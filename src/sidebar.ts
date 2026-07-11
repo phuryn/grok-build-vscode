@@ -58,6 +58,7 @@ import { appendPlanEntry, decideRestoreState } from "./plan-restore";
 import { planReviewFileBaseName, sanitizePlanReviewFilePart } from "./plan-review";
 import { GROK_PRIMER, isPrimerText } from "./grok-primer";
 import { HostMsg, WebviewMsg } from "./protocol";
+import { canonicalizeWorkspacePath, mergeSessionIndexes } from "./workspaces";
 import {
   SessionListEntry,
   SessionMetaOverrides,
@@ -214,6 +215,14 @@ export class GrokSidebar implements vscode.WebviewViewProvider {
   private readonly diffProvider = new GrokDiffContentProvider();
   private diffSeq = 0;
   private readonly openDiffsByRequest = new Map<string, { left: vscode.Uri; right: vscode.Uri }>();
+
+  // Grok Workspaces panel plumbing: the tree refreshes off this event (fired on
+  // every catalog change + dot change), and historyPanelVisible mirrors the
+  // tree's visibility so the chat's own history button hides while the panel is
+  // showing (New stays).
+  private readonly sessionsChangedEmitter = new vscode.EventEmitter<void>();
+  readonly onDidChangeSessions = this.sessionsChangedEmitter.event;
+  private historyPanelVisible = false;
 
   constructor(
     private context: vscode.ExtensionContext,
@@ -427,11 +436,27 @@ See design doc for the full state machine diagram.`;
     this.post({ type: "modeChanged", modeId: this.displayMode() });
   }
 
-  /** Whether grok's config.toml forces always-approve (#31). Project
-   *  `.grok/config.toml` overrides global `~/.grok/config.toml`. Read fresh on
-   *  each session start — it's a couple of small file reads, and the user may
-   *  edit the config between sessions. Any read error → false (treat as normal). */
-  private configForcesAutoApprove(): boolean {
+  /** This window's own (first) workspace folder — the default home for new
+   *  sessions, and the scope of the popover list / startup sweep. */
+  private activeWorkspaceCwd(): string {
+    return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
+  }
+
+  /** The workspace a session belongs to. Every disk/config path derived from a
+   *  session must go through this, never the window's folder — the pool can hold
+   *  sessions from several workspaces (Grok Workspaces panel). Falls back to the
+   *  window's folder for a not-yet-started Session. */
+  private sessionCwd(session: Session): string {
+    return session.cwd || this.activeWorkspaceCwd();
+  }
+
+  /** Whether grok's config.toml forces always-approve (#31). The starting
+   *  session's project `.grok/config.toml` overrides global
+   *  `~/.grok/config.toml` — `cwd` is the SESSION's workspace, so a
+   *  cross-workspace session reads its own project config. Read fresh on each
+   *  session start — it's a couple of small file reads, and the user may edit
+   *  the config between sessions. Any read error → false (treat as normal). */
+  private configForcesAutoApprove(cwd: string): boolean {
     const readSafe = (p?: string): string | undefined => {
       if (!p) return undefined;
       try {
@@ -442,7 +467,6 @@ See design doc for the full state machine diagram.`;
     };
     const home = process.env.HOME || process.env.USERPROFILE || "";
     const globalPath = home ? path.join(home, ".grok", "config.toml") : undefined;
-    const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
     const projectPath = cwd ? path.join(cwd, ".grok", "config.toml") : undefined;
     return configForcesAlwaysApprove({ project: readSafe(projectPath), global: readSafe(globalPath) });
   }
@@ -1161,6 +1185,7 @@ See design doc for the full state machine diagram.`;
       if (choice !== "Update Anyway") return;
     }
     const resumeId = this.focused.activeSessionId;
+    const resumeCwd = this.sessionCwd(this.focused); // resume in ITS workspace, not the window's
     // Free the binary: every pooled session's process holds it open (a hard lock
     // on Windows), so tear the whole pool down before the update replaces the
     // executable, then resume the focused session on the fresh binary. Other
@@ -1174,7 +1199,7 @@ See design doc for the full state machine diagram.`;
     await this.disposePool();
     await this.runGrokUpdate(cliPath, updateArgs);
     // Respawn on the (possibly) updated binary, resuming the same session.
-    await this.startSession(resumeId);
+    await this.startSession(resumeId, resumeCwd);
   }
 
   /** Run `grok update`, retrying once on the Windows "locked executable" error.
@@ -1267,7 +1292,10 @@ See design doc for the full state machine diagram.`;
   private discardRestartedEmptySession(oldId: string | undefined): void {
     const newId = this.focused.activeSessionId;
     if (!oldId || oldId === newId) return;
-    const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
+    // A restart-in-place keeps the session's workspace, so the discarded dir
+    // lives under the (restarted) focused session's cwd — not necessarily the
+    // window's folder.
+    const cwd = this.sessionCwd(this.focused);
     const grokHome = resolveGrokHome(process.env);
     try {
       deleteSessionDir({ fs: defaultFs, grokHome, cwd, id: oldId });
@@ -1276,16 +1304,21 @@ See design doc for the full state machine diagram.`;
     }
     const overrides = this.context.globalState.get<SessionMetaOverrides>(SESSION_META_KEY, {});
     void this.context.globalState.update(SESSION_META_KEY, carrySessionName(overrides, oldId, newId));
-    this.sessionCache.delete(oldId);
+    this.dropCacheEntry(oldId);
     this.postSessionsList();
   }
 
-  private async startSession(resumeId?: string): Promise<AcpClient | undefined> {
+  private async startSession(resumeId?: string, cwdOverride?: string): Promise<AcpClient | undefined> {
     // The session this start (re)builds. Today always the focused one (pool-of-1);
     // Step D passes a pool member. Its handlers close over `session`/`gen` so a
     // backgrounded session's events stay bound to it even after focus moves.
     const session = this.focused;
     const gen = ++session.gen;
+    // Stamp the session's workspace FIRST — the config lookup below and the
+    // spawn cwd / plan-gate root / .env all derive from it. Explicit override
+    // (workspace panel) > the session's existing home (a restart-in-place
+    // keeps its workspace) > this window's own folder.
+    session.cwd = cwdOverride || session.cwd || this.activeWorkspaceCwd();
     session.buffer = [];
     session.status = "idle";
     // Stop any in-progress voice capture so listening never carries across a
@@ -1307,7 +1340,7 @@ See design doc for the full state machine diagram.`;
     // and is invisible over ACP — the CLI still reports plain agent mode. Detect
     // it so the button shows "Auto accept" instead of a misleading "Agent" (#31).
     // Applies to resumed sessions too (the config is global, not per-session).
-    const configAutoApprove = this.configForcesAutoApprove();
+    const configAutoApprove = this.configForcesAutoApprove(session.cwd);
     session.autoApprove = rememberedYolo || configAutoApprove;
     session.planActive = false;
     session.afterTurn = undefined;
@@ -1359,7 +1392,7 @@ See design doc for the full state machine diagram.`;
     await this.maybePinBrokenCli(cliPath);
     if (gen !== session.gen) return undefined;
 
-    const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
+    const cwd = session.cwd; // the session's workspace — closures below capture it
     const env = this.buildEnv(cwd);
     const effortStr = cfg.get<string>("defaultEffort", "");
     const effort = effortStr ? (effortStr as EffortLevel) : undefined;
@@ -1850,8 +1883,9 @@ See design doc for the full state machine diagram.`;
         const ref = parseFileRef(msg.path);
         let p = ref.path;
         if (!path.isAbsolute(p)) {
-          const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-          if (root) p = path.join(root, p);
+          // Chat content shows paths relative to the SESSION's workspace (which
+          // the workspace panel can point at another folder), not the window's.
+          p = path.join(this.sessionCwd(this.focused), p);
         }
         const uri = vscode.Uri.file(p);
         if (ref.startLine != null) {
@@ -1945,7 +1979,8 @@ See design doc for the full state machine diagram.`;
         break;
       }
       case "openProjectConfig": {
-        const cwd2 = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
+        // "Project" = the focused session's workspace (the config grok actually reads).
+        const cwd2 = this.sessionCwd(this.focused);
         const projCfg = path.join(cwd2, ".grok", "config.toml");
         if (!fs.existsSync(projCfg)) {
           fs.mkdirSync(path.dirname(projCfg), { recursive: true });
@@ -1964,7 +1999,7 @@ See design doc for the full state machine diagram.`;
         const mcpCli = this.cliPath || locateGrokCli(
           vscode.workspace.getConfiguration("grok").get<string>("cliPath", ""),
         );
-        const mcpCwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        const mcpCwd = this.focused.cwd || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
         const term = mcpCli
           ? vscode.window.createTerminal({ name: "Grok MCP", shellPath: mcpCli, shellArgs: ["mcp", "list"], cwd: mcpCwd })
           : vscode.window.createTerminal("Grok MCP");
@@ -2079,10 +2114,15 @@ See design doc for the full state machine diagram.`;
    * cache once so search stays complete, not just over what's already loaded).
    */
   private postSessionsList(opts?: { offset?: number; limit?: number; query?: string }): void {
+    // The Grok Workspaces tree refreshes off the same triggers as the popover
+    // (every catalog mutation funnels through here).
+    this.sessionsChangedEmitter.fire();
     const offset = Math.max(0, opts?.offset ?? 0);
     const limit = opts?.limit ?? SESSION_PAGE_SIZE;
     const query = (opts?.query ?? "").trim().toLowerCase();
-    const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
+    // The popover always lists THIS window's workspace — other workspaces'
+    // histories live in the Grok Workspaces panel.
+    const cwd = this.activeWorkspaceCwd();
     const grokHome = resolveGrokHome(process.env);
     const overrides = this.context.globalState.get<SessionMetaOverrides>(SESSION_META_KEY, {});
     const log = (m: string) => this.output.appendLine(m);
@@ -2122,9 +2162,13 @@ See design doc for the full state machine diagram.`;
       const onDisk = new Set(index.map((e) => e.id));
       const seen = new Set(pageEntries.map((e) => e.id));
       const synthetic: SessionListEntry[] = [];
+      const cwdKey = canonicalizeWorkspacePath(cwd);
       for (const s of this.pool) {
         const id = s.activeSessionId;
         if (!id || onDisk.has(id) || seen.has(id)) continue;
+        // A pool session homed in ANOTHER workspace (Grok Workspaces panel)
+        // doesn't belong in this window's popover list.
+        if (canonicalizeWorkspacePath(this.sessionCwd(s)) !== cwdKey) continue;
         synthetic.push(this.liveSessionEntry(s, id, cwd, overrides));
         seen.add(id);
       }
@@ -2211,16 +2255,33 @@ See design doc for the full state machine diagram.`;
   ): SessionListEntry[] {
     const stale: string[] = [];
     for (const id of ids) {
-      const cached = this.sessionCache.get(id);
+      const cached = this.sessionCache.get(this.cacheKey(cwd, id));
       if (!cached || cached.mtimeMs !== (mtimeById.get(id) ?? -1)) stale.push(id);
     }
     if (stale.length) {
       const fresh = readSessionEntries({ fs: defaultFs, grokHome, cwd, ids: stale, overrides, log });
       for (const e of fresh) {
-        this.sessionCache.set(e.id, { mtimeMs: mtimeById.get(e.id) ?? 0, entry: e });
+        this.sessionCache.set(this.cacheKey(cwd, e.id), { mtimeMs: mtimeById.get(e.id) ?? 0, entry: e });
       }
     }
-    return ids.map((id) => this.sessionCache.get(id)?.entry).filter((e): e is SessionListEntry => !!e);
+    return ids
+      .map((id) => this.sessionCache.get(this.cacheKey(cwd, id))?.entry)
+      .filter((e): e is SessionListEntry => !!e);
+  }
+
+  /** Cache key for {@link sessionCache} — cwd-scoped now that several workspaces'
+   *  entries share the cache (Grok Workspaces panel). */
+  private cacheKey(cwd: string, id: string): string {
+    return cwd + "\n" + id;
+  }
+
+  /** Invalidate a session's cached entry under EVERY workspace spelling. Ids are
+   *  UUIDs, so the suffix match is unambiguous; rename/delete callers don't need
+   *  to know which spelling(s) the entry was read under. */
+  private dropCacheEntry(id: string): void {
+    for (const k of [...this.sessionCache.keys()]) {
+      if (k.endsWith("\n" + id)) this.sessionCache.delete(k);
+    }
   }
 
   private renameSession(id: string, name: string): void {
@@ -2240,11 +2301,13 @@ See design doc for the full state machine diagram.`;
     void this.context.globalState.update(SESSION_META_KEY, next);
     // A rename changes displayName but not summary.json's mtime, so the mtime-keyed cache would
     // otherwise keep serving the old name. Drop it so the next read rebuilds the entry.
-    this.sessionCache.delete(id);
+    this.dropCacheEntry(id);
     this.postSessionsList();
   }
 
-  private async deleteSession(id: string, name?: string): Promise<void> {
+  /** `cwd` defaults to this window's workspace (the popover's scope); the
+   *  workspace panel passes the entry's own storage cwd. */
+  private async deleteSession(id: string, name?: string, cwd?: string): Promise<void> {
     const label = name ? `session "${name}"` : "this session";
     const choice = await vscode.window.showWarningMessage(
       `Delete ${label}? This cannot be undone.`,
@@ -2252,18 +2315,17 @@ See design doc for the full state machine diagram.`;
       "Delete",
     );
     if (choice !== "Delete") return;
-    const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
     try {
       deleteSessionDir({
         fs: defaultFs,
         grokHome: resolveGrokHome(process.env),
-        cwd,
+        cwd: cwd ?? this.activeWorkspaceCwd(),
         id,
       });
     } catch (e) {
       this.output.appendLine(`[sessions] delete failed for ${id}: ${(e as Error).message}`);
     }
-    this.sessionCache.delete(id);
+    this.dropCacheEntry(id);
     const overrides = this.context.globalState.get<SessionMetaOverrides>(SESSION_META_KEY, {});
     if (overrides[id]) {
       const next = { ...overrides };
@@ -2284,33 +2346,55 @@ See design doc for the full state machine diagram.`;
     this.postSessionsList();
   }
 
-  /** Delete every session in this workspace's history except the live/focused one (grok
-   *  re-persists that, so deleting it wouldn't stick). Behind a modal confirm showing the
-   *  count. Tears down any backgrounded live members it deletes and purges their overrides. */
+  /** Webview "Clear all history" — clears this window's workspace store. */
   private async clearAllSessions(): Promise<void> {
-    const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
+    await this.clearWorkspaceSessions([this.activeWorkspaceCwd()]);
+  }
+
+  /**
+   * Delete a workspace's session history (across every storage spelling),
+   * preserving EVERY live pool session homed there — not just the focused one.
+   * grok re-persists a live session's dir on its next turn (deleting it wouldn't
+   * stick), and a working background agent shouldn't lose its record either.
+   * Modal-confirmed with the real counts. Serves both the popover's "Clear all"
+   * and the workspace panel's per-workspace "Clear sessions".
+   */
+  async clearWorkspaceSessions(storageCwds: string[]): Promise<void> {
     const grokHome = resolveGrokHome(process.env);
-    const exceptId = this.focused?.activeSessionId;
-    // Count via the cheap stat-only index — no need to parse every summary just to confirm.
-    const clearableCount = indexSessions({ fs: defaultFs, grokHome, cwd }).filter(
-      (e) => e.id !== exceptId,
-    ).length;
-    if (clearableCount === 0) {
+    const keys = new Set(storageCwds.map((c) => canonicalizeWorkspacePath(c)));
+    const liveIds = new Set<string>();
+    for (const s of [...this.pool, this.focused]) {
+      if (s.activeSessionId && keys.has(canonicalizeWorkspacePath(this.sessionCwd(s)))) {
+        liveIds.add(s.activeSessionId);
+      }
+    }
+    // Count via the cheap stat-only index, deduped across spellings (on a
+    // case-insensitive fs two spellings can serve the SAME physical dir).
+    const index = mergeSessionIndexes(
+      storageCwds.map((cwd) => ({ cwd, entries: indexSessions({ fs: defaultFs, grokHome, cwd }) })),
+    );
+    const clearable = index.filter((e) => !liveIds.has(e.id)).length;
+    if (clearable === 0) {
       void vscode.window.showInformationMessage("No history to clear.");
       return;
     }
+    const kept = liveIds.size;
     const choice = await vscode.window.showWarningMessage(
-      `Delete ${clearableCount} session${clearableCount === 1 ? "" : "s"} from this workspace's history? This cannot be undone.`,
+      `Delete ${clearable} session${clearable === 1 ? "" : "s"} from this workspace's history?` +
+        (kept ? ` ${kept} live session${kept === 1 ? "" : "s"} will be kept.` : "") +
+        " This cannot be undone.",
       { modal: true },
       "Delete All",
     );
     if (choice !== "Delete All") return;
 
-    let removed: string[] = [];
-    try {
-      removed = clearSessions({ fs: defaultFs, grokHome, cwd, exceptId });
-    } catch (e) {
-      this.output.appendLine(`[sessions] clear-all failed: ${(e as Error).message}`);
+    const removed: string[] = [];
+    for (const cwd of storageCwds) {
+      try {
+        removed.push(...clearSessions({ fs: defaultFs, grokHome, cwd, exceptIds: [...liveIds] }));
+      } catch (e) {
+        this.output.appendLine(`[sessions] clear failed under ${cwd}: ${(e as Error).message}`);
+      }
     }
 
     // Purge our meta overrides + read cache for every removed id.
@@ -2318,21 +2402,13 @@ See design doc for the full state machine diagram.`;
       const next = { ...this.context.globalState.get<SessionMetaOverrides>(SESSION_META_KEY, {}) };
       let changed = false;
       for (const id of removed) {
-        this.sessionCache.delete(id);
+        this.dropCacheEntry(id);
         if (next[id]) {
           delete next[id];
           changed = true;
         }
       }
       if (changed) await this.context.globalState.update(SESSION_META_KEY, next);
-    }
-
-    // Tear down any backgrounded live pool members we just deleted (the focused one is kept).
-    const gone = new Set(removed);
-    for (const s of [...this.pool]) {
-      if (s !== this.focused && s.activeSessionId && gone.has(s.activeSessionId)) {
-        this.disposeSession(s);
-      }
     }
     this.postSessionsList();
   }
@@ -2446,7 +2522,7 @@ See design doc for the full state machine diagram.`;
   }
 
   private postVoiceConfigured(): void {
-    const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
+    const cwd = this.activeWorkspaceCwd();
     const cfg = vscode.workspace.getConfiguration("grok");
     this.post({
       type: "voiceConfigured",
@@ -2473,7 +2549,7 @@ See design doc for the full state machine diagram.`;
    *  reach the mic). The webview has already flipped its button to "listening";
    *  on any setup failure we send `voiceError` to reset it. */
   private async handleVoiceStart(): Promise<void> {
-    const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
+    const cwd = this.activeWorkspaceCwd();
     const key = this.resolveVoiceApiKey(cwd);
     if (!key) {
       void this.promptVoiceKeySetup();
@@ -2648,7 +2724,7 @@ See design doc for the full state machine diagram.`;
       this.post({ type: "voiceError" });
       return;
     }
-    const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
+    const cwd = this.activeWorkspaceCwd();
     const key = this.resolveVoiceApiKey(cwd);
     if (!key) {
       this.voiceRecorder.cancel();
@@ -3129,7 +3205,7 @@ See design doc for the full state machine diagram.`;
 
   private postInitialState(): void {
     const cfg = vscode.workspace.getConfiguration("grok");
-    const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
+    const cwd = this.activeWorkspaceCwd();
     this.post({
       type: "initialState",
       effort: cfg.get("defaultEffort", ""),
@@ -3138,6 +3214,9 @@ See design doc for the full state machine diagram.`;
       extVersion: (this.context.extension.packageJSON as { version?: string })?.version ?? "",
       showThinking: cfg.get("showThinking", false),
     });
+    // A fresh/reloaded webview needs the panel-visibility state too — the
+    // treeView visibility event fired long before this webview existed.
+    if (this.historyPanelVisible) this.post({ type: "historyPanelVisible", value: true });
     // Sync the active-editor context chip into the fresh webview (the config
     // gate + no-editor case live inside refreshImplicitChip).
     this.refreshImplicitChip(true);
@@ -3233,16 +3312,15 @@ See design doc for the full state machine diagram.`;
     // up in history (#24). The next focused session becomes the single live "New
     // session"; abandoning this one removes it entirely.
     this.disposeSession(cur);
-    this.removeSessionFromDisk(cur.activeSessionId);
+    this.removeSessionFromDisk(cur.activeSessionId, this.sessionCwd(cur));
     this.postSessionsList();
   }
 
-  /** Delete a session's on-disk dir + drop its meta override and read-cache entry.
-   *  Used when an empty (primer-only) session is abandoned or swept. Best-effort —
-   *  a locked/already-gone dir is logged, not thrown. */
-  private removeSessionFromDisk(id: string | undefined): void {
+  /** Delete a session's on-disk dir (under ITS workspace) + drop its meta
+   *  override and read-cache entry. Used when an empty (primer-only) session is
+   *  abandoned. Best-effort — a locked/already-gone dir is logged, not thrown. */
+  private removeSessionFromDisk(id: string | undefined, cwd: string): void {
     if (!id) return;
-    const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
     const grokHome = resolveGrokHome(process.env);
     try {
       deleteSessionDir({ fs: defaultFs, grokHome, cwd, id });
@@ -3255,7 +3333,7 @@ See design doc for the full state machine diagram.`;
       delete next[id];
       void this.context.globalState.update(SESSION_META_KEY, next);
     }
-    this.sessionCache.delete(id);
+    this.dropCacheEntry(id);
   }
 
   /** One-shot cleanup (per activation) of empty, primer-only sessions left on disk by
@@ -3266,7 +3344,9 @@ See design doc for the full state machine diagram.`;
   private sweepEmptyPrimerSessions(): void {
     if (this.sweptEmptySessions) return;
     this.sweptEmptySessions = true;
-    const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
+    // Deliberately window-scoped: only ever sweep THIS window's workspace store.
+    // Other workspaces shown in the panel are never touched on activation.
+    const cwd = this.activeWorkspaceCwd();
     const grokHome = resolveGrokHome(process.env);
     const log = (m: string) => this.output.appendLine(m);
     const overrides = this.context.globalState.get<SessionMetaOverrides>(SESSION_META_KEY, {});
@@ -3314,7 +3394,7 @@ See design doc for the full state machine diagram.`;
       const next = { ...overrides };
       for (const id of removed) {
         delete next[id];
-        this.sessionCache.delete(id);
+        this.dropCacheEntry(id);
       }
       void this.context.globalState.update(SESSION_META_KEY, next);
       log(`[sessions] swept ${removed.length} empty primer session(s) from history`);
@@ -3332,7 +3412,10 @@ See design doc for the full state machine diagram.`;
     session.client?.dispose();
     session.client = undefined;
     this.pool.delete(session);
-    if (id) this.post({ type: "sessionDot", id, dot: this.dotForId(id) });
+    if (id) {
+      this.post({ type: "sessionDot", id, dot: this.dotForId(id) });
+      this.sessionsChangedEmitter.fire();
+    }
   }
 
   /** Stamp a session's recency for LRU/TTL reaping (created / focused / made busy). */
@@ -3386,7 +3469,10 @@ See design doc for the full state machine diagram.`;
    *  and on reaping (where the session has left the pool but may stay green). */
   private pushDot(session: Session): void {
     const id = session.activeSessionId;
-    if (id) this.post({ type: "sessionDot", id, dot: this.dotForId(id) });
+    if (id) {
+      this.post({ type: "sessionDot", id, dot: this.dotForId(id) });
+      this.sessionsChangedEmitter.fire(); // keep the workspace panel's dots live too
+    }
   }
 
   /** The dashboard dot for a grok-session id, from live status (if it's a live pool
@@ -3440,19 +3526,24 @@ See design doc for the full state machine diagram.`;
     return Promise.all(closing).then(() => undefined);
   }
 
-  /** Start a brand-new session, keeping the current one alive in the background. */
-  private async newFocusedSession(): Promise<void> {
+  /** Start a brand-new session, keeping the current one alive in the background.
+   *  `cwd` homes it in another workspace (Grok Workspaces panel); default is this
+   *  window's folder. */
+  private async newFocusedSession(cwd?: string): Promise<void> {
     this.parkFocused();
     this.focused = new Session();
-    await this.startSession();
+    await this.startSession(undefined, cwd);
   }
 
   /**
    * Open the session with grok id `id`. If it's already live in the pool, re-focus
-   * it instantly (lossless buffer replay — no reload). Otherwise park the current
-   * session and load this one cold from grok's on-disk history into a fresh member.
+   * it instantly (lossless buffer replay — no reload), whatever workspace it's
+   * homed in. Otherwise park the current session and load this one cold from
+   * grok's on-disk history into a fresh member — spawned in `cwd` when given
+   * (the workspace panel passes the entry's storage cwd), else this window's
+   * workspace (the popover's scope).
    */
-  private async openSession(id: string): Promise<void> {
+  private async openSession(id: string, cwd?: string): Promise<void> {
     for (const s of this.pool) {
       if (s.activeSessionId === id && s.client) {
         this.focusSession(s);
@@ -3461,8 +3552,126 @@ See design doc for the full state machine diagram.`;
     }
     this.parkFocused();
     this.focused = new Session();
-    await this.startSession(id);
+    await this.startSession(id, cwd);
     this.markRead(this.focused); // opening a cold session clears its unread badge
+  }
+
+  // ---------- Grok Workspaces panel (tree view) API ----------
+
+  /** The grok id of the session currently shown in the chat. */
+  focusedSessionId(): string | undefined {
+    return this.focused.activeSessionId;
+  }
+
+  /** Append to the extension's output channel (the workspace panel logs here too). */
+  log(msg: string): void {
+    this.output.appendLine(msg);
+  }
+
+  /** Dashboard dot for any session id (live status + persisted unread badge). */
+  dotForSession(id: string): Dot {
+    return this.dotForId(id);
+  }
+
+  /**
+   * Newest-first session entries for one workspace — all its storage spellings
+   * merged and id-deduped (on a case-insensitive fs two spellings serve the same
+   * physical dir), cache-backed like the popover. Mirrors the popover's
+   * in-memory overlay: synthesizes a row for a live not-yet-persisted session
+   * homed here, and shows a live primer-only session as "New session".
+   */
+  listWorkspaceSessions(
+    storageCwds: string[],
+    limit: number,
+  ): { entries: Array<SessionListEntry & { storageCwd: string }>; total: number } {
+    const grokHome = resolveGrokHome(process.env);
+    const overrides = this.context.globalState.get<SessionMetaOverrides>(SESSION_META_KEY, {});
+    const log = (m: string) => this.output.appendLine(m);
+    const index = mergeSessionIndexes(
+      storageCwds.map((cwd) => ({ cwd, entries: indexSessions({ fs: defaultFs, grokHome, cwd, log }) })),
+    );
+
+    // Read the visible window, grouped by storage spelling (cache keys are cwd-scoped).
+    const page = index.slice(0, Math.max(0, limit));
+    const idsByCwd = new Map<string, string[]>();
+    for (const e of page) {
+      const ids = idsByCwd.get(e.storageCwd) ?? [];
+      ids.push(e.id);
+      idsByCwd.set(e.storageCwd, ids);
+    }
+    const entryById = new Map<string, SessionListEntry & { storageCwd: string }>();
+    for (const [cwd, ids] of idsByCwd) {
+      const mtimeById = new Map(
+        index.filter((e) => e.storageCwd === cwd).map((e) => [e.id, e.mtimeMs] as const),
+      );
+      for (const e of this.readEntriesCached(ids, mtimeById, overrides, cwd, grokHome, log)) {
+        entryById.set(e.id, { ...e, storageCwd: cwd });
+      }
+    }
+    let entries = page
+      .map((e) => entryById.get(e.id))
+      .filter((e): e is SessionListEntry & { storageCwd: string } => !!e);
+    entries.sort((a, b) => b.updatedAt - a.updatedAt);
+
+    // In-memory overlay, mirroring postSessionsList: live pool sessions homed here.
+    const keys = new Set(storageCwds.map((c) => canonicalizeWorkspacePath(c)));
+    const onDisk = new Set(index.map((e) => e.id));
+    let total = index.length;
+    const synthetic: Array<SessionListEntry & { storageCwd: string }> = [];
+    const liveEmpty = new Set<string>();
+    for (const s of this.pool) {
+      const id = s.activeSessionId;
+      if (!id || !keys.has(canonicalizeWorkspacePath(this.sessionCwd(s)))) continue;
+      if (!s.hasHistory) liveEmpty.add(id);
+      if (!onDisk.has(id)) {
+        const home = this.sessionCwd(s);
+        synthetic.push({ ...this.liveSessionEntry(s, id, home, overrides), storageCwd: home });
+        total += 1;
+      }
+    }
+    if (synthetic.length) {
+      synthetic.sort((a, b) => b.updatedAt - a.updatedAt);
+      entries = [...synthetic, ...entries];
+    }
+    for (const e of entries) {
+      if (!e.customName && liveEmpty.has(e.id)) e.displayName = "New session";
+    }
+    return { entries, total };
+  }
+
+  /** Open a session (possibly homed in another workspace) into the chat panel: a
+   *  live pool member re-focuses instantly; anything else cold-loads with grok
+   *  spawned in ITS workspace. */
+  async openSessionInWorkspace(storageCwd: string, id: string): Promise<void> {
+    this.reveal();
+    await this.openSession(id, storageCwd);
+  }
+
+  /** Start a brand-new session homed in the given workspace. */
+  async newSessionInWorkspace(cwd: string): Promise<void> {
+    this.reveal();
+    await this.newFocusedSession(cwd);
+  }
+
+  async deleteSessionInWorkspace(storageCwd: string, id: string, name?: string): Promise<void> {
+    await this.deleteSession(id, name, storageCwd);
+  }
+
+  /** Rename via the panel — an input box instead of the popover's inline field. */
+  async renameSessionFromPanel(id: string, currentName: string): Promise<void> {
+    const name = await vscode.window.showInputBox({
+      prompt: "Rename session (leave empty to restore the generated name)",
+      value: currentName,
+    });
+    if (name === undefined) return; // dismissed
+    this.renameSession(id, name);
+  }
+
+  /** Mirror the workspace panel's visibility into the webview: while the panel is
+   *  showing, the chat's own history button hides (New stays). */
+  setHistoryPanelVisible(visible: boolean): void {
+    this.historyPanelVisible = visible;
+    this.post({ type: "historyPanelVisible", value: visible });
   }
 
   private reveal(): void {

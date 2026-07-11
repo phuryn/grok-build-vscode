@@ -345,15 +345,20 @@ export interface ClearDeps {
   fs: FsLike;
   grokHome: string;
   cwd: string;
-  /** Session id to keep (the live/focused one — grok re-persists it, so deleting it wouldn't stick). */
+  /** Session id to keep (a live one — grok re-persists it, so deleting it wouldn't stick). */
   exceptId?: string;
+  /** Session ids to keep — the plural form for a pool with several live sessions
+   *  in one workspace. Merged with `exceptId`. */
+  exceptIds?: string[];
 }
 
-/** Remove every session directory under `cwd`, optionally keeping one. Returns the ids it removed.
+/** Remove every session directory under `cwd`, optionally keeping some. Returns the ids it removed.
  *  Best-effort: a directory that fails to remove is skipped, not thrown, so one locked dir doesn't
  *  abort the sweep. The directory name is the session id (mirrors `deleteSessionDir`). */
 export function clearSessions(deps: ClearDeps): string[] {
-  const { fs, grokHome, cwd, exceptId } = deps;
+  const { fs, grokHome, cwd, exceptId, exceptIds } = deps;
+  const keep = new Set(exceptIds ?? []);
+  if (exceptId) keep.add(exceptId);
   const dir = sessionsDirFor(grokHome, cwd);
   if (!fs.existsSync(dir)) return [];
   let entries: string[];
@@ -364,7 +369,7 @@ export function clearSessions(deps: ClearDeps): string[] {
   }
   const removed: string[] = [];
   for (const name of entries) {
-    if (exceptId && name === exceptId) continue;
+    if (keep.has(name)) continue;
     const full = path.join(dir, name);
     try {
       if (!fs.statSync(full).isDirectory()) continue;

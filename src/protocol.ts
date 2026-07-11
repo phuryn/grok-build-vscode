@@ -101,6 +101,9 @@ export type HostMsg =
   | { type: "xaiNotification"; update?: unknown }
   | { type: "sessions"; entries: SessionListEntry[]; activeId?: string; dots: Record<string, Dot>; offset: number; total: number; hasMore: boolean; query: string }
   | { type: "sessionDot"; id: string; dot: Dot }
+  // The Grok Workspaces tree view is visible — the chat's own history button
+  // hides while it is (the panel is the history surface then; New stays).
+  | { type: "historyPanelVisible"; value: boolean }
   // Full snapshot of the focused session's host-owned send queue (#37) — the
   // webview renders pending user blocks from this; replay rebuilds them.
   | { type: "queuedSends"; items: string[] };
@@ -170,7 +173,8 @@ const HOST_MESSAGE_TYPE_MAP: Record<HostMsg["type"], true> = {
   planNotice: true, planBlocked: true, promptComplete: true, agentReset: true,
   agentError: true, agentEnd: true, exit: true, setBusy: true, summarizing: true,
   sessionContext: true, clearMessages: true, onboarding: true, error: true,
-  xaiNotification: true, sessions: true, sessionDot: true, queuedSends: true,
+  xaiNotification: true, sessions: true, sessionDot: true, historyPanelVisible: true,
+  queuedSends: true,
 };
 
 const WEBVIEW_MESSAGE_TYPE_MAP: Record<WebviewMsg["type"], true> = {

@@ -23,7 +23,7 @@
     "permissionResolved", "exitPlanRequest", "questionRequest", "planNotice", "planBlocked",
     "promptComplete", "agentReset", "agentError", "agentEnd", "exit", "setBusy", "summarizing",
     "sessionContext", "clearMessages", "onboarding", "error", "xaiNotification", "sessions",
-    "sessionDot", "queuedSends",
+    "sessionDot", "historyPanelVisible", "queuedSends",
   ];
   const WEBVIEW_MESSAGE_TYPES = [
     "ready", "send", "newSession", "cancel", "pickModel", "setMode", "removeChip",

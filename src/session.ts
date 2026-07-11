@@ -20,6 +20,17 @@ export class Session {
   /** The live ACP client (one spawned `grok agent stdio` process), once started. */
   client?: AcpClient;
 
+  /**
+   * Workspace folder this session's grok runs in — its spawn cwd, and the key
+   * for grok's on-disk store (`~/.grok/sessions/<encodeURIComponent(cwd)>/`).
+   * Stamped by startSession ("" only before the first start, or for a
+   * pre-stamp fresh Session — sidebar.sessionCwd falls back to the window's
+   * folder). The pool can hold sessions from SEVERAL workspaces (Grok
+   * Workspaces panel), so any disk/config path derived from a session must go
+   * through this, never through the window's own workspace folder.
+   */
+  cwd = "";
+
   /** YOLO: auto-approve every permission request for this session. */
   autoApprove = false;
 

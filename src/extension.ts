@@ -1,9 +1,14 @@
 import * as vscode from "vscode";
 import { GrokSidebar } from "./sidebar";
+import { registerWorkspacesView } from "./workspace-tree";
 
 export function activate(context: vscode.ExtensionContext): void {
   const output = vscode.window.createOutputChannel("Grok");
   const sidebar = new GrokSidebar(context, output);
+
+  // Grok Workspaces panel (primary side bar): cross-workspace session history
+  // with live status dots. Registers the tree view + its commands.
+  registerWorkspacesView(context, sidebar);
 
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(GrokSidebar.viewId, sidebar, {

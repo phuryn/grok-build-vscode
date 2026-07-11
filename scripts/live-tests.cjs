@@ -42,11 +42,13 @@ const fs = require("node:fs");
 
 // ── Real extension modules (compiled CJS + shipped webview helper) ───────────
 const REPO = path.resolve(__dirname, "..");
-let dispatch, planGate, helpers, primer;
+let dispatch, planGate, helpers, primer, sessionsMod, workspacesMod;
 try {
   dispatch = require(path.join(REPO, "out", "acp-dispatch.js"));
   planGate = require(path.join(REPO, "out", "plan-gate.js"));
   primer = require(path.join(REPO, "out", "grok-primer.js"));
+  sessionsMod = require(path.join(REPO, "out", "sessions.js"));
+  workspacesMod = require(path.join(REPO, "out", "workspaces.js"));
   helpers = require(path.join(REPO, "media", "webview-helpers.js"));
 } catch (e) {
   console.error("Could not load compiled modules — run `npm run compile` (or `tsc -p .`) first.\n" + e.message);
@@ -55,6 +57,8 @@ try {
 const { isMediaGenToolCall, extractGeneratedMediaPaths } = dispatch;
 const { shouldBlockWrite } = planGate;
 const { GROK_PRIMER } = primer;
+const { sessionsDirFor, defaultFs, indexSessions } = sessionsMod;
+const { discoverWorkspaces, canonicalizeWorkspacePath } = workspacesMod;
 const { isSubagentToolCall, subagentLabel } = helpers;
 
 // ── grok locator (cross-platform; mirrors cli-locator's resolution order) ────
@@ -387,6 +391,58 @@ async function testParallelSessions() {
     assert(!/bravo/i.test(ta) && !/alpha/i.test(tb), `cross-talk between concurrent sessions (A="${ta.trim().slice(0, 40)}", B="${tb.trim().slice(0, 40)}")`);
     return `two concurrent processes answered independently (A→ALPHA, B→BRAVO)`;
   } finally { a.kill(); b.kill(); }
+}
+
+// The Grok Workspaces panel contract: sessions from DIFFERENT workspaces land in
+// per-cwd stores (`~/.grok/sessions/<encodeURIComponent(cwd)>/<id>`), resumable
+// by spawning grok in that cwd — and the panel's discovery/indexing (the real
+// compiled workspaces.js/sessions.js) sees exactly what grok wrote. Two
+// concurrent processes on two temp workspaces mirror one window driving two
+// workspaces at once (Session.cwd threading).
+async function testParallelWorkspaces() {
+  const cwd1 = mkTmp("wsA");
+  const cwd2 = mkTmp("wsB");
+  const a = new Acp(cwd1);
+  const b = new Acp(cwd2);
+  try {
+    const [ia, ib] = await Promise.all([
+      withTimeout(a.send("initialize", INIT), 30000, "init A"),
+      withTimeout(b.send("initialize", INIT), 30000, "init B"),
+    ]);
+    assert(!ia.error && !ib.error, "initialize errored");
+    const [na, nb] = await Promise.all([
+      withTimeout(a.send("session/new", { cwd: cwd1, mcpServers: [] }), 30000, "session/new A"),
+      withTimeout(b.send("session/new", { cwd: cwd2, mcpServers: [] }), 30000, "session/new B"),
+    ]);
+    assert(na.result && na.result.sessionId, "session/new A failed: " + JSON.stringify(na.error));
+    assert(nb.result && nb.result.sessionId, "session/new B failed: " + JSON.stringify(nb.error));
+
+    const [pa, pb] = await Promise.all([
+      withTimeout(a.send("session/prompt", { sessionId: na.result.sessionId, prompt: [{ type: "text", text: "Reply with exactly one word: NORTH. No tools." }] }), 180000, "prompt A"),
+      withTimeout(b.send("session/prompt", { sessionId: nb.result.sessionId, prompt: [{ type: "text", text: "Reply with exactly one word: SOUTH. No tools." }] }), 180000, "prompt B"),
+    ]);
+    assert(!pa.error && !pb.error, "a prompt errored");
+    assert(/north/i.test(a.agentText()) && /south/i.test(b.agentText()), "cross-workspace prompts didn't answer independently");
+
+    // Storage layout: each session dir must exist under ITS workspace's store —
+    // via the same sessionsDirFor the extension lists/deletes/restores through.
+    const dirA = path.join(sessionsDirFor(GROK_HOME, cwd1), na.result.sessionId);
+    const dirB = path.join(sessionsDirFor(GROK_HOME, cwd2), nb.result.sessionId);
+    assert(fs.existsSync(dirA), `session A not stored under its workspace store: ${dirA}`);
+    assert(fs.existsSync(dirB), `session B not stored under its workspace store: ${dirB}`);
+
+    // Panel discovery: the real discoverWorkspaces must surface BOTH temp
+    // workspaces, and the real indexSessions must see each session id.
+    const keys = new Set(discoverWorkspaces({ fs: defaultFs, grokHome: GROK_HOME }).map((w) => w.canonicalKey));
+    assert(keys.has(canonicalizeWorkspacePath(cwd1)), `discoverWorkspaces missed ${cwd1}`);
+    assert(keys.has(canonicalizeWorkspacePath(cwd2)), `discoverWorkspaces missed ${cwd2}`);
+    const idsA = indexSessions({ fs: defaultFs, grokHome: GROK_HOME, cwd: cwd1 }).map((e) => e.id);
+    assert(idsA.includes(na.result.sessionId), "indexSessions didn't list workspace A's session");
+    return `two workspaces answered independently; per-cwd stores + discovery/index verified (real workspaces.js/sessions.js)`;
+  } finally {
+    a.kill();
+    b.kill();
+  }
 }
 
 // Vision INPUT (paste/upload → inline {type:"image"} blocks in session/prompt).
@@ -738,6 +794,7 @@ const TESTS = [
   { name: "prompt-roundtrip", fn: testPrompt, slow: false },
   { name: "cancel-mid-turn", fn: testCancelMidTurn, slow: false },
   { name: "parallel-sessions", fn: testParallelSessions, slow: false },
+  { name: "parallel-workspaces", fn: testParallelWorkspaces, slow: false },
   { name: "vision-prompt", fn: testVisionPrompt, slow: false },
   { name: "session-restore", fn: testRestore, slow: false },
   { name: "edit-diff-restore", fn: testEditDiffRestore, slow: false },

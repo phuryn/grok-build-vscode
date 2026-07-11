@@ -488,6 +488,23 @@ describe("clearSessions", () => {
     expect(fs.existsSync(dirFor("c"))).toBe(false);
   });
 
+  it("keeps every exceptIds session (several live sessions in one workspace)", () => {
+    const fs = buildThree();
+    const removed = clearSessions({ fs, grokHome, cwd, exceptIds: ["a", "c"] });
+    expect(removed).toEqual(["b"]);
+    expect(fs.existsSync(dirFor("a"))).toBe(true);
+    expect(fs.existsSync(dirFor("c"))).toBe(true);
+    expect(fs.existsSync(dirFor("b"))).toBe(false);
+  });
+
+  it("merges exceptId with exceptIds", () => {
+    const fs = buildThree();
+    const removed = clearSessions({ fs, grokHome, cwd, exceptId: "b", exceptIds: ["a"] });
+    expect(removed).toEqual(["c"]);
+    expect(fs.existsSync(dirFor("a"))).toBe(true);
+    expect(fs.existsSync(dirFor("b"))).toBe(true);
+  });
+
   it("skips non-directory entries", () => {
     const fs = buildFs({
       [dir]: { isDir: true },

@@ -4051,6 +4051,14 @@
         else delete state.dots[msg.id];
         if (!historyPopover.hidden) patchSessionDot(msg.id);
         break;
+      case "historyPanelVisible":
+        // The Grok Workspaces panel is the history surface while it's visible —
+        // hide the chat's own history button (New stays). `[hidden]` loses to the
+        // .toolbar-btn display rule, so toggle display directly.
+        state.historyPanelVisible = !!msg.value;
+        historyBtn.style.display = state.historyPanelVisible ? "none" : "";
+        if (state.historyPanelVisible && !historyPopover.hidden) closePopovers();
+        break;
       default:
         // No case ran. Either the host posted a type outside the contract (drift
         // between src/protocol.ts and the webview-helpers.js copy — the sync test

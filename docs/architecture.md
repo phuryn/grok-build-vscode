@@ -137,6 +137,49 @@ it and fail with *"cannot rename locked executable"*. On Windows the kill is a
 children that a parent-only kill would orphan, and they keep the binary locked),
 and the update retries once if a lingering lock still slips through.
 
+## The Workspaces panel (multi-workspace)
+
+grok keys its on-disk session store by the **exact spawn cwd**, URL-encoded:
+`~/.grok/sessions/<encodeURIComponent(cwd)>/<session-id>/`. That makes every
+workspace grok has ever run in discoverable by decoding the store's directory
+names — which is exactly what the **Grok Workspaces** tree view (primary side
+bar, [src/workspace-tree.ts](../src/workspace-tree.ts)) does. It lists this
+window's folder(s) first (multi-root included, never removable), then
+user-added folders (a `globalState` registry; the **+** action quick-picks from
+the discovered workspaces with session counts, or browses to any folder).
+Session rows carry the same status dots as the history dropdown
+(`ThemeIcon("circle-filled", ThemeColor)` over the shared `computeDot` value)
+and paginate per workspace via a trailing "Load more…" node.
+
+Two design rules carry the whole feature
+([src/workspaces.ts](../src/workspaces.ts), pure):
+
+- **Identity is canonical; disk access is literal.** One real folder can have
+  several storage spellings (VS Code lowercases the drive letter on Windows, a
+  terminal doesn't; trailing separators). Workspaces are deduped/merged by
+  `canonicalizeWorkspacePath`, but every read/delete/spawn uses the literal
+  on-disk spelling (`WorkspaceRef.storageCwds`) — and merged session indexes
+  dedupe by id, because on a case-insensitive filesystem two spellings serve
+  the *same* physical dir.
+- **Every session owns its workspace.** `Session.cwd` is stamped at
+  `startSession` and threads through everything derived from it: the spawn cwd,
+  plan-gate containment root, `.env`, the *project* `config.toml` lookup
+  (auto-approve detection), relative-path resolution for chat file links, and
+  the empty-session cleanup. Opening a session from another workspace spawns
+  grok **in that folder**; the pool happily holds sessions from several
+  workspaces at once (live blue/yellow dots included). The chat's history
+  popover stays scoped to this window's workspace — pool members homed
+  elsewhere are filtered out of it — and while the panel is visible the chat's
+  history button hides (`historyPanelVisible` in the message contract).
+
+Workspace-level actions: **New session here** (spawns in that folder), **Open
+folder in new window**, **Clear sessions** (deletes on-disk history across all
+spellings while **preserving every live session** homed there — grok re-persists
+a live session's dir, so deleting it wouldn't stick), and **Remove from panel**
+(forgets an added folder; never touches disk). What the panel can't show:
+live blue/yellow status for sessions run by *another* VS Code window — there's
+no cross-window channel; only the persisted unread badge travels.
+
 ## Plan Mode — the one part that isn't thin
 
 Everything else mirrors the CLI. Plan Mode is enforced **client-side**, because
@@ -189,8 +232,10 @@ The full pedagogical write-up lives in
 | [src/extension.ts](../src/extension.ts) | Entry point — registers commands, keybindings, output channel |
 | [src/sidebar.ts](../src/sidebar.ts) | Webview provider, message routing, fs handlers, diff preview, logout, generated-media serving (`postGeneratedMedia` → `asWebviewUri`, base64 fallback) |
 | [src/acp.ts](../src/acp.ts) | ACP client — spawns CLI, manages session lifecycle, emits events |
-| [src/session.ts](../src/session.ts) | Per-session state bag — one `Session` per live `grok agent stdio` process (the sidebar holds a *pool* of these + one focused) |
+| [src/session.ts](../src/session.ts) | Per-session state bag — one `Session` per live `grok agent stdio` process (the sidebar holds a *pool* of these + one focused); `cwd` homes each session in its workspace |
 | [src/session-pool.ts](../src/session-pool.ts) | Pure reaping policy (`selectReapable`) — idle-TTL + LRU cap over the live-session pool |
+| [src/workspaces.ts](../src/workspaces.ts) | Multi-workspace data layer (pure) — canonical path identity vs literal storage spellings, store-driven workspace discovery, added-workspace registry policy, merged/deduped session indexes, tree dot palette |
+| [src/workspace-tree.ts](../src/workspace-tree.ts) | Grok Workspaces tree view (primary side bar) — workspace/session/load-more nodes over the sidebar's panel API + the `grok.workspaces.*` commands; visibility drives `historyPanelVisible` |
 | [src/acp-dispatch.ts](../src/acp-dispatch.ts) | Pure protocol helpers — line parsing, update routing, response + generated-media extraction (`isMediaGenToolCall`/`extractGeneratedMediaPaths`) |
 | [src/protocol.ts](../src/protocol.ts) | Single source of truth for the host↔webview message contract — `HostMsg`/`WebviewMsg` unions + the runtime `HOST_MESSAGE_TYPES`/`WEBVIEW_MESSAGE_TYPES` arrays (kept exhaustive by compile-time `Record` maps). Pure types + two arrays, no runtime deps |
 | [src/cli-locator.ts](../src/cli-locator.ts) | Locate the `grok` binary; cross-platform |
@@ -204,7 +249,7 @@ The full pedagogical write-up lives in
 | [src/grok-config.ts](../src/grok-config.ts) | Reads grok's `config.toml` to detect `permission_mode = "always-approve"` so the mode button shows Auto accept (pure) |
 | [src/mode-prefs.ts](../src/mode-prefs.ts) | Remembered-mode policy (pure) — persist Agent/Auto-accept (never Plan), apply on new sessions only |
 | [src/view-move.ts](../src/view-move.ts) | View placement (pure) — maps the gear-menu "Move view" destinations to the extension-owned per-location view containers targeted via `vscode.moveViews` (view default-homes in the Secondary Side Bar) |
-| [src/sessions.ts](../src/sessions.ts) | Disk-driven session listing/delete + name overrides (pure) — `indexSessions` (stat-only ordering), `readSessionEntries` (windowed read), `listSessions` (whole-list), `clearSessions` |
+| [src/sessions.ts](../src/sessions.ts) | Disk-driven session listing/delete + name overrides (pure) — `indexSessions` (stat-only ordering), `readSessionEntries` (windowed read), `listSessions` (whole-list), `clearSessions` (multi-keep via `exceptIds`) |
 | [src/file-ref.ts](../src/file-ref.ts) | Open-file ref parsing + large-file inline-read guard (pure) |
 | [src/plan-review.ts](../src/plan-review.ts) | Plan-snapshot Markdown filename generation (pure) |
 | [src/voice.ts](../src/voice.ts) | Voice-input pure helpers — STT request/response, ffmpeg args, device parsing, key resolution |

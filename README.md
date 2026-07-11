@@ -181,6 +181,13 @@ The clock icon lists this project's sessions, newest first. Click a row to resum
 </details>
 
 <details>
+<summary><strong>Workspaces panel</strong> — every project's sessions in one dashboard</summary>
+
+The **Grok icon in the activity bar** opens the **Workspaces panel**: session history across **all** your projects, not just the open one. Your current workspace is listed first; the **+** button adds any other folder — picked from the projects Grok has already been used in (with session counts), or browsed to anywhere on disk. Each session row carries the same **status dot** as the history dropdown (blue working, yellow needs you, green finished-unread), and **clicking a session opens it in the chat even when it belongs to another workspace** — Grok runs in that session's own folder, so file access, plan-mode containment, and project config all resolve against the right project. Right-click a workspace for **New session here**, **Open folder in new window**, or **Clear sessions** (live sessions are kept); removing an added workspace only takes it off the panel, never touching disk. While the panel is visible, the chat's own history button steps aside (New stays).
+
+</details>
+
+<details>
 <summary><strong>Tool calls</strong> — every read, edit & command, inline</summary>
 
 Every action Grok takes appears in chat as a **category-iconed** row — a single line, or a batch summarized by what it did ("Explored 5 items", "Edited 2 files") that expands to the full list on click. A tool that **fails** turns red with the reason inline.
