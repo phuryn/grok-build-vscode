@@ -149,7 +149,10 @@ user-added folders (a `globalState` registry; the **+** action quick-picks from
 the discovered workspaces with session counts, or browses to any folder).
 Session rows carry the same status dots as the history dropdown
 (`ThemeIcon("circle-filled", ThemeColor)` over the shared `computeDot` value)
-and paginate per workspace via a trailing "Load more…" node.
+and paginate per workspace: 5 rows, then a grayed "Show more (N hidden)" row
+revealing 10 more per click (an empty-label, description-only TreeItem — native
+theming renders it dim with the standard hover highlight in light and dark).
+Deep-dive: [research/multi-workspace.md](../research/multi-workspace.md).
 
 Two design rules carry the whole feature
 ([src/workspaces.ts](../src/workspaces.ts), pure):

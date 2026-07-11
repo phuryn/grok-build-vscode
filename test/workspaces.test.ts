@@ -9,6 +9,7 @@ import {
   dotColorId,
   dotTooltip,
   formatAgo,
+  isInternalWorkspacePath,
   mergeSessionIndexes,
   removeWorkspacePath,
 } from "../src/workspaces";
@@ -193,6 +194,38 @@ describe("mergeSessionIndexes", () => {
       { cwd: "C:\\Proj", entries },
     ]);
     expect(out.map((e) => e.id)).toEqual(["a", "b"]);
+  });
+});
+
+describe("isInternalWorkspacePath (Add-workspace suggestion filter)", () => {
+  it("flags temp-dir workspaces (live-test grok-live-* scratch cwds) on win32", () => {
+    const env = { platform: "win32" as const, tmpdir: "C:\\Users\\U\\AppData\\Local\\Temp" };
+    expect(isInternalWorkspacePath("C:\\Users\\U\\AppData\\Local\\Temp\\grok-live-wsA-x1y2", env)).toBe(true);
+    expect(isInternalWorkspacePath("c:\\users\\u\\appdata\\local\\temp", env)).toBe(true);
+  });
+
+  it("flags anything under AppData and under grok's own home on win32", () => {
+    const env = { platform: "win32" as const, grokHome: "C:\\Users\\U\\.grok" };
+    expect(isInternalWorkspacePath("C:\\Users\\U\\AppData\\Roaming\\Code\\scratch", env)).toBe(true);
+    expect(isInternalWorkspacePath("C:\\Users\\U\\.grok\\sessions", env)).toBe(true);
+  });
+
+  it("keeps real project folders", () => {
+    const env = { platform: "win32" as const, tmpdir: "C:\\Users\\U\\AppData\\Local\\Temp", grokHome: "C:\\Users\\U\\.grok" };
+    expect(isInternalWorkspacePath("C:\\GitHub\\grok-build-vscode", env)).toBe(false);
+    expect(isInternalWorkspacePath("D:\\Work\\client-app", env)).toBe(false);
+  });
+
+  it("flags POSIX temp locations, keeps real ones", () => {
+    const env = { platform: "linux" as const, tmpdir: "/tmp" };
+    expect(isInternalWorkspacePath("/tmp/grok-live-pool-abc", env)).toBe(true);
+    expect(isInternalWorkspacePath("/var/folders/ab/T/grok-live-x", { platform: "darwin" as NodeJS.Platform })).toBe(true);
+    expect(isInternalWorkspacePath("/home/u/projects/app", env)).toBe(false);
+  });
+
+  it("a prefix-sibling of tmpdir is NOT flagged (boundary is the separator)", () => {
+    const env = { platform: "linux" as const, tmpdir: "/tmp" };
+    expect(isInternalWorkspacePath("/tmpfiles/app", env)).toBe(false);
   });
 });
 

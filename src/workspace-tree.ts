@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import * as path from "node:path";
 import type { GrokSidebar } from "./sidebar";
 import { SessionListEntry, defaultFs, resolveGrokHome } from "./sessions";
+import * as os from "node:os";
 import {
   WorkspaceRef,
   addWorkspacePath,
@@ -11,6 +12,7 @@ import {
   dotColorId,
   dotTooltip,
   formatAgo,
+  isInternalWorkspacePath,
   removeWorkspacePath,
 } from "./workspaces";
 
@@ -33,14 +35,17 @@ import {
 export const WORKSPACES_VIEW_ID = "grok.workspaces";
 /** globalState key for the user-added workspace folders (display spellings). */
 const ADDED_WORKSPACES_KEY = "grok.addedWorkspaces";
-/** Session rows shown per workspace per "Load more…" step. */
-const TREE_PAGE_SIZE = 100;
+/** Sessions shown per workspace before "Show more" — small so a multi-workspace
+ *  tree stays scannable (the recent-and-live rows are the ones that matter). */
+const TREE_INITIAL_PAGE = 5;
+/** Extra sessions revealed per "Show more" click. */
+const TREE_PAGE_STEP = 10;
 
 type SessionEntry = SessionListEntry & { storageCwd: string };
 
 interface WorkspaceNode { kind: "workspace"; ref: WorkspaceRef }
 interface SessionNode { kind: "session"; entry: SessionEntry }
-interface MoreNode { kind: "more"; wsKey: string }
+interface MoreNode { kind: "more"; wsKey: string; remaining: number }
 export type WorkspacesNode = WorkspaceNode | SessionNode | MoreNode;
 
 export class GrokWorkspacesProvider implements vscode.TreeDataProvider<WorkspacesNode> {
@@ -80,10 +85,12 @@ export class GrokWorkspacesProvider implements vscode.TreeDataProvider<Workspace
   getChildren(node?: WorkspacesNode): WorkspacesNode[] {
     if (!node) return this.workspaceRefs().map((ref) => ({ kind: "workspace", ref }));
     if (node.kind !== "workspace") return [];
-    const limit = this.limits.get(node.ref.canonicalKey) ?? TREE_PAGE_SIZE;
+    const limit = this.limits.get(node.ref.canonicalKey) ?? TREE_INITIAL_PAGE;
     const { entries, total } = this.sidebar.listWorkspaceSessions(node.ref.storageCwds, limit);
     const children: WorkspacesNode[] = entries.map((entry) => ({ kind: "session", entry }));
-    if (entries.length < total) children.push({ kind: "more", wsKey: node.ref.canonicalKey });
+    if (entries.length < total) {
+      children.push({ kind: "more", wsKey: node.ref.canonicalKey, remaining: total - entries.length });
+    }
     return children;
   }
 
@@ -106,9 +113,15 @@ export class GrokWorkspacesProvider implements vscode.TreeDataProvider<Workspace
       return item;
     }
     if (node.kind === "more") {
-      const item = new vscode.TreeItem("Load more…", vscode.TreeItemCollapsibleState.None);
+      // Empty label + description-only text renders in the theme's dim
+      // description color — the "grayed" affordance — while the row keeps the
+      // native list hover highlight in light and dark themes alike.
+      const item = new vscode.TreeItem("", vscode.TreeItemCollapsibleState.None);
+      const step = Math.min(TREE_PAGE_STEP, node.remaining);
+      item.description = `Show more (${node.remaining} hidden)`;
+      item.tooltip = `Show ${step} more session${step === 1 ? "" : "s"}`;
       item.iconPath = new vscode.ThemeIcon("ellipsis");
-      item.command = { command: "grok.workspaces.loadMore", title: "Load more", arguments: [node] };
+      item.command = { command: "grok.workspaces.loadMore", title: "Show more", arguments: [node] };
       return item;
     }
     const { entry } = node;
@@ -132,7 +145,7 @@ export class GrokWorkspacesProvider implements vscode.TreeDataProvider<Workspace
   }
 
   loadMore(wsKey: string): void {
-    this.limits.set(wsKey, (this.limits.get(wsKey) ?? TREE_PAGE_SIZE) + TREE_PAGE_SIZE);
+    this.limits.set(wsKey, (this.limits.get(wsKey) ?? TREE_INITIAL_PAGE) + TREE_PAGE_STEP);
     this.refresh();
   }
 
@@ -141,10 +154,15 @@ export class GrokWorkspacesProvider implements vscode.TreeDataProvider<Workspace
    *  folder. Multi-select capable via Browse. */
   async addWorkspace(): Promise<void> {
     const existing = new Set(this.workspaceRefs().map((r) => r.canonicalKey));
-    const discovered = discoverWorkspaces({
-      fs: defaultFs,
-      grokHome: resolveGrokHome(process.env),
-    }).filter((d) => !existing.has(d.canonicalKey));
+    const grokHome = resolveGrokHome(process.env);
+    const discovered = discoverWorkspaces({ fs: defaultFs, grokHome }).filter(
+      (d) =>
+        !existing.has(d.canonicalKey) &&
+        // grok-internal cwds (temp dirs, AppData scratch, grok's own home) are
+        // noise in the suggestions — only real user workspaces are offered.
+        // Browse… below still reaches anything explicitly.
+        !isInternalWorkspacePath(d.displayPath, { tmpdir: os.tmpdir(), grokHome }),
+    );
     type Pick = vscode.QuickPickItem & { folder?: string; browse?: boolean };
     const items: Pick[] = discovered.map((d) => ({
       label: path.basename(d.displayPath) || d.displayPath,

@@ -120,6 +120,46 @@ export function discoverWorkspaces(deps: DiscoverDeps): DiscoveredWorkspace[] {
   return out;
 }
 
+export interface InternalPathEnv {
+  platform?: NodeJS.Platform;
+  /** `os.tmpdir()` — injected so the predicate stays pure/testable. */
+  tmpdir?: string;
+  /** `~/.grok` — sessions whose cwd is inside grok's own home are internal. */
+  grokHome?: string;
+}
+
+/**
+ * True for workspace paths no user would add on purpose — temp dirs (live-test
+ * `grok-live-*` scratch cwds land there), anything under Windows `AppData`, and
+ * grok's own home. Used to filter the Add-workspace SUGGESTIONS only: an
+ * explicitly added/browsed folder and the window's active folder are never
+ * filtered, so Browse… remains the escape hatch for unusual layouts.
+ */
+export function isInternalWorkspacePath(p: string, env: InternalPathEnv = {}): boolean {
+  const platform = env.platform ?? process.platform;
+  const c = canonicalizeWorkspacePath(p, platform);
+  if (!c) return true;
+  const sep = platform === "win32" ? "\\" : "/";
+  const under = (root?: string): boolean => {
+    if (!root) return false;
+    const r = canonicalizeWorkspacePath(root, platform);
+    return !!r && (c === r || c.startsWith(r.endsWith(sep) ? r : r + sep));
+  };
+  if (under(env.tmpdir) || under(env.grokHome)) return true;
+  if (platform === "win32") {
+    // Real projects don't live in AppData; grok-internal cwds (extension hosts,
+    // scratch dirs) do. Browse… still reaches one if a user genuinely wants it.
+    if (c.includes("\\appdata\\")) return true;
+    return false;
+  }
+  return (
+    c === "/tmp" || c.startsWith("/tmp/") ||
+    c === "/private/tmp" || c.startsWith("/private/tmp/") ||
+    c.startsWith("/var/folders/") || c.startsWith("/private/var/folders/") ||
+    c.startsWith("/dev/shm/")
+  );
+}
+
 export type WorkspaceSource = "active" | "added";
 
 export interface WorkspaceRef {
