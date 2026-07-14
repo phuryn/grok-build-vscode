@@ -2164,6 +2164,11 @@
       `<span class="tool-group-label">${escapeHtml(inProgressLabel(call))}</span>` +
       `<span class="tool-dots" aria-hidden="true"><span>.</span><span>.</span><span>.</span></span>` +
       `<span class="tool-chevron" aria-hidden="true">${ICON.chevronRight}</span>`;
+    // Header rebuild wipes the slot — re-paint any edit totals already attached.
+    paintInProgressDiffTotals(el);
+    // Early diff: some CLIs put old_string/new_string on the initial tool_call.
+    // Try now (toolCallUpdate path still runs if content arrives later).
+    applyToolDiffs(call);
     // A lone in-progress COMMAND is expandable immediately — its chevron shows
     // now (multi-tool groups keep theirs until the batch closes), and
     // expanding also opens the row's IN/OUT detail so one click reveals the
@@ -2473,7 +2478,10 @@
     }
     item.appendChild(details);
     wireCommandToggle(item, details, "Show the diff");
-    scrollToBottom();
+    // Live: open the group + inline diff as soon as the edit lands, so the chat
+    // tracks the on-disk change immediately (not only after the batch closes or
+    // the user expands). Replay keeps the default collapsed policy.
+    revealEditDiff(item);
   }
 
   // "+A −R" pill for an edit row (green additions, red removals). Uses a real
@@ -2506,6 +2514,44 @@
     t.files.add(path || ("__anon" + t.files.size));
   }
 
+  // While a batch is still in-progress, paint rolled-up +A −R on the group header
+  // so the user sees the edit magnitude without expanding. Survives the header
+  // rebuild that addToToolGroup does on every new call (own slot next to dots).
+  function paintInProgressDiffTotals(group) {
+    if (!group || !group.classList.contains("in-progress")) return;
+    const hdr = group.querySelector(".tool-group-header");
+    if (!hdr) return;
+    let slot = hdr.querySelector(".in-progress-diff-totals");
+    if (!slot) {
+      slot = document.createElement("span");
+      slot.className = "in-progress-diff-totals";
+      const dots = hdr.querySelector(".tool-dots");
+      if (dots) hdr.insertBefore(slot, dots);
+      else hdr.appendChild(slot);
+    }
+    while (slot.firstChild) slot.removeChild(slot.firstChild);
+    const t = group._diffTotals;
+    if (!t || (t.added === 0 && t.removed === 0)) return;
+    slot.appendChild(document.createTextNode(" · "));
+    slot.appendChild(makeDiffStat(t.added, t.removed));
+  }
+
+  // Open the group/row so a just-attached edit diff is visible mid-turn (live only).
+  function revealEditDiff(item) {
+    if (!item) return;
+    const group = item.closest && item.closest(".tool-group");
+    if (group) {
+      if (!state.replaying) {
+        setGroupExpanded(group, true);
+        setDetailExpanded(item, true);
+      }
+      paintInProgressDiffTotals(group);
+    } else if (!state.replaying) {
+      setDetailExpanded(item, true);
+    }
+    scrollToBottom();
+  }
+
   // Extract every `type:"diff"` block from a tool call's `content` and render the
   // inline edit diff. grok delivers the diff differently by path: LIVE it rides a
   // `tool_call_update` (the `tool_call` is a bare "StrReplace" with no content),
@@ -2523,17 +2569,58 @@
     labelEl.appendChild(makeDiffStat(t.added, t.removed));
   }
 
-  function applyToolDiffs(call) {
-    const c = call?.content;
-    if (!Array.isArray(c)) return;
+  // Prefer content[].type==="diff"; fall back to rawInput (old_string/new_string /
+  // Write contents) so the first tool_call can paint a preview before the
+  // completed tool_call_update arrives — cuts the "file already saved, chat still
+  // blank" lag when the CLI puts args on the initial call.
+  function extractDiffsFromCall(call) {
     const diffs = [];
-    for (const item of c) {
-      if (item?.type === "diff") {
-        diffs.push({ path: item.path, oldText: item.oldText ?? "", newText: item.newText ?? "" });
+    const c = call && call.content;
+    if (Array.isArray(c)) {
+      for (const item of c) {
+        if (item && item.type === "diff") {
+          diffs.push({
+            path: item.path || "",
+            oldText: item.oldText ?? "",
+            newText: item.newText ?? "",
+          });
+        }
       }
     }
+    if (diffs.length) return diffs;
+
+    const r = (call && (call.rawInput || call.input)) || null;
+    if (!r || typeof r !== "object") return diffs;
+    const path = r.target_file || r.filePath || r.file_path || r.path || "";
+    const ot = r.oldText != null ? r.oldText : r.old_string;
+    const nt = r.newText != null ? r.newText : r.new_string;
+    if (ot != null || nt != null) {
+      const oldText = ot == null ? "" : String(ot);
+      const newText = nt == null ? "" : String(nt);
+      if (oldText !== "" || newText !== "") {
+        diffs.push({ path, oldText, newText });
+        return diffs;
+      }
+    }
+    // Whole-file write: contents/content is the new body, old is empty.
+    const isWrite =
+      toolKind(call) === "write" ||
+      /^(write|create)\b/i.test((call && call.title) || "") ||
+      /write_file|file_write|^write$/i.test(toolName(call));
+    if (isWrite) {
+      const body = r.contents != null ? r.contents : (typeof r.content === "string" ? r.content : null);
+      if (body != null && String(body) !== "") {
+        diffs.push({ path, oldText: "", newText: String(body) });
+      }
+    }
+    return diffs;
+  }
+
+  function applyToolDiffs(call) {
+    if (!call) return;
+    const diffs = extractDiffsFromCall(call);
     if (!diffs.length) return;
-    state.pendingDiffByToolCallId.set(call.toolCallId, diffs[0]); // permission card / openDiff use the first
+    if (call.toolCallId) state.pendingDiffByToolCallId.set(call.toolCallId, diffs[0]); // permission card / openDiff use the first
     attachDiffPreviewToToolItem(call.toolCallId, diffs);
   }
 
@@ -2865,7 +2952,13 @@
       hdr.innerHTML = `<span class="thinking-icon">${ICON.brain}</span><span class="thinking-label">Thinking</span>${BLINK_DOTS}<span class="thinking-chevron" aria-hidden="true">${ICON.chevronRight}</span>`;
       const body = document.createElement("div");
       body.className = "thinking-body";
-      body.hidden = true;
+      // Live + showThinking: keep the body open while streaming so the transcript
+      // grows continuously (Claude Code-style) instead of a long collapsed quiet
+      // period followed by a sudden height jump when the answer arrives.
+      // Replay / hidden traces stay collapsed.
+      const autoOpen = !state.replaying && state.showThinking;
+      body.hidden = !autoOpen;
+      if (autoOpen) el.classList.add("expanded");
       hdr.onclick = () => {
         body.hidden = !body.hidden;
         el.classList.toggle("expanded", !body.hidden);
@@ -2875,6 +2968,12 @@
       messagesEl.appendChild(el);
       state.activeThoughtEl = body;
       state.activeThoughtHdrEl = hdr;
+    } else if (!state.replaying && state.showThinking && state.activeThoughtEl.hidden) {
+      // User (or a prior state) left it collapsed — re-open on new live chunks
+      // only while traces are enabled, so growth stays continuous.
+      state.activeThoughtEl.hidden = false;
+      const wrap = state.activeThoughtEl.parentElement;
+      if (wrap) wrap.classList.add("expanded");
     }
     state.thoughtBuffer += text;
     if (!state.thoughtRenderScheduled) {
@@ -3225,8 +3324,36 @@
   // Follow streaming output only while the user is pinned to the bottom. Once
   // they scroll up (the listener below clears state.stickToBottom) this becomes
   // a no-op, so they can read history while grok keeps thinking (#16).
+  // While the turn is live, a rAF loop keeps pinning every frame so height growth
+  // (markdown layout, newly-opened tool groups, thinking body) tracks the bottom
+  // continuously — Claude Code-style progressive follow, not a single jump after
+  // a long quiet thinking stretch.
+  let scrollFollowRaf = 0;
+  function ensureScrollFollowLoop() {
+    if (scrollFollowRaf) return;
+    const tick = () => {
+      if (!state.stickToBottom) {
+        scrollFollowRaf = 0;
+        return;
+      }
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+      if (state.busy) {
+        scrollFollowRaf = requestAnimationFrame(tick);
+      } else {
+        // One trailing frame after the turn ends catches final layout (footer,
+        // closed tool groups) without leaving a permanent loop.
+        scrollFollowRaf = requestAnimationFrame(() => {
+          scrollFollowRaf = 0;
+          if (state.stickToBottom) messagesEl.scrollTop = messagesEl.scrollHeight;
+        });
+      }
+    };
+    scrollFollowRaf = requestAnimationFrame(tick);
+  }
   function scrollToBottom() {
-    if (state.stickToBottom) messagesEl.scrollTop = messagesEl.scrollHeight;
+    if (!state.stickToBottom) return;
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+    ensureScrollFollowLoop();
   }
 
   // The floating "Scroll to bottom" button (#28) shows exactly when we've stopped
@@ -3245,6 +3372,7 @@
     state.stickToBottom = true;
     messagesEl.scrollTop = messagesEl.scrollHeight;
     updateScrollBtn();
+    ensureScrollFollowLoop();
   }
 
   // While a click-triggered smooth scroll is animating, the intermediate scroll
@@ -3261,6 +3389,8 @@
     state.stickToBottom = shouldStickToBottom(
       messagesEl.scrollTop, messagesEl.scrollHeight, messagesEl.clientHeight);
     updateScrollBtn();
+    // Re-arm the follow loop if the user scrolled back to the bottom mid-turn.
+    if (state.stickToBottom && state.busy) ensureScrollFollowLoop();
   });
 
   scrollBottomBtn.onclick = () => {

@@ -904,6 +904,12 @@ body.vscode-light {
 .diff-stat { white-space: nowrap; }
 .diff-stat-add { color: var(--tdiff-add-line); }
 .diff-stat-del { color: var(--tdiff-del-line); }
+/* Mid-turn edit totals on the group header (before the batch closes). */
+.in-progress-diff-totals {
+  white-space: nowrap;
+  font-size: inherit;
+  margin-left: 2px;
+}
 
 /* Codex-style inline diff inside the edit row's expandable detail: a line-number
    gutter, a colored left-border stripe, a subtle per-line tint, and a small +/-
@@ -921,7 +927,8 @@ body.vscode-light {
 }
 .tdl {
   display: grid;
-  grid-template-columns: 1.1ch 3ch 1fr;
+  /* sign | line# | code — line# was 3ch; digits >99 wrapped under overflow-wrap:anywhere */
+  grid-template-columns: 1.1ch 4ch 1fr;
   gap: 0 8px;
   padding-left: 7px;  /* breathing room between the colored border stripe and the +/- glyph */
   padding-right: 10px;
@@ -941,6 +948,7 @@ body.vscode-light {
   opacity: 0.75;
   user-select: none;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap; /* never wrap 3+ digit line numbers onto a second row */
 }
 .tdl-code { min-width: 0; }
 .tdl-add { background: var(--tdiff-add-bg); border-left-color: var(--tdiff-add-line); }
