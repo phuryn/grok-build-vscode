@@ -100,6 +100,9 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
   openUrl: "host-local",
   openText: "host-local",
   openDiff: "host-local",
+  // File baselines undo/view write or open host disk — desktop only.
+  viewTurnBaseline: "host-local",
+  undoTurnFiles: "host-local",
   exportExpr: "host-local",
   openGlobalConfig: "host-local",
   openProjectConfig: "host-local",
@@ -218,6 +221,7 @@ export const OUTBOUND_DISPOSITION: Record<HostMsg["type"], OutboundDisposition> 
   mentionResults: "mirror",
   userMessage: "mirror",
   agentStart: "mirror",
+  turnBaselines: "mirror",
   thoughtChunk: "mirror",
   messageChunk: "mirror",
   userMessageChunk: "mirror",

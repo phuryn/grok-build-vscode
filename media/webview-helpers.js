@@ -17,7 +17,7 @@
     "initialState", "showThinking", "fontScale", "grokUpdateStatus", "initialized",
     "cliUpdating", "session", "modelChanged", "modeChanged", "openModePopover",
     "voiceState", "voiceConfigured", "voicePartial", "voiceSubmit", "voiceTranscript",
-    "voiceError", "chips", "commandsUpdate", "mentionResults", "userMessage", "agentStart", "thoughtChunk",
+    "voiceError", "chips", "commandsUpdate", "mentionResults", "userMessage", "agentStart", "turnBaselines", "thoughtChunk",
     "messageChunk", "media", "userMessageChunk", "historyReplay", "permissionHistoryQueue",
     "planHistoryQueue", "planProcessing", "toolCall", "toolCallUpdate", "permissionRequest",
     "permissionResolved", "exitPlanRequest", "planResolved", "questionRequest", "planNotice", "autoCompactNotice", "planBlocked",
@@ -28,7 +28,7 @@
   ];
   const WEBVIEW_MESSAGE_TYPES = [
     "ready", "send", "newSession", "cancel", "pickModel", "setMode", "removeChip",
-    "toggleChip", "openFile", "openUrl", "openText", "openDiff", "exportExpr", "setEffort",
+    "toggleChip", "openFile", "openUrl", "openText", "openDiff", "viewTurnBaseline", "undoTurnFiles", "exportExpr", "setEffort",
     "openGlobalConfig", "openProjectConfig", "runMcpList", "showLogs", "moveView",
     "setShowThinking", "setExpandCommandOutputs",
     "dropFile", "permissionAnswer", "exitPlanAnswer", "questionAnswer", "questionCancel",
@@ -741,7 +741,175 @@
     return { lines, added, removed, truncated: false };
   }
 
-  const api = { FILE_EXTS, HOST_MESSAGE_TYPES, WEBVIEW_MESSAGE_TYPES, isKnownHostMessage, getMentionQuery, applyMentionPick, looksLikeFileRef, formatRelativeTime, modelDisplayName, MIC_STATES, nextMicState, trailingSendPhrase, buildQuestionAnswers, isSubagentToolCall, subagentLabel, cleanSubagentOutput, parseSubagentTaskResult, shouldStickToBottom, splitMath, stripUnsupportedTex, toolFailureText, commandProgramLabel, commandTextPreview, extractToolResultOutput, computeLineDiff, parseAttachmentContext, parseSelectionBlocks, parseImageTags, orderPermissionOptions, defaultPermissionIndex, shouldFocusPermissionCard, isTypeThroughKey, isInterjectionText };
+  /**
+   * Merge key for turn-summary paths. Slash-normalized + lowercased so Windows
+   * (and typical macOS) path casing differences don't split one file into two
+   * rows (F1.txt vs f1.txt). Linux case collisions are vanishingly rare here.
+   */
+  function normalizeTurnEditPathKey(path) {
+    if (path == null || path === "") return "";
+    return String(path).replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+  }
+
+  /**
+   * Paths a shell command is deleting — best-effort parse of the delete verbs
+   * grok actually emits (PowerShell Remove-Item / ri / del, POSIX rm). Returns
+   * [] when the command isn't a delete (so Start-Sleep / git status stay out).
+   */
+  function parseShellDeletePaths(command) {
+    const s = String(command || "").trim();
+    if (!s) return [];
+    // First statement only — grok usually issues one delete per tool call.
+    const first = s.split(/(?:;|\n|&&|\|\|)/)[0].trim();
+    const head = first.match(/^(?:Remove-Item|ri|del|erase|rm(?:\.exe)?)\b/i);
+    if (!head) return [];
+    let rest = first.slice(head[0].length);
+
+    const paths = [];
+    const quoted = /"([^"]+)"|'([^']+)'|`([^`]+)`/g;
+    let m;
+    while ((m = quoted.exec(rest))) {
+      const p = m[1] || m[2] || m[3];
+      if (p) paths.push(p);
+    }
+    if (paths.length) return paths;
+
+    // Unquoted: drop flags (-Force, -ErrorAction X, /f, /q, -f, -rf, …) then
+    // keep remaining tokens as candidate paths. Do NOT treat Unix absolute
+    // paths (/tmp/x) as flags — only short DOS-style /f switches.
+    const tokens = rest.split(/\s+/).filter(Boolean);
+    const flagWithArg = /^(?:-ErrorAction|-ea|-Path|-LiteralPath|-Include|-Exclude|-Filter|-Name)$/i;
+    const isFlag = (t) => /^-/.test(t) || /^\/[A-Za-z]{1,3}$/.test(t);
+    for (let i = 0; i < tokens.length; i++) {
+      const t = tokens[i];
+      if (flagWithArg.test(t)) { i++; continue; }
+      if (isFlag(t)) continue;
+      paths.push(t);
+    }
+    return paths;
+  }
+
+  /**
+   * Collapse per-tool-call file mutations into one row per path (turn-level
+   * chat diff summary).
+   *
+   * - Paths merge case-insensitively (see normalizeTurnEditPathKey).
+   * - Multiple edits on one path: **sum** every edit's +/− (each tool row's
+   *   change counts toward the turn — create in batch 1 + edit in batch 2 both
+   *   count). openDiff spans **first.oldText → last.newText** when both are on
+   *   the wire so "open diff" shows the whole turn, not only the last region.
+   * - kind:"delete" (or shell-parsed deletes) mark the path deleted; a later
+   *   edit on the same path recreates it.
+   *
+   * @param {Iterable<{ path?: string, kind?: string, added?: number, removed?: number, oldText?: string, newText?: string, openDiff?: object|null }>} entries
+   * @param {{ computeLineDiff?: Function }} [opts] — reserved; counts come from
+   *   the per-edit stats already computed by the row renderer.
+   */
+  function aggregateTurnEdits(entries, opts) {
+    void opts; // kept for call-site compat / future inject hooks
+    /** @type {Map<string, { path: string, events: any[] }>} */
+    const groups = new Map();
+    if (entries) {
+      for (const e of entries) {
+        if (!e) continue;
+        const path = typeof e.path === "string" ? e.path : "";
+        const key = normalizeTurnEditPathKey(path);
+        let g = groups.get(key);
+        if (!g) {
+          g = { path, events: [] };
+          groups.set(key, g);
+        } else if (path && (!g.path || path.length >= g.path.length)) {
+          // Prefer a longer/more specific display path; keep first-seen casing
+          // when lengths match (so we don't thrash on case-only variants).
+          if (path.length > g.path.length) g.path = path;
+        }
+        g.events.push(e);
+      }
+    }
+
+    const files = [];
+    for (const g of groups.values()) {
+      let deleted = false;
+      const edits = [];
+      for (const e of g.events) {
+        if (e.kind === "delete") {
+          deleted = true;
+          edits.length = 0;
+          continue;
+        }
+        deleted = false;
+        edits.push(e);
+      }
+      if (deleted) {
+        files.push({
+          path: g.path,
+          action: "deleted",
+          added: 0,
+          removed: 0,
+          openDiff: null,
+        });
+        continue;
+      }
+      if (!edits.length) continue;
+
+      let added = 0;
+      let removed = 0;
+      for (const e of edits) {
+        if (typeof e.added === "number" && Number.isFinite(e.added)) added += e.added;
+        if (typeof e.removed === "number" && Number.isFinite(e.removed)) removed += e.removed;
+      }
+
+      const first = edits[0];
+      const last = edits[edits.length - 1];
+      // Full-turn openDiff: first block's before → last block's after. That way
+      // a create in batch 1 + edit in batch 2 opens as one span (batch 1 content
+      // is part of the change), not only the last region's old/new. Drop
+      // per-site metadata — it belongs to a single edit and would mis-expand.
+      let openDiff = last.openDiff || first.openDiff || null;
+      if (typeof first.oldText === "string" && typeof last.newText === "string") {
+        openDiff = {
+          type: "openDiff",
+          path: (openDiff && openDiff.path) || g.path,
+          oldText: first.oldText,
+          newText: last.newText,
+        };
+      }
+
+      const created = first.oldText === "" || (first.openDiff && first.openDiff.oldText === "");
+      files.push({
+        path: g.path,
+        action: created ? "created" : "edited",
+        added,
+        removed,
+        openDiff,
+      });
+    }
+
+    files.sort((a, b) => {
+      // Deletes last; then alpha by path (case-insensitive).
+      if (a.action === "deleted" && b.action !== "deleted") return 1;
+      if (b.action === "deleted" && a.action !== "deleted") return -1;
+      return (a.path || "").localeCompare(b.path || "", undefined, { sensitivity: "base" });
+    });
+
+    let totalAdded = 0;
+    let totalRemoved = 0;
+    for (const f of files) {
+      if (f.action === "deleted") continue;
+      totalAdded += f.added;
+      totalRemoved += f.removed;
+    }
+    return { files, totalAdded, totalRemoved };
+  }
+
+  /** Header label for the turn-level change list ("Changed 1 file" / "Changed 3 files"). */
+  function turnDiffSummaryTitle(agg) {
+    const n = agg && Array.isArray(agg.files) ? agg.files.length : 0;
+    if (n <= 0) return "";
+    return n === 1 ? "Changed 1 file" : `Changed ${n} files`;
+  }
+
+  const api = { FILE_EXTS, HOST_MESSAGE_TYPES, WEBVIEW_MESSAGE_TYPES, isKnownHostMessage, getMentionQuery, applyMentionPick, looksLikeFileRef, formatRelativeTime, modelDisplayName, MIC_STATES, nextMicState, trailingSendPhrase, buildQuestionAnswers, isSubagentToolCall, subagentLabel, cleanSubagentOutput, parseSubagentTaskResult, shouldStickToBottom, splitMath, stripUnsupportedTex, toolFailureText, commandProgramLabel, commandTextPreview, extractToolResultOutput, computeLineDiff, normalizeTurnEditPathKey, parseShellDeletePaths, aggregateTurnEdits, turnDiffSummaryTitle, parseAttachmentContext, parseSelectionBlocks, parseImageTags, orderPermissionOptions, defaultPermissionIndex, shouldFocusPermissionCard, isTypeThroughKey, isInterjectionText };
 
   if (typeof module !== "undefined" && module.exports) {
     module.exports = api;

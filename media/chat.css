@@ -1076,6 +1076,115 @@ body.vscode-light {
 .diff-stat-add { color: var(--tdiff-add-line); }
 .diff-stat-del { color: var(--tdiff-del-line); }
 
+/* Turn-level file change summary — one card per agent turn listing every file
+   touched by edit tools (path-deduped +/−), with click → native openDiff. */
+.turn-diff-summary {
+  margin: 8px 0 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--vscode-widget-border, rgba(127, 127, 127, 0.35));
+  border-radius: var(--chat-radius-block, 8px);
+  background: var(--vscode-editor-inactiveSelectionBackground, rgba(127, 127, 127, 0.08));
+  font-size: 0.92em;
+}
+.turn-diff-summary-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 8px;
+  color: var(--vscode-descriptionForeground);
+  margin-bottom: 4px;
+}
+.turn-diff-summary-title {
+  font-weight: 600;
+  color: var(--vscode-foreground);
+}
+.turn-diff-summary-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 4px;
+}
+.turn-diff-summary-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.turn-diff-file {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  margin: 0;
+  padding: 3px 6px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: default;
+}
+.turn-diff-file-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--vscode-foreground);
+}
+button.turn-diff-file-path.has-diff {
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+button.turn-diff-file-path.has-diff:hover {
+  text-decoration: underline;
+  color: var(--vscode-textLink-foreground, var(--vscode-foreground));
+}
+.turn-diff-file.is-deleted .turn-diff-file-path {
+  text-decoration: line-through;
+  opacity: 0.85;
+}
+.turn-diff-file-right {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+}
+.turn-diff-file-action.deleted {
+  flex-shrink: 0;
+  color: var(--tdiff-del-line);
+  font-size: 0.92em;
+}
+.turn-diff-action {
+  flex-shrink: 0;
+  margin: 0;
+  padding: 1px 6px;
+  border: 1px solid var(--vscode-widget-border, rgba(127, 127, 127, 0.4));
+  border-radius: 4px;
+  background: transparent;
+  color: var(--vscode-descriptionForeground);
+  font: inherit;
+  font-size: 0.88em;
+  cursor: pointer;
+}
+.turn-diff-action:hover {
+  color: var(--vscode-foreground);
+  background: var(--vscode-list-hoverBackground, rgba(127, 127, 127, 0.12));
+}
+.turn-diff-action:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder, #007fd4);
+  outline-offset: -1px;
+}
+
 /* Codex-style inline diff inside the edit row's expandable detail: a line-number
    gutter, a colored left-border stripe, a subtle per-line tint, and a small +/-
    glyph by the border for color-blind readability. */

@@ -82,8 +82,18 @@ export type HostMsg =
    *  NOT a prompt and gets no rewind point, so the bubble must not consume a
    *  rewind index — see refreshUserRewindButtons. */
   | { type: "userMessage"; text: string; chips?: FileChip[]; steer?: boolean }
-  | { type: "agentStart" }
+  /** `turnId` keys host-side file baselines for view-deleted / undo this turn. */
+  | { type: "agentStart"; turnId?: number }
   | { type: "thoughtChunk"; text: string }
+  /**
+   * Host-side first-touch baselines for a turn (metadata only — content stays
+   * on the host). Enables View deleted / Undo file / Undo all on the summary.
+   */
+  | {
+      type: "turnBaselines";
+      turnId: number;
+      files: Array<{ path: string; kind: "content" | "absent" | "omitted"; reason?: string }>;
+    }
   | { type: "messageChunk"; text: string }
   | { type: "media"; media: string; src?: string; url?: string; mimeType?: string; path?: string }
   | { type: "userMessageChunk"; text: string }
@@ -196,6 +206,13 @@ export type WebviewMsg =
       replaceAll?: boolean;
       sites?: { oldText: string; newText: string; oldLine?: number; newLine?: number }[];
     }
+  /** Open the pre-mutation baseline for a path (deleted content, or pre-edit). */
+  | { type: "viewTurnBaseline"; turnId: number; path: string }
+  /**
+   * Restore disk from first-touch baselines. Omit `paths` (or pass []) to undo
+   * every baselined file for that turn; otherwise restore only those paths.
+   */
+  | { type: "undoTurnFiles"; turnId: number; paths?: string[] }
   | { type: "exportExpr"; action: string; kind: string; current?: string; svg?: string; png?: string; svgDark?: string; svgLight?: string }
   | { type: "setEffort"; level: string }
   | { type: "openGlobalConfig" }
@@ -290,6 +307,7 @@ const HOST_MESSAGE_TYPE_MAP: Record<HostMsg["type"], true> = {
   modeChanged: true, openModePopover: true, voiceState: true, voiceConfigured: true,
   voicePartial: true, voiceSubmit: true, voiceTranscript: true, voiceError: true,
   chips: true, commandsUpdate: true, mentionResults: true, userMessage: true, agentStart: true,
+  turnBaselines: true,
   thoughtChunk: true, messageChunk: true, media: true, userMessageChunk: true,
   historyReplay: true, permissionHistoryQueue: true, planHistoryQueue: true,
   planProcessing: true, toolCall: true, toolCallUpdate: true, permissionRequest: true,
@@ -307,7 +325,8 @@ const HOST_MESSAGE_TYPE_MAP: Record<HostMsg["type"], true> = {
 const WEBVIEW_MESSAGE_TYPE_MAP: Record<WebviewMsg["type"], true> = {
   ready: true, send: true, newSession: true, cancel: true, pickModel: true,
   setMode: true, removeChip: true, toggleChip: true, openFile: true, openUrl: true,
-  openText: true, openDiff: true, exportExpr: true, setEffort: true, openGlobalConfig: true,
+  openText: true, openDiff: true, viewTurnBaseline: true, undoTurnFiles: true,
+  exportExpr: true, setEffort: true, openGlobalConfig: true,
   openProjectConfig: true, runMcpList: true, showLogs: true, moveView: true,
   setShowThinking: true, setExpandCommandOutputs: true, setSteerByDefault: true,
   setSoundNotifications: true,

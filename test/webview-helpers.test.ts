@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 // @ts-expect-error — plain JS module, no types
-import { looksLikeFileRef, formatRelativeTime, FILE_EXTS, modelDisplayName, nextMicState, trailingSendPhrase, buildQuestionAnswers, isSubagentToolCall, subagentLabel, cleanSubagentOutput, parseSubagentTaskResult, shouldStickToBottom, splitMath, stripUnsupportedTex, parseAttachmentContext, parseSelectionBlocks, parseImageTags, toolFailureText, commandProgramLabel, commandTextPreview, extractToolResultOutput, computeLineDiff } from "../media/webview-helpers.js";
+import { looksLikeFileRef, formatRelativeTime, FILE_EXTS, modelDisplayName, nextMicState, trailingSendPhrase, buildQuestionAnswers, isSubagentToolCall, subagentLabel, cleanSubagentOutput, parseSubagentTaskResult, shouldStickToBottom, splitMath, stripUnsupportedTex, parseAttachmentContext, parseSelectionBlocks, parseImageTags, toolFailureText, commandProgramLabel, commandTextPreview, extractToolResultOutput, computeLineDiff, aggregateTurnEdits, turnDiffSummaryTitle, normalizeTurnEditPathKey, parseShellDeletePaths } from "../media/webview-helpers.js";
 import { buildPrompt, buildPromptWithImages } from "../src/prompt-builder";
 import { makeExplicitChip, makeImplicitChip, makeImageChip } from "../src/chips";
 
@@ -1097,5 +1097,248 @@ describe("computeLineDiff", () => {
     expect(r.truncated).toBe(true);
     expect(r.removed).toBe(40);
     expect(r.added).toBe(40);
+  });
+});
+
+describe("normalizeTurnEditPathKey / parseShellDeletePaths", () => {
+  it("case-folds and slash-normalizes path keys", () => {
+    expect(normalizeTurnEditPathKey("d:\\Temp\\AITest\\F1.txt"))
+      .toBe(normalizeTurnEditPathKey("d:/Temp/AITest/f1.txt"));
+    expect(normalizeTurnEditPathKey("src/A.ts")).toBe("src/a.ts");
+  });
+
+  it("parses PowerShell Remove-Item and POSIX rm delete targets", () => {
+    expect(parseShellDeletePaths("Remove-Item -Force 'd:\\Temp\\AITest\\to-delete-1.txt'"))
+      .toEqual(["d:\\Temp\\AITest\\to-delete-1.txt"]);
+    expect(parseShellDeletePaths('Remove-Item -ErrorAction SilentlyContinue "C:\\work\\F2.txt"'))
+      .toEqual(["C:\\work\\F2.txt"]);
+    expect(parseShellDeletePaths("rm -f /tmp/x.txt")).toEqual(["/tmp/x.txt"]);
+    expect(parseShellDeletePaths("rm -rf a b")).toEqual(["a", "b"]);
+    expect(parseShellDeletePaths("Start-Sleep -Seconds 3")).toEqual([]);
+    expect(parseShellDeletePaths("git status")).toEqual([]);
+  });
+});
+
+describe("aggregateTurnEdits (turn-level file change summary)", () => {
+  /** Build an entry with +/− from the same LCS the row renderer uses. */
+  function edit(path: string, oldText: string, newText: string) {
+    const r = computeLineDiff(oldText, newText);
+    return {
+      path,
+      added: r.added,
+      removed: r.removed,
+      oldText,
+      newText,
+      openDiff: { type: "openDiff" as const, path, oldText, newText },
+    };
+  }
+
+  it("returns empty when there are no entries", () => {
+    expect(aggregateTurnEdits([])).toEqual({ files: [], totalAdded: 0, totalRemoved: 0 });
+    expect(aggregateTurnEdits(null as unknown as [])).toEqual({ files: [], totalAdded: 0, totalRemoved: 0 });
+    expect(turnDiffSummaryTitle({ files: [], totalAdded: 0, totalRemoved: 0 })).toBe("");
+  });
+
+  it("merges case-variant paths, sums multi-edit +/−, openDiff spans first→last", () => {
+    const e1 = edit("src/A.ts", "x", "y");
+    const e2 = edit("src/a.ts", "y", "z");
+    const b = edit("src/b.ts", "", "hi");
+    const r = aggregateTurnEdits([b, e1, e2]);
+    expect(r.files).toHaveLength(2);
+    const a = r.files.find((f) => /a\.ts$/i.test(f.path))!;
+    expect(a.added).toBe(e1.added + e2.added);
+    expect(a.removed).toBe(e1.removed + e2.removed);
+    expect(a.openDiff).toMatchObject({ oldText: "x", newText: "z" });
+    expect(r.totalAdded).toBe(a.added + b.added);
+    expect(r.totalRemoved).toBe(a.removed + b.removed);
+    expect(turnDiffSummaryTitle(r)).toBe("Changed 2 files");
+  });
+
+  it("singular title for one file; pathless rows merge under empty path", () => {
+    const r = aggregateTurnEdits([
+      edit("", "a", "b"),
+      { ...edit("", "b", "cd"), path: undefined as unknown as string },
+    ]);
+    expect(r.files).toHaveLength(1);
+    expect(r.files[0].path).toBe("");
+    expect(r.files[0].added).toBe(edit("", "a", "b").added + edit("", "b", "cd").added);
+    expect(r.files[0].openDiff).toMatchObject({ oldText: "a", newText: "cd" });
+    expect(turnDiffSummaryTitle(r)).toBe("Changed 1 file");
+  });
+
+  describe("same file edited multiple times in one turn", () => {
+    it("sums three sequential appends and openDiffs first.old → last.new", () => {
+      const v0 = "base\n";
+      const v1 = "base\npass1\n";
+      const v2 = "base\npass1\npass2\n";
+      const v3 = "base\npass1\npass2\npass3\n";
+      const e1 = edit("F3.txt", v0, v1);
+      const e2 = edit("F3.txt", v1, v2);
+      const e3 = edit("F3.txt", v2, v3);
+      const r = aggregateTurnEdits([e1, e2, e3]);
+      expect(r.files).toHaveLength(1);
+      expect(r.files[0].added).toBe(e1.added + e2.added + e3.added);
+      expect(r.files[0].removed).toBe(e1.removed + e2.removed + e3.removed);
+      // Each append is pure +1; three passes → +3 −0
+      expect(r.files[0].added).toBe(3);
+      expect(r.files[0].removed).toBe(0);
+      expect(r.files[0].openDiff).toMatchObject({ oldText: v0, newText: v3 });
+      expect(r.files[0].action).toBe("edited");
+    });
+
+    it("create then append: empty first.old so openDiff includes batch-1 lines", () => {
+      const batch1 = "F1 initial content\nCreated in batch 1 (tracked).\n";
+      const batch2 = batch1 + "F1 edited in batch 2 (tracked).\n";
+      const e1 = edit("F1.txt", "", batch1);
+      const e2 = edit("f1.txt", batch1, batch2); // case variant of same path
+      const r = aggregateTurnEdits([e1, e2]);
+      expect(r.files).toHaveLength(1);
+      expect(r.files[0].added).toBe(e1.added + e2.added);
+      expect(r.files[0].removed).toBe(0);
+      expect(r.files[0].action).toBe("created");
+      expect(r.files[0].openDiff).toMatchObject({ oldText: "", newText: batch2 });
+    });
+
+    it("add content then remove that same content (sum + and −)", () => {
+      // Batch 1: insert a line. Batch 2: delete that line again.
+      const before = "keep\n";
+      const withExtra = "keep\nTEMP\n";
+      const after = "keep\n";
+      const e1 = edit("note.txt", before, withExtra); // +1 −0
+      const e2 = edit("note.txt", withExtra, after); // +0 −1
+      expect(e1.added).toBe(1);
+      expect(e1.removed).toBe(0);
+      expect(e2.added).toBe(0);
+      expect(e2.removed).toBe(1);
+
+      const r = aggregateTurnEdits([e1, e2]);
+      expect(r.files).toHaveLength(1);
+      // Sum of activity, not net zero — both the add and the remove count.
+      expect(r.files[0].added).toBe(1);
+      expect(r.files[0].removed).toBe(1);
+      expect(r.files[0].openDiff).toMatchObject({ oldText: before, newText: after });
+      expect(r.totalAdded).toBe(1);
+      expect(r.totalRemoved).toBe(1);
+    });
+
+    it("add content then rewrite that same content", () => {
+      const v0 = "header\n";
+      const v1 = "header\nDRAFT\n";
+      const v2 = "header\nFINAL\n";
+      const e1 = edit("doc.txt", v0, v1); // +1
+      const e2 = edit("doc.txt", v1, v2); // −1 +1 (DRAFT→FINAL)
+      expect(e2.added).toBe(1);
+      expect(e2.removed).toBe(1);
+
+      const r = aggregateTurnEdits([e1, e2]);
+      expect(r.files[0].added).toBe(e1.added + e2.added); // 1+1
+      expect(r.files[0].removed).toBe(e1.removed + e2.removed); // 0+1
+      expect(r.files[0].openDiff).toMatchObject({ oldText: v0, newText: v2 });
+    });
+
+    it("add then fully delete the file content (empty newText)", () => {
+      // No trailing newline — split("\n") would otherwise invent an empty line.
+      const e1 = edit("wipe.txt", "", "only\nline"); // +2
+      const e2 = edit("wipe.txt", "only\nline", ""); // −2
+      expect(e1.added).toBe(2);
+      expect(e2.removed).toBe(2);
+      const r = aggregateTurnEdits([e1, e2]);
+      expect(r.files[0].added).toBe(2);
+      expect(r.files[0].removed).toBe(2);
+      expect(r.files[0].openDiff).toMatchObject({ oldText: "", newText: "" });
+      expect(r.files[0].action).toBe("created"); // first old was empty
+    });
+
+    it("three passes: append, edit that line, remove that line", () => {
+      const v0 = "stable\n";
+      const v1 = "stable\nX\n";
+      const v2 = "stable\nY\n";
+      const v3 = "stable\n";
+      const e1 = edit("f.txt", v0, v1);
+      const e2 = edit("f.txt", v1, v2);
+      const e3 = edit("f.txt", v2, v3);
+      const r = aggregateTurnEdits([e1, e2, e3]);
+      expect(r.files[0].added).toBe(e1.added + e2.added + e3.added);
+      expect(r.files[0].removed).toBe(e1.removed + e2.removed + e3.removed);
+      // append +1, rewrite +1−1, remove −1 → +2 −2
+      expect(r.files[0].added).toBe(2);
+      expect(r.files[0].removed).toBe(2);
+      expect(r.files[0].openDiff).toMatchObject({ oldText: v0, newText: v3 });
+    });
+
+    it("interleaved edits on two files still path-dedupe each", () => {
+      const a1 = edit("a.ts", "1", "2");
+      const b1 = edit("b.ts", "", "x\n");
+      const a2 = edit("a.ts", "2", "3");
+      const b2 = edit("b.ts", "x\n", "x\ny\n");
+      const r = aggregateTurnEdits([a1, b1, a2, b2]);
+      expect(r.files).toHaveLength(2);
+      const a = r.files.find((f) => f.path === "a.ts")!;
+      const b = r.files.find((f) => f.path === "b.ts")!;
+      expect(a.added).toBe(a1.added + a2.added);
+      expect(a.openDiff).toMatchObject({ oldText: "1", newText: "3" });
+      expect(b.added).toBe(b1.added + b2.added);
+      expect(b.openDiff).toMatchObject({ oldText: "", newText: "x\ny\n" });
+      expect(b.action).toBe("created");
+    });
+
+    it("unchained independent regions still sum and span first.old → last.new", () => {
+      // Non-overlapping search_replace-style regions (old of #2 ≠ new of #1).
+      const e1 = edit("f.txt", "tokenA", "tokenB");
+      const e2 = edit("f.txt", "otherX", "otherY");
+      expect(e1.newText).not.toBe(e2.oldText);
+      const r = aggregateTurnEdits([e1, e2]);
+      expect(r.files[0].added).toBe(e1.added + e2.added);
+      expect(r.files[0].removed).toBe(e1.removed + e2.removed);
+      expect(r.files[0].openDiff).toMatchObject({ oldText: "tokenA", newText: "otherY" });
+    });
+  });
+
+  describe("deletes mixed with edits", () => {
+    it("create then shell-style delete drops prior +/− (Deleted wins)", () => {
+      const r = aggregateTurnEdits([
+        edit("F2.txt", "", "a\nb\nc"),
+        { path: "f2.txt", kind: "delete" },
+        edit("keep.txt", "x", "y"),
+      ]);
+      expect(r.files).toHaveLength(2);
+      expect(r.files.find((f) => /f2/i.test(f.path))).toMatchObject({
+        action: "deleted",
+        added: 0,
+        removed: 0,
+        openDiff: null,
+      });
+      expect(r.files.find((f) => /keep/i.test(f.path))).toMatchObject({ action: "edited", added: 1, removed: 1 });
+      expect(r.totalAdded).toBe(1);
+      expect(r.totalRemoved).toBe(1);
+    });
+
+    it("edit then delete then recreate: only the post-delete edits count", () => {
+      const r = aggregateTurnEdits([
+        edit("x.txt", "old", "mid"), // wiped by delete
+        { path: "x.txt", kind: "delete" },
+        edit("x.txt", "", "brand\nnew\n"), // recreate
+        edit("x.txt", "brand\nnew\n", "brand\nnew\nplus\n"),
+      ]);
+      expect(r.files).toHaveLength(1);
+      const f = r.files[0];
+      // Only the two post-delete edits
+      const e3 = edit("x.txt", "", "brand\nnew\n");
+      const e4 = edit("x.txt", "brand\nnew\n", "brand\nnew\nplus\n");
+      expect(f.added).toBe(e3.added + e4.added);
+      expect(f.removed).toBe(e3.removed + e4.removed);
+      expect(f.action).toBe("created");
+      expect(f.openDiff).toMatchObject({ oldText: "", newText: "brand\nnew\nplus\n" });
+    });
+
+    it("delete-only path has no openDiff and is sorted after edits", () => {
+      const r = aggregateTurnEdits([
+        { path: "gone.txt", kind: "delete" },
+        edit("a.txt", "x", "y"),
+      ]);
+      expect(r.files.map((f) => f.path)).toEqual(["a.txt", "gone.txt"]);
+      expect(r.files[1].action).toBe("deleted");
+      expect(r.files[1].openDiff).toBeNull();
+    });
   });
 });

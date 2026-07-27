@@ -1,5 +1,6 @@
 import { AcpClient } from "./acp";
 import type { PromptUsage } from "./acp";
+import type { FileBaseline } from "./file-baseline";
 import type { HostMsg } from "./protocol";
 
 /** Live state for the dashboard dot. `cold` (no live process) is represented by
@@ -228,4 +229,23 @@ export class Session {
    * globalState (`SessionMetaOverride.usage`) and re-persisted as turns land.
    */
   sessionUsage?: PromptUsage;
+
+  /**
+   * Monotonic id for the open agent turn (incremented on each agentStart).
+   * Keys the per-turn file baseline maps used by view-deleted / undo-file.
+   * 0 = no turn started yet.
+   */
+  turnBaselineId = 0;
+
+  /**
+   * First-touch baselines for the *current* turn (pathKey → snapshot taken
+   * before the first write/delete of that path). Content stays host-side.
+   */
+  turnBaselines = new Map<string, FileBaseline>();
+
+  /**
+   * Completed turns' baselines (turnId → map), kept for a few turns so undo /
+   * view-deleted still work after the next agentStart clears `turnBaselines`.
+   */
+  turnBaselineArchive = new Map<number, Map<string, FileBaseline>>();
 }

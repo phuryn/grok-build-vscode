@@ -175,6 +175,15 @@
     // The current turn's agent-message footer (copy + timestamp). Only the
     // turn's LAST narration segment keeps one — see addMessage.
     turnAgentActionsEl: null,
+    // Turn-level file-change summary: per-tool-call edit stats for the open
+    // agent turn (path-deduped into a "Changed N files" card). Cleared on
+    // agentStart / next user message; the card itself stays in the transcript.
+    turnEditsByToolCallId: new Map(),
+    turnDiffSummaryEl: null,
+    // Host turn id (agentStart.turnId) + baseline *metadata* per turn (content
+    // stays on the host). Powers View deleted / Undo on the summary card.
+    currentTurnId: 0,
+    baselineMetaByTurn: new Map(), // turnId → [{ path, kind, reason? }]
     // Restored question cards on resume (toolCallId → card element). On replay grok
     // sends a tool_call per question (with rawInput.questions); we render the card
     // immediately and fill the answer in whenever it arrives — on the tool_call
@@ -482,7 +491,7 @@
 
   // ---------- markdown ----------
 
-  const { looksLikeFileRef, formatRelativeTime, modelDisplayName, nextMicState, trailingSendPhrase, buildQuestionAnswers, isSubagentToolCall, subagentLabel, cleanSubagentOutput, parseSubagentTaskResult, shouldStickToBottom, splitMath, stripUnsupportedTex, toolFailureText, commandProgramLabel, commandTextPreview, extractToolResultOutput, computeLineDiff, parseAttachmentContext, parseSelectionBlocks, parseImageTags, isKnownHostMessage, getMentionQuery, applyMentionPick, orderPermissionOptions, defaultPermissionIndex, shouldFocusPermissionCard, isTypeThroughKey, isInterjectionText } = globalThis.GrokWebviewHelpers;
+  const { looksLikeFileRef, formatRelativeTime, modelDisplayName, nextMicState, trailingSendPhrase, buildQuestionAnswers, isSubagentToolCall, subagentLabel, cleanSubagentOutput, parseSubagentTaskResult, shouldStickToBottom, splitMath, stripUnsupportedTex, toolFailureText, commandProgramLabel, commandTextPreview, extractToolResultOutput, computeLineDiff, aggregateTurnEdits, turnDiffSummaryTitle, parseShellDeletePaths, parseAttachmentContext, parseSelectionBlocks, parseImageTags, isKnownHostMessage, getMentionQuery, applyMentionPick, orderPermissionOptions, defaultPermissionIndex, shouldFocusPermissionCard, isTypeThroughKey, isInterjectionText } = globalThis.GrokWebviewHelpers;
 
   function escapeAttr(s) {
     return String(s == null ? "" : s)
@@ -2301,6 +2310,10 @@
     state.pendingCommandDetails = [];
     state.toolExpandOverride = null; // the Expand/Collapse All latch is per-session; a swap/restore starts clean (the replay buffer re-applies it for a warm re-focus)
     state.turnAgentActionsEl = null;
+    state.turnEditsByToolCallId.clear();
+    state.turnDiffSummaryEl = null;
+    state.currentTurnId = 0;
+    state.baselineMetaByTurn.clear();
     state.activeAgentEl = null;
     state.activeAgentRaw = "";
     state.activeUserEl = null;
@@ -2585,6 +2598,231 @@
     a.hidden = false;
     const ts = a.querySelector(".msg-timestamp");
     if (ts && !state.replaying) ts.textContent = formatTime(Date.now());
+    // Same boundary as the copy/timestamp footer: pin the turn's file-change
+    // list under the last content so it reads as the turn's conclusion.
+    pinTurnDiffSummary();
+  }
+
+  // ---- Turn-level file change summary ----
+  // Aggregates edit-tool diffs + delete mutations (kind:delete or shell
+  // Remove-Item/rm/del) across every tool group in the open turn into one
+  // "Changed N files" card. Edit data is the same wire diffs the rows already
+  // paint; deletes are inferred from tool kind / command text — no disk re-diff.
+
+  function startTurnDiffTracking() {
+    // Leave any previous turn's card in the transcript; only drop the live
+    // pointer + per-call map so this turn starts empty.
+    state.turnEditsByToolCallId.clear();
+    state.turnDiffSummaryEl = null;
+  }
+
+  function pinTurnDiffSummary() {
+    const el = state.turnDiffSummaryEl;
+    if (el && el.isConnected) messagesEl.appendChild(el);
+  }
+
+  /** Workspace-relative path for the summary list (falls back to the raw path). */
+  function turnEditDisplayPath(p) {
+    if (!p) return "Unknown file";
+    let s = String(p).replace(/\\/g, "/");
+    const cwd = (state.cwd || "").replace(/\\/g, "/").replace(/\/+$/, "");
+    if (cwd) {
+      const sl = s.toLowerCase();
+      const cl = cwd.toLowerCase();
+      if (sl === cl) return s.split("/").pop() || s;
+      if (sl.startsWith(cl + "/")) s = s.slice(cwd.length + 1);
+    }
+    return s || "Unknown file";
+  }
+
+  function recordTurnEdit(toolCallId, path, added, removed, openDiff, oldText, newText) {
+    if (!toolCallId) return;
+    state.turnEditsByToolCallId.set(toolCallId, {
+      kind: "edit",
+      path: path || "",
+      added: typeof added === "number" ? added : 0,
+      removed: typeof removed === "number" ? removed : 0,
+      openDiff: openDiff || null,
+      // Block-level strings for multi-edit chaining (first.old → last.new).
+      oldText: typeof oldText === "string" ? oldText : undefined,
+      newText: typeof newText === "string" ? newText : undefined,
+    });
+    refreshTurnDiffSummaryUi();
+  }
+
+  function recordTurnDelete(toolCallId, path) {
+    if (!toolCallId || !path) return;
+    state.turnEditsByToolCallId.set(toolCallId, {
+      kind: "delete",
+      path,
+      added: 0,
+      removed: 0,
+      openDiff: null,
+    });
+    refreshTurnDiffSummaryUi();
+  }
+
+  // kind:delete tools + shell Remove-Item/rm/del — the only ways grok deletes
+  // files today (there is no dedicated ACP delete in the write path).
+  function maybeRecordTurnDelete(call) {
+    if (!call || !call.toolCallId) return;
+    const kind = toolKind(call);
+    if (kind === "delete" || /^delete\b/i.test(String(call.title || "").trim())) {
+      const p = toolFilePath(call);
+      if (p) recordTurnDelete(call.toolCallId, p);
+      return;
+    }
+    if (kind === "execute" || categorize(call) === "command") {
+      const r = call.rawInput || call.input || {};
+      const cmd = r.command || r.cmd || "";
+      const paths = parseShellDeletePaths(cmd);
+      for (let i = 0; i < paths.length; i++) {
+        // One tool call can name several paths; key each so they don't clobber.
+        recordTurnDelete(call.toolCallId + "::del::" + i, paths[i]);
+      }
+    }
+  }
+
+  function baselineKey(p) {
+    return String(p || "").replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+  }
+
+  /** Find host baseline meta for a summary path (case/slash-insensitive). */
+  function baselineMetaForPath(turnId, filePath) {
+    const files = state.baselineMetaByTurn.get(turnId);
+    if (!files || !files.length) return null;
+    const want = baselineKey(filePath);
+    const wantBase = want.split("/").pop();
+    let hit = files.find((f) => baselineKey(f.path) === want);
+    if (hit) return hit;
+    // Wire paths may be abs vs relative — match on basename as fallback.
+    if (wantBase) hit = files.find((f) => baselineKey(f.path).split("/").pop() === wantBase);
+    return hit || null;
+  }
+
+  function makeTurnActionBtn(label, title, onClick) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "turn-diff-action";
+    btn.textContent = label;
+    btn.title = title;
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      onClick();
+    };
+    return btn;
+  }
+
+  function refreshTurnDiffSummaryUi() {
+    const agg = aggregateTurnEdits(state.turnEditsByToolCallId.values());
+    if (!agg.files.length) {
+      if (state.turnDiffSummaryEl) {
+        state.turnDiffSummaryEl.remove();
+        state.turnDiffSummaryEl = null;
+      }
+      return;
+    }
+    let el = state.turnDiffSummaryEl;
+    if (!el || !el.isConnected) {
+      el = document.createElement("div");
+      el.className = "turn-diff-summary";
+      el.setAttribute("role", "region");
+      el.setAttribute("aria-label", "Files changed this turn");
+      state.turnDiffSummaryEl = el;
+    }
+    const turnId = state.currentTurnId || 0;
+    el.dataset.turnId = String(turnId);
+    while (el.firstChild) el.removeChild(el.firstChild);
+
+    const hdr = document.createElement("div");
+    hdr.className = "turn-diff-summary-header";
+    const title = document.createElement("span");
+    title.className = "turn-diff-summary-title";
+    title.textContent = turnDiffSummaryTitle(agg);
+    hdr.appendChild(title);
+    if (agg.totalAdded > 0 || agg.totalRemoved > 0) {
+      hdr.appendChild(document.createTextNode(" · "));
+      hdr.appendChild(makeDiffStat(agg.totalAdded, agg.totalRemoved));
+    }
+    const hdrActions = document.createElement("span");
+    hdrActions.className = "turn-diff-summary-actions";
+    // Undo all when the host has any baseline for this turn.
+    const baselined = state.baselineMetaByTurn.get(turnId);
+    if (turnId && baselined && baselined.length && !IS_REMOTE) {
+      hdrActions.appendChild(
+        makeTurnActionBtn("Undo all", "Restore every file changed this turn to its pre-turn state", () => {
+          vscode.postMessage({ type: "undoTurnFiles", turnId });
+        }),
+      );
+    }
+    hdr.appendChild(hdrActions);
+    el.appendChild(hdr);
+
+    const list = document.createElement("div");
+    list.className = "turn-diff-summary-list";
+    for (const f of agg.files) {
+      const isDel = f.action === "deleted";
+      const row = document.createElement("div");
+      row.className = "turn-diff-file" + (isDel ? " is-deleted" : "");
+      if (f.path) row.dataset.path = f.path;
+
+      const name = document.createElement(
+        f.openDiff && !isDel ? "button" : "span",
+      );
+      name.className = "turn-diff-file-path" + (f.openDiff && !isDel ? " has-diff" : "");
+      name.textContent = turnEditDisplayPath(f.path);
+      if (f.path) name.title = f.path;
+      if (f.openDiff && !isDel) {
+        name.type = "button";
+        name.title = (f.path || "") + " — open diff";
+        const payload = f.openDiff;
+        name.onclick = (e) => {
+          e.stopPropagation();
+          vscode.postMessage(payload);
+        };
+      }
+      row.appendChild(name);
+
+      const right = document.createElement("span");
+      right.className = "turn-diff-file-right";
+      if (isDel) {
+        const tag = document.createElement("span");
+        tag.className = "turn-diff-file-action deleted";
+        tag.textContent = "Deleted";
+        right.appendChild(tag);
+      } else {
+        right.appendChild(makeDiffStat(f.added, f.removed));
+      }
+
+      if (turnId && !IS_REMOTE) {
+        const meta = baselineMetaForPath(turnId, f.path);
+        if (meta && (meta.kind === "content" || isDel)) {
+          if (isDel && meta.kind === "content") {
+            right.appendChild(
+              makeTurnActionBtn("View", "Show the file content from before it was deleted", () => {
+                vscode.postMessage({ type: "viewTurnBaseline", turnId, path: meta.path || f.path });
+              }),
+            );
+          }
+          if (meta.kind === "content" || meta.kind === "absent") {
+            right.appendChild(
+              makeTurnActionBtn("Undo", "Restore this file to its pre-turn state", () => {
+                vscode.postMessage({
+                  type: "undoTurnFiles",
+                  turnId,
+                  paths: [meta.path || f.path],
+                });
+              }),
+            );
+          }
+        }
+      }
+      row.appendChild(right);
+      list.appendChild(row);
+    }
+    el.appendChild(list);
+    messagesEl.appendChild(el); // live: always ride at the end of the turn
+    scrollToBottom();
   }
 
   const TOOL_VERB = {
@@ -2855,12 +3093,16 @@
       if (!el._userToggled) setGroupExpanded(el, groupShouldExpand(el));
     }
     state.activeToolGroupEl = null;
+    pinTurnDiffSummary();
   }
 
   function addToToolGroup(call) {
     clearWelcome();
     hideGrokking(); // a tool card is the first content of this turn
     hideThinkingIndicator(); // a running tool now conveys the activity
+    // Deletes never carry a type:"diff" block — catch kind:delete + shell
+    // Remove-Item/rm here (and on restore's completed tool_call).
+    maybeRecordTurnDelete(call);
     if (!state.activeToolGroupEl) {
       // Starting a fresh batch of tools after some agent narration: detach the
       // active agent bubble so the NEXT narration opens a new bubble *below* this
@@ -3356,6 +3598,21 @@
       blocks.push({ diff, hunks });
     }
     item._diffStat = { added, removed, path: diffs[0] && diffs[0].path };
+
+    // Turn-level summary: same counts as the row, keyed by toolCallId so an
+    // echo→completed repaint replaces rather than double-counts. Block-level
+    // old/new text enable chained multi-edit net recompute (first→last).
+    // openDiff uses the first block (matches the row's "open diff →").
+    const d0 = diffs[0];
+    recordTurnEdit(
+      toolCallId,
+      d0 && d0.path,
+      added,
+      removed,
+      openDiffMessage(d0),
+      d0 ? d0.oldText : undefined,
+      d0 ? d0.newText : undefined,
+    );
 
     // Always-visible +A −R on the row (and the roll-up onto the group header).
     const stat = makeDiffStat(added, removed);
@@ -4155,6 +4412,7 @@
     const wrapper = state.activeAgentEl.parentElement;
     if (wrapper) wrapper._copyText = state.activeAgentRaw;
     scrollToBottom();
+    pinTurnDiffSummary(); // narration after tools must not leave the summary mid-turn
   }
 
   // Finalize the current agent turn (flush buffers, stamp the "Thought for Ns"
@@ -4183,6 +4441,7 @@
     state.activeAgentRaw = "";
     state.activeThoughtEl = null;
     state.activeThoughtHdrEl = null;
+    pinTurnDiffSummary();
   }
 
   // Replayed user prompts (session/load) arrive as user_message_chunk updates.
@@ -4238,6 +4497,10 @@
           text = mk.rest;
         }
       }
+      // Restore has no agentStart between turns — a new user bubble is the
+      // turn boundary. Pin the previous turn's change list before clearing.
+      pinTurnDiffSummary();
+      startTurnDiffTracking();
       state.userMsgCount += 1;
       state.activeUserEl = addMessage("user", "");
       state.activeUserRaw = "";
@@ -5818,6 +6081,8 @@
         state.activeThoughtEl = null;
         state.activeToolGroupEl = null;
         state.turnAgentActionsEl = null;
+        state.turnEditsByToolCallId.clear();
+        state.turnDiffSummaryEl = null;
         hideGrokking();
         hideThinkingIndicator();
         hidePlanProcessing();
@@ -5998,6 +6263,11 @@
         drainPlanHistory(state.userMsgCount);
         drainPermissionHistory(state.userMsgCount);
         state.userMsgCount += 1;
+        // Previous agent turn is over: pin its change list and drop the live
+        // tracker so this user message starts a clean turn boundary (restore
+        // has no agentStart between turns — only user bubbles).
+        pinTurnDiffSummary();
+        startTurnDiffTracking();
         addMessage("user", msg.text, msg.chips || [], { steer: msg.steer });
         forceScrollToBottom(); // jump back to the bottom on the user's own send (#16)
         // If the indicator is showing and a NEW (live-send) user message comes
@@ -6011,6 +6281,15 @@
         // follow-up). Show "Grokking…" until the first real content replaces it.
         // The silent primer never emits agentStart, so it never shows here.
         state.turnAgentActionsEl = null; // new turn → previous turn keeps its footer
+        // Fresh tracker for this turn's edits (userMessage already closed the
+        // previous card on a live send; this also covers afterTurn follow-ups
+        // that emit agentStart without a new user bubble).
+        startTurnDiffTracking();
+        if (typeof msg.turnId === "number" && msg.turnId > 0) {
+          state.currentTurnId = msg.turnId;
+        } else {
+          state.currentTurnId = (state.currentTurnId || 0) + 1; // older hosts
+        }
         showGrokking();
         // Busy is event-sourced through the session buffer so a re-focus lands
         // on the true state: agentStart marks a turn in flight (a live send
@@ -6019,6 +6298,18 @@
         state.busy = true;
         state.busyLocked = false;
         updateSendButton();
+        break;
+      case "turnBaselines":
+        // Host first-touch snapshots (meta only). Refresh the live summary so
+        // View / Undo buttons appear as files are baselined.
+        if (typeof msg.turnId === "number" && Array.isArray(msg.files)) {
+          state.baselineMetaByTurn.set(msg.turnId, msg.files);
+          if (state.turnDiffSummaryEl && state.currentTurnId === msg.turnId) {
+            refreshTurnDiffSummaryUi();
+          } else if (state.turnDiffSummaryEl && String(state.turnDiffSummaryEl.dataset.turnId) === String(msg.turnId)) {
+            refreshTurnDiffSummaryUi();
+          }
+        }
         break;
       case "thoughtChunk":
         appendThought(msg.text);

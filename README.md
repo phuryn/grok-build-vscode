@@ -170,7 +170,7 @@ When Grok delegates work to a subagent, the chat shows a card with the task and 
 <details>
 <summary><strong>Tool calls</strong> — every read, edit & command inline; expand for full details</summary>
 
-Every action appears as a category-iconed row, batched and summarized ("Explored 5 items", "Edited 2 files"); a failed tool turns red with the reason. Edits show a `+N −M` change count and expand to an inline diff at the file's real line numbers; shell commands expand to an **IN/OUT block** with the full command and its complete output — exactly what Grok received, exit code included. To audit an Auto-accept run, pre-expand everything with `grok.expandCommandOutputs`, or **Grok: Expand All Tool Details** from the Command Palette.
+Every action appears as a category-iconed row, batched and summarized ("Explored 5 items", "Edited 2 files"); a failed tool turns red with the reason. Edits show a `+N −M` change count and expand to an inline diff at the file's real line numbers; shell commands expand to an **IN/OUT block** with the full command and its complete output — exactly what Grok received, exit code included. At the end of a turn that changed files, a **Changed N files** card lists every path (with **View** on deletes and **Undo** / **Undo all** to restore pre-turn disk state). To audit an Auto-accept run, pre-expand everything with `grok.expandCommandOutputs`, or **Grok: Expand All Tool Details** from the Command Palette.
 
 ![A tool batch with a command expanded to its IN/OUT block](docs/screenshots/tool_calls.png)
 

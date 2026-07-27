@@ -17,6 +17,7 @@ process, not the extension.
 | MCP servers, subagents, plugins | YOLO flag (auto-approval) |
 | Tool execution, model state | Plan-mode gate + per-plan verdict log |
 | Plan text on disk (`~/.grok/sessions/<…>/plan.md`) | Webview UI state, popovers, slash filter, pending diff per `toolCallId` |
+| Rewind file snapshots (`rewind_points.jsonl`) | Per-turn file baselines (first-touch content for View deleted / Undo on the summary card) |
 
 Kill the extension and the `grok` child dies with it; kill `grok` and the
 extension surfaces an error and offers a fresh session. Restarting the session

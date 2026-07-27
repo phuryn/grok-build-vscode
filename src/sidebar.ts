@@ -136,6 +136,17 @@ import {
   parseRunProgressUpdate,
   workflowControlCommand,
 } from "./run-progress";
+import {
+  archiveTurnBaselines,
+  baselineAbsent,
+  baselineFromContent,
+  baselineToMeta,
+  normalizeBaselinePathKey,
+  parseShellDeletePaths,
+  resolveTurnBaselineMap,
+  selectBaselinesForUndo,
+  type FileBaseline,
+} from "./file-baseline";
 
 // HostMsg (host -> webview) and WebviewMsg (webview -> host) both live in
 // src/protocol.ts now — the single source of truth for the message contract,
@@ -2563,6 +2574,8 @@ See design doc for the full state machine diagram.`;
       }
     };
     client.fsWrite = async (p: string, content: string) => {
+      // First-touch baseline before the write mutates disk (undo / openDiff).
+      await this.captureFileBaseline(session, p);
       try {
         const uri = vscode.Uri.file(p);
         const dir = vscode.Uri.file(path.dirname(p));
@@ -2573,7 +2586,19 @@ See design doc for the full state machine diagram.`;
         fs.writeFileSync(p, content, "utf8");
       }
     };
-    client.terminal = this.terminalManager;
+    // Wrap the shared terminal manager so shell deletes pre-read paths *before*
+    // the command runs (async would race Remove-Item — use sync reads here).
+    const tm = this.terminalManager;
+    client.terminal = {
+      create: (params) => {
+        this.captureDeleteBaselinesSync(session, params.command || "");
+        return tm.create(params);
+      },
+      output: (id) => tm.output(id),
+      waitForExit: (id) => tm.waitForExit(id),
+      kill: (id) => tm.kill(id),
+      release: (id) => tm.release(id),
+    };
 
     client.on("initialized", (init) => {
       if (gen !== session.gen) return;
@@ -3248,6 +3273,12 @@ See design doc for the full state machine diagram.`;
           msg.replaceAll,
           msg.sites,
         );
+        break;
+      case "viewTurnBaseline":
+        await this.viewTurnBaseline(msg.turnId, msg.path);
+        break;
+      case "undoTurnFiles":
+        await this.undoTurnFiles(msg.turnId, msg.paths);
         break;
       case "exportExpr":
         await this.exportExpr(msg);
@@ -5319,12 +5350,209 @@ See design doc for the full state machine diagram.`;
   private emit(session: Session, message: HostMsg): void {
     if (session.suppressContent && GrokSidebar.SUPPRESS_TYPES.has(message.type)) return;
     if (session.suppressPlanReject && GrokSidebar.PLAN_REJECT_SUPPRESS.has(message.type)) return;
-    if (message.type === "clearMessages") session.buffer = [];
-    else session.buffer.push(message);
+
+    // Turn-level file baselines: stamp a turnId on agentStart and archive the
+    // previous turn's map so view-deleted / undo still work after the next turn.
+    let out = message;
+    if (message.type === "agentStart") {
+      if (session.turnBaselineId > 0 && session.turnBaselines.size > 0) {
+        archiveTurnBaselines(
+          session.turnBaselineArchive,
+          session.turnBaselineId,
+          session.turnBaselines,
+        );
+      }
+      session.turnBaselineId += 1;
+      session.turnBaselines = new Map();
+      out = { type: "agentStart", turnId: session.turnBaselineId };
+    }
+
+    if (out.type === "clearMessages") session.buffer = [];
+    else session.buffer.push(out);
+    if (session === this.focused) {
+      this.view?.webview.postMessage(out);
+      this.mirrorToRemote(out);
+    }
+
+    // After a turn ends, push baseline *metadata* (content stays host-side) so
+    // the summary card can enable View / Undo.
+    if (out.type === "agentEnd" || out.type === "agentError") {
+      this.pushTurnBaselineMeta(session);
+    }
+  }
+
+  /** Host→webview baseline meta only (no file content). */
+  private pushTurnBaselineMeta(session: Session): void {
+    if (session.turnBaselineId <= 0 || session.turnBaselines.size === 0) return;
+    const message: HostMsg = {
+      type: "turnBaselines",
+      turnId: session.turnBaselineId,
+      files: [...session.turnBaselines.values()].map(baselineToMeta),
+    };
+    session.buffer.push(message);
     if (session === this.focused) {
       this.view?.webview.postMessage(message);
       this.mirrorToRemote(message);
     }
+  }
+
+  private resolveBaselineAbsPath(session: Session, p: string): string {
+    if (path.isAbsolute(p)) return p;
+    const root =
+      session.cwd ||
+      vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ||
+      process.cwd();
+    return path.resolve(root, p);
+  }
+
+  /**
+   * First-touch snapshot of `absPath` for this turn (no-op if already captured).
+   * Call before any mutation so delete/edit undo still has the pre-state.
+   */
+  private async captureFileBaseline(session: Session, rawPath: string): Promise<void> {
+    if (session.turnBaselineId <= 0) return;
+    const absPath = this.resolveBaselineAbsPath(session, rawPath);
+    const key = normalizeBaselinePathKey(absPath);
+    if (!key || session.turnBaselines.has(key)) return;
+
+    let baseline: FileBaseline;
+    try {
+      const st = await fs.promises.stat(absPath);
+      if (!st.isFile()) {
+        baseline = baselineAbsent(absPath);
+      } else {
+        const buf = await fs.promises.readFile(absPath);
+        baseline = baselineFromContent(absPath, buf.toString("utf8"), buf.byteLength);
+      }
+    } catch {
+      baseline = baselineAbsent(absPath);
+    }
+    session.turnBaselines.set(key, baseline);
+    this.pushTurnBaselineMeta(session);
+  }
+
+  /** Sync first-touch baselines for shell deletes (must finish before spawn). */
+  private captureDeleteBaselinesSync(session: Session, command: string): void {
+    if (session.turnBaselineId <= 0) return;
+    for (const raw of parseShellDeletePaths(command)) {
+      const abs = this.resolveBaselineAbsPath(session, raw);
+      const key = normalizeBaselinePathKey(abs);
+      if (!key || session.turnBaselines.has(key)) continue;
+      try {
+        const st = fs.statSync(abs);
+        if (!st.isFile()) session.turnBaselines.set(key, baselineAbsent(abs));
+        else {
+          const buf = fs.readFileSync(abs);
+          session.turnBaselines.set(
+            key,
+            baselineFromContent(abs, buf.toString("utf8"), buf.byteLength),
+          );
+        }
+      } catch {
+        session.turnBaselines.set(key, baselineAbsent(abs));
+      }
+      this.pushTurnBaselineMeta(session);
+    }
+  }
+
+  private async viewTurnBaseline(turnId: number, rawPath: string): Promise<void> {
+    const session = this.focused;
+    const map = resolveTurnBaselineMap(
+      turnId,
+      session.turnBaselineId,
+      session.turnBaselines,
+      session.turnBaselineArchive,
+    );
+    if (!map) {
+      void vscode.window.showWarningMessage("No saved baseline for this turn.");
+      return;
+    }
+    const key = normalizeBaselinePathKey(this.resolveBaselineAbsPath(session, rawPath));
+    const b = map.get(key) ?? map.get(normalizeBaselinePathKey(rawPath));
+    if (!b) {
+      void vscode.window.showWarningMessage("No baseline for that file.");
+      return;
+    }
+    if (b.kind === "content" && typeof b.content === "string") {
+      const doc = await vscode.workspace.openTextDocument({
+        content: b.content,
+        language: path.extname(b.path).slice(1) || "plaintext",
+      });
+      await vscode.window.showTextDocument(doc, { preview: true });
+      return;
+    }
+    if (b.kind === "absent") {
+      void vscode.window.showInformationMessage(
+        `${path.basename(b.path)} did not exist before this turn (nothing to show).`,
+      );
+      return;
+    }
+    void vscode.window.showWarningMessage(
+      `Baseline for ${path.basename(b.path)} was not kept (${b.reason || "omitted"}).`,
+    );
+  }
+
+  private async undoTurnFiles(turnId: number, paths?: string[]): Promise<void> {
+    const session = this.focused;
+    const map = resolveTurnBaselineMap(
+      turnId,
+      session.turnBaselineId,
+      session.turnBaselines,
+      session.turnBaselineArchive,
+    );
+    if (!map || map.size === 0) {
+      void vscode.window.showWarningMessage("No file baselines to restore for this turn.");
+      return;
+    }
+    const targets = selectBaselinesForUndo(map, paths);
+    if (!targets.length) {
+      void vscode.window.showWarningMessage("No matching file baselines to restore.");
+      return;
+    }
+    const label =
+      targets.length === 1
+        ? path.basename(targets[0].path)
+        : `${targets.length} files`;
+    const ok = await vscode.window.showWarningMessage(
+      `Restore ${label} to the state before this turn? Current disk content will be overwritten.`,
+      { modal: true },
+      "Restore",
+    );
+    if (ok !== "Restore") return;
+
+    let restored = 0;
+    let deleted = 0;
+    let skipped = 0;
+    for (const b of targets) {
+      try {
+        if (b.kind === "content" && typeof b.content === "string") {
+          const uri = vscode.Uri.file(b.path);
+          await vscode.workspace.fs.createDirectory(vscode.Uri.file(path.dirname(b.path)));
+          await vscode.workspace.fs.writeFile(uri, Buffer.from(b.content, "utf8"));
+          restored++;
+        } else if (b.kind === "absent") {
+          try {
+            await vscode.workspace.fs.delete(vscode.Uri.file(b.path), { useTrash: true });
+            deleted++;
+          } catch {
+            // Already gone — counts as success for "undo create".
+            deleted++;
+          }
+        } else {
+          skipped++;
+        }
+      } catch (e) {
+        this.output.appendLine(`[baseline-undo] ${b.path}: ${(e as Error).message}`);
+        skipped++;
+      }
+    }
+    const parts: string[] = [];
+    if (restored) parts.push(`restored ${restored}`);
+    if (deleted) parts.push(`removed ${deleted} created`);
+    if (skipped) parts.push(`skipped ${skipped}`);
+    void vscode.window.showInformationMessage(
+      parts.length ? `Undo: ${parts.join(", ")}.` : "Nothing to restore.",
+    );
   }
 
   /** Record sticky chrome + fan the (already-un-suppressed, focused) message out

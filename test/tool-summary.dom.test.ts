@@ -348,6 +348,7 @@ describe("plan / permission cards sit below interleaved narration + tools", () =
         if (c.classList.contains("thinking")) return "thinking";
         if (c.classList.contains("card") && c.classList.contains("plan")) return "PLAN-CARD";
         if (c.classList.contains("card") && c.classList.contains("permission")) return "PERM-CARD";
+        if (c.classList.contains("turn-diff-summary")) return "turn-diff-summary";
         if (c.classList.contains("agent")) return "agent:" + (c.querySelector(".body")?.textContent ?? "");
         if (c.classList.contains("tool-group")) return "tools:" + (c.querySelector(".tool-group-label")?.textContent ?? "");
         if (c.classList.contains("tool-flat")) return "tool:" + c.textContent;
@@ -386,6 +387,8 @@ describe("plan / permission cards sit below interleaved narration + tools", () =
     expect(cardSeq(doc)).toEqual([
       "agent:I'll remove the stale files.",
       "tools:Ran 2 commands",
+      // rm commands are tracked as turn-level deletes (Changed N files card).
+      "turn-diff-summary",
       "PERM-CARD",
     ]);
   });
