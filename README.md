@@ -72,7 +72,7 @@ Type `/imagine <prompt>` (or `/imagine-video <prompt>`) and the result renders *
 <details>
 <summary><strong>Voice control</strong> — hands-free dictation with live transcription</summary>
 
-The **microphone button** dictates speech via [xAI's Speech-to-Text API](https://docs.x.ai/developers/model-capabilities/audio/speech-to-text) — words appear live as you talk. Say **"grok send"** to submit hands-free and keep dictating; messages spoken while Grok responds queue and flush when it finishes.
+The **microphone button** dictates speech via [xAI's Speech-to-Text API](https://docs.x.ai/developers/model-capabilities/audio/speech-to-text) — words appear live as you talk. Say **"grok send"** to submit hands-free and keep dictating; messages spoken while Grok responds queue and flush when it finishes. Clicking the regular **Send** button instead sends exactly the visible composer text and turns the microphone off. Restarting dictation inserts speech at the current cursor or replaces the selected text, so you can pause, correct a sentence, and continue in place.
 
 It works out of the box once you're signed in (your `grok login` token is reused automatically) — you only need [`ffmpeg`](https://ffmpeg.org) installed to record. Setup, devices, and costs: **[docs/voice-setup.md](docs/voice-setup.md)**.
 

@@ -266,9 +266,18 @@ export class GrokSidebar implements vscode.WebviewViewProvider {
   private voiceTempPath?: string;
   private voiceStreamer?: VoiceStreamer;
   private voiceFinalizing = false;
+  /** Invalidates async voice callbacks after a manual send/session switch. */
+  private voiceGeneration = 0;
   // Stored so a "grok send" can transparently restart a fresh stream (each
   // message = one clean utterance) without re-resolving the mic device.
-  private voiceStreamCtx?: { key: string; ffmpegPath: string; device?: string; phrase: string; keyterms: string[] };
+  private voiceStreamCtx?: {
+    key: string;
+    ffmpegPath: string;
+    device?: string;
+    phrase: string;
+    keyterms: string[];
+    generation: number;
+  };
   private configWatcher?: vscode.Disposable;
   // Remote uplink — outbound wss to the relay (REMOTE_RELAY_URL), active only
   // when a device token is stored (the "Grok: Link Remote Device" / gear
@@ -3559,7 +3568,8 @@ See design doc for the full state machine diagram.`;
         await this.handleVoiceStart();
         break;
       case "voiceStop":
-        await this.handleVoiceStop();
+        if (msg.discard) this.stopVoiceInput();
+        else await this.handleVoiceStop();
         break;
     }
 
@@ -4221,6 +4231,7 @@ See design doc for the full state machine diagram.`;
    *  reach the mic). The webview has already flipped its button to "listening";
    *  on any setup failure we send `voiceError` to reset it. */
   private async handleVoiceStart(): Promise<void> {
+    const generation = ++this.voiceGeneration;
     const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
     const key = this.resolveVoiceApiKey(cwd);
     if (!key) {
@@ -4235,16 +4246,25 @@ See design doc for the full state machine diagram.`;
     // Streaming (default): live transcription over the STT WebSocket, so "grok
     // send" can submit hands-free without a stop-click. Batch is the fallback.
     if (cfg.get<boolean>("voiceStreaming", true)) {
-      await this.startVoiceStream(key, ffmpegPath, device, cfg);
+      await this.startVoiceStream(key, ffmpegPath, device, cfg, generation);
       return;
     }
 
     const tmp = path.join(os.tmpdir(), `grok-voice-${Date.now()}.wav`);
     try {
       await this.voiceRecorder.start({ ffmpegPath, outputPath: tmp, device, log: (m) => this.output.appendLine(m) });
+      if (generation !== this.voiceGeneration) {
+        this.voiceRecorder.cancel();
+        try { fs.unlinkSync(tmp); } catch { /* best effort */ }
+        return;
+      }
       this.voiceTempPath = tmp;
       this.post({ type: "voiceState", status: "listening" });
     } catch (e) {
+      if (generation !== this.voiceGeneration) {
+        try { fs.unlinkSync(tmp); } catch { /* best effort */ }
+        return;
+      }
       const msg = (e as Error).message;
       this.output.appendLine(`[voice] start failed: ${msg}`);
       // ffmpeg-missing is the common, fixable case — offer a jump to its setting.
@@ -4268,6 +4288,7 @@ See design doc for the full state machine diagram.`;
     ffmpegPath: string,
     device: string | undefined,
     cfg: vscode.WorkspaceConfiguration,
+    generation: number,
   ): Promise<void> {
     const phrase = cfg.get<string>("voiceSendPhrase", DEFAULT_SEND_PHRASE);
     // Bias the model toward the send phrase + "Grok" so it spells them right
@@ -4278,7 +4299,8 @@ See design doc for the full state machine diagram.`;
     if (process.platform === "win32" && !resolved) {
       try { resolved = await resolveWindowsAudioDevice(ffmpegPath, (m) => this.output.appendLine(m)); } catch { /* streamer surfaces it */ }
     }
-    this.voiceStreamCtx = { key, ffmpegPath, device: resolved, phrase, keyterms };
+    if (generation !== this.voiceGeneration) return;
+    this.voiceStreamCtx = { key, ffmpegPath, device: resolved, phrase, keyterms, generation };
     this.voiceFinalizing = false;
     await this.openVoiceStream();
   }
@@ -4297,7 +4319,9 @@ See design doc for the full state machine diagram.`;
     if (fresh) ctx.key = fresh;
     const streamer = new VoiceStreamer();
     this.voiceStreamer = streamer;
-    const isCurrent = () => this.voiceStreamer === streamer;
+    const isCurrent = () =>
+      this.voiceStreamer === streamer &&
+      ctx.generation === this.voiceGeneration;
 
     streamer.on("partial", (ev: { text: string; speechFinal: boolean }) => {
       if (!isCurrent()) return;
@@ -4362,6 +4386,8 @@ See design doc for the full state machine diagram.`;
   /** "grok send": submit the message and KEEP listening by restarting a fresh
    *  stream (each message = one clean utterance). No clicks needed. */
   private commitVoiceStream(text: string): void {
+    const ctx = this.voiceStreamCtx;
+    if (!ctx || ctx.generation !== this.voiceGeneration) return;
     const old = this.voiceStreamer;
     this.voiceStreamer = undefined; // detach so late events are ignored
     old?.cancel();
@@ -4373,6 +4399,7 @@ See design doc for the full state machine diagram.`;
    *  remaining transcript and return to idle. */
   private async finalizeVoiceStream(): Promise<void> {
     if (this.voiceFinalizing) return;
+    const generation = this.voiceGeneration;
     this.voiceFinalizing = true;
     const streamer = this.voiceStreamer;
     this.voiceStreamer = undefined;
@@ -4381,6 +4408,7 @@ See design doc for the full state machine diagram.`;
     this.post({ type: "voiceState", status: "transcribing" });
     let finalText = "";
     try { finalText = await streamer.stop(); } catch { finalText = streamer.transcript; }
+    if (generation !== this.voiceGeneration) return;
     const phrase = vscode.workspace.getConfiguration("grok").get<string>("voiceSendPhrase", DEFAULT_SEND_PHRASE);
     const { text, send } = parseVoiceCommand(finalText, phrase);
     this.voiceFinalizing = false;
@@ -4392,9 +4420,16 @@ See design doc for the full state machine diagram.`;
   }
 
   /** Hard-stop any voice capture (no transcript) and reset the mic to idle.
-   *  Called on session switch/restart so listening never bleeds across sessions. */
+   *  Called on manual message send and session switch/restart so listening never
+   *  refills a cleared composer or bleeds across sessions. */
   private stopVoiceInput(): void {
-    const wasActive = !!this.voiceStreamer || this.voiceRecorder.active;
+    const wasActive =
+      !!this.voiceStreamer ||
+      !!this.voiceStreamCtx ||
+      this.voiceRecorder.active ||
+      this.voiceFinalizing ||
+      !!this.voiceTempPath;
+    this.voiceGeneration += 1;
     this.voiceStreamer?.cancel();
     this.voiceStreamer = undefined;
     this.voiceStreamCtx = undefined;
@@ -4407,6 +4442,7 @@ See design doc for the full state machine diagram.`;
 
   /** Stop recording, transcribe via xAI STT, and send the text to the composer. */
   private async handleVoiceStop(): Promise<void> {
+    const generation = this.voiceGeneration;
     // Streaming path: finalize the live stream.
     if (this.voiceStreamer) {
       await this.finalizeVoiceStream();
@@ -4426,15 +4462,22 @@ See design doc for the full state machine diagram.`;
     let wavPath: string;
     try {
       wavPath = await this.voiceRecorder.stop();
+      if (generation !== this.voiceGeneration) {
+        try { fs.unlinkSync(wavPath); } catch { /* best effort */ }
+        return;
+      }
     } catch (e) {
+      if (generation !== this.voiceGeneration) return;
       this.output.appendLine(`[voice] stop failed: ${(e as Error).message}`);
       vscode.window.showErrorMessage(`Voice recording failed: ${(e as Error).message}`);
       this.post({ type: "voiceError" });
       return;
     }
+    const tempPath = this.voiceTempPath;
     this.post({ type: "voiceState", status: "transcribing" });
     try {
       const raw = await transcribeAudio(wavPath, key, (m) => this.output.appendLine(m));
+      if (generation !== this.voiceGeneration) return;
       // Strip a trailing "grok send" (configurable) so dictation can submit
       // hands-free. The webview inserts `text` and, if `send`, fires the send.
       const sendPhrase = vscode.workspace.getConfiguration("grok").get<string>("voiceSendPhrase", DEFAULT_SEND_PHRASE);
@@ -4446,12 +4489,13 @@ See design doc for the full state machine diagram.`;
       }
       this.post({ type: "voiceTranscript", text, send });
     } catch (e) {
+      if (generation !== this.voiceGeneration) return;
       this.output.appendLine(`[voice] transcription failed: ${(e as Error).message}`);
       vscode.window.showErrorMessage((e as Error).message);
       this.post({ type: "voiceError" });
     } finally {
-      try { if (this.voiceTempPath) fs.unlinkSync(this.voiceTempPath); } catch { /* best effort */ }
-      this.voiceTempPath = undefined;
+      try { if (tempPath) fs.unlinkSync(tempPath); } catch { /* best effort */ }
+      if (this.voiceTempPath === tempPath) this.voiceTempPath = undefined;
     }
   }
 

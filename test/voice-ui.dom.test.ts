@@ -105,6 +105,22 @@ describe("voice control mic button", () => {
     expect(input.value).toBe("Note: hello");
   });
 
+  it("replaces the composer selection with a batch transcript", () => {
+    const { window, doc } = bootWebview();
+    const mic = $(doc, "mic-btn");
+    const input = $(doc, "input") as HTMLTextAreaElement;
+    input.value = "Fix the eror now";
+    input.setSelectionRange(8, 12); // "eror"
+
+    click(window, mic);
+    click(window, mic);
+    dispatch(window, { type: "voiceTranscript", text: "error", send: false });
+
+    expect(input.value).toBe("Fix the error now");
+    expect(input.selectionStart).toBe(13);
+    expect(input.selectionEnd).toBe(13);
+  });
+
   it("resets to idle when the host reports a voiceError", () => {
     const { window, doc } = bootWebview();
     const mic = $(doc, "mic-btn");
@@ -178,6 +194,28 @@ describe("voice control: live streaming transcription", () => {
     expect(input.value).toBe("Note: fix the parser");
   });
 
+  it("inserts live dictation at the cursor and preserves the rest of the sentence", () => {
+    const { window, doc } = bootWebview();
+    const mic = $(doc, "mic-btn");
+    const input = $(doc, "input") as HTMLTextAreaElement;
+    input.value = "Fix here";
+    input.setSelectionRange(3, 3);
+
+    click(window, mic);
+    dispatch(window, { type: "voicePartial", text: "this" });
+    expect(input.value).toBe("Fix this here");
+    expect(input.selectionStart).toBe(8);
+
+    dispatch(window, { type: "voicePartial", text: "this text" });
+    expect(input.value).toBe("Fix this text here");
+    expect(input.selectionStart).toBe(13);
+
+    dispatch(window, { type: "voiceTranscript", text: "this new text", send: false });
+    expect(input.value).toBe("Fix this new text here");
+    expect(input.selectionStart).toBe(17);
+    expect(input.selectionEnd).toBe(17);
+  });
+
   it("final voiceTranscript replaces the live tail (not appends) in streaming mode", () => {
     const { window, doc } = bootWebview();
     const mic = $(doc, "mic-btn");
@@ -200,6 +238,72 @@ describe("voice control: live streaming transcription", () => {
     const sent = posted.find((p) => p.type === "send");
     expect(sent).toBeTruthy();
     expect((sent as Posted).text).toBe("add a logout button");
+  });
+
+  it("manual Send stops live voice, clears the composer, and ignores late voice events", () => {
+    const { window, posted, doc } = bootWebview();
+    const mic = $(doc, "mic-btn");
+    const send = $(doc, "send-btn");
+    const input = $(doc, "input") as HTMLTextAreaElement;
+
+    click(window, mic);
+    dispatch(window, { type: "voiceState", status: "listening" });
+    dispatch(window, { type: "voicePartial", text: "fix the parser" });
+    click(window, send);
+
+    expect(posted.find((p) => p.type === "voiceStop")).toMatchObject({
+      type: "voiceStop",
+      discard: true,
+    });
+    expect(posted.find((p) => p.type === "send")).toMatchObject({
+      type: "send",
+      text: "fix the parser",
+    });
+    expect(input.value).toBe("");
+    expect(mic.classList.contains("listening")).toBe(false);
+
+    dispatch(window, { type: "voicePartial", text: "late partial" });
+    dispatch(window, { type: "voiceTranscript", text: "late transcript" });
+    dispatch(window, { type: "voiceSubmit", text: "late submit" });
+    dispatch(window, { type: "voiceState", status: "listening" });
+    dispatch(window, { type: "voiceState", status: "transcribing" });
+
+    expect(input.value).toBe("");
+    expect(mic.classList.contains("listening")).toBe(false);
+    expect(mic.classList.contains("transcribing")).toBe(false);
+    expect(posted.filter((p) => p.type === "send")).toHaveLength(1);
+
+    dispatch(window, { type: "agentEnd" });
+    click(window, mic);
+    dispatch(window, { type: "voiceState", status: "listening" });
+    dispatch(window, { type: "voicePartial", text: "new recording" });
+    expect(input.value).toBe("new recording");
+  });
+
+  it("manual Queue stops live voice and late partials do not refill the composer", () => {
+    const { window, posted, doc } = bootWebview();
+    const mic = $(doc, "mic-btn");
+    const send = $(doc, "send-btn");
+    const input = $(doc, "input") as HTMLTextAreaElement;
+
+    click(window, mic);
+    dispatch(window, { type: "voiceState", status: "listening" });
+    dispatch(window, { type: "voicePartial", text: "check the next result" });
+    dispatch(window, { type: "setBusy", value: true });
+    click(window, send);
+
+    expect(posted.find((p) => p.type === "voiceStop")).toMatchObject({
+      type: "voiceStop",
+      discard: true,
+    });
+    expect(posted.find((p) => p.type === "queueSend")).toMatchObject({
+      type: "queueSend",
+      text: "check the next result",
+    });
+    expect(input.value).toBe("");
+
+    dispatch(window, { type: "voicePartial", text: "late partial" });
+    expect(input.value).toBe("");
   });
 });
 

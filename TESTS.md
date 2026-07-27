@@ -240,9 +240,11 @@ happy-dom test locking in the native-Windows regressions this build fixed (plus 
 - API-key resolution order (`grok.voiceApiKey` → `GROK_VOICE_API_KEY` → `XAI_API_KEY`)
 - `parseVoiceCommand` / trailing send-phrase detection — the two-word "grok send", tolerant of the "send"→"sent" mishearing, with trailing punctuation kept-not-doubled
 
-### `test/voice-ui.dom.test.ts` — mic button + composer in a real DOM (28 tests)
+### `test/voice-ui.dom.test.ts` — mic button + composer in a real DOM (31 tests)
 
 - The mic-button state machine (idle → connecting → listening → stopped), animated waves, and the brief "connecting…" spinner
+- Manual Send/Queue stops voice, clears the composer, and ignores late partial, transcript, or submit events
+- Restarted dictation inserts at the current cursor or replaces the selected text while preserving the sentence suffix
 - A live partial transcript accumulates into the composer; the trailing send-phrase is highlighted via the backdrop overlay
 - "grok send" submits and flushes messages dictated while Grok was responding (hands-free continuous listening)
 

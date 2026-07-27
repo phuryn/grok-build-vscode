@@ -63,7 +63,8 @@ describe("AFK Pilot shared webview controls", () => {
       beforeScripts: (w) => { (w as any).webkitSpeechRecognition = FakeRecognition; },
     });
     const input = doc.getElementById("input") as HTMLTextAreaElement;
-    input.value = "Please";
+    input.value = "Please now";
+    input.setSelectionRange(6, 6);
 
     click(window, doc.getElementById("mic-btn")!);
     expect(doc.getElementById("mic-btn")!.classList.contains("listening")).toBe(true);
@@ -72,10 +73,46 @@ describe("AFK Pilot shared webview controls", () => {
     const result: any = [{ transcript: "fix the tests" }];
     result.isFinal = true;
     recognition.onresult({ results: [result] });
-    expect(input.value).toBe("Please fix the tests");
+    expect(input.value).toBe("Please fix the tests now");
 
     click(window, doc.getElementById("mic-btn")!);
     expect(doc.getElementById("mic-btn")!.classList.contains("listening")).toBe(false);
+  });
+
+  it("stops browser dictation on manual send and ignores late results", () => {
+    let recognition: any;
+    class FakeRecognition {
+      onresult?: (event: any) => void;
+      onerror?: () => void;
+      onend?: () => void;
+      start() {}
+      stop() { this.onend?.(); }
+      abort() { this.onend?.(); }
+      constructor() { recognition = this; }
+    }
+    const { window, posted, doc } = bootWebview({
+      remote: true,
+      beforeScripts: (w) => { (w as any).webkitSpeechRecognition = FakeRecognition; },
+    });
+    const input = doc.getElementById("input") as HTMLTextAreaElement;
+
+    click(window, doc.getElementById("mic-btn")!);
+    const lateResult = recognition.onresult;
+    const partial: any = [{ transcript: "send this message" }];
+    partial.isFinal = false;
+    lateResult({ results: [partial] });
+    expect(input.value).toBe("send this message");
+
+    click(window, doc.getElementById("send-btn")!);
+    expect(posted.find((m) => m.type === "send")).toMatchObject({ text: "send this message" });
+    expect(posted.filter((m) => m.type === "voiceStop")).toHaveLength(0);
+    expect(input.value).toBe("");
+    expect(doc.getElementById("mic-btn")!.classList.contains("listening")).toBe(false);
+
+    const stale: any = [{ transcript: "late words" }];
+    stale.isFinal = true;
+    lateResult({ results: [stale] });
+    expect(input.value).toBe("");
   });
 
   it("previews remote text size while dragging, then persists and applies it on release", () => {

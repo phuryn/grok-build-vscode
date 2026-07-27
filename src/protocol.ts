@@ -247,7 +247,10 @@ export type WebviewMsg =
   // allowlists/sanitizes/stages it, then routes it through addDroppedFile.
   | { type: "uploadFile"; name: string; data: string }
   | { type: "voiceStart" }
-  | { type: "voiceStop" }
+  /** Stop voice input. The mic button omits `discard` so the remaining audio is
+   *  finalized into the composer; a manual message send sets it so capture is
+   *  cancelled without a late transcript refilling the cleared composer. */
+  | { type: "voiceStop"; discard?: boolean }
   // Host-owned send queue mutations (#37): the webview never mutates its local
   // mirror — it posts these and re-renders from the queuedSends snapshot.
   | { type: "queueSend"; text: string }

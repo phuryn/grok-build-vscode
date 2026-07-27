@@ -1,6 +1,6 @@
 # Voice control — setup & advanced configuration
 
-The microphone button in the composer dictates speech, transcribed by [xAI's Speech-to-Text API](https://docs.x.ai/developers/model-capabilities/audio/speech-to-text). Click it, wait for the blue listening waves, and speak — words appear live as you talk. Say **"grok send"** to submit hands-free and keep listening for the next message. Click the mic again to stop and keep any in-progress text.
+The microphone button in the composer dictates speech, transcribed by [xAI's Speech-to-Text API](https://docs.x.ai/developers/model-capabilities/audio/speech-to-text). Click it, wait for the blue listening waves, and speak — words appear live as you talk. Say **"grok send"** to submit hands-free and keep listening for the next message. Click the mic again to stop and keep any in-progress text. When you restart dictation, speech is inserted at the current cursor or replaces the selected text instead of always being appended.
 
 For most people it **just works** once you're signed in — the two things below are only if you need them.
 

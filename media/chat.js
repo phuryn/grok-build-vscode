@@ -115,10 +115,17 @@
     // Whether the host found a voice API key. Optimistic until the host says
     // otherwise; drives the mic button's "needs setup" hint.
     voiceConfigured: true,
-    // Streaming dictation: text typed before the mic started ("base"), and
-    // whether live partials have begun replacing the tail.
-    voiceBase: "",
+    // Dictation insertion point: text before and after the selection that was
+    // active when the mic started. Live partials replace only the text between
+    // these anchors, so restarting voice in the middle of a sentence does not
+    // force the transcript to the end.
+    voiceBefore: "",
+    voiceAfter: "",
+    voiceInsertionActive: false,
     voiceLive: false,
+    // Set by a manual Send/Queue while voice is active. Late partial/final
+    // events already in transit are ignored until the next mic start.
+    voiceDiscarded: false,
     // The configured send phrase (for highlighting it in the composer).
     voiceSendPhrase: "grok send",
     remoteFontScale: IS_REMOTE ? storedNumber(REMOTE_FONT_SCALE_KEY, 1) : 1,
@@ -5538,6 +5545,7 @@
   function queueFromComposer() {
     const t = input.value.trim();
     if (!t) return false;
+    stopVoiceForManualSend();
     queueOutgoing(t);
     input.value = "";
     renderInputHighlight(); // also flips the busy button back to Stop (empty composer)
@@ -5577,6 +5585,7 @@
     // Sendable = typed text or any visible chip (file or image alike — image
     // chips render as remove-only attachment rows, so they're never hidden).
     if (!text && state.chips.every((c) => c.hidden)) return;
+    stopVoiceForManualSend();
     state.busy = true;
     updateSendButton();
     state.activeAgentEl = null;
@@ -5647,9 +5656,9 @@
       // host will pop the setup guidance instead of recording. Still send
       // voiceStart so the host (the authority on the key) makes the call.
       if (state.voiceConfigured) {
-        // Remember what's already typed; live partials replace only the tail.
-        state.voiceBase = input.value;
+        captureVoiceInsertion();
         state.voiceLive = false;
+        state.voiceDiscarded = false;
         setMic("start");
       }
       vscode.postMessage({ type: "voiceStart" });
@@ -5676,13 +5685,16 @@
     }
     if (state.mic !== "idle") return;
 
-    state.voiceBase = input.value;
+    captureVoiceInsertion();
+    state.voiceLive = false;
+    state.voiceDiscarded = false;
     browserTranscript = "";
     const recognition = new Recognition();
     browserRecognition = recognition;
     recognition.continuous = true;
     recognition.interimResults = true;
     recognition.onresult = (event) => {
+      if (state.voiceDiscarded || browserRecognition !== recognition) return;
       let finalText = "";
       let interimText = "";
       for (let i = 0; i < event.results.length; i++) {
@@ -5692,19 +5704,23 @@
         else interimText += text;
       }
       browserTranscript = finalText;
-      input.value = composeVoiceTail(state.voiceBase, finalText + interimText);
-      input.dispatchEvent(new Event("input", { bubbles: true }));
+      renderVoiceInsertion(finalText + interimText);
     };
     recognition.onerror = () => {
+      if (browserRecognition !== recognition) return;
       browserRecognition = null;
+      clearVoiceInsertion();
+      state.voiceLive = false;
       setMic("error");
     };
     recognition.onend = () => {
+      if (browserRecognition !== recognition) return;
       browserRecognition = null;
-      if (browserTranscript) input.value = composeVoiceTail(state.voiceBase, browserTranscript);
+      if (browserTranscript) renderVoiceInsertion(browserTranscript, true);
+      clearVoiceInsertion();
+      state.voiceLive = false;
       setMic("error");
       input.focus();
-      input.dispatchEvent(new Event("input", { bubbles: true }));
     };
     state.mic = "listening";
     renderMic();
@@ -5712,7 +5728,32 @@
       recognition.start();
     } catch {
       browserRecognition = null;
+      clearVoiceInsertion();
       setMic("error");
+    }
+  }
+
+  // A manual Send/Queue means "send exactly what is visible now", unlike the mic
+  // button's stop action, which means "finalize the remaining audio and insert
+  // its transcript". Cancel capture immediately and ignore any voice event that
+  // was already in transit so it cannot repopulate the cleared composer.
+  function stopVoiceForManualSend() {
+    if (state.mic === "idle") return;
+    state.mic = "idle";
+    clearVoiceInsertion();
+    state.voiceLive = false;
+    state.voiceDiscarded = true;
+    renderMic();
+    if (IS_REMOTE) {
+      const recognition = browserRecognition;
+      browserRecognition = null;
+      browserTranscript = "";
+      if (recognition) {
+        if (typeof recognition.abort === "function") recognition.abort();
+        else recognition.stop();
+      }
+    } else {
+      vscode.postMessage({ type: "voiceStop", discard: true });
     }
   }
 
@@ -5729,13 +5770,44 @@
     renderInputHighlight();
   }
 
-  // base + live transcript, with a separating space unless base already ends in
-  // whitespace (or the tail is empty). Used for streaming partials/final.
-  function composeVoiceTail(base, text) {
+  function captureVoiceInsertion() {
+    const start = input.selectionStart ?? input.value.length;
+    const end = input.selectionEnd ?? start;
+    state.voiceBefore = input.value.slice(0, start);
+    state.voiceAfter = input.value.slice(end);
+    state.voiceInsertionActive = true;
+  }
+
+  function clearVoiceInsertion() {
+    state.voiceBefore = "";
+    state.voiceAfter = "";
+    state.voiceInsertionActive = false;
+  }
+
+  // Insert a transcript between the text that surrounded the selection when
+  // recording started. Return the caret just after the dictated text, before
+  // the preserved suffix, so another correction can start from the same area.
+  function composeVoiceInsertion(before, text, after) {
     const t = text || "";
-    if (!base) return t;
-    if (!t || /\s$/.test(base)) return base + t;
-    return base + " " + t;
+    if (!t) return { value: before + after, caret: before.length };
+    const left = before && !/\s$/.test(before) && !/^\s/.test(t) ? " " : "";
+    const right = after && !/\s$/.test(t) && !/^\s/.test(after) &&
+      !/^[.,!?;:)\]}]/.test(after) ? " " : "";
+    return {
+      value: before + left + t + right + after,
+      caret: before.length + left.length + t.length,
+    };
+  }
+
+  function renderVoiceInsertion(text, focus = false) {
+    if (!state.voiceInsertionActive) captureVoiceInsertion();
+    const result = composeVoiceInsertion(state.voiceBefore, text, state.voiceAfter);
+    input.value = result.value;
+    input.setSelectionRange(result.caret, result.caret);
+    if (focus) input.focus();
+    updateSlash();
+    updateMention();
+    renderInputHighlight();
   }
 
   // Mirror the composer text onto the backdrop, wrapping a trailing send command
@@ -6126,6 +6198,7 @@
       case "voiceState":
         // Host confirms a transition (e.g. recording actually started). Only
         // accept the known states; ignore anything unexpected.
+        if (state.voiceDiscarded && msg.status !== "idle") break;
         if (msg.status === "listening" || msg.status === "transcribing") {
           state.mic = msg.status;
           renderMic();
@@ -6134,6 +6207,7 @@
           // live flag and any queued messages too, not just the button.
           state.mic = "idle";
           state.voiceLive = false;
+          clearVoiceInsertion();
           renderMic();
         }
         break;
@@ -6144,16 +6218,20 @@
         renderInputHighlight();
         break;
       case "voicePartial":
-        // Live streaming update: replace the tail after the pre-dictation base.
+        if (state.voiceDiscarded) break;
+        // Live streaming update: replace only the dictated text at the cursor
+        // captured when recording started.
         state.voiceLive = true;
-        input.value = composeVoiceTail(state.voiceBase, msg.text || "");
-        renderInputHighlight();
+        renderVoiceInsertion(msg.text || "");
         break;
       case "voiceSubmit": {
+        if (state.voiceDiscarded) break;
         // Continuous "grok send": submit now (or queue if Grok is mid-response),
         // clear the composer, and keep the mic listening for the next utterance.
         const t = (msg.text || "").trim();
-        state.voiceBase = "";
+        state.voiceBefore = "";
+        state.voiceAfter = "";
+        state.voiceInsertionActive = true;
         state.voiceLive = false;
         input.value = "";
         renderInputHighlight();
@@ -6164,17 +6242,17 @@
         break;
       }
       case "voiceTranscript":
-        // Final result. Streaming replaces the live tail; batch appends.
-        if (state.voiceLive) {
-          input.value = composeVoiceTail(state.voiceBase, (msg.text || "").trim());
-          input.focus();
-          updateSlash();
-          updateMention();
-          renderInputHighlight();
+        if (state.voiceDiscarded) break;
+        // Final result. Streaming replaces the live partial; batch inserts at
+        // the selection captured when recording began. Unsolicited transcripts
+        // retain the legacy append behavior.
+        if (state.voiceLive || state.voiceInsertionActive) {
+          renderVoiceInsertion((msg.text || "").trim(), true);
         } else {
           insertTranscript(msg.text);
         }
         state.voiceLive = false;
+        clearVoiceInsertion();
         setMic("transcript");
         // "grok send" detected: submit hands-free — but only when idle, so it
         // never doubles as a "stop" on an in-flight turn.
@@ -6183,6 +6261,7 @@
       case "voiceError":
         // Setup/record/transcribe failed (the host already showed the reason).
         state.voiceLive = false;
+        clearVoiceInsertion();
         setMic("error");
         break;
       case "chips":
