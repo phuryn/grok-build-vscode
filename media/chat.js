@@ -694,6 +694,11 @@
     // The current turn's agent-message footer (copy + timestamp). Only the
     // turn's LAST narration segment keeps one — see addMessage.
     turnAgentActionsEl: null,
+    // Turn-level file-change summary: per-tool-call edit stats for the open
+    // agent turn (path-deduped into a "Changed N files" card). Cleared on
+    // agentStart / next user message; the card itself stays in the transcript.
+    turnEditsByToolCallId: new Map(),
+    turnDiffSummaryEl: null,
     // Restored question cards on resume (toolCallId → card element). On replay grok
     // sends a tool_call per question (with rawInput.questions); we render the card
     // immediately and fill the answer in whenever it arrives — on the tool_call
@@ -1199,7 +1204,7 @@
 
   // ---------- markdown ----------
 
-  const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, modelPickerLabel, modelDisplayName, nextMicState, trailingSendPhrase, versionedSiblingUrl, buildQuestionAnswers, isFreeTextOptionLabel, isSubagentToolCall, subagentLabel, cleanSubagentOutput, parseSubagentTaskResult, shouldStickToBottom, stickThresholdPx, splitMath, stripUnsupportedTex, toolFailureText, isMediaGenToolCall, mediaGenZeroRetentionHint, TOOL_LABEL_MAX, middleElide, isAdvertisedSkill, getSlashQuery, applySlashPick, filterCommands, appendHighlightedText, commandProgramLabel, commandTextPreview, extractToolResultOutput, commandOutputWasCancelled, commandOutputTruncationNote, computeLineDiff, parseAttachmentContext, parseSelectionBlocks, parseImageTags, isKnownHostMessage, composerHasSendIntent, explicitVisibleChips, normalizeQueuedSends, queuedSendsText, queuedSendsChips, contextOverheadTokens, nextContextBreakdown, contextBreakdownIsCurrent, createPendingOverlay, getMentionQuery, applyMentionPick, orderPermissionOptions, defaultPermissionIndex, shouldFocusPermissionCard, isTypeThroughKey, isInterjectionText, stripInterjectionEnvelope, spokenTextFromMarkdown, isRelaySendRejection, wireFullscreenSafeReclamp, distributeSidePanelWidths, chatZoomFactor, unzoomClientPx, exportSessionMarkdown, exportSessionFilename, isExportableSessionEvent, replayedUserBubbleVerdict, truncateExportEvents, flattenHistoryMessages, splitHistoryWindow, countHistoryReplayCounters, partitionHistoryCards } = globalThis.GrokWebviewHelpers;
+  const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, modelPickerLabel, modelDisplayName, nextMicState, trailingSendPhrase, versionedSiblingUrl, buildQuestionAnswers, isFreeTextOptionLabel, isSubagentToolCall, subagentLabel, cleanSubagentOutput, parseSubagentTaskResult, shouldStickToBottom, stickThresholdPx, splitMath, stripUnsupportedTex, toolFailureText, isMediaGenToolCall, mediaGenZeroRetentionHint, TOOL_LABEL_MAX, middleElide, isAdvertisedSkill, getSlashQuery, applySlashPick, filterCommands, appendHighlightedText, commandProgramLabel, commandTextPreview, extractToolResultOutput, commandOutputWasCancelled, commandOutputTruncationNote, computeLineDiff, aggregateTurnEdits, turnDiffSummaryTitle, parseShellDeletePaths, parseAttachmentContext, parseSelectionBlocks, parseImageTags, isKnownHostMessage, composerHasSendIntent, explicitVisibleChips, normalizeQueuedSends, queuedSendsText, queuedSendsChips, contextOverheadTokens, nextContextBreakdown, contextBreakdownIsCurrent, createPendingOverlay, getMentionQuery, applyMentionPick, orderPermissionOptions, defaultPermissionIndex, shouldFocusPermissionCard, isTypeThroughKey, isInterjectionText, stripInterjectionEnvelope, spokenTextFromMarkdown, isRelaySendRejection, wireFullscreenSafeReclamp, distributeSidePanelWidths, chatZoomFactor, unzoomClientPx, exportSessionMarkdown, exportSessionFilename, isExportableSessionEvent, replayedUserBubbleVerdict, truncateExportEvents, flattenHistoryMessages, splitHistoryWindow, countHistoryReplayCounters, partitionHistoryCards } = globalThis.GrokWebviewHelpers;
 
   function escapeAttr(s) {
     return String(s == null ? "" : s)
@@ -8876,6 +8881,8 @@
     state.pendingCommandDetails = [];
     state.toolExpandOverride = null; // the Expand/Collapse All latch is per-session; a swap/restore starts clean (the replay buffer re-applies it for a warm re-focus)
     state.turnAgentActionsEl = null;
+    state.turnEditsByToolCallId.clear();
+    state.turnDiffSummaryEl = null;
     state.activeAgentEl = null;
     state.activeAgentRaw = "";
     state.activeUserEl = null;
@@ -9876,6 +9883,10 @@
     const a = state.turnAgentActionsEl;
     if (!a || !a.hidden) return;
     a.hidden = false;
+    // Same boundary as the copy/timestamp footer: pin the turn's file-change
+    // list under the last content so it reads as the turn's conclusion. Ahead
+    // of the timestamp write, which returns early on a footer without one.
+    pinTurnDiffSummary();
     const ts = a.querySelector(".msg-timestamp");
     if (!ts) return;
     if (!state.replaying) {
@@ -9883,6 +9894,155 @@
     } else if (typeof timestampMs === "number" && Number.isFinite(timestampMs)) {
       ts.textContent = formatTime(timestampMs);
     }
+  }
+
+
+  // ---- Turn-level file change summary ----
+  // Aggregates edit-tool diffs + delete mutations (kind:delete or shell
+  // Remove-Item/rm/del) across every tool group in the open turn into one
+  // "Changed N files" card. Edit data is the same wire diffs the rows already
+  // paint; deletes are inferred from tool kind / command text — no disk re-diff.
+
+  function startTurnDiffTracking() {
+    // Leave any previous turn's card in the transcript; only drop the live
+    // pointer + per-call map so this turn starts empty.
+    state.turnEditsByToolCallId.clear();
+    state.turnDiffSummaryEl = null;
+  }
+
+  function pinTurnDiffSummary() {
+    const el = state.turnDiffSummaryEl;
+    if (el && el.isConnected) messagesEl.appendChild(el);
+  }
+
+  /** Workspace-relative path for the summary list (falls back to the raw path). */
+  function turnEditDisplayPath(p) {
+    if (!p) return "Unknown file";
+    let s = String(p).replace(/\\/g, "/");
+    const cwd = (state.cwd || "").replace(/\\/g, "/").replace(/\/+$/, "");
+    if (cwd) {
+      const sl = s.toLowerCase();
+      const cl = cwd.toLowerCase();
+      if (sl === cl) return s.split("/").pop() || s;
+      if (sl.startsWith(cl + "/")) s = s.slice(cwd.length + 1);
+    }
+    return s || "Unknown file";
+  }
+
+  function recordTurnEdit(toolCallId, path, added, removed, openDiff, oldText, newText) {
+    if (!toolCallId) return;
+    state.turnEditsByToolCallId.set(toolCallId, {
+      kind: "edit",
+      path: path || "",
+      added: typeof added === "number" ? added : 0,
+      removed: typeof removed === "number" ? removed : 0,
+      openDiff: openDiff || null,
+      // Block-level strings for multi-edit chaining (first.old → last.new).
+      oldText: typeof oldText === "string" ? oldText : undefined,
+      newText: typeof newText === "string" ? newText : undefined,
+    });
+    refreshTurnDiffSummaryUi();
+  }
+
+  function recordTurnDelete(toolCallId, path) {
+    if (!toolCallId || !path) return;
+    state.turnEditsByToolCallId.set(toolCallId, {
+      kind: "delete",
+      path,
+      added: 0,
+      removed: 0,
+      openDiff: null,
+    });
+    refreshTurnDiffSummaryUi();
+  }
+
+  // kind:delete tools + shell Remove-Item/rm/del — the only ways grok deletes
+  // files today (there is no dedicated ACP delete in the write path).
+  function maybeRecordTurnDelete(call) {
+    if (!call || !call.toolCallId) return;
+    const kind = toolKind(call);
+    if (kind === "delete" || /^delete\b/i.test(String(call.title || "").trim())) {
+      const p = toolFilePath(call);
+      if (p) recordTurnDelete(call.toolCallId, p);
+      return;
+    }
+    if (kind === "execute" || categorize(call) === "command") {
+      const r = call.rawInput || call.input || {};
+      const cmd = r.command || r.cmd || "";
+      const paths = parseShellDeletePaths(cmd);
+      for (let i = 0; i < paths.length; i++) {
+        // One tool call can name several paths; key each so they don't clobber.
+        recordTurnDelete(call.toolCallId + "::del::" + i, paths[i]);
+      }
+    }
+  }
+
+  function refreshTurnDiffSummaryUi() {
+    const agg = aggregateTurnEdits(state.turnEditsByToolCallId.values());
+    if (!agg.files.length) {
+      if (state.turnDiffSummaryEl) {
+        state.turnDiffSummaryEl.remove();
+        state.turnDiffSummaryEl = null;
+      }
+      return;
+    }
+    let el = state.turnDiffSummaryEl;
+    if (!el || !el.isConnected) {
+      el = document.createElement("div");
+      el.className = "turn-diff-summary";
+      el.setAttribute("role", "region");
+      el.setAttribute("aria-label", "Files changed this turn");
+      state.turnDiffSummaryEl = el;
+    }
+    while (el.firstChild) el.removeChild(el.firstChild);
+
+    const hdr = document.createElement("div");
+    hdr.className = "turn-diff-summary-header";
+    const title = document.createElement("span");
+    title.className = "turn-diff-summary-title";
+    title.textContent = turnDiffSummaryTitle(agg);
+    hdr.appendChild(title);
+    if (agg.totalAdded > 0 || agg.totalRemoved > 0) {
+      hdr.appendChild(document.createTextNode(" · "));
+      hdr.appendChild(makeDiffStat(agg.totalAdded, agg.totalRemoved));
+    }
+    el.appendChild(hdr);
+
+    const list = document.createElement("div");
+    list.className = "turn-diff-summary-list";
+    for (const f of agg.files) {
+      const isDel = f.action === "deleted";
+      const row = document.createElement(f.openDiff && !isDel ? "button" : "div");
+      row.className = "turn-diff-file"
+        + (f.openDiff && !isDel ? " has-diff" : "")
+        + (isDel ? " is-deleted" : "");
+      if (f.openDiff && !isDel) {
+        row.type = "button";
+        row.title = "Open diff";
+        const payload = f.openDiff;
+        row.onclick = (e) => {
+          e.stopPropagation();
+          vscode.postMessage(payload);
+        };
+      }
+      const name = document.createElement("span");
+      name.className = "turn-diff-file-path";
+      name.textContent = turnEditDisplayPath(f.path);
+      if (f.path) name.title = f.path;
+      row.appendChild(name);
+      if (isDel) {
+        const tag = document.createElement("span");
+        tag.className = "turn-diff-file-action deleted";
+        tag.textContent = "Deleted";
+        row.appendChild(tag);
+      } else {
+        row.appendChild(makeDiffStat(f.added, f.removed));
+      }
+      list.appendChild(row);
+    }
+    el.appendChild(list);
+    messagesEl.appendChild(el); // live: always ride at the end of the turn
+    scrollToBottom();
   }
 
   function feedbackOffered() {
@@ -10436,12 +10596,16 @@
       if (!el._userToggled) setGroupExpanded(el, groupShouldExpand(el));
     }
     state.activeToolGroupEl = null;
+    pinTurnDiffSummary();
   }
 
   function addToToolGroup(call) {
     clearWelcome();
     hideGrokking(); // a tool card is the first content of this turn
     hideThinkingIndicator(); // a running tool now conveys the activity
+    // Deletes never carry a type:"diff" block — catch kind:delete + shell
+    // Remove-Item/rm here (and on restore's completed tool_call).
+    maybeRecordTurnDelete(call);
     if (!state.activeToolGroupEl) {
       // Starting a fresh batch of tools after some agent narration: detach the
       // active agent bubble so the NEXT narration opens a new bubble *below* this
@@ -11194,6 +11358,21 @@
       blocks.push({ diff, hunks });
     }
     item._diffStat = { added, removed, path: diffs[0] && diffs[0].path };
+
+    // Turn-level summary: same counts as the row, keyed by toolCallId so an
+    // echo→completed repaint replaces rather than double-counts. Block-level
+    // old/new text enable chained multi-edit net recompute (first→last).
+    // openDiff uses the first block (matches the row's "open diff →").
+    const d0 = diffs[0];
+    recordTurnEdit(
+      toolCallId,
+      d0 && d0.path,
+      added,
+      removed,
+      d0 ? openDiffMessage(d0) : null,
+      d0 ? d0.oldText : undefined,
+      d0 ? d0.newText : undefined,
+    );
     const diffPath = diffs[0] && diffs[0].path;
     if (diffPath && item._call && !toolFilePath(item._call)) {
       item._call.rawInput = { ...(item._call.rawInput || {}), path: diffPath };
@@ -12337,6 +12516,7 @@
     const wrapper = state.activeAgentEl.parentElement;
     if (wrapper) wrapper._copyText = state.activeAgentRaw;
     scrollToBottom();
+    pinTurnDiffSummary(); // narration after tools must not leave the summary mid-turn
   }
 
   function applyChatZoom() {
@@ -12557,6 +12737,7 @@
     state.activeAgentRaw = "";
     state.activeThoughtEl = null;
     state.activeThoughtHdrEl = null;
+    pinTurnDiffSummary();
   }
 
   // Replayed user prompts (session/load) arrive as user_message_chunk updates.
@@ -12610,6 +12791,10 @@
       // Marker + comment: drop the marker, keep the user's words. Live
       // counted this (the comment), so we count it here too.
       text = verdict.text;
+      // Restore has no agentStart between turns — a new user bubble is the
+      // turn boundary. Pin the previous turn's change list before clearing.
+      pinTurnDiffSummary();
+      startTurnDiffTracking();
       state.userMsgCount += 1;
       state.activeUserEl = addMessage("user", "", undefined, { timestampMs });
       state.activeUserRaw = "";
@@ -16561,6 +16746,8 @@
         state.activeThoughtEl = null;
         state.activeToolGroupEl = null;
         state.turnAgentActionsEl = null;
+        state.turnEditsByToolCallId.clear();
+        state.turnDiffSummaryEl = null;
         // The host has just rebuilt the aggregate from the surviving ledger.
         // No completed-turn figure survives a rewind; when the whole transcript
         // is gone, neither does the session aggregate.
@@ -16868,6 +17055,11 @@
           drainPlanHistory(state.userMsgCount);
           drainPermissionHistory(state.userMsgCount);
           state.userMsgCount += 1;
+          // Previous agent turn is over: pin its change list and drop the live
+          // tracker so this user message starts a clean turn boundary. A steer
+          // is the same turn, so it deliberately keeps the running tracker.
+          pinTurnDiffSummary();
+          startTurnDiffTracking();
         }
         addMessage("user", msg.text, msg.chips || [], { steer: msg.steer });
         forceScrollToBottom(); // jump back to the bottom on the user's own send (#16)
@@ -16878,6 +17070,10 @@
         // turn that just finished is rateable.
         retireLiveTurnFeedback(state.turnAgentActionsEl);
         state.turnAgentActionsEl = null; // new turn → previous turn keeps its footer
+        // Fresh tracker for this turn's edits (userMessage already closed the
+        // previous card on a live send; this also covers afterTurn follow-ups
+        // that emit agentStart without a new user bubble).
+        startTurnDiffTracking();
         if (!state.replaying) state.turnRating = 0;
         state.ttsTurnText = "";
         showGrokking();
