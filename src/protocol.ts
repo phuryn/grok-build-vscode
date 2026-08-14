@@ -81,6 +81,8 @@ export type HostMsg =
   | { type: "modelChanged"; modelId: string }
   | { type: "modeChanged"; modeId: string }
   | { type: "openModePopover" }
+  /** Reveal the MCP management page in the Grok side-bar view. */
+  | { type: "openMcpServers" }
   | { type: "voiceState"; status: "listening" | "transcribing" | "idle" }
   | { type: "voiceConfigured"; value: boolean; sendPhrase?: string }
   | { type: "voicePartial"; text: string }
@@ -264,8 +266,6 @@ export type WebviewMsg =
   | { type: "listMcpServers" }
   // Persist enable/disable via `grok mcp enable|disable` (global user config).
   | { type: "setMcpServerEnabled"; name: string; enabled: boolean }
-  /** @deprecated Prefer `listMcpServers`. Kept so older webviews still open the panel. */
-  | { type: "runMcpList" }
   | { type: "showLogs" }
   | { type: "moveView"; location: "panel" | "sidebar" | "auxiliarybar" }
   | { type: "setShowThinking"; value: boolean }
@@ -373,7 +373,7 @@ export type WebviewMsg =
 const HOST_MESSAGE_TYPE_MAP: Record<HostMsg["type"], true> = {
   initialState: true, planModeAvailability: true, showThinking: true, fontScale: true, grokUpdateStatus: true,
   initialized: true, cliUpdating: true, session: true, modelChanged: true,
-  modeChanged: true, openModePopover: true, voiceState: true, voiceConfigured: true,
+  modeChanged: true, openModePopover: true, openMcpServers: true, voiceState: true, voiceConfigured: true,
   voicePartial: true, voiceSubmit: true, voiceTranscript: true, voiceError: true,
   chips: true, commandsUpdate: true, mentionResults: true, userMessage: true, agentStart: true,
   thoughtChunk: true, messageChunk: true, media: true, userMessageChunk: true,
@@ -394,7 +394,7 @@ const WEBVIEW_MESSAGE_TYPE_MAP: Record<WebviewMsg["type"], true> = {
   ready: true, remotePreferences: true, send: true, newSession: true, cancel: true, pickModel: true,
   setMode: true, removeChip: true, toggleChip: true, openFile: true, openUrl: true,
   openText: true, openDiff: true, exportExpr: true, setEffort: true, openGlobalConfig: true,
-  openProjectConfig: true, listMcpServers: true, setMcpServerEnabled: true, runMcpList: true, showLogs: true, moveView: true,
+  openProjectConfig: true, listMcpServers: true, setMcpServerEnabled: true, showLogs: true, moveView: true,
   setShowThinking: true, setExpandCommandOutputs: true, setSteerByDefault: true,
   setSoundNotifications: true, setProcessingSound: true, setReadRepliesAloud: true, setSummarizeRepliesAloud: true, summarizeSpeech: true, requestImageFull: true, composerFocus: true,
   dropFile: true, permissionAnswer: true, exitPlanAnswer: true, questionAnswer: true,

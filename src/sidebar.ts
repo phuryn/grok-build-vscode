@@ -296,6 +296,9 @@ function guessMediaMime(p: string): string {
 export class GrokSidebar implements vscode.WebviewViewProvider {
   public static readonly viewId = "grok.chat";
   private view?: vscode.WebviewView;
+  /** A command may arrive before the webview posts `ready`; retain only its intent. */
+  private mcpPanelOpenRequested = false;
+  private webviewReady = false;
   /** The session currently shown in the chat — one member of {@link pool}. */
   private focused = this.newLocalSession();
   /**
@@ -449,6 +452,7 @@ export class GrokSidebar implements vscode.WebviewViewProvider {
 
   resolveWebviewView(view: vscode.WebviewView): void {
     this.view = view;
+    this.webviewReady = false;
     view.webview.options = {
       enableScripts: true,
       localResourceRoots: [
@@ -673,6 +677,13 @@ export class GrokSidebar implements vscode.WebviewViewProvider {
 
   openModePopover(): void {
     this.post({ type: "openModePopover" });
+  }
+
+  /** Focus the Grok view and reveal MCP management inside that side bar. */
+  async openMcpServers(): Promise<void> {
+    this.mcpPanelOpenRequested = true;
+    await vscode.commands.executeCommand("workbench.view.extension.grokSidebar");
+    this.postMcpPanelWhenReady();
   }
 
   /**
@@ -2441,7 +2452,7 @@ See design doc for the full state machine diagram.`;
     await this.disposePool();
     this.focused = this.newLocalSession();
     // shellPath/shellArgs, not sendText — a quoted path typed into PowerShell
-    // is a parser error (see runMcpList).
+    // is a parser error.
     vscode.window.createTerminal({ name: "Grok Logout", shellPath: cliPath, shellArgs: ["logout"] });
     this.post({ type: "clearMessages" });
     this.post({ type: "onboarding", state: "auth-required" });
@@ -3617,6 +3628,8 @@ See design doc for the full state machine diagram.`;
       case "ready":
         this.postInitialState();
         this.postRepoCatalog();
+        this.webviewReady = true;
+        this.postMcpPanelWhenReady();
         break;
       case "remotePreferences":
         if (origin === "remote" && clientId) {
@@ -4020,10 +4033,8 @@ See design doc for the full state machine diagram.`;
         await vscode.commands.executeCommand("vscode.open", vscode.Uri.file(projCfg));
         break;
       }
-      case "listMcpServers":
-      case "runMcpList": {
+      case "listMcpServers": {
         // Gear → MCP servers: in-panel list with enable/disable (CLI 0.2.113+).
-        // Older webviews still post runMcpList — same path.
         await this.refreshMcpServers(session);
         break;
       }
@@ -4111,7 +4122,7 @@ See design doc for the full state machine diagram.`;
           break;
         }
         // shellPath/shellArgs, not sendText — a quoted path typed into
-        // PowerShell is a parser error (see runMcpList).
+        // PowerShell is a parser error.
         const term = vscode.window.createTerminal({ name: "Grok Login", shellPath: cliPath, shellArgs: ["login"] });
         term.show();
         break;
@@ -6737,6 +6748,13 @@ See design doc for the full state machine diagram.`;
     } else {
       this.sendRemoteSession(this.focused, message);
     }
+  }
+
+  /** Deliver a command-palette MCP request only after this webview can receive it. */
+  private postMcpPanelWhenReady(): void {
+    if (!this.mcpPanelOpenRequested || !this.webviewReady) return;
+    this.mcpPanelOpenRequested = false;
+    this.post({ type: "openMcpServers" });
   }
 
   /** Post to the VS Code webview only. */

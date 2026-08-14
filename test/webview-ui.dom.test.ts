@@ -1332,6 +1332,21 @@ describe("gear menu — Other group + About / Config & debug sub-views", () => {
       p.type === "setMcpServerEnabled" && p.name === "chrome-devtools" && p.enabled === false,
     )).toBe(true);
   });
+
+  it("opens MCP management directly in the sidebar and keeps refresh plus both config scopes available", () => {
+    const h = boot();
+    dispatch(h.window, { type: "openMcpServers" });
+
+    expect(gear(h.doc).hidden).toBe(false);
+    expect(types(h.posted)).toContain("listMcpServers");
+    const labels = items(h.doc).map((el) => el.textContent || "");
+    expect(labels).toContain("Refresh servers↻");
+    expect(labels.some((label) => label.includes("Open project MCP config"))).toBe(true);
+    expect(labels.some((label) => label.includes("Open global MCP config"))).toBe(true);
+
+    click(h.window, itemByText(h.doc, "Open project MCP config"));
+    expect(types(h.posted)).toContain("openProjectConfig");
+  });
 });
 
 describe("Auto accept mode label (#25 rename)", () => {

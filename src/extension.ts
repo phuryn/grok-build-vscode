@@ -34,6 +34,7 @@ export function activate(context: vscode.ExtensionContext): GrokExtensionApi {
     }),
     vscode.commands.registerCommand("grok.pickModel", () => sidebar.pickModel()),
     vscode.commands.registerCommand("grok.toggleMode", () => sidebar.openModePopover()),
+    vscode.commands.registerCommand("grok.mcpServers", () => sidebar.openMcpServers()),
     vscode.commands.registerCommand("grok.sendSelection", () =>
       sidebar.insertActiveMention({ selection: true }),
     ),

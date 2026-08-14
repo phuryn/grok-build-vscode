@@ -2317,13 +2317,22 @@
     gearPopover.innerHTML = "";
     addGearItem('<span class="popover-back">← Config &amp; debug</span>', renderConfigDebugPanel);
     if (requestRefresh) {
-      state.mcpServers = state.mcpServers || { servers: [], loading: true };
+      state.mcpServers = { ...(state.mcpServers || { servers: [] }), loading: true };
       vscode.postMessage({ type: "listMcpServers" });
     }
     const catalog = state.mcpServers;
     const warning = (catalog && catalog.warning) ||
       "Enable/disable is global — it updates your user Grok config and applies to every session on this machine.";
     addGearInfo(`<span class="popover-mcp-warning" title="${escapeHtml(warning)}">${escapeHtml(warning)}</span>`);
+    addGearItem('<span>Refresh servers</span><span aria-hidden="true">↻</span>', () => renderMcpPanel(true));
+    addGearItem('<span>Open project MCP config</span><span class="popover-external">↗</span>', () => {
+      vscode.postMessage({ type: "openProjectConfig" });
+      closePopovers();
+    });
+    addGearItem('<span>Open global MCP config</span><span class="popover-external">↗</span>', () => {
+      vscode.postMessage({ type: "openGlobalConfig" });
+      closePopovers();
+    });
     addGearSep();
 
     if (!catalog || catalog.loading) {
@@ -2332,23 +2341,11 @@
     }
     if (catalog.unsupported) {
       addGearInfo('<span>MCP list unavailable on this CLI</span><span class="popover-ver">Update Grok</span>');
-      addGearItem("<span>Open global config</span>", () => {
-        vscode.postMessage({ type: "openGlobalConfig" });
-        closePopovers();
-      });
       return;
     }
     const servers = Array.isArray(catalog.servers) ? catalog.servers : [];
     if (servers.length === 0) {
       addGearInfo("<span>No MCP servers configured</span>");
-      addGearItem("<span>Open project config</span>", () => {
-        vscode.postMessage({ type: "openProjectConfig" });
-        closePopovers();
-      });
-      addGearItem("<span>Open global config</span>", () => {
-        vscode.postMessage({ type: "openGlobalConfig" });
-        closePopovers();
-      });
       return;
     }
     for (const server of servers) {
@@ -7849,6 +7846,11 @@
         break;
       case "openModePopover":
         openModePopover();
+        break;
+      case "openMcpServers":
+        closePopovers();
+        gearPopover.hidden = false;
+        renderMcpPanel(true);
         break;
       case "voiceState":
         // Host confirms a transition (e.g. recording actually started). Only

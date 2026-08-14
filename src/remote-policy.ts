@@ -268,7 +268,6 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
   // MCP enable/disable writes the desk's user config — never a remote concern.
   listMcpServers: "host-local",
   setMcpServerEnabled: "host-local",
-  runMcpList: "host-local",
   showLogs: "host-local",
   moveView: "host-local",
   dropFile: "host-local",
@@ -412,6 +411,9 @@ export const OUTBOUND_DISPOSITION: Record<HostMsg["type"], OutboundDisposition> 
   modeChanged: "mirror",
   planModeAvailability: "mirror",
   openModePopover: "mirror",
+  // The MCP manager opens desktop configuration files and is intentionally
+  // unavailable in browser clients.
+  openMcpServers: "host-local",
   chips: "mirror",
   commandsUpdate: "mirror",
   mentionResults: "mirror",

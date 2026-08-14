@@ -15,7 +15,7 @@
   // directions (and that chat.js actually handles every host type).
   const HOST_MESSAGE_TYPES = [
     "initialState", "planModeAvailability", "showThinking", "fontScale", "grokUpdateStatus", "initialized",
-    "cliUpdating", "session", "modelChanged", "modeChanged", "openModePopover",
+    "cliUpdating", "session", "modelChanged", "modeChanged", "openModePopover", "openMcpServers",
     "voiceState", "voiceConfigured", "voicePartial", "voiceSubmit", "voiceTranscript",
     "voiceError", "chips", "commandsUpdate", "mentionResults", "userMessage", "agentStart", "thoughtChunk",
     "messageChunk", "media", "userMessageChunk", "historyReplay", "historyBatch", "permissionHistoryQueue",
@@ -29,7 +29,7 @@
   const WEBVIEW_MESSAGE_TYPES = [
     "ready", "remotePreferences", "send", "newSession", "cancel", "pickModel", "setMode", "removeChip",
     "toggleChip", "openFile", "openUrl", "openText", "openDiff", "exportExpr", "setEffort",
-    "openGlobalConfig", "openProjectConfig", "listMcpServers", "setMcpServerEnabled", "runMcpList", "showLogs", "moveView",
+    "openGlobalConfig", "openProjectConfig", "listMcpServers", "setMcpServerEnabled", "showLogs", "moveView",
     "setShowThinking", "setExpandCommandOutputs",
     "dropFile", "permissionAnswer", "exitPlanAnswer", "questionAnswer", "questionCancel",
     "setModel", "runInstallCmd", "runGrokLogin", "logout", "checkGrokUpdate", "updateGrok",

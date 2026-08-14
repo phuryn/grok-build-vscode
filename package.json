@@ -112,6 +112,10 @@
         "title": "Grok: Toggle Plan / Agent Mode"
       },
       {
+        "command": "grok.mcpServers",
+        "title": "Grok: MCP Servers"
+      },
+      {
         "command": "grok.sendSelection",
         "title": "Add Selection to Grok"
       },

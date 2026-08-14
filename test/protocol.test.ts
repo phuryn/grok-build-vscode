@@ -57,6 +57,14 @@ describe("host <-> webview message contract (src/protocol.ts is the source of tr
     });
   });
 
+  it("contributes an MCP command that opens the side-bar manager, not a terminal command", () => {
+    expect(packageJson.contributes.commands).toContainEqual({
+      command: "grok.mcpServers",
+      title: "Grok: MCP Servers",
+    });
+    expect(chatSrc).not.toContain("runMcpList");
+  });
+
   it("the webview's host-message list matches the TS union exactly", () => {
     // Guards the "post one shape, handle another" class: if the two copies drift,
     // the host could post a type the webview silently drops (or vice versa).
