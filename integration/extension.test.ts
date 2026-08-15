@@ -872,6 +872,13 @@ suite("repo selection: isolated per remote tab, workspace-local in VS Code", () 
   });
 
   test("a remote resume waits for the first catalog build before refusing a still-warming session", async () => {
+    // CI-DEBUG (branch-only): surface swallowed rejections and the FULL post
+    // stream — the Linux runner fails this with zero errors posted, which
+    // reads as a silently-dead resume task.
+    process.on("unhandledRejection", (reason) => {
+      // eslint-disable-next-line no-console
+      console.error("[ci-debug] unhandledRejection:", (reason as any)?.stack || reason);
+    });
     // RED without the warmup retry: findSessionCatalogCwd misses, the host
     // immediately sends the permanent-sounding "may have been deleted" error,
     // and writing the session afterward cannot restore it.
@@ -894,6 +901,8 @@ suite("repo selection: isolated per remote tab, workspace-local in VS Code", () 
       while (Date.now() < deadline && hooks.activeRemoteSessionId(clientId) !== id) {
         await new Promise((r) => setTimeout(r, 50));
       }
+      // eslint-disable-next-line no-console
+      console.error("[ci-debug] warmup posts (all types):", JSON.stringify(posts.map((p) => ({ t: p.msg?.type, ids: p.clientIds, err: p.msg?.type === "error" ? p.msg.text : undefined })).slice(0, 60)));
       assert.strictEqual(
         hooks.activeRemoteSessionId(clientId),
         id,
