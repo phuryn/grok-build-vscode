@@ -304,6 +304,7 @@ import {
   parseAppPurpose,
   type AppPurpose,
 } from "./app-purpose";
+import { MCP_GLOBAL_SCOPE_WARNING, parseMcpCliList, type McpServerView } from "./mcp";
 
 // HostMsg (host -> webview) and WebviewMsg (webview -> host) both live in
 // src/protocol.ts now — the single source of truth for the message contract,
@@ -733,7 +734,8 @@ export class GrokSidebar {
     "setTelemetryEnabled",
     "openGlobalConfig",
     "openProjectConfig",
-    "runMcpList",
+    "listMcpServers",
+    "setMcpServerEnabled",
     "showLogs",
     "toggleDevTools",
     "openSettings",
@@ -5768,7 +5770,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     );
     if (choice !== "Sign Out") return;
     // shellPath/shellArgs, not sendText — a quoted path typed into PowerShell
-    // is a parser error (see runMcpList).
+    // is parsed as a string literal rather than an invocation.
     this.host.createTerminal({ name: "Grok Logout", shellPath: cliPath, shellArgs: ["logout"] });
     await this.finishProviderLogout("grok");
   }
@@ -8153,20 +8155,12 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         await this.host.openProjectConfig(this.sessionCwd(session));
         break;
       }
-      case "runMcpList": {
-        // Run grok as the terminal's own process (shellPath/shellArgs) rather than
-        // typing a quoted path into the user's shell. On Windows the default
-        // terminal is PowerShell, which parses `"C:\…\grok.exe" mcp list` as a
-        // string literal and errors "Unexpected token". Launching the binary
-        // directly sidesteps shell quoting entirely and behaves the same on
-        // PowerShell, cmd, and POSIX shells.
-        const mcpCli = this.locateProvider("grok");
-        const mcpCwd = this.sessionCwd(session);
-        const term = mcpCli
-          ? this.host.createTerminal({ name: "Grok MCP", shellPath: mcpCli, shellArgs: ["mcp", "list"], cwd: mcpCwd })
-          : this.host.createTerminal("Grok MCP");
-        term.show();
-        if (!mcpCli) term.sendText("grok mcp list");
+      case "listMcpServers": {
+        await this.refreshMcpServers(session);
+        break;
+      }
+      case "setMcpServerEnabled": {
+        await this.setMcpServerEnabled(session, msg.name, msg.enabled === true);
         break;
       }
       case "showLogs":
@@ -11852,6 +11846,86 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     }
   }
 
+  private postMcpServers(message: Extract<HostMsg, { type: "mcpServers" }>): void {
+    this.postLocal(message);
+    void this.settingsEditor?.webview.postMessage(message);
+  }
+
+  /** Read the MCP catalog without opening a terminal. */
+  private async refreshMcpServers(session: Session): Promise<void> {
+    this.postMcpServers({
+      type: "mcpServers",
+      servers: [],
+      loading: true,
+      warning: MCP_GLOBAL_SCOPE_WARNING,
+    });
+    const cliPath = this.locateProvider("grok");
+    if (!cliPath) {
+      this.postMcpServers({
+        type: "mcpServers",
+        servers: [],
+        error: "Grok CLI was not found on this machine.",
+        warning: MCP_GLOBAL_SCOPE_WARNING,
+      });
+      return;
+    }
+    try {
+      const { stdout } = await execGrokCli(cliPath, ["mcp", "list", "--json"], {
+        cwd: this.sessionCwd(session),
+        timeout: 15_000,
+        windowsHide: true,
+      });
+      this.postMcpServers({
+        type: "mcpServers",
+        servers: parseMcpCliList(stdout),
+        warning: MCP_GLOBAL_SCOPE_WARNING,
+      });
+    } catch (error: any) {
+      const detail = String(error?.stderr || error?.stdout || error?.message || error).trim();
+      this.host.appendLine(`[mcp] list failed: ${detail}`);
+      this.postMcpServers({
+        type: "mcpServers",
+        servers: [],
+        error: detail || "Could not load MCP servers.",
+        warning: MCP_GLOBAL_SCOPE_WARNING,
+      });
+    }
+  }
+
+  /** Persist one global MCP toggle, then replace the optimistic page with truth. */
+  private async setMcpServerEnabled(
+    session: Session,
+    rawName: string,
+    enabled: boolean,
+  ): Promise<void> {
+    const name = typeof rawName === "string" ? rawName.trim() : "";
+    if (!name || name.length > 200 || /[\r\n\0]/.test(name)) return;
+    const cliPath = this.locateProvider("grok");
+    if (!cliPath) {
+      await this.refreshMcpServers(session);
+      return;
+    }
+    const action = enabled ? "enable" : "disable";
+    try {
+      await execGrokCli(cliPath, ["mcp", action, name], {
+        cwd: this.sessionCwd(session),
+        timeout: 20_000,
+        windowsHide: true,
+      });
+    } catch (error: any) {
+      const detail = String(error?.stderr || error?.stdout || error?.message || error).trim();
+      this.host.appendLine(`[mcp] ${action} ${name} failed: ${detail}`);
+      this.postMcpServers({
+        type: "mcpServers",
+        servers: [],
+        error: detail || `Could not ${action} MCP server “${name}”.`,
+        warning: MCP_GLOBAL_SCOPE_WARNING,
+      });
+      return;
+    }
+    await this.refreshMcpServers(session);
+  }
+
   /**
    * Recover from an expired-token turn failure without a manual sign-out. A
    * pooled `grok agent stdio` process can wedge on an expired OAuth token when
@@ -15260,6 +15334,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         hostKind: "extension" as const,
         hostName: deviceDisplayName(os.hostname(), process.platform, os.release()),
         grokUpdate: null,
+        mcpServers: [],
+        mcpLoading: false,
+        mcpError: "",
+        mcpWarning: MCP_GLOBAL_SCOPE_WARNING,
       },
       category: opts.category || "general",
       env: {
@@ -15319,6 +15397,14 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         }
         if (msg.type === "providerState" && Array.isArray(msg.providers)) {
           surface.update({ providers: msg.providers, providersChecking: msg.checking === true });
+        }
+        if (msg.type === "mcpServers") {
+          surface.update({
+            mcpServers: Array.isArray(msg.servers) ? msg.servers : [],
+            mcpLoading: msg.loading === true,
+            mcpError: msg.error || "",
+            mcpWarning: msg.warning || "",
+          });
         }
         if (msg.type === "settingsCategory" && msg.category) surface.setCategory(msg.category);
       });

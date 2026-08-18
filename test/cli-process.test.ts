@@ -13,7 +13,9 @@ describe("grok CLI process invocation", () => {
   it("keeps every one-shot sidebar invocation on the shared wrapper", () => {
     const sidebar = readFileSync(new URL("../src/sidebar.ts", import.meta.url), "utf8");
     expect(sidebar).not.toMatch(/\bexecFile(?:Async)?\s*\(/);
-    expect(sidebar.match(/execGrokCli\s*\(/g)).toHaveLength(8);
+    expect(sidebar.match(/execGrokCli\s*\(/g)).toHaveLength(10);
+    expect(sidebar).toMatch(/execGrokCli\(cliPath, \["mcp", "list", "--json"\]/);
+    expect(sidebar).toMatch(/execGrokCli\(cliPath, \["mcp", action, name\]/);
     expect(sidebar).toMatch(/execGrokCli\(cliPath, \["--version"\],[\s\S]*parseCodexVersionOutput/);
     expect(sidebar).toMatch(/execGrokCli\(cliPath, \["--version"\],[\s\S]*parseClaudeVersionOutput/);
   });

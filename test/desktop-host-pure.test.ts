@@ -4666,7 +4666,7 @@ describe("typed config open intents (host-resolved paths)", () => {
     );
     const projectCase = sidebar.slice(
       sidebar.indexOf('case "openProjectConfig"'),
-      sidebar.indexOf('case "runMcpList"'),
+      sidebar.indexOf('case "listMcpServers"'),
     );
     expect(globalCase).toMatch(/openGlobalConfig\s*\(/);
     expect(globalCase).not.toMatch(/openResource\s*\(/);

@@ -80,12 +80,15 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
     case "removeProjectFolder":
     case "openGlobalConfig":
     case "openProjectConfig":
-    case "runMcpList":
+    case "listMcpServers":
     case "showLogs":
     case "toggleDevTools":
     case "restartToUpdate":
     case "openSettings":
       if (type === "openSettings" && raw.section !== undefined && !isString(raw.section)) return null;
+      break;
+    case "setMcpServerEnabled":
+      if (!isString(raw.name) || !isBoolean(raw.enabled)) return null;
       break;
     case "openSettingsSurface":
       if (raw.category !== undefined && !isString(raw.category)) return null;

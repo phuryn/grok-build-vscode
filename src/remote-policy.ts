@@ -322,7 +322,8 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
   removeProjectFolder: "host-local",
   openGlobalConfig: "host-local",
   openProjectConfig: "host-local",
-  runMcpList: "host-local",
+  listMcpServers: "host-local",
+  setMcpServerEnabled: "host-local",
   showLogs: "host-local",
   toggleDevTools: "host-local",
   openSettings: "host-local",
@@ -531,6 +532,7 @@ export const OUTBOUND_DISPOSITION: Record<HostMsg["type"], OutboundDisposition> 
   voiceError: "mirror",
   initialState: "mirror",
   providerState: "mirror",
+  mcpServers: "host-local",
   codexInstallProgress: "host-local",
   // Placement is a property of the machine running the extension, and `moveView`
   // is host-local anyway — a remote could neither act on the hint nor need it.
@@ -666,6 +668,7 @@ export const OUTBOUND_PROJECT_AUTH: Record<HostMsg["type"], OutboundProjectAuth>
   cliUpdating: "none",
   onboarding: "none",
   providerState: "none",
+  mcpServers: "none",
   codexInstallProgress: "none",
   expandCommandOutputs: "none",
   steerByDefault: "none",

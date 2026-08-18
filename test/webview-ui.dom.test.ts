@@ -2241,11 +2241,19 @@ describe("gear menu — Other group + About / Settings", () => {
     const overlay = h.doc.getElementById("settings-overlay")!;
     expect(overlay.querySelector('[data-id="openGlobalConfig"]')).toBeTruthy();
     expect(overlay.querySelector('[data-id="openProjectConfig"]')).toBeTruthy();
-    expect(overlay.querySelector('[data-id="runMcpList"]')).toBeTruthy();
     expect(overlay.querySelector('[data-id="showLogs"]')).toBeTruthy();
 
     click(h.window, overlay.querySelector('[data-id="showLogs"] .settings-action')!);
     expect(types(h.posted)).toContain("showLogs");
+  });
+
+  it("Settings → MCP servers stays in the GUI", () => {
+    const h = boot();
+    openSettingsOverlay(h.window, h.doc);
+    clickSettingsNav(h.window, h.doc, "MCP servers");
+    expect(types(h.posted)).toContain("listMcpServers");
+    expect(types(h.posted)).not.toContain("runMcpList");
+    expect(h.doc.querySelector("#settings-overlay .settings-mcp-state")?.textContent).toContain("Loading");
   });
 });
 

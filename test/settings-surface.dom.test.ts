@@ -112,7 +112,7 @@ describe("settings catalog", () => {
     });
     const local = api.visibleCategories(snapshot, api.defaultEnv(fullEnv()));
     expect(local.map((c) => c.id)).toEqual([
-      "general", "voice", "notifications", "providers", "account", "advanced", "about",
+      "general", "voice", "notifications", "providers", "mcp", "account", "advanced", "about",
     ]);
     const remoteRows = api.visibleRows(snapshot, api.defaultEnv(fullEnv({ isRemote: true })));
     expect(remoteRows.some((row) => row.hostLocal)).toBe(false);
@@ -162,7 +162,7 @@ describe("settings overlay (chat.js)", () => {
     expect(overlay).toBeTruthy();
     const nav = settingsNav(h).map((el) => (el.textContent || "").trim());
     expect(nav).toEqual([
-      "General", "Voice", "Notifications", "Providers", "Account", "Advanced", "About",
+      "General", "Voice", "Notifications", "Providers", "MCP servers", "Account", "Advanced", "About",
     ]);
     expect(overlay!.querySelector(".settings-nav-icon svg")).toBeTruthy();
     expect(overlay!.querySelector(".settings-close")).toBeNull();
@@ -208,12 +208,13 @@ describe("settings overlay (chat.js)", () => {
     openSettings(h);
     const overlay = h.doc.getElementById("settings-overlay")!;
     const ids = [...overlay.querySelectorAll(".settings-row")].map((el) => (el as HTMLElement).dataset.id);
+    const nav = settingsNav(h).map((el) => (el.textContent || "").trim());
     expect(ids).not.toContain("openGlobalConfig");
-    expect(ids).not.toContain("runMcpList");
+    expect(ids).not.toContain("mcpCatalog");
+    expect(nav).not.toContain("MCP servers");
     expect(ids).not.toContain("showLogs");
     expect(ids).not.toContain("providerGrok");
     expect(ids).not.toContain("continueRemotely");
-    const nav = settingsNav(h).map((el) => (el.textContent || "").trim());
     expect(nav).toContain("Providers");
     expect(nav).toContain("Account");
     clickSettingsNav(h, "Providers");
@@ -265,9 +266,30 @@ describe("settings overlay (chat.js)", () => {
       "showThinking", "expandCommandOutputs", "steerByDefault",
       "soundNotifications", "processingSound",
       "readRepliesAloud", "summarizeRepliesAloud",
-      "openGlobalConfig", "openProjectConfig", "runMcpList", "showLogs",
+      "openGlobalConfig", "openProjectConfig", "mcpCatalog", "showLogs",
       "openVsCodeSettings", "moveView",
     ]));
+  });
+
+  it("loads and toggles MCP servers inside the settings surface", () => {
+    const h = bootWebview();
+    seedChat(h);
+    openSettings(h);
+    clickSettingsNav(h, "MCP servers");
+    expect(h.posted).toContainEqual({ type: "listMcpServers" });
+
+    dispatch(h.window, {
+      type: "mcpServers",
+      servers: [{ name: "docs", enabled: true, scope: "user", command: "npx", args: ["docs-mcp"] }],
+      warning: "Global setting.",
+    });
+    const overlay = h.doc.getElementById("settings-overlay")!;
+    expect(overlay.textContent).toContain("docs");
+    expect(overlay.textContent).toContain("npx docs-mcp");
+    const toggle = overlay.querySelector('[aria-label="Disable docs"]');
+    expect(toggle).toBeTruthy();
+    click(h.window, toggle!);
+    expect(h.posted).toContainEqual({ type: "setMcpServerEnabled", name: "docs", enabled: false });
   });
 
   it("hides healthy provider rows in the gear and shows them when attention is needed", () => {

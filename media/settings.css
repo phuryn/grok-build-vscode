@@ -395,6 +395,61 @@ body.settings-page .settings-surface {
   transition: transform 120ms ease;
 }
 
+.settings-mcp {
+  display: grid;
+  gap: 12px;
+}
+
+.settings-mcp-warning {
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--vscode-focusBorder, #007fd4) 35%, transparent);
+  border-radius: 8px;
+  color: var(--vscode-descriptionForeground, #969696);
+  background: color-mix(in srgb, var(--vscode-focusBorder, #007fd4) 7%, transparent);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.settings-mcp-list {
+  overflow: hidden;
+  border: 1px solid var(--vscode-widget-border, rgba(127, 127, 127, .25));
+  border-radius: 8px;
+}
+
+.settings-mcp-server {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 18px;
+  align-items: center;
+  min-height: 46px;
+  padding: 12px 14px;
+}
+
+.settings-mcp-server + .settings-mcp-server {
+  border-top: 1px solid var(--vscode-widget-border, rgba(127, 127, 127, .2));
+}
+
+.settings-mcp-copy {
+  min-width: 0;
+}
+
+.settings-mcp-copy .settings-row-desc {
+  overflow-wrap: anywhere;
+}
+
+.settings-mcp-state {
+  padding: 28px 16px;
+  border: 1px dashed var(--vscode-widget-border, rgba(127, 127, 127, .3));
+  border-radius: 8px;
+  color: var(--vscode-descriptionForeground, #969696);
+  text-align: center;
+}
+
+.settings-mcp-state.is-error {
+  color: var(--vscode-errorForeground, #f48771);
+  border-color: color-mix(in srgb, var(--vscode-errorForeground, #f48771) 45%, transparent);
+}
+
 .settings-switch.on .settings-switch-knob {
   transform: translateX(16px);
 }
