@@ -14,6 +14,7 @@ repository; start with its
 - [Slash commands](SLASH-COMMANDS.md) — what the running CLI exposes and how commands dispatch.
 - [Voice setup](voice-setup.md) — dictation, transcription and the hands-free send phrase.
 - [Privacy](privacy.md) — what leaves your machine, and what never does.
+- [Build Remote Agent](gbr.md) — spectator phone for the desktop Grok Build / VS Code session (`gbr/1`). Companion, not AFK Pilot.
 - [Attribution](attribution.md) — licence and third-party notices.
 - [Changelog archive](CHANGELOG-ARCHIVE.md) — releases before 2.0.0.
 
