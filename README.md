@@ -106,6 +106,13 @@ The green/red dot is an **unread badge** — it survives a VS Code restart and c
 </details>
 
 <details>
+<summary><strong>Turn rail (Desktop)</strong> — jump a long chat from the left gutter</summary>
+
+On Grok Build Desktop, a pinned column of bars sits on the left edge of the conversation — one bar per question and answer. Click to jump there. Hover to preview a truncated question and answer. The gutter stays on screen while the transcript scrolls; VS Code's sidebar does not show it.
+
+</details>
+
+<details>
 <summary><strong>Queue or steer</strong> — type while Grok works, without ever interrupting it</summary>
 
 A message you send mid-turn **never cancels** anything. By default it **queues** — a pending block at the end of the chat (Edit / Remove), sent the moment the turn ends; type more and it merges into the same message. Hit **Steer** on it to redirect Grok *now* instead: the text goes straight into the running turn without losing the tool work in flight. Prefer that always? Turn on **Steer by default** (gear → *Config & debug*).

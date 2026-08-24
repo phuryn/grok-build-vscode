@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Desktop: jump a long conversation from the left gutter.** Each question/answer pair gets a bar on the left edge of the chat. Click jumps to that turn; hover previews a truncated question and answer. VS Code is unchanged.
+
 ## 3.15.0 — 2026-08-23
 
 ### Added
