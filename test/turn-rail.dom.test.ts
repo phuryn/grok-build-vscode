@@ -295,6 +295,54 @@ describe("createTurnRail", () => {
     await new Promise((r) => setTimeout(r, 80));
     expect(doc.querySelector(".turn-rail-popover")).toBeTruthy();
   });
+
+  it("reuses bars when the same userEls stream a longer answer", () => {
+    const { doc } = transcript();
+    const u = userBubble(doc, "q");
+    doc.body.appendChild(u);
+    const live = [{ userEl: u, question: "q", answer: "", pending: true }];
+    const { rail, ctl, clicks } = mountRail(doc, () => live);
+    const bar = rail.querySelector("button.turn-rail-bar")!;
+    dispatchDom(bar, "mouseenter");
+    const pop = doc.querySelector(".turn-rail-popover");
+    expect(pop).toBeTruthy();
+    expect(pop!.querySelector(".turn-rail-a")!.textContent).toBe("Answering…");
+    live[0] = { userEl: u, question: "q", answer: "hello world", pending: true };
+    ctl.refresh();
+    expect(rail.querySelector("button.turn-rail-bar")).toBe(bar);
+    expect(doc.querySelector(".turn-rail-popover")).toBe(pop);
+    expect(pop!.querySelector(".turn-rail-a")!.textContent).toBe("hello world");
+    dispatchClick(doc, bar);
+    expect(clicks[0]).toBe(u);
+  });
+
+  it("rebuilds bars when userEls change even if the count matches", () => {
+    const { doc } = transcript();
+    const a = userBubble(doc, "old");
+    const b = userBubble(doc, "new");
+    let live = [{ userEl: a, question: "old", answer: "1", pending: false }];
+    const { rail, ctl } = mountRail(doc, () => live);
+    const bar = rail.querySelector("button.turn-rail-bar")!;
+    live = [{ userEl: b, question: "new", answer: "2", pending: false }];
+    ctl.refresh();
+    const next = rail.querySelector("button.turn-rail-bar")!;
+    expect(next).not.toBe(bar);
+    expect(next.getAttribute("aria-label")).toBe("new");
+  });
+
+  it("rebuilds when a turn is added", () => {
+    const { doc } = transcript();
+    const u1 = userBubble(doc, "q1");
+    const u2 = userBubble(doc, "q2");
+    let live = [{ userEl: u1, question: "q1", answer: "a", pending: false }];
+    const { rail, ctl } = mountRail(doc, () => live);
+    live = [
+      { userEl: u1, question: "q1", answer: "a", pending: false },
+      { userEl: u2, question: "q2", answer: "", pending: true },
+    ];
+    ctl.refresh();
+    expect(rail.querySelectorAll("button.turn-rail-bar").length).toBe(2);
+  });
 });
 
 describe("turn-rail hover", () => {

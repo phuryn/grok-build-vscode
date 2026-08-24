@@ -148,19 +148,83 @@
       return 0;
     }
 
-    function updateActive() {
-      const turns = (host.listTurns && host.listTurns()) || [];
+    let latestTurns = [];
+    let popoverIndex = -1;
+
+    function sameUserEls(prev, next) {
+      if (!prev || prev.length !== next.length) return false;
+      for (let i = 0; i < next.length; i++) {
+        const a = prev[i] && prev[i].userEl;
+        const b = next[i] && next[i].userEl;
+        if (a !== b) return false;
+      }
+      return true;
+    }
+
+    function paintActive(turns) {
       const current = activeIndex(turns);
       const bars = mount.querySelectorAll("button.turn-rail-bar");
       for (let i = 0; i < bars.length; i++) {
         if (i === current) bars[i].setAttribute("aria-current", "true");
         else bars[i].removeAttribute("aria-current");
       }
+      return bars;
     }
 
-    function refresh() {
-      hidePopover();
+    function paintBarLabels(turns, bars) {
+      for (let i = 0; i < bars.length && i < turns.length; i++) {
+        bars[i].setAttribute("aria-label", displayQuestion(turns[i]));
+      }
+      if (popover && popoverIndex >= 0 && turns[popoverIndex]) {
+        const q = popover.querySelector(".turn-rail-q");
+        const a = popover.querySelector(".turn-rail-a");
+        if (q) q.textContent = displayQuestion(turns[popoverIndex]);
+        if (a) a.textContent = displayAnswer(turns[popoverIndex]);
+      }
+    }
+
+    function updateActive() {
       const turns = (host.listTurns && host.listTurns()) || [];
+      latestTurns = turns;
+      paintActive(turns);
+    }
+
+    function bindBar(bar, index) {
+      bar.addEventListener("click", function () {
+        const turn = latestTurns[index];
+        const el = turn && turn.userEl;
+        if (!el) return;
+        let ok = false;
+        try {
+          ok = host.scrollToTurn(el);
+        } catch (_err) {
+          return;
+        }
+        if (ok && typeof bar.scrollIntoView === "function") {
+          bar.scrollIntoView({ block: "nearest" });
+        }
+      });
+      bar.addEventListener("mouseenter", function () {
+        const turn = latestTurns[index];
+        if (!turn) return;
+        popoverIndex = index;
+        schedulePopover(bar, turn);
+      });
+      bar.addEventListener("mouseleave", function () {
+        if (hoverTimer) { clearTimeout(hoverTimer); hoverTimer = 0; }
+        if (hideTimer) { clearTimeout(hideTimer); hideTimer = 0; }
+        hideTimer = setTimeout(function () {
+          hideTimer = 0;
+          if (!popover) return;
+          const over = popover.matches && popover.matches(":hover");
+          if (!over) hidePopover();
+        }, 50);
+      });
+    }
+
+    function rebuild(turns) {
+      hidePopover();
+      popoverIndex = -1;
       clearChildren(mount);
       if (!turns.length) {
         mount.hidden = true;
@@ -180,34 +244,21 @@
         bar.className = "turn-rail-bar";
         bar.setAttribute("aria-label", displayQuestion(turn));
         if (i === current) bar.setAttribute("aria-current", "true");
-        bar.addEventListener("click", function () {
-          const el = turn.userEl;
-          if (!el) return;
-          let ok = false;
-          try {
-            ok = host.scrollToTurn(el);
-          } catch (_err) {
-            return;
-          }
-          if (ok && typeof bar.scrollIntoView === "function") {
-            bar.scrollIntoView({ block: "nearest" });
-          }
-        });
-        bar.addEventListener("mouseenter", function () {
-          schedulePopover(bar, turn);
-        });
-        bar.addEventListener("mouseleave", function () {
-          if (hoverTimer) { clearTimeout(hoverTimer); hoverTimer = 0; }
-          if (hideTimer) { clearTimeout(hideTimer); hideTimer = 0; }
-          hideTimer = setTimeout(function () {
-            hideTimer = 0;
-            if (!popover) return;
-            const over = popover.matches && popover.matches(":hover");
-            if (!over) hidePopover();
-          }, 50);
-        });
+        bindBar(bar, i);
         mount.appendChild(bar);
       });
+    }
+
+    function refresh() {
+      const turns = (host.listTurns && host.listTurns()) || [];
+      if (sameUserEls(latestTurns, turns) && mount.querySelectorAll("button.turn-rail-bar").length === turns.length) {
+        latestTurns = turns;
+        const bars = paintActive(turns);
+        paintBarLabels(turns, bars);
+        return;
+      }
+      latestTurns = turns;
+      rebuild(turns);
     }
 
     if (typeof host.subscribe === "function") host.subscribe(refresh);
