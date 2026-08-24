@@ -56,7 +56,149 @@
     return parts.join("\n");
   }
 
-  const api = { QUESTION_MAX, ANSWER_MAX, truncatePreview, questionFromUserEl, answerFromUserEl };
+  function displayQuestion(turn) {
+    return truncatePreview(turn && turn.question || "", QUESTION_MAX);
+  }
+
+  function displayAnswer(turn) {
+    const raw = (turn && turn.answer) || "";
+    if (!raw && turn && turn.pending) return "Answering…";
+    return truncatePreview(raw, ANSWER_MAX);
+  }
+
+  function clearChildren(el) {
+    if (typeof el.replaceChildren === "function") {
+      el.replaceChildren();
+      return;
+    }
+    while (el.firstChild) el.removeChild(el.firstChild);
+  }
+
+  function createTurnRail(mount, host) {
+    if (!mount || !host) return { refresh: function () {} };
+    const hoverDelay = host.hoverDelayMs == null ? 150 : host.hoverDelayMs;
+    let hoverTimer = 0;
+    let popover = null;
+
+    function hidePopover() {
+      if (hoverTimer) { clearTimeout(hoverTimer); hoverTimer = 0; }
+      if (popover && popover.parentNode) popover.parentNode.removeChild(popover);
+      popover = null;
+    }
+
+    function showPopover(bar, turn) {
+      hidePopover();
+      const doc = mount.ownerDocument;
+      popover = doc.createElement("div");
+      popover.className = "turn-rail-popover";
+      popover.innerHTML =
+        '<div class="turn-rail-k">Question</div>' +
+        '<div class="turn-rail-q"></div>' +
+        '<div class="turn-rail-k">Answer</div>' +
+        '<div class="turn-rail-a"></div>';
+      popover.querySelector(".turn-rail-q").textContent = displayQuestion(turn);
+      popover.querySelector(".turn-rail-a").textContent = displayAnswer(turn);
+      (mount.parentNode || doc.body).appendChild(popover);
+      const br = bar.getBoundingClientRect();
+      const pr = popover.getBoundingClientRect();
+      const view = doc.defaultView;
+      const viewH = view && view.innerHeight != null ? view.innerHeight : 0;
+      let top = br.top;
+      if (viewH && top + pr.height > viewH - 8) {
+        top = Math.max(8, br.bottom - pr.height);
+      }
+      popover.style.position = "fixed";
+      popover.style.left = Math.round(br.right + 6) + "px";
+      popover.style.top = Math.round(top) + "px";
+      popover.addEventListener("mouseleave", hidePopover);
+    }
+
+    function schedulePopover(bar, turn) {
+      if (hoverTimer) { clearTimeout(hoverTimer); hoverTimer = 0; }
+      if (hoverDelay <= 0) {
+        showPopover(bar, turn);
+        return;
+      }
+      hoverTimer = setTimeout(function () { showPopover(bar, turn); }, hoverDelay);
+    }
+
+    function activeIndex(turns) {
+      if (!turns.length) return -1;
+      if (host.isStickToBottom && host.isStickToBottom()) return turns.length - 1;
+      const box = host.messagesEl && host.messagesEl.getBoundingClientRect
+        ? host.messagesEl.getBoundingClientRect()
+        : null;
+      if (!box) return 0;
+      let best = 0;
+      let bestDist = Infinity;
+      turns.forEach(function (t, i) {
+        if (!t.userEl || !t.userEl.getBoundingClientRect) return;
+        const r = t.userEl.getBoundingClientRect();
+        if (r.bottom < box.top || r.top > box.bottom) return;
+        const dist = Math.abs(r.top - box.top);
+        if (dist < bestDist) { bestDist = dist; best = i; }
+      });
+      return best;
+    }
+
+    function refresh() {
+      hidePopover();
+      const turns = (host.listTurns && host.listTurns()) || [];
+      clearChildren(mount);
+      if (!turns.length) {
+        mount.hidden = true;
+        if (host.messagesEl && host.messagesEl.classList) {
+          host.messagesEl.classList.remove("has-turn-rail");
+        }
+        return;
+      }
+      mount.hidden = false;
+      if (host.messagesEl && host.messagesEl.classList) {
+        host.messagesEl.classList.add("has-turn-rail");
+      }
+      const current = activeIndex(turns);
+      turns.forEach(function (turn, i) {
+        const bar = mount.ownerDocument.createElement("button");
+        bar.type = "button";
+        bar.className = "turn-rail-bar";
+        bar.setAttribute("aria-label", displayQuestion(turn));
+        if (i === current) bar.setAttribute("aria-current", "true");
+        bar.addEventListener("click", function () {
+          const el = turn.userEl;
+          if (!el) return;
+          let ok = false;
+          try {
+            ok = host.scrollToTurn(el);
+          } catch (_err) {
+            return;
+          }
+          if (ok && typeof bar.scrollIntoView === "function") {
+            bar.scrollIntoView({ block: "nearest" });
+          }
+        });
+        bar.addEventListener("mouseenter", function () {
+          schedulePopover(bar, turn);
+        });
+        bar.addEventListener("mouseleave", function () {
+          if (hoverTimer) { clearTimeout(hoverTimer); hoverTimer = 0; }
+          setTimeout(function () {
+            if (!popover) return;
+            const over = popover.matches && popover.matches(":hover");
+            if (!over) hidePopover();
+          }, 50);
+        });
+        mount.appendChild(bar);
+      });
+    }
+
+    if (typeof host.subscribe === "function") host.subscribe(refresh);
+    if (host.messagesEl && host.messagesEl.addEventListener) {
+      host.messagesEl.addEventListener("scroll", refresh, { passive: true });
+    }
+    return { refresh: refresh, hidePopover: hidePopover };
+  }
+
+  const api = { QUESTION_MAX, ANSWER_MAX, truncatePreview, questionFromUserEl, answerFromUserEl, createTurnRail };
 
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.GrokTurnRail = api;

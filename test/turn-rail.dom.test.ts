@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Window } from "happy-dom";
 // @ts-expect-error Plain-JS webview module, no TS build step.
-import { QUESTION_MAX, ANSWER_MAX, truncatePreview, questionFromUserEl, answerFromUserEl } from "../media/turn-rail.js";
+import { QUESTION_MAX, ANSWER_MAX, truncatePreview, questionFromUserEl, answerFromUserEl, createTurnRail } from "../media/turn-rail.js";
 
 type CopyEl = HTMLElement & { _copyText?: string };
 
@@ -165,5 +165,100 @@ describe("questionFromUserEl / answerFromUserEl", () => {
     const next = userBubble(doc, "q2");
     for (const n of [u1, queued, a1, steer, a2, next]) root.appendChild(n);
     expect(answerFromUserEl(u1)).toBe("hello\nworld");
+  });
+});
+
+function mountRail(doc: Document, turns: unknown, opts: { scrollFalse?: boolean; stick?: boolean } = {}) {
+  const messagesEl = doc.createElement("main");
+  messagesEl.id = "messages";
+  messagesEl.className = "messages";
+  const rail = doc.createElement("aside");
+  rail.id = "turn-rail";
+  rail.hidden = true;
+  doc.body.appendChild(messagesEl);
+  doc.body.appendChild(rail);
+  const clicks: unknown[] = [];
+  const host: {
+    messagesEl: HTMLElement;
+    listTurns: () => unknown;
+    scrollToTurn: (userEl: unknown) => boolean;
+    subscribe: (fn: () => void) => () => void;
+    isStickToBottom: () => boolean;
+    hoverDelayMs: number;
+    _notify?: (() => void) | null;
+  } = {
+    messagesEl,
+    listTurns: () => (typeof turns === "function" ? (turns as () => unknown)() : turns),
+    scrollToTurn: (userEl) => {
+      clicks.push(userEl);
+      if (opts.scrollFalse) return false;
+      return !!(userEl && (userEl as Node).isConnected);
+    },
+    subscribe: (fn) => {
+      host._notify = fn;
+      return () => { host._notify = null; };
+    },
+    isStickToBottom: () => !!opts.stick,
+    hoverDelayMs: 0,
+  };
+  const ctl = createTurnRail(rail, host);
+  ctl.refresh();
+  return { rail, messagesEl, host, clicks, ctl };
+}
+
+function dispatchClick(doc: Document, bar: Element) {
+  const MouseEventCtor = doc.defaultView!.MouseEvent;
+  try {
+    bar.dispatchEvent(new MouseEventCtor("click", { bubbles: true }));
+  } catch {
+    const ev = doc.createEvent("Event");
+    ev.initEvent("click", true, true);
+    bar.dispatchEvent(ev);
+  }
+}
+
+describe("createTurnRail", () => {
+  it("hides the rail when there are no turns", () => {
+    const { doc } = transcript();
+    const { rail, messagesEl } = mountRail(doc, []);
+    expect(rail.hidden).toBe(true);
+    expect(messagesEl.classList.contains("has-turn-rail")).toBe(false);
+  });
+
+  it("renders one bar per turn and unhides", () => {
+    const { doc } = transcript();
+    const u = userBubble(doc, "hello world");
+    const { rail, messagesEl } = mountRail(doc, [
+      { userEl: u, question: "hello world", answer: "hi", pending: false },
+    ]);
+    expect(rail.hidden).toBe(false);
+    expect(messagesEl.classList.contains("has-turn-rail")).toBe(true);
+    const bars = rail.querySelectorAll("button.turn-rail-bar");
+    expect(bars.length).toBe(1);
+    expect(bars[0].getAttribute("aria-label")).toBe("hello world");
+  });
+
+  it("click calls scrollToTurn with that userEl", () => {
+    const { doc } = transcript();
+    const u = userBubble(doc, "q");
+    doc.body.appendChild(u);
+    const { rail, clicks } = mountRail(doc, [
+      { userEl: u, question: "q", answer: "a", pending: false },
+    ]);
+    const bar = rail.querySelector("button.turn-rail-bar")!;
+    dispatchClick(doc, bar);
+    expect(clicks[0]).toBe(u);
+  });
+
+  it("a disconnected target does not throw", () => {
+    const { doc } = transcript();
+    const u = userBubble(doc, "q");
+    const { rail } = mountRail(doc, [
+      { userEl: u, question: "q", answer: "a", pending: false },
+    ], { scrollFalse: true });
+    expect(() => {
+      const bar = rail.querySelector("button.turn-rail-bar")!;
+      dispatchClick(doc, bar);
+    }).not.toThrow();
   });
 });
