@@ -16538,6 +16538,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       ? `<div id="desk-ft-shell" class="desk-ft-shell"><div class="desk-ft-chat">`
       : "";
     const fileShellClose = this.host.canSwitchWorkspaceFolder ? `</div></div>` : "";
+    const transcriptOpen = this.host.canSwitchWorkspaceFolder
+      ? `<div class="desk-transcript"><aside id="turn-rail" hidden aria-label="Conversation turns"></aside>`
+      : "";
+    const transcriptClose = this.host.canSwitchWorkspaceFolder ? `</div>` : "";
     const deskLayoutClass = this.host.canSwitchWorkspaceFolder ? " has-rail desk-with-ft" : "";
     const firstFrameLayout = this.host.canSwitchWorkspaceFolder
       ? `
@@ -16545,7 +16549,9 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   body.desk.has-rail #projects-rail { width: var(--rail-width, 260px); flex-shrink: 0; height: 100%; display: flex; flex-direction: column; }
   body.desk.has-rail .app-main { flex: 1; min-width: 0; display: flex; flex-direction: column; height: 100%; overflow: hidden; }
   body.desk.has-rail .desk-ft-shell { display: flex; flex: 1 1 auto; flex-direction: row; min-width: 0; min-height: 0; height: 100%; }
-  body.desk.has-rail .desk-ft-chat { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; min-height: 0; height: 100%; overflow: hidden; }`
+  body.desk.has-rail .desk-ft-chat { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; min-height: 0; height: 100%; overflow: hidden; }
+  body.desk.has-rail .desk-transcript { position: relative; flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; height: 100%; }
+  body.desk.has-rail .desk-transcript > .messages { flex: 1 1 auto; min-height: 0; }`
       : "";
     // The shared file-panel asset is desktop-only in this generated document.
     // Remote browsers load it from the relay's own web/chat.html; VS Code gets
@@ -16559,6 +16565,12 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     const filePanelScript = this.host.canSwitchWorkspaceFolder
       ? `<script nonce="${nonce}" src="${mediaUri("syntax-highlight.js")}"></script>\n` +
         `  <script nonce="${nonce}" src="${mediaUri("file-panel.js")}"></script>`
+      : "";
+    const turnRailStyle = this.host.canSwitchWorkspaceFolder
+      ? `<link rel="stylesheet" href="${mediaUri("turn-rail.css")}" />`
+      : "";
+    const turnRailScript = this.host.canSwitchWorkspaceFolder
+      ? `<script nonce="${nonce}" src="${mediaUri("turn-rail.js")}"></script>`
       : "";
 
     return `<!DOCTYPE html>
@@ -16581,6 +16593,7 @@ ${firstFrameLayout}
 <link rel="stylesheet" href="${mediaUri("chat.css")}" />
 <link rel="stylesheet" href="${mediaUri("settings.css")}" />
 ${filePanelStyle}
+${turnRailStyle}
 </head>
 <body class="desk${deskLayoutClass}${this.showThinking() ? "" : " thinking-hidden"}" style="--chat-zoom: ${this.chatFontScale()}">
 ${this.host.canSwitchWorkspaceFolder ? `<script nonce="${nonce}">try{if(localStorage.getItem("desk-rail-open")==="0")document.body.classList.add("desk-rail-collapsed")}catch(e){}</script>` : ""}
@@ -16606,6 +16619,7 @@ ${openMain}
     <div id="history-popover" class="toolbar-popover history-popover" hidden></div>
   </header>
 ${fileShellOpen}
+${transcriptOpen}
   <main id="messages" class="messages">
     <div class="welcome" id="welcome">
       <span class="welcome-mark" role="img" aria-label="Grok" style="--welcome-mark:url('${resourceUri("grok-icon.svg")}')"></span>
@@ -16615,6 +16629,7 @@ ${fileShellOpen}
       <div id="welcome-onboarding"></div>
     </div>
   </main>
+${transcriptClose}
 
   <footer class="composer">
     <button id="scroll-bottom-btn" class="scroll-bottom-btn" type="button" title="Scroll to bottom"></button>
@@ -16677,6 +16692,7 @@ ${closeMain}
   <script nonce="${nonce}" src="${mediaUri("webview-helpers.js")}"></script>
   <script nonce="${nonce}" src="${mediaUri("settings.js")}"></script>
   ${filePanelScript}
+  ${turnRailScript}
   <script nonce="${nonce}" src="${mediaUri("chat.js")}"></script>
 </body>
 </html>`;

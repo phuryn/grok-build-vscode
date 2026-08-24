@@ -685,9 +685,14 @@ describe("desktop main wiring (source gates)", () => {
     expect(assetGate).toContain("this.host.canSwitchWorkspaceFolder");
     expect(assetGate).toContain('mediaUri("file-panel.css")');
     expect(assetGate).toContain('mediaUri("file-panel.js")');
+    expect(assetGate).toContain('mediaUri("turn-rail.css")');
+    expect(assetGate).toContain('mediaUri("turn-rail.js")');
+    expect(sidebar).toContain('id="turn-rail"');
+    expect(sidebar).toContain('aria-label="Conversation turns"');
+    expect(sidebar).toContain("desk-transcript");
     // An empty branch means the VS Code webview receives neither tag; absence
     // of a mount call is not the thing enforcing the product decision.
-    expect(assetGate.match(/:\s*"";/g)).toHaveLength(2);
+    expect(assetGate.match(/:\s*"";/g)).toHaveLength(4);
 
     // First-frame desktop chrome: rail visible + files shell in getHtml so the
     // window never paints the panel-less layout and then upgrades.
