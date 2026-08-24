@@ -206,15 +206,20 @@ function mountRail(doc: Document, turns: unknown, opts: { scrollFalse?: boolean;
   return { rail, messagesEl, host, clicks, ctl };
 }
 
-function dispatchClick(doc: Document, bar: Element) {
+function dispatchDom(el: Element, type: string) {
+  const doc = el.ownerDocument!;
   const MouseEventCtor = doc.defaultView!.MouseEvent;
   try {
-    bar.dispatchEvent(new MouseEventCtor("click", { bubbles: true }));
+    el.dispatchEvent(new MouseEventCtor(type, { bubbles: true }));
   } catch {
     const ev = doc.createEvent("Event");
-    ev.initEvent("click", true, true);
-    bar.dispatchEvent(ev);
+    ev.initEvent(type, true, true);
+    el.dispatchEvent(ev);
   }
+}
+
+function dispatchClick(_doc: Document, bar: Element) {
+  dispatchDom(bar, "click");
 }
 
 describe("createTurnRail", () => {
@@ -260,5 +265,34 @@ describe("createTurnRail", () => {
       const bar = rail.querySelector("button.turn-rail-bar")!;
       dispatchClick(doc, bar);
     }).not.toThrow();
+  });
+
+  it("does not rebuild bars on transcript scroll", () => {
+    const { doc } = transcript();
+    const u = userBubble(doc, "hello");
+    const { rail, messagesEl } = mountRail(doc, [
+      { userEl: u, question: "hello", answer: "hi", pending: false },
+    ]);
+    const bar = rail.querySelector("button.turn-rail-bar")!;
+    dispatchDom(messagesEl, "scroll");
+    expect(bar.isConnected).toBe(true);
+    expect(rail.querySelector("button.turn-rail-bar")).toBe(bar);
+  });
+
+  it("does not hide bar B popover after leaving bar A", async () => {
+    const { doc } = transcript();
+    const u1 = userBubble(doc, "q1");
+    const u2 = userBubble(doc, "q2");
+    const { rail } = mountRail(doc, [
+      { userEl: u1, question: "q1", answer: "a1", pending: false },
+      { userEl: u2, question: "q2", answer: "a2", pending: false },
+    ]);
+    const bars = rail.querySelectorAll("button.turn-rail-bar");
+    expect(bars.length).toBe(2);
+    dispatchDom(bars[0], "mouseenter");
+    dispatchDom(bars[0], "mouseleave");
+    dispatchDom(bars[1], "mouseenter");
+    await new Promise((r) => setTimeout(r, 80));
+    expect(doc.querySelector(".turn-rail-popover")).toBeTruthy();
   });
 });

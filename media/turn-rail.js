@@ -78,10 +78,12 @@
     if (!mount || !host) return { refresh: function () {} };
     const hoverDelay = host.hoverDelayMs == null ? 150 : host.hoverDelayMs;
     let hoverTimer = 0;
+    let hideTimer = 0;
     let popover = null;
 
     function hidePopover() {
       if (hoverTimer) { clearTimeout(hoverTimer); hoverTimer = 0; }
+      if (hideTimer) { clearTimeout(hideTimer); hideTimer = 0; }
       if (popover && popover.parentNode) popover.parentNode.removeChild(popover);
       popover = null;
     }
@@ -114,6 +116,7 @@
     }
 
     function schedulePopover(bar, turn) {
+      if (hideTimer) { clearTimeout(hideTimer); hideTimer = 0; }
       if (hoverTimer) { clearTimeout(hoverTimer); hoverTimer = 0; }
       if (hoverDelay <= 0) {
         showPopover(bar, turn);
@@ -129,16 +132,30 @@
         ? host.messagesEl.getBoundingClientRect()
         : null;
       if (!box) return 0;
-      let best = 0;
+      let best = -1;
       let bestDist = Infinity;
+      let lastPassed = -1;
       turns.forEach(function (t, i) {
         if (!t.userEl || !t.userEl.getBoundingClientRect) return;
         const r = t.userEl.getBoundingClientRect();
+        if (r.top <= box.top) lastPassed = i;
         if (r.bottom < box.top || r.top > box.bottom) return;
         const dist = Math.abs(r.top - box.top);
         if (dist < bestDist) { bestDist = dist; best = i; }
       });
-      return best;
+      if (best >= 0) return best;
+      if (lastPassed >= 0) return lastPassed;
+      return 0;
+    }
+
+    function updateActive() {
+      const turns = (host.listTurns && host.listTurns()) || [];
+      const current = activeIndex(turns);
+      const bars = mount.querySelectorAll("button.turn-rail-bar");
+      for (let i = 0; i < bars.length; i++) {
+        if (i === current) bars[i].setAttribute("aria-current", "true");
+        else bars[i].removeAttribute("aria-current");
+      }
     }
 
     function refresh() {
@@ -181,7 +198,9 @@
         });
         bar.addEventListener("mouseleave", function () {
           if (hoverTimer) { clearTimeout(hoverTimer); hoverTimer = 0; }
-          setTimeout(function () {
+          if (hideTimer) { clearTimeout(hideTimer); hideTimer = 0; }
+          hideTimer = setTimeout(function () {
+            hideTimer = 0;
             if (!popover) return;
             const over = popover.matches && popover.matches(":hover");
             if (!over) hidePopover();
@@ -193,7 +212,7 @@
 
     if (typeof host.subscribe === "function") host.subscribe(refresh);
     if (host.messagesEl && host.messagesEl.addEventListener) {
-      host.messagesEl.addEventListener("scroll", refresh, { passive: true });
+      host.messagesEl.addEventListener("scroll", updateActive, { passive: true });
     }
     return { refresh: refresh, hidePopover: hidePopover };
   }
