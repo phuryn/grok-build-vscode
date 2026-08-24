@@ -296,3 +296,33 @@ describe("createTurnRail", () => {
     expect(doc.querySelector(".turn-rail-popover")).toBeTruthy();
   });
 });
+
+describe("turn-rail hover", () => {
+  it("shows truncated question and answer", () => {
+    const { doc } = transcript();
+    const u = userBubble(doc, "q");
+    const { rail } = mountRail(doc, [
+      { userEl: u, question: "hello".repeat(30), answer: "world".repeat(50), pending: false },
+    ]);
+    const bar = rail.querySelector("button.turn-rail-bar");
+    bar.dispatchEvent(new doc.defaultView.MouseEvent("mouseenter", { bubbles: true }));
+    const pop = doc.querySelector(".turn-rail-popover");
+    expect(pop).toBeTruthy();
+    expect(pop.querySelector(".turn-rail-q").textContent.endsWith("…")).toBe(true);
+    expect(pop.querySelector(".turn-rail-a").textContent.endsWith("…")).toBe(true);
+    expect(pop.querySelector(".turn-rail-q").textContent.length).toBe(81);
+    const labels = [...pop.querySelectorAll(".turn-rail-k")].map((el) => el.textContent);
+    expect(labels).toEqual(["Question", "Answer"]);
+  });
+
+  it("uses Answering… when pending and empty", () => {
+    const { doc } = transcript();
+    const u = userBubble(doc, "q");
+    const { rail } = mountRail(doc, [
+      { userEl: u, question: "q", answer: "", pending: true },
+    ]);
+    const bar = rail.querySelector("button.turn-rail-bar");
+    bar.dispatchEvent(new doc.defaultView.MouseEvent("mouseenter", { bubbles: true }));
+    expect(doc.querySelector(".turn-rail-a").textContent).toBe("Answering…");
+  });
+});
