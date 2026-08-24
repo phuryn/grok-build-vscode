@@ -10,6 +10,7 @@ describe("truncatePreview", () => {
 
   it("leaves short text alone", () => {
     expect(truncatePreview("hello", 80)).toBe("hello");
+    expect(truncatePreview("hello", ANSWER_MAX)).toBe("hello");
     expect(truncatePreview("", 80)).toBe("");
   });
 
@@ -23,18 +24,27 @@ describe("truncatePreview", () => {
   it("keeps a simple emoji whole", () => {
     const text = "👍".repeat(81);
     const out = truncatePreview(text, 80);
-    expect(out.startsWith("👍")).toBe(true);
-    expect(out.endsWith("…")).toBe(true);
-    expect(out.includes("\uD83D") && out.indexOf("\uD83D") === out.length - 1).toBe(false);
+    expect(out).toBe("👍".repeat(80) + "…");
   });
 
   it("falls back to code points when Segmenter is missing", () => {
-    const orig = globalThis.Intl && globalThis.Intl.Segmenter;
-    if (globalThis.Intl) globalThis.Intl.Segmenter = undefined;
+    const intl = globalThis.Intl;
+    const origDesc = intl ? Object.getOwnPropertyDescriptor(intl, "Segmenter") : undefined;
     try {
+      if (intl) {
+        intl.Segmenter = undefined;
+        if (intl.Segmenter) {
+          Object.defineProperty(intl, "Segmenter", {
+            configurable: true,
+            writable: true,
+            value: undefined,
+          });
+        }
+      }
+      expect(intl && intl.Segmenter).toBeFalsy();
       expect(truncatePreview("abcdef", 3)).toBe("abc…");
     } finally {
-      if (globalThis.Intl && orig) globalThis.Intl.Segmenter = orig;
+      if (intl && origDesc) Object.defineProperty(intl, "Segmenter", origDesc);
     }
   });
 });
