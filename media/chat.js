@@ -1052,7 +1052,7 @@
 
   // ---------- markdown ----------
 
-  const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, modelPickerLabel, modelDisplayName, nextMicState, trailingSendPhrase, versionedSiblingUrl, buildQuestionAnswers, isFreeTextOptionLabel, isSubagentToolCall, subagentLabel, cleanSubagentOutput, parseSubagentTaskResult, shouldStickToBottom, stickThresholdPx, splitMath, stripUnsupportedTex, toolFailureText, isMediaGenToolCall, mediaGenZeroRetentionHint, TOOL_LABEL_MAX, middleElide, isAdvertisedSkill, getSlashQuery, applySlashPick, filterCommands, appendHighlightedText, commandProgramLabel, commandTextPreview, extractToolResultOutput, commandOutputWasCancelled, commandOutputTruncationNote, computeLineDiff, parseAttachmentContext, parseSelectionBlocks, parseImageTags, isKnownHostMessage, composerHasSendIntent, explicitVisibleChips, normalizeQueuedSends, queuedSendsText, queuedSendsChips, contextOverheadTokens, nextContextBreakdown, contextBreakdownIsCurrent, createPendingOverlay, getMentionQuery, applyMentionPick, orderPermissionOptions, defaultPermissionIndex, shouldFocusPermissionCard, isTypeThroughKey, isInterjectionText, stripInterjectionEnvelope, spokenTextFromMarkdown, isRelaySendRejection, wireFullscreenSafeReclamp, distributeSidePanelWidths, chatZoomFactor, unzoomClientPx, exportSessionMarkdown, exportSessionFilename, isExportableSessionEvent, replayedUserBubbleVerdict, truncateExportEvents, flattenHistoryMessages, splitHistoryWindow, countHistoryReplayCounters, partitionHistoryCards } = globalThis.GrokWebviewHelpers;
+  const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, modelPickerLabel, modelDisplayName, nextMicState, trailingSendPhrase, versionedSiblingUrl, buildQuestionAnswers, isFreeTextOptionLabel, isSubagentToolCall, subagentLabel, cleanSubagentOutput, parseSubagentTaskResult, shouldStickToBottom, stickThresholdPx, splitMath, stripUnsupportedTex, toolFailureText, isMediaGenToolCall, mediaGenZeroRetentionHint, TOOL_LABEL_MAX, middleElide, isAdvertisedSkill, getSlashQuery, applySlashPick, filterCommands, appendHighlightedText, commandProgramLabel, commandTextPreview, extractToolResultOutput, commandOutputWasCancelled, commandOutputTruncationNote, computeLineDiff, parseAttachmentContext, parseSelectionBlocks, parseImageTags, isKnownHostMessage, composerHasSendIntent, explicitVisibleChips, normalizeQueuedSends, queuedSendsText, queuedSendsChips, contextOverheadTokens, nextContextBreakdown, contextBreakdownIsCurrent, createPendingOverlay, getMentionQuery, applyMentionPick, orderPermissionOptions, defaultPermissionIndex, shouldFocusPermissionCard, isTypeThroughKey, isInterjectionText, stripInterjectionEnvelope, spokenTextFromMarkdown, isRelaySendRejection, wireFullscreenSafeReclamp, distributeSidePanelWidths, chatZoomFactor, unzoomClientPx, exportSessionMarkdown, exportSessionFilename, isExportableSessionEvent, replayedUserBubbleVerdict, truncateExportEvents, flattenHistoryMessages, splitHistoryWindow, countHistoryReplayCounters, partitionHistoryCards, isCountableUserBubble } = globalThis.GrokWebviewHelpers;
 
   function escapeAttr(s) {
     return String(s == null ? "" : s)
@@ -8351,8 +8351,7 @@
   // as the rewind map counts them). Sent with every rewind/edit so the host can
   // verify its point list still lines up before acting — see bubbleMapIsConsistent.
   function visibleUserBubbleCount() {
-    const rendered = liveTranscriptQueryAll(".msg.user:not(.queued)")
-      .filter((el) => el.dataset.steer !== "1").length;
+    const rendered = liveTranscriptQueryAll(".msg.user").filter(isCountableUserBubble).length;
     return (state.historyPrefixUserCount || 0) + rendered;
   }
 
@@ -8362,8 +8361,7 @@
     // Rewind at the wrong turn (and reverted the wrong files) and made Edit
     // fail outright. Both actions are hidden on a steer bubble for the same
     // reason: there is nothing on the wire to roll back to.
-    const users = liveTranscriptQueryAll(".msg.user:not(.queued)")
-      .filter((el) => el.dataset.steer !== "1");
+    const users = liveTranscriptQueryAll(".msg.user").filter(isCountableUserBubble);
     for (const el of liveTranscriptQueryAll('.msg.user[data-steer="1"]')) {
       delete el.dataset.userBubbleIndex;
       const r = el.querySelector(".msg-rewind-btn");
@@ -16706,6 +16704,66 @@
   syncProviderVoice();
   initMermaid();
   initMathJax();
+
+  function listTurnRailTurns() {
+    const extract = (globalThis.GrokTurnRail || {});
+    const users = liveTranscriptQueryAll(".msg.user").filter(isCountableUserBubble);
+    return users.map((userEl, i) => ({
+      userEl,
+      question: typeof extract.questionFromUserEl === "function"
+        ? extract.questionFromUserEl(userEl)
+        : "",
+      answer: typeof extract.answerFromUserEl === "function"
+        ? extract.answerFromUserEl(userEl)
+        : "",
+      pending: i === users.length - 1 && !!state.busy,
+    }));
+  }
+
+  function scrollToTurnRail(userEl) {
+    if (!userEl || !userEl.isConnected) return false;
+    const users = liveTranscriptQueryAll(".msg.user").filter(isCountableUserBubble);
+    const last = users[users.length - 1];
+    if (userEl !== last) {
+      noteUserScrollIntent();
+      setStickToBottom(false);
+      updateScrollBtn();
+    }
+    if (typeof userEl.scrollIntoView === "function") {
+      userEl.scrollIntoView({ block: "start", inline: "nearest" });
+    }
+    return true;
+  }
+
+  function subscribeTurnRail(listener) {
+    let frame = 0;
+    const kick = () => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        listener();
+      });
+    };
+    const mo = new MutationObserver(kick);
+    mo.observe(messagesEl, { childList: true, subtree: true, characterData: true });
+    return () => mo.disconnect();
+  }
+
+  function bootTurnRail() {
+    const mount = document.getElementById("turn-rail");
+    const api = globalThis.GrokTurnRail;
+    if (!mount || !api || typeof api.createTurnRail !== "function") return;
+    const ctl = api.createTurnRail(mount, {
+      messagesEl,
+      listTurns: listTurnRailTurns,
+      scrollToTurn: scrollToTurnRail,
+      subscribe: subscribeTurnRail,
+      isStickToBottom: () => !!state.stickToBottom,
+    });
+    if (ctl && typeof ctl.refresh === "function") ctl.refresh();
+  }
+
+  bootTurnRail();
   claimRemoteTabIdentity((finalToken) => {
     resolveRemoteTabTokenReady(finalToken);
     vscode.postMessage({
