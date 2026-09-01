@@ -325,6 +325,18 @@ export class Session {
    */
   turnToken: object | undefined = undefined;
 
+  /** ms-epoch stamped by {@link beginTurn} — the wall clock a turn's footer
+   *  duration is measured from. Deliberately NOT cleared by `endTurn`: the
+   *  turn-ending emit sites read it right after the token settles. The next
+   *  beginTurn overwrites it. */
+  turnStartedAt: number | undefined = undefined;
+
+  /** `_meta.agentTimestampMs` of the most recent replayed user message — the
+   *  start edge a restored turn's footer duration is measured from when the
+   *  persisted rail carries no explicit duration_ms. Set by the session/load
+   *  userMessageChunk replay path; read by the replayed turn_completed. */
+  replayTurnStartedAt: number | undefined = undefined;
+
   /**
    * ms-epoch of the last time this session was made the focus, created, or put to
    * work — its "recency" for the pool's LRU/TTL reaping (see session-pool.ts).
@@ -416,6 +428,7 @@ export class Session {
 export function beginTurn(session: Session): object {
   const token = {};
   session.turnToken = token;
+  session.turnStartedAt = Date.now();
   session.staleSendReported = false;
   return token;
 }
@@ -433,6 +446,18 @@ export function endTurn(session: Session, token: object): boolean {
  *  which cannot distinguish "working" from "was working and never settled". */
 export function turnIsInFlight(session: { turnToken?: object }): boolean {
   return session.turnToken !== undefined;
+}
+
+/** Wall-clock ms the current (or just-settled) turn has run — the number a
+ *  "Worked for …" footer displays. Undefined when no turn was ever started
+ *  (a failure before {@link beginTurn}); never negative. Pure in `now`. */
+export function turnElapsedMs(
+  session: { turnStartedAt?: number },
+  now: number = Date.now(),
+): number | undefined {
+  return typeof session.turnStartedAt === "number" && session.turnStartedAt > 0
+    ? Math.max(0, now - session.turnStartedAt)
+    : undefined;
 }
 
 /**

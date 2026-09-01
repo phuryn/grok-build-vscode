@@ -1949,6 +1949,12 @@ body.turn-busy .queued-steer:hover {
 /* Edit is the complement: shown only on the tip, where Rewind is hidden (#56). */
 .msg-edit-btn[hidden] { display: none; }
 .msg-timestamp { font-size: 11px; }
+/* Turn duration/status on the agent footer: "Worked for 12.4s" — muted, like
+   the timestamp. A cancelled/failed turn keeps the muted read for a cancel
+   (a user stop, not a failure — same rule as the subagent card) and the error
+   color only for a real failure. */
+.msg-duration { font-size: 11px; color: var(--vscode-descriptionForeground); }
+.msg-duration-failed { color: var(--vscode-errorForeground, #f66); }
 .msg.thinking {
   background: transparent;
   padding: 2px 0;

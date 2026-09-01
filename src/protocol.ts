@@ -22,6 +22,8 @@
 // test can import it without a VS Code environment.
 
 import type { ModelInfo, PromptResultMeta, PromptUsage, PermissionRequest, ExitPlanRequest, QuestionRequest } from "./acp";
+import type { TurnEndStatus } from "./acp-dispatch";
+export type { TurnEndStatus };
 import type { FileChip } from "./chips";
 import type { RepoListEntry, SessionListEntry } from "./sessions";
 import type { Dot } from "./session-pool";
@@ -591,9 +593,14 @@ export type HostMsg =
       autoCompactThresholdPercent?: number;
     }
   | { type: "agentReset" }
-  | { type: "agentError"; text: string }
-  | { type: "agentEnd"; meta?: PromptResultMeta }
-  | { type: "exit"; code: number | null }
+  // status/durationMs are additive turn-footer data: how THIS turn ended and
+  // how long it ran ("Worked for 12.4s" / "Cancelled after 4.1s" / "Failed
+  // after 8.7s"). Older hosts omit them; the client then shows neither.
+  | { type: "agentError"; text: string; status?: TurnEndStatus; durationMs?: number }
+  | { type: "agentEnd"; meta?: PromptResultMeta; status?: TurnEndStatus; durationMs?: number }
+  // status/durationMs are present only when a turn was IN FLIGHT when the
+  // process died — a clean exit between turns ends no turn.
+  | { type: "exit"; code: number | null; status?: TurnEndStatus; durationMs?: number }
   | { type: "setBusy"; value: boolean; locked?: boolean }
   | { type: "summarizing" }
   | { type: "sessionContext" }
@@ -663,7 +670,11 @@ export type HostMsg =
   | { type: "xaiNotification"; update?: unknown }
   // Persisted xAI lifecycle (method _x.ai/session/update): subagent spawn/finish
   // plus replayed turn_completed, whose timestamp finalizes the agent footer.
-  | { type: "subagentUpdate"; update?: unknown; timestampMs?: number }
+  // turnDurationMs/turnStatus ride the same replayed turn_completed — the
+  // restored footer's "Worked for …" — computed host-side from the persisted
+  // timestamps (or an explicit duration_ms on newer CLIs). Subagent card data
+  // is NOT here; the subagent_* updates keep their own shape below.
+  | { type: "subagentUpdate"; update?: unknown; timestampMs?: number; turnDurationMs?: number; turnStatus?: TurnEndStatus }
   /**
    * Live child-session stream demuxed off the parent ACP stdout (#62).
    * Additive: an older webview that ignores this type loses nothing it has today.

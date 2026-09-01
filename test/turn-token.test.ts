@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { Session, beginTurn, endTurn, turnIsInFlight } from "../src/session";
+import { describe, expect, it, vi } from "vitest";
+import { Session, beginTurn, endTurn, turnElapsedMs, turnIsInFlight } from "../src/session";
 
 // `status` used to stand in for "is a turn running", and could not do the job:
 // it is set to "working" beside the prompt and only leaves it when that promise
@@ -99,5 +99,36 @@ describe("turn token", () => {
     // turn, but no prompt is running and sends must go through.
     session.status = "working";
     expect(turnIsInFlight(session)).toBe(false);
+  });
+
+  it("stamps the wall clock a footer duration is measured from", () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(5_000);
+      const session = new Session();
+      expect(turnElapsedMs(session)).toBeUndefined(); // no turn ever begun
+      beginTurn(session);
+      expect(session.turnStartedAt).toBe(5_000);
+      vi.setSystemTime(17_400);
+      expect(turnElapsedMs(session)).toBe(12_400);
+      // endTurn consumes the token but the timestamp survives — the turn-ending
+      // emit sites read it right after settlement.
+      const turn = session.turnToken!;
+      endTurn(session, turn);
+      expect(turnElapsedMs(session)).toBe(12_400);
+      // The next turn measures from ITS OWN beginTurn.
+      vi.setSystemTime(18_000);
+      beginTurn(session);
+      expect(session.turnStartedAt).toBe(18_000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("never reports a negative duration", () => {
+    const session = new Session();
+    beginTurn(session);
+    session.turnStartedAt = 5_000;
+    expect(turnElapsedMs(session, 4_999)).toBe(0);
   });
 });

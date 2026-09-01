@@ -185,6 +185,7 @@ export interface SlashCommand {
 // these, so a second structurally-identical copy here silently drops any field
 // added on one side only — which is exactly what `usage` (#53) would have done.
 export type { PromptResultMeta, PromptUsage };
+export type { TurnEndStatus } from "./acp-dispatch";
 
 export interface PermissionOption {
   optionId: string;

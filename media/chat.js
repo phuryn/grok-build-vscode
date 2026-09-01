@@ -9427,10 +9427,14 @@
   // signal: promptComplete/agentEnd/agentError live, the next user message or
   // replay end on restore. Stamps the time at reveal so it reads as the
   // turn's END time, not the moment the last segment happened to start.
-  function revealTurnFooter(timestampMs) {
+  // `end` is the turn footer's duration/status payload from the host — how the
+  // turn ended and how long it ran. Absent (old host / old transcript) means
+  // no duration line is shown.
+  function revealTurnFooter(timestampMs, end) {
     const a = state.turnAgentActionsEl;
     if (!a || !a.hidden) return;
     a.hidden = false;
+    stampTurnDuration(a, end);
     const ts = a.querySelector(".msg-timestamp");
     if (!ts) return;
     if (!state.replaying) {
@@ -9438,6 +9442,32 @@
     } else if (typeof timestampMs === "number" && Number.isFinite(timestampMs)) {
       ts.textContent = formatTime(timestampMs);
     }
+  }
+
+  const TURN_END_VERB = { completed: "Worked for", cancelled: "Cancelled after", failed: "Failed after" };
+
+  // "12.4s" under a minute, then "2m 5s". Null when there is nothing honest to
+  // show — the field is absent, or not a number the host could have measured.
+  function formatTurnDuration(ms) {
+    if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) return null;
+    if (ms < 60000) return (ms / 1000).toFixed(1) + "s";
+    const m = Math.floor(ms / 60000);
+    const s = Math.round((ms % 60000) / 1000);
+    return m + "m " + s + "s";
+  }
+
+  function stampTurnDuration(actions, end) {
+    const duration = formatTurnDuration(end && end.durationMs);
+    const existing = actions.querySelector(".msg-duration");
+    if (existing) existing.remove();
+    if (duration == null) return;
+    const status = end && TURN_END_VERB[end.status] ? end.status : "completed";
+    const span = document.createElement("span");
+    span.className = "msg-duration" + (status !== "completed" ? " msg-duration-" + status : "");
+    span.textContent = TURN_END_VERB[status] + " " + duration;
+    const ts = actions.querySelector(".msg-timestamp");
+    if (ts) actions.insertBefore(span, ts);
+    else actions.appendChild(span);
   }
 
   function feedbackOffered() {
@@ -16439,7 +16469,9 @@
         if (u.sessionUpdate === "turn_completed") {
           if (state.replaying) {
             commitAgentTurn();
-            revealTurnFooter(msg.timestampMs);
+            revealTurnFooter(msg.timestampMs, msg.turnDurationMs != null
+              ? { status: msg.turnStatus || "completed", durationMs: msg.turnDurationMs }
+              : undefined);
           }
           break;
         }
@@ -16690,7 +16722,12 @@
         stopProcessingCue();
         hideGrokking(); // turn ended (possibly before any content)
         hideThinkingIndicator();
-        revealTurnFooter();
+        // status defaults to failed — an agentError that ends a turn IS the
+        // failure, unless the host says otherwise (a cancelled turn whose stop
+        // went unanswered reports "cancelled"). No fields (old host) → no line.
+        revealTurnFooter(undefined, (msg.status || msg.durationMs != null)
+          ? { status: msg.status || "failed", durationMs: msg.durationMs }
+          : undefined);
         // Image-read failures fire agentError before a turn starts — don't
         // restamp the previous reply. A prompt that actually failed is busy.
         if (state.busy) markLiveTurnFeedback();
@@ -16708,7 +16745,11 @@
         // A turn that ends with NO content (grok's [Plan cancelled] ack can be
         // empty) would otherwise orphan the dots forever — content-based
         // clearing never fires.
-        revealTurnFooter();
+        // The host derives "cancelled" from the prompt's stopReason; anything
+        // else that reached here ended cleanly.
+        revealTurnFooter(undefined, (msg.status || msg.durationMs != null)
+          ? { status: msg.status || "completed", durationMs: msg.durationMs }
+          : undefined);
         markLiveTurnFeedback();
         state.busy = false;
         updateSendButton();
@@ -16725,6 +16766,12 @@
         // true until any conversation content (or an error) calls clearWelcome.
         if (!(msg.code === 0 && state.welcomeVisible)) {
           addError(`Grok exited (code ${msg.code}). Send a message to restart this session, or start a new one.`);
+        }
+        // A dead process takes a running turn with it — that turn failed. The
+        // host only attaches the fields when a turn was in flight, so a clean
+        // exit between turns stamps nothing (durationMs absent → no line).
+        if (msg.status || msg.durationMs != null) {
+          revealTurnFooter(undefined, { status: msg.status || "failed", durationMs: msg.durationMs });
         }
         // A process that dies takes the host's send queue with it: that text
         // never reached Grok, and the host empties the queue in the very next

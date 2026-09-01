@@ -1386,6 +1386,28 @@ describe("subagent child sessions (session_kind)", () => {
     expect(out.find((e) => e.id === "child")?.kind).toBe("subagent");
     expect(out.find((e) => e.id === "real")?.kind).toBeUndefined();
   });
+
+  it("marks a headless session but keeps it resumable in the list (grok 1.0.11)", () => {
+    const fs = buildFs({
+      [path.join(dirFor("headless"), "summary.json")]: {
+        isDir: false,
+        // grok ≥1.0.11 marks sessions a non-interactive run created. The list
+        // must SHOW them — /resume picks up where a headless run left off —
+        // while only subagent transcripts stay hidden.
+        content: JSON.stringify({
+          info: { id: "headless", cwd },
+          session_summary: "Run the nightly benchmark",
+          session_kind: "headless",
+          updated_at: "2026-07-11T18:00:00Z",
+        }),
+      },
+      [dir]: { isDir: true },
+    });
+    const out = readSessionEntries({ fs, grokHome, cwd, ids: ["headless"], overrides: {} });
+    expect(out.find((e) => e.id === "headless")?.kind).toBe("headless");
+    // Visible to the picker's newest-row pick — the filter hides only subagents.
+    expect(mostRecentSession(out)?.id).toBe("headless");
+  });
 });
 
 describe("readContextUsage", () => {

@@ -352,7 +352,15 @@ export interface PromptResultMeta {
   reasoningTokens?: number;
   modelId?: string;
   usage?: PromptUsage;
+  /** ACP `session/prompt` `stopReason`, verbatim. Only "cancelled" is acted
+   *  on — the turn footer's "Cancelled after …"; everything else reads as a
+   *  completed turn. Absent from older CLIs. */
+  stopReason?: string;
 }
+
+/** How a turn ended, as the turn footer displays it. Carried additively on the
+ *  HostMsg that ends the turn (`agentEnd` / `agentError` / `exit`). */
+export type TurnEndStatus = "completed" | "cancelled" | "failed";
 
 /** Pull the nested `_meta.usage` (see `PromptUsage`). Returns undefined when the
  *  CLI didn't send one — an older build, or a turn that ran no inference — so a
@@ -387,7 +395,41 @@ export function extractPromptMeta(result: any): PromptResultMeta {
     reasoningTokens: m.reasoningTokens,
     modelId: m.modelId,
     usage: extractPromptUsage(m),
+    stopReason: typeof result?.stopReason === "string" && result.stopReason
+      ? result.stopReason
+      : undefined,
   };
+}
+
+/** How a turn ended, for the footer. The ACP stop reason is the only wire-level
+ *  "cancelled" signal; a prompt that THREW never reaches here (the caller
+ *  classifies that as "failed" directly). */
+export function turnStatusFromPromptResult(meta: PromptResultMeta | undefined): Extract<TurnEndStatus, "completed" | "cancelled"> {
+  return meta?.stopReason === "cancelled" ? "cancelled" : "completed";
+}
+
+/** Duration for a RESTORED turn's footer, from whatever the persisted rail
+ *  carries. Preference order: an explicit `duration_ms` on the `turn_completed`
+ *  update (newer CLIs), the same field on the envelope `_meta`, then the
+ *  wall-clock gap between the turn's last user-message timestamp and the
+ *  turn_completed timestamp (both `_meta.agentTimestampMs`, grok ≥0.2.x).
+ *  Undefined when none of these exist — an old transcript simply shows no
+ *  duration. Subagent `duration_ms` NEVER passes through here: those are
+ *  consumed by the subagent card's own lifecycle handler. Pure. */
+export function replayedTurnDuration(
+  update: unknown,
+  meta: unknown,
+  turnStartMs: number | undefined,
+): number | undefined {
+  const u = update as { duration_ms?: unknown } | null | undefined;
+  const m = meta as { duration_ms?: unknown } | null | undefined;
+  const num = (v: unknown): number | undefined =>
+    typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : undefined;
+  const explicit = num(u?.duration_ms) ?? num(m?.duration_ms);
+  if (explicit !== undefined) return explicit;
+  if (typeof turnStartMs !== "number" || turnStartMs <= 0) return undefined;
+  const endMs = num((meta as { agentTimestampMs?: unknown } | null | undefined)?.agentTimestampMs);
+  return endMs !== undefined && endMs > turnStartMs ? endMs - turnStartMs : undefined;
 }
 
 /**

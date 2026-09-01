@@ -3599,6 +3599,128 @@ describe("agent message footer (copy + timestamp) — one per turn", () => {
     expect(doc.querySelector(".msg.user .msg-timestamp")!.textContent).not.toBe("");
     expect(doc.querySelector(".msg.agent .msg-timestamp")!.textContent).not.toBe("");
   });
+
+  it("shows the turn duration on the live footer — Worked for 12.4s", () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, { type: "userMessage", text: "q" });
+    dispatch(window, { type: "agentStart" });
+    dispatch(window, { type: "messageChunk", text: "answer" });
+    dispatch(window, { type: "agentEnd", status: "completed", durationMs: 12_400 });
+
+    const line = doc.querySelector(".msg.agent .msg-duration")!;
+    expect(line.textContent).toBe("Worked for 12.4s");
+    // Muted read: no failure/cancel modifier class on a clean turn.
+    expect(line.className).toBe("msg-duration");
+  });
+
+  it("reads a cancelled turn from the prompt's stopReason — Cancelled after 4.1s", () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, { type: "userMessage", text: "q" });
+    dispatch(window, { type: "agentStart" });
+    dispatch(window, { type: "messageChunk", text: "partial" });
+    dispatch(window, { type: "agentEnd", status: "cancelled", durationMs: 4_100 });
+
+    const line = doc.querySelector(".msg.agent .msg-duration")!;
+    expect(line.textContent).toBe("Cancelled after 4.1s");
+    expect(line.classList.contains("msg-duration-cancelled")).toBe(true);
+  });
+
+  it("shows a failed turn from agentError — Failed after 8.7s", () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, { type: "userMessage", text: "q" });
+    dispatch(window, { type: "agentStart" });
+    dispatch(window, { type: "messageChunk", text: "half" });
+    dispatch(window, { type: "agentError", text: "boom", status: "failed", durationMs: 8_700 });
+
+    const line = doc.querySelector(".msg.agent .msg-duration")!;
+    expect(line.textContent).toBe("Failed after 8.7s");
+    expect(line.classList.contains("msg-duration-failed")).toBe(true);
+  });
+
+  it("shows a process death mid-turn as a failed turn on the exit message", () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, { type: "userMessage", text: "q" });
+    dispatch(window, { type: "agentStart" });
+    dispatch(window, { type: "messageChunk", text: "half" });
+    dispatch(window, { type: "exit", code: 1, status: "failed", durationMs: 2_500 });
+
+    expect(doc.querySelector(".msg.agent .msg-duration")!.textContent).toBe("Failed after 2.5s");
+  });
+
+  it("stamps no duration when the host sends no footer fields (old host)", () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, { type: "userMessage", text: "q" });
+    dispatch(window, { type: "agentStart" });
+    dispatch(window, { type: "messageChunk", text: "answer" });
+    dispatch(window, { type: "agentEnd" });
+    expect(doc.querySelector(".msg.agent .msg-duration")).toBeNull();
+  });
+
+  it("rolls over to minutes — Worked for 2m 5s", () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, { type: "userMessage", text: "q" });
+    dispatch(window, { type: "agentStart" });
+    dispatch(window, { type: "messageChunk", text: "answer" });
+    dispatch(window, { type: "agentEnd", status: "completed", durationMs: 125_000 });
+    expect(doc.querySelector(".msg.agent .msg-duration")!.textContent).toBe("Worked for 2m 5s");
+  });
+
+  it("restores the duration from the replayed turn_completed — with the original timestamp", () => {
+    const { window, doc } = bootWebview();
+    const agentAt = Date.UTC(2026, 6, 30, 6, 19);
+
+    dispatch(window, { type: "historyReplay", active: true });
+    dispatch(window, { type: "userMessageChunk", text: "yesterday's question", timestampMs: Date.UTC(2026, 6, 30, 6, 14) });
+    dispatch(window, { type: "messageChunk", text: "yesterday's answer" });
+    dispatch(window, {
+      type: "subagentUpdate",
+      update: { sessionUpdate: "turn_completed" },
+      timestampMs: agentAt,
+      turnDurationMs: 18_000,
+      turnStatus: "completed",
+    });
+    dispatch(window, { type: "historyReplay", active: false });
+
+    expect(doc.querySelector(".msg.agent .msg-duration")!.textContent).toBe("Worked for 18.0s");
+    // The timestamp behavior is unchanged — the duration line rides beside it.
+    expect(doc.querySelector(".msg.agent .msg-timestamp")!.textContent).toBe(clock(agentAt));
+  });
+
+  it("restores no duration when the persisted transcript carries none (old CLI)", () => {
+    const { window, doc } = bootWebview();
+
+    dispatch(window, { type: "historyReplay", active: true });
+    dispatch(window, { type: "userMessageChunk", text: "old question" });
+    dispatch(window, { type: "messageChunk", text: "old answer" });
+    dispatch(window, {
+      type: "subagentUpdate",
+      update: { sessionUpdate: "turn_completed" },
+    });
+    dispatch(window, { type: "historyReplay", active: false });
+
+    expect(doc.querySelector(".msg.agent .msg-duration")).toBeNull();
+  });
+
+  it("a replayed turn_completed never feeds the SUBAGENT duration into the turn footer", () => {
+    // The subagent_finished duration belongs to the child card. Only a
+    // turn_completed's turnDurationMs (computed host-side) may reach the footer.
+    const { window, doc } = bootWebview();
+    dispatch(window, { type: "historyReplay", active: true });
+    dispatch(window, { type: "userMessageChunk", text: "q", timestampMs: Date.UTC(2026, 6, 30, 6, 14) });
+    dispatch(window, { type: "messageChunk", text: "answer" });
+    dispatch(window, {
+      type: "subagentUpdate",
+      update: { sessionUpdate: "subagent_finished", duration_ms: 99_999, status: "completed" },
+    });
+    dispatch(window, {
+      type: "subagentUpdate",
+      update: { sessionUpdate: "turn_completed" },
+      timestampMs: Date.UTC(2026, 6, 30, 6, 15),
+    });
+    dispatch(window, { type: "historyReplay", active: false });
+
+    expect(doc.querySelector(".msg.agent .msg-duration")).toBeNull();
+  });
 });
 
 describe("user prompt counter parity (interjections never count)", () => {

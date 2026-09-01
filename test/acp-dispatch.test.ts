@@ -15,6 +15,8 @@ import {
   extractPromptMeta,
   extractPromptUsage,
   gateZeroTokenMeta,
+  replayedTurnDuration,
+  turnStatusFromPromptResult,
   isMediaGenToolCall,
   isIncompatibleAgentError,
   isMethodNotFoundError,
@@ -302,13 +304,71 @@ describe("extractPromptMeta", () => {
       cachedReadTokens: 5,
       reasoningTokens: 3,
       modelId: "grok-4.3",
+      stopReason: "end_turn",
     });
+  });
+
+  it("keeps a cancelled stopReason for the turn footer", () => {
+    expect(extractPromptMeta({ stopReason: "cancelled" }).stopReason).toBe("cancelled");
   });
 
   it("returns all-undefined when _meta is missing", () => {
     const m = extractPromptMeta({});
     expect(m.totalTokens).toBeUndefined();
     expect(m.modelId).toBeUndefined();
+    expect(m.stopReason).toBeUndefined();
+  });
+});
+
+describe("turn footer status + duration", () => {
+  describe("turnStatusFromPromptResult", () => {
+    it("reads a cancelled stopReason as a cancelled turn", () => {
+      expect(turnStatusFromPromptResult({ stopReason: "cancelled" })).toBe("cancelled");
+    });
+
+    it("reads every other stopReason as completed", () => {
+      expect(turnStatusFromPromptResult({ stopReason: "end_turn" })).toBe("completed");
+      expect(turnStatusFromPromptResult({ stopReason: "max_tokens" })).toBe("completed");
+      expect(turnStatusFromPromptResult({})).toBe("completed");
+      expect(turnStatusFromPromptResult(undefined)).toBe("completed");
+    });
+  });
+
+  describe("replayedTurnDuration (restored footer)", () => {
+    it("prefers an explicit duration_ms on the turn_completed update", () => {
+      expect(replayedTurnDuration(
+        { sessionUpdate: "turn_completed", duration_ms: 4200 },
+        { agentTimestampMs: 1_000, duration_ms: 999 },
+        500,
+      )).toBe(4200);
+    });
+
+    it("falls back to an envelope _meta duration_ms", () => {
+      expect(replayedTurnDuration(
+        { sessionUpdate: "turn_completed" },
+        { agentTimestampMs: 1_000, duration_ms: 4200 },
+        500,
+      )).toBe(4200);
+    });
+
+    it("derives the wall-clock gap from the persisted turn timestamps", () => {
+      expect(replayedTurnDuration(
+        { sessionUpdate: "turn_completed" },
+        { agentTimestampMs: 12_400 },
+        1_000,
+      )).toBe(11_400);
+    });
+
+    it("returns undefined when neither source exists (old transcript)", () => {
+      expect(replayedTurnDuration({ sessionUpdate: "turn_completed" }, undefined, undefined)).toBeUndefined();
+      expect(replayedTurnDuration({ sessionUpdate: "turn_completed" }, {}, 5_000)).toBeUndefined();
+      expect(replayedTurnDuration({}, { agentTimestampMs: 4_000 }, 5_000)).toBeUndefined();
+    });
+
+    it("rejects negative and non-finite garbage", () => {
+      expect(replayedTurnDuration({ duration_ms: -1 }, undefined, undefined)).toBeUndefined();
+      expect(replayedTurnDuration({ duration_ms: Number.NaN }, undefined, undefined)).toBeUndefined();
+    });
   });
 });
 

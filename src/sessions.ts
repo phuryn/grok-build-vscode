@@ -28,8 +28,11 @@ export interface SessionListEntry {
   modelId?: string;
   /** grok's `session_kind` when it marks a non-user session — a `spawn_subagent`
    *  delegation persists its child as a top-level session dir with
-   *  `session_kind: "subagent"`; the history list hides those. */
-  kind?: "subagent";
+   *  `session_kind: "subagent"`; the history list hides those. `"headless"`
+   *  marks a session a non-interactive CLI run created (grok ≥1.0.11) — those
+   *  STAY in the list: /resume must be able to pick up where a headless run
+   *  left off. */
+  kind?: "subagent" | "headless";
   /** Worktree label when this session's cwd is an isolated git worktree (P2-8). */
   worktreeLabel?: string;
   /** When the user pinned this conversation, from `SessionMetaOverride`. Drives
@@ -1034,7 +1037,8 @@ function buildEntry(
   const generatedTitle = typeof raw?.generated_title === "string" ? raw.generated_title : "";
   const autoName = override?.autoName?.trim() || "";
   const displayName = customName || fallbackName(cliSessionTitle(rawSummary, generatedTitle) || autoName, updatedAt);
-  const kind = raw?.session_kind === "subagent" ? ("subagent" as const) : undefined;
+  const rawKind = raw?.session_kind;
+  const kind = rawKind === "subagent" || rawKind === "headless" ? rawKind : undefined;
   const pinnedAt = typeof override?.pinnedAt === "number" ? override.pinnedAt : undefined;
   return {
     id,
@@ -1626,6 +1630,9 @@ export function isEmptySession(
   if (typeof inp.pinnedAt === "number") return false;
   if (inp.worktreePath?.trim()) return false;
   if (inp.queuedDraft) return false;
+  // Only a subagent transcript is invisible BY KIND. A headless session is a
+  // conversation the user can resume — its emptiness is decided by content,
+  // exactly like a desk session's.
   if (inp.kind === "subagent") return false;
   if (inp.historyUnreadable) return false;
   if ((inp.chatHistory ?? "").trim()) {
