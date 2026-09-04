@@ -283,6 +283,33 @@
       window.matchMedia("(hover: none), (pointer: coarse)").matches;
   }
 
+  /**
+   * How tall the composer may grow, in lines (owner, 2026-09-04).
+   *
+   * A phone stops sooner than a desktop, because there the composer is not the
+   * only thing competing for the screen: the keyboard already owns the bottom
+   * half, and a box that grows to nine lines on top of it leaves nothing of the
+   * conversation to read while you write about it. That is the same reason the
+   * box grows at all (#144) — being able to see what you are writing — applied
+   * to the other side of the trade.
+   *
+   * Coarse pointer AND no hover, the signal the add-project form already uses:
+   * a touchscreen laptop still has a mouse and is not a phone. Not gated on
+   * IS_REMOTE, because a phone is a phone whether it reached us through the
+   * relay or the native shell.
+   */
+  const COMPOSER_MAX_LINES_TOUCH = 6;
+  const COMPOSER_MAX_LINES_DESK = 9;
+  function composerMaxLines() {
+    return typeof window.matchMedia === "function"
+      && window.matchMedia("(hover: none), (pointer: coarse)").matches
+      ? COMPOSER_MAX_LINES_TOUCH
+      : COMPOSER_MAX_LINES_DESK;
+  }
+  // Exported for tests: happy-dom does no layout, so a height assertion would
+  // measure nothing. The decision is the testable part.
+  window.__grokComposerMaxLines = composerMaxLines;
+
   const $ = (id) => document.getElementById(id);
   const messagesEl = $("messages");
   const input = $("input");
@@ -13373,7 +13400,10 @@
             const line = parseFloat(cs.lineHeight) || 20;
             const pad = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0)
               + (parseFloat(cs.borderTopWidth) || 0) + (parseFloat(cs.borderBottomWidth) || 0);
-            const max = Math.round(line * 10 + pad);
+            // Same ceiling as the composer: it is the same trade about how much
+            // of the screen a writing box may take, and two different answers to
+            // it on one screen would be arbitrary.
+            const max = Math.round(line * composerMaxLines() + pad);
             custom.style.height = "auto";
             const content = custom.scrollHeight;
             custom.style.height = Math.max(Math.round(line + pad), Math.min(content, max)) + "px";
@@ -14643,22 +14673,21 @@
   // Mirror the composer text onto the backdrop, wrapping a trailing send command
   // ("grok send") in an accent pill. Call whenever the input value changes.
   // Auto-grow the composer with its content: 2 lines at rest (Cursor-style,
-  // matching the textarea's rows attribute), expanding to 10 as the user
-  // types, then scrolling. The .input-highlight overlay is inset:0 in the
-  // same wrap, so it tracks the height for free; its scrollTop is synced in
-  // renderInputHighlight.
+  // matching the textarea's rows attribute), expanding to composerMaxLines()
+  // as the user types, then scrolling. The .input-highlight overlay is inset:0
+  // in the same wrap, so it tracks the height for free; its scrollTop is synced
+  // in renderInputHighlight.
   //
-  // 10 rather than the original 5 (#144): a longer answer could not be read
-  // back while writing it. The owner set the number against the neighbours —
-  // Claude Code stops at 10, Codex at 8 — in preference to a drag handle,
-  // because a max the user has to re-drag every time they want the history
-  // back is worse than one that is simply large enough.
+  // More than the original 5 (#144): a longer answer could not be read back
+  // while writing it. A drag handle was considered and rejected — a maximum you
+  // have to re-drag every time you want the history back is worse than one that
+  // is simply large enough. See composerMaxLines for why a phone gets fewer.
   function autosizeInput() {
     const cs = window.getComputedStyle(input);
     const line = parseFloat(cs.lineHeight) || 20;
     const pad = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
     const min = Math.round(line * 2 + pad);
-    const max = Math.round(line * 10 + pad);
+    const max = Math.round(line * composerMaxLines() + pad);
     input.style.height = "auto";
     const content = input.scrollHeight;
     input.style.height = Math.max(min, Math.min(content, max)) + "px";
