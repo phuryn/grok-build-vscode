@@ -299,7 +299,7 @@
    * relay or the native shell.
    */
   const COMPOSER_MAX_LINES_TOUCH = 6;
-  const COMPOSER_MAX_LINES_DESK = 9;
+  const COMPOSER_MAX_LINES_DESK = 10;
   function composerMaxLines() {
     return typeof window.matchMedia === "function"
       && window.matchMedia("(hover: none), (pointer: coarse)").matches
@@ -806,8 +806,8 @@
     // the Add project form shows the destination as you type, so it needs this
     // before anyone has typed anything.
     projectRoot: "",
-    // Last `projectSetup.github` from the host, so a reconnect can reopen the
-    // clone form onto the code the CLI is still polling.
+    // Live `projectSetup.github` while the clone form is open. Closing or
+    // reopening cancels the login; this is not a reason to pop the modal.
     projectGithub: null,
     // Empty-state tip facts from the host (`welcomeTips`): the two counts the
     // chat client never receives on its own plus the retired ids. null until
@@ -6294,6 +6294,11 @@
   let addProjectFormKeydown = null;
 
   function closeAddProjectForm() {
+    const wasClone = !!(addProjectFormApi && addProjectFormApi.el && addProjectFormApi.el.dataset.kind === "clone");
+    if (wasClone) {
+      state.projectGithub = null;
+      vscode.postMessage({ type: "cancelDeviceLogin", provider: "github" });
+    }
     if (addProjectFormScrim) addProjectFormScrim.remove();
     // Capture-phase, so it must come off again — a listener left behind would
     // swallow Escape everywhere else in the app for the rest of the session.
@@ -6315,15 +6320,25 @@
     if (!helpers || typeof helpers.addProjectForm !== "function") return;
     closeAddProjectForm();
     closeRailMenu();
+    if (kind === "clone") {
+      state.projectGithub = null;
+      vscode.postMessage({ type: "cancelDeviceLogin", provider: "github" });
+    }
+    const githubSignIn = !IS_REMOTE || !!(state.hostCaps && state.hostCaps.remoteGithubSignIn);
     const api = helpers.addProjectForm({
       kind,
       root: state.projectRoot,
+      canGithubCli: githubSignIn,
+      canUseToken: githubSignIn,
       onSubmit: (value, extra) => {
         vscode.postMessage(
           kind === "clone"
             ? { type: "cloneProject", url: value, ...(extra && extra.name ? { name: extra.name } : {}) }
             : { type: "createProject", name: value },
         );
+      },
+      onLoginWithToken: (token) => {
+        vscode.postMessage({ type: "githubLoginWithToken", token });
       },
       onConnect: () => {
         // Same gate as onFix below, and for the same reason: a host that
@@ -6417,7 +6432,6 @@
     document.addEventListener("keydown", addProjectFormKeydown, true);
     api.update({
       root: state.projectRoot,
-      github: state.projectGithub || undefined,
       githubState: state.githubState || undefined,
       repos: state.githubRepos,
     });
@@ -15878,13 +15892,8 @@
           break;
         }
         if (msg.busy) state.projectGithub = null;
-        else if (msg.github && typeof msg.github === "object") state.projectGithub = msg.github;
+        else if (addProjectFormApi && msg.github && typeof msg.github === "object") state.projectGithub = msg.github;
         else if (msg.error) state.projectGithub = null;
-        // Reconnect: the form is gone, the CLI is still polling, and the
-        // snapshot carried the code. Reopen the clone form so they can finish.
-        if (!addProjectFormApi && msg.github && (msg.github.status === "starting" || msg.github.status === "waiting")) {
-          openAddProjectForm("clone");
-        }
         if (addProjectFormApi) addProjectFormApi.update({
           ...msg,
           github: state.projectGithub || msg.github,

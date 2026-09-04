@@ -29,8 +29,8 @@ describe("composer height ceiling", () => {
     expect(maxLines(true)).toBe(6);
   });
 
-  it("allows 9 everywhere else", () => {
-    expect(maxLines(false)).toBe(9);
+  it("allows 10 everywhere else", () => {
+    expect(maxLines(false)).toBe(10);
   });
 
   it("falls back to the desktop ceiling when matchMedia is missing", () => {
@@ -38,6 +38,6 @@ describe("composer height ceiling", () => {
     // silently produce the phone value on a desktop.
     const h = bootWebview({ ready: true });
     (h.window as any).matchMedia = undefined;
-    expect((h.window as any).__grokComposerMaxLines()).toBe(9);
+    expect((h.window as any).__grokComposerMaxLines()).toBe(10);
   });
 });

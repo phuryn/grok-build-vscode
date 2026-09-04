@@ -162,11 +162,15 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
     case "unlinkRemoteDevice":
       break;
     case "runGrokLogin":
-    case "cancelDeviceLogin":
     case "logout":
     case "recheckConnection":
     case "retryProviderSession":
       if (raw.provider !== undefined && raw.provider !== "grok" && raw.provider !== "codex" && raw.provider !== "claude") return null;
+      break;
+    case "cancelDeviceLogin":
+      if (raw.provider !== undefined
+        && raw.provider !== "grok" && raw.provider !== "codex"
+        && raw.provider !== "claude" && raw.provider !== "github") return null;
       break;
     case "submitDeviceLoginCode":
       if (!isString(raw.code)) return null;

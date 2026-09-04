@@ -76,12 +76,17 @@ that is already taken asks for a different folder.
 
 **GitHub is a connection**, like Grok or Codex. Settings → Providers shows
 whether this machine is signed in and as whom. Connect from that row, or from
-the clone form's "Connect GitHub to see your repositories" row. Public URLs
-still clone without signing in.
+the clone form: Connect with the GitHub CLI is the main action, a token is the
+quieter advanced path under it. Public URLs still clone without signing in.
 
-A pasted token is an advanced option on the Settings row. It is sent once to
-`gh auth login --with-token` and never stored by us; `gh` owns it after that.
-Do not put a token in the clone URL.
+A pasted token is an advanced option on both the Settings row and the clone
+form, not a competing control. It is sent once to `gh auth login --with-token`
+and never stored by us; `gh` owns it after that. Do not put a token in the
+clone URL.
+
+Closing the clone form cancels an in-flight `gh` login. Reopening starts the
+choice again — a `projectSetup` frame naming a waiting login does not reopen
+the form.
 
 **Credentials are git's own.** Whatever you already have set up — a credential
 helper, an SSH key, `gh auth login` — is what authenticates. Public repositories
@@ -97,9 +102,10 @@ in for fails quickly, and the form offers the next step:
 - **Sign in to GitHub** runs `gh auth login` **and then `gh auth setup-git`**.
   At the computer that is a terminal: answer the questions, finish in the
   browser it opens, then try the clone again. From a phone or browser it is
-  the same device-code flow the agent connect card uses — a short code, a
-  copy button, a link that opens GitHub in a new tab, and the form stays
-  open so you can Clone again when it finishes. The second command is the
+  the same two-step device-code flow the agent connect card uses: first a
+  choice (CLI, or a token), then a short code and a button that opens
+  GitHub in a new tab. The form stays open so you can Clone again when it
+  finishes. The second command is the
   one that matters and is easy to miss: `gh auth login` asks whether to
   configure Git and lets you say no, which would leave the clone failing
   exactly as before. `gh auth setup-git` wires the CLI into Git either way,

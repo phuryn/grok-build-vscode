@@ -226,7 +226,17 @@
   }
 
   function githubAction(snapshot) {
-    return githubConnectedNow(snapshot) ? "Sign out" : "Connect";
+    return githubConnectedNow(snapshot) ? "Sign out" : "Connect with GitHub CLI";
+  }
+
+  function githubTokenAvailable(snapshot, env) {
+    return !!(githubKnown(snapshot) && !githubConnectedNow(snapshot)
+      && (!env || !env.isRemote || canGithubSignInFromRemote(env)));
+  }
+
+  function githubCliLive(snapshot) {
+    const flow = githubOf(snapshot) && githubOf(snapshot).loginFlow;
+    return !!(flow && (flow.status === "starting" || flow.status === "waiting"));
   }
 
   function canGithubSignInFromRemote(env) {
@@ -865,11 +875,9 @@
       description: "A fine-grained token can be scoped to one repository, with an expiry. It is stored by the GitHub CLI, not by us.",
       kind: "action",
       actionLabel: "Paste token",
-      // Any remote whose host can sign in to GitHub at all — cloud or desk.
-      // Briefly cloud-only; see `githubLoginWithToken` in remote-policy.ts for
-      // why that came back out.
-      visible: (s, env) => !!(githubKnown(s) && !githubConnectedNow(s)
-        && (!env || !env.isRemote || canGithubSignInFromRemote(env))),
+      // Folded into the GitHub row as the quieter advanced path. The row
+      // stays in the catalog so existing ids do not vanish; it does not paint.
+      visible: () => false,
       keepOpen: true,
       local: "githubToken",
     },
@@ -2585,24 +2593,33 @@
     return el;
   }
 
-  function appendGithubLoginFlow(el, snapshot) {
+  function appendGithubLoginFlow(el, snapshot, opts) {
     const g = githubOf(snapshot);
     const flow = g && g.loginFlow;
-    const status = flow && flow.status;
+    const status = (flow && flow.status) || (opts && opts.pending ? "starting" : "");
     if (status !== "starting" && status !== "waiting") return;
     const box = document.createElement("div");
     box.className = "settings-github-flow";
+    box.dataset.status = status;
     if (status === "starting") {
+      const heading = document.createElement("div");
+      heading.className = "settings-github-flow-heading";
+      heading.textContent = "Connecting GitHub";
       const p = document.createElement("p");
       p.className = "settings-github-flow-desc";
       p.textContent = "Asking the GitHub CLI for a sign-in code…";
+      box.appendChild(heading);
       box.appendChild(p);
     } else {
+      const heading = document.createElement("div");
+      heading.className = "settings-github-flow-heading";
+      heading.textContent = "Finish signing in to GitHub";
       const p = document.createElement("p");
       p.className = "settings-github-flow-desc";
       p.textContent = flow.code
         ? "Open the link, then confirm this code:"
         : "Open the link to finish signing in.";
+      box.appendChild(heading);
       box.appendChild(p);
       if (flow.code) {
         const cmd = document.createElement("div");
@@ -2627,7 +2644,7 @@
       }
       if (flow.url && /^https?:\/\//i.test(flow.url)) {
         const open = document.createElement("a");
-        open.className = "settings-github-flow-open";
+        open.className = "onb-action settings-github-flow-open";
         open.href = flow.url;
         open.target = "_blank";
         open.rel = "noopener noreferrer";
@@ -2639,7 +2656,20 @@
       note.textContent = "Keep this page open — it finishes on its own.";
       box.appendChild(note);
     }
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.className = "settings-github-flow-cancel";
+    cancel.textContent = "Cancel";
+    box.appendChild(cancel);
     el.appendChild(box);
+  }
+
+  function appendGithubAdvanced(el) {
+    const link = document.createElement("button");
+    link.type = "button";
+    link.className = "settings-github-advanced";
+    link.textContent = "Use a token instead";
+    el.appendChild(link);
   }
 
   function appendGithubTokenForm(el, githubTokenForm) {
@@ -2674,7 +2704,7 @@
     el.appendChild(form);
   }
 
-  function renderRow(row, snapshot, env, keyForm, githubTokenForm) {
+  function renderRow(row, snapshot, env, keyForm, githubTokenForm, githubCliStarted) {
     if (row.kind === "mcp") return renderMcpCatalog(snapshot, env);
     if (row.kind === "connectors") return renderConnectorsCatalog(snapshot, env, keyForm);
     if (row.kind === "routines") return renderRoutines(snapshot, env);
@@ -2792,25 +2822,38 @@
       span.textContent = String(value ?? "—");
       control.appendChild(span);
     } else if (row.kind === "action") {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "settings-action";
-      const pending = providerPendingLabel(row);
-      const flow = githubOf(snapshot) && githubOf(snapshot).loginFlow;
-      const githubBusy = (row.id === "githubConnection" || row.id === "githubConnectionRemote")
-        && flow && (flow.status === "starting" || flow.status === "waiting");
-      btn.textContent = githubBusy ? "Connecting…" : (pending || rowActionLabel(row, snapshot, env));
-      if (!enabled || pending || githubBusy) btn.disabled = true;
-      if (pending || githubBusy) btn.setAttribute("aria-busy", "true");
-      control.appendChild(btn);
+      const isGithub = row.id === "githubConnection" || row.id === "githubConnectionRemote";
+      const githubStepped = isGithub && (
+        !!githubCliStarted || githubCliLive(snapshot) || !!(githubTokenForm && githubTokenForm.open)
+      );
+      if (!githubStepped) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "settings-action";
+        if (isGithub && !githubConnectedNow(snapshot)) {
+          btn.classList.add("settings-github-connect", "is-primary");
+        }
+        const pending = providerPendingLabel(row);
+        btn.textContent = pending || rowActionLabel(row, snapshot, env);
+        if (!enabled || pending) btn.disabled = true;
+        if (pending) btn.setAttribute("aria-busy", "true");
+        control.appendChild(btn);
+      }
     }
 
     el.appendChild(title);
     el.appendChild(control);
     if (row.id === "githubConnection" || row.id === "githubConnectionRemote") {
-      appendGithubLoginFlow(el, snapshot);
+      if (githubCliLive(snapshot) || githubCliStarted) {
+        appendGithubLoginFlow(el, snapshot, {
+          pending: !!githubCliStarted && !githubCliLive(snapshot),
+        });
+      } else if (githubTokenForm && githubTokenForm.open) {
+        appendGithubTokenForm(el, githubTokenForm);
+      } else if (!githubConnectedNow(snapshot) && githubTokenAvailable(snapshot, env)) {
+        appendGithubAdvanced(el);
+      }
     }
-    if (row.id === "githubToken") appendGithubTokenForm(el, githubTokenForm);
     return el;
   }
 
@@ -2822,6 +2865,7 @@
     let query = "";
     let keyForm = { id: "", value: "", readOnly: false };
     let githubTokenForm = { open: false, value: "" };
+    let githubCliStarted = false;
     let pendingRestore = null;
     let aboutChecked = false;
     let providersChecked = false;
@@ -3022,6 +3066,7 @@
         phoneNav,
         keyFormId: keyForm.id,
         githubTokenOpen: githubTokenForm.open,
+        githubCliStarted: githubCliStarted,
         // Which routine is open, and which unit its cadence is on — the two
         // pieces of local state that change the DOM without the snapshot
         // moving. Without them an expand or a unit switch computes the same
@@ -3244,7 +3289,7 @@
             heading.textContent = cat ? cat.title : row.category;
             body.appendChild(heading);
           }
-          body.appendChild(renderRow(row, snapshot, env, keyForm, githubTokenForm));
+          body.appendChild(renderRow(row, snapshot, env, keyForm, githubTokenForm, githubCliStarted));
         }
       } else {
         let lastSection = "";
@@ -3257,7 +3302,7 @@
             heading.textContent = section;
             body.appendChild(heading);
           }
-          body.appendChild(renderRow(row, snapshot, env, keyForm, githubTokenForm));
+          body.appendChild(renderRow(row, snapshot, env, keyForm, githubTokenForm, githubCliStarted));
         }
         if (categoryId === "about") {
           const disclaimer = document.createElement("p");
@@ -3373,7 +3418,18 @@
             || btn.classList.contains("settings-github-token-cancel")) {
             return;
           }
-          btn.onclick = (e) => { e.stopPropagation(); runAction(row); };
+          btn.onclick = (e) => {
+            e.stopPropagation();
+            if ((row.id === "githubConnection" || row.id === "githubConnectionRemote")
+              && !githubConnectedNow(snapshot)) {
+              githubCliStarted = true;
+              githubTokenForm = { open: false, value: "" };
+              runAction(row);
+              paint();
+              return;
+            }
+            runAction(row);
+          };
         }
       });
       function closeKeyForm() {
@@ -3436,6 +3492,27 @@
           if (input) input.value = "";
           keyForm = { id: "", value: "", readOnly: false };
           post({ type: "connectMcpConnector", id, key, readOnly });
+          paint();
+        });
+      });
+      body.querySelectorAll(".settings-github-advanced").forEach((btn) => {
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          if (githubCliStarted || githubCliLive(snapshot)) {
+            post({ type: "cancelDeviceLogin", provider: "github" });
+          }
+          githubCliStarted = false;
+          githubTokenForm = { open: true, value: "" };
+          paint();
+          const input = container.querySelector(".settings-github-token-input");
+          if (input) input.focus();
+        });
+      });
+      body.querySelectorAll(".settings-github-flow-cancel").forEach((btn) => {
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          githubCliStarted = false;
+          post({ type: "cancelDeviceLogin", provider: "github" });
           paint();
         });
       });
@@ -3733,6 +3810,9 @@
         if (nextSnapshot) snapshot = defaultSnapshot({ ...snapshot, ...nextSnapshot });
         if (nextEnv) Object.assign(env, nextEnv);
         if (githubConnectedNow(snapshot)) githubTokenForm = { open: false, value: "" };
+        if (nextSnapshot && Object.prototype.hasOwnProperty.call(nextSnapshot, "githubState")) {
+          githubCliStarted = false;
+        }
         // Before the key: the answer this was waiting for is usually IN this
         // snapshot, and a stale "Disconnecting…" left in the key would make
         // the repaint that clears it look like a no-op.
@@ -3808,6 +3888,8 @@
     githubKnown,
     githubDescribe,
     githubAction,
+    githubTokenAvailable,
+    githubCliLive,
     visibleRows,
     visibleCategories,
     filterRows,

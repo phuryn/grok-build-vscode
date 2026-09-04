@@ -252,13 +252,52 @@ describe("add project", () => {
     expect(problem(h)?.textContent).toMatch(/Sign in to GitHub on the computer/);
   });
 
-  it("renders the device code in the clone form, with a copy button and a link", () => {
+  const githubBox = (h: Harness) => h.doc.querySelector(".add-project-github") as HTMLElement | null;
+  const githubConnect = (h: Harness) =>
+    h.doc.querySelector(".add-project-github-connect") as HTMLButtonElement | null;
+  const githubOpen = (h: Harness) =>
+    h.doc.querySelector(".add-project-github-open") as HTMLAnchorElement | null;
+
+  it("step 1 is a choice, with no code, until they press connect", () => {
     const h = boot({ coding: true });
     installOpener(h);
     openMenu(h);
     click(h.window, [...h.doc.querySelectorAll(".rail-menu-item")][0]);
-    input(h).value = "https://github.com/you/private.git";
-    input(h).dispatchEvent(new h.window.Event("input", { bubbles: true }));
+    dispatch(h.window, {
+      type: "githubState",
+      github: { connected: false, cliPresent: true },
+    });
+    const box = githubBox(h);
+    expect(box?.hidden).toBe(false);
+    expect(box?.dataset.phase).toBe("choice");
+    expect(githubConnect(h)?.textContent).toBe("Connect with GitHub CLI");
+    expect(h.doc.querySelector(".add-project-github-advanced")?.textContent)
+      .toBe("Use a token instead");
+    expect(box?.textContent).not.toContain("0D15-6BD9");
+    expect(h.doc.querySelector(".add-project-github-token")?.hidden).toBe(true);
+    expect(h.doc.querySelector(".add-project-github-card")?.hidden).toBe(true);
+  });
+
+  it("pressing connect replaces the choice with the device card", () => {
+    const h = boot({
+      remote: true,
+      coding: true,
+      caps: { ...CAPS, remoteGithubSignIn: true },
+    });
+    installOpener(h);
+    openMenu(h);
+    click(h.window, [...h.doc.querySelectorAll(".rail-menu-item")][0]);
+    dispatch(h.window, {
+      type: "githubState",
+      github: { connected: false, cliPresent: true },
+    });
+    h.posted.length = 0;
+    click(h.window, githubConnect(h)!);
+    expect(h.posted).toContainEqual({ type: "setupGithubCli", action: "auth" });
+    expect(githubBox(h)?.dataset.phase).toBe("cli");
+    expect(githubConnect(h)?.closest(".add-project-github-choice")?.hidden).toBe(true);
+    expect(h.doc.querySelector(".add-project-github-card")?.hidden).toBe(false);
+    expect(input(h).hidden).toBe(true);
     dispatch(h.window, {
       type: "projectSetup",
       root: "~/Grok Build",
@@ -268,20 +307,18 @@ describe("add project", () => {
         code: "0D15-6BD9",
       },
     });
-    expect(form(h)).toBeTruthy();
-    const box = h.doc.querySelector(".add-project-github") as HTMLElement | null;
-    expect(box?.hidden).toBe(false);
-    expect(box?.textContent).toContain("0D15-6BD9");
-    expect(box?.textContent).toContain("Open the link, then confirm this code");
-    expect(box?.textContent).toContain("Keep this page open");
-    const link = h.doc.querySelector(".add-project-github-open") as HTMLAnchorElement | null;
+    expect(githubBox(h)?.textContent).toContain("0D15-6BD9");
+    expect(githubBox(h)?.textContent).toContain("Open the link, then confirm this code");
+    expect(githubBox(h)?.textContent).toContain("Keep this page open");
+    const link = githubOpen(h);
     expect(link?.hidden).toBe(false);
+    expect(link?.tagName).toBe("A");
     expect(link?.getAttribute("href")).toBe("https://github.com/login/device");
     expect(link?.textContent).toBe("Open the sign-in page");
     expect(link?.target).toBe("_blank");
+    expect(link?.classList.contains("onb-action")).toBe(true);
     expect(h.doc.querySelector(".add-project-github-copy")).toBeTruthy();
     expect(fix(h)?.hidden).toBe(true);
-    expect(submit(h).disabled).toBe(false);
   });
 
   it("stays open on success and tells them to clone again", () => {
@@ -289,8 +326,7 @@ describe("add project", () => {
     installOpener(h);
     openMenu(h);
     click(h.window, [...h.doc.querySelectorAll(".rail-menu-item")][0]);
-    input(h).value = "https://github.com/you/private.git";
-    input(h).dispatchEvent(new h.window.Event("input", { bubbles: true }));
+    click(h.window, githubConnect(h)!);
     dispatch(h.window, {
       type: "projectSetup",
       root: "~/Grok Build",
@@ -298,11 +334,9 @@ describe("add project", () => {
     });
     expect(form(h)).toBeTruthy();
     expect(h.doc.querySelector(".add-project-github")?.textContent).toContain("Clone again");
-    expect(submit(h).textContent).toBe("Clone");
-    expect(submit(h).disabled).toBe(false);
   });
 
-  it("reopens the clone form on a waiting github frame so a reconnect can finish", () => {
+  it("a waiting GitHub login with no form open leaves the DOM alone", () => {
     const h = boot({ remote: true, coding: true, caps: { ...CAPS, remoteGithubSignIn: true } });
     dispatch(h.window, {
       type: "projectSetup",
@@ -313,8 +347,45 @@ describe("add project", () => {
         code: "0D15-6BD9",
       },
     });
+    expect(form(h)).toBeNull();
+    expect(h.doc.querySelector(".add-project-scrim")).toBeNull();
+    expect(githubBox(h)).toBeNull();
+  });
+
+  it("reopening the form returns to step 1 and cancels the in-flight login", () => {
+    const h = boot({
+      remote: true,
+      coding: true,
+      caps: { ...CAPS, remoteGithubSignIn: true },
+    });
+    installOpener(h);
+    openMenu(h);
+    click(h.window, [...h.doc.querySelectorAll(".rail-menu-item")][0]);
+    dispatch(h.window, {
+      type: "githubState",
+      github: { connected: false, cliPresent: true },
+    });
+    click(h.window, githubConnect(h)!);
+    dispatch(h.window, {
+      type: "projectSetup",
+      root: "~/Grok Build",
+      github: {
+        status: "waiting",
+        url: "https://github.com/login/device",
+        code: "0D15-6BD9",
+      },
+    });
+    expect(githubBox(h)?.textContent).toContain("0D15-6BD9");
+    h.posted.length = 0;
+    click(h.window, h.doc.querySelector(".add-project-btn:not(.add-project-primary)") as HTMLElement);
+    expect(form(h)).toBeNull();
+    expect(h.posted).toContainEqual({ type: "cancelDeviceLogin", provider: "github" });
+    openMenu(h);
+    click(h.window, [...h.doc.querySelectorAll(".rail-menu-item")][0]);
     expect(form(h)).toBeTruthy();
-    expect(h.doc.querySelector(".add-project-github")?.textContent).toContain("0D15-6BD9");
+    expect(githubBox(h)?.dataset.phase).toBe("choice");
+    expect(githubBox(h)?.textContent).not.toContain("0D15-6BD9");
+    expect(githubConnect(h)).toBeTruthy();
   });
 
   it("ignores github on an older frame that does not carry it", () => {
@@ -328,7 +399,8 @@ describe("add project", () => {
       error: "Git couldn't authenticate.",
       fix: "auth-gh",
     });
-    expect(h.doc.querySelector(".add-project-github")?.hidden).toBe(true);
+    expect(githubBox(h)?.dataset.phase).toBe("choice");
+    expect(h.doc.querySelector(".add-project-github-card")?.hidden).toBe(true);
     expect(fix(h)?.hidden).toBe(false);
   });
 
@@ -474,7 +546,7 @@ describe("add project", () => {
       type: "githubState",
       github: { connected: false, cliPresent: true },
     });
-    expect(optionLabels(h).some((t) => t.includes("Connect GitHub to see your repositories"))).toBe(true);
+    expect(githubConnect(h)).toBeTruthy();
     input(h).value = "https://github.com/phuryn/afkpilot";
     input(h).dispatchEvent(new h.window.Event("input", { bubbles: true }));
     expect(optionLabels(h).some((t) => t.includes("Clone https://github.com/phuryn/afkpilot"))).toBe(true);
@@ -486,7 +558,7 @@ describe("add project", () => {
     });
   });
 
-  it("runs Connect from the not-connected row", () => {
+  it("runs Connect from the step-1 CLI button", () => {
     const h = boot({ coding: true });
     installOpener(h);
     openMenu(h);
@@ -495,10 +567,8 @@ describe("add project", () => {
       type: "githubState",
       github: { connected: false, cliPresent: true },
     });
-    const connect = [...h.doc.querySelectorAll(".add-project-option")].find((el) =>
-      el.textContent?.includes("Connect GitHub"),
-    )!;
-    click(h.window, connect);
+    h.posted.length = 0;
+    click(h.window, githubConnect(h)!);
     expect(h.posted).toContainEqual({ type: "setupGithubCli", action: "auth" });
   });
 
@@ -507,27 +577,48 @@ describe("add project", () => {
   // ordinary case here, not an edge one. A host predating `remoteGithubSignIn`
   // DROPS `setupGithubCli`, so posting it anyway leaves a button that does
   // nothing at all. The post-clone fix row has always checked this; the
-  // picker's own Connect row is a second entry point to the same action.
-  const openConnectRow = (h: Harness) => {
+  // picker's own Connect control is a second entry point to the same action.
+  const openConnectChoice = (h: Harness) => {
     installOpener(h);
     openMenu(h);
     click(h.window, [...h.doc.querySelectorAll(".rail-menu-item")][0]);
     dispatch(h.window, { type: "githubState", github: { connected: false, cliPresent: true } });
-    return [...h.doc.querySelectorAll(".add-project-option")].find((el) =>
-      el.textContent?.includes("Connect GitHub"),
-    )!;
+    return githubConnect(h)!;
   };
 
   it("explains instead of posting a message an older host would drop", () => {
     const h = boot({ remote: true, caps: { ...CAPS, remoteGithubSignIn: false } });
-    click(h.window, openConnectRow(h));
+    click(h.window, openConnectChoice(h));
     expect(h.posted.some((m) => m.type === "setupGithubCli")).toBe(false);
     expect(h.doc.querySelector(".add-project-form")!.textContent).toMatch(/terminal|too old/i);
+    expect(githubBox(h)?.dataset.phase).toBe("choice");
   });
 
   it("still connects when the host advertises that it can", () => {
     const h = boot({ remote: true, caps: { ...CAPS, remoteGithubSignIn: true } });
-    click(h.window, openConnectRow(h));
+    h.posted.length = 0;
+    click(h.window, openConnectChoice(h));
     expect(h.posted).toContainEqual({ type: "setupGithubCli", action: "auth" });
+  });
+
+  it("the token path is a second step, not a field that is simply present", () => {
+    const h = boot({
+      remote: true,
+      coding: true,
+      caps: { ...CAPS, remoteGithubSignIn: true },
+    });
+    installOpener(h);
+    openMenu(h);
+    click(h.window, [...h.doc.querySelectorAll(".rail-menu-item")][0]);
+    dispatch(h.window, {
+      type: "githubState",
+      github: { connected: false, cliPresent: true },
+    });
+    expect(h.doc.querySelector(".add-project-github-token")?.hidden).toBe(true);
+    click(h.window, h.doc.querySelector(".add-project-github-advanced") as HTMLElement);
+    expect(githubBox(h)?.dataset.phase).toBe("token");
+    expect(h.doc.querySelector(".add-project-github-token")?.hidden).toBe(false);
+    expect(h.doc.querySelector(".add-project-github-token-input")).toBeTruthy();
+    expect(githubConnect(h)?.closest(".add-project-github-choice")?.hidden).toBe(true);
   });
 });

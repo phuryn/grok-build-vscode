@@ -2299,12 +2299,38 @@
     fixBtn.hidden = true;
     el.appendChild(fixBtn);
 
-    // Headless GitHub sign-in. Same wording as the agent connect card: a
-    // code, a copy button, a link that opens the vendor page in a new tab.
-    // Only the clone form ever receives `projectSetup.github`.
+    // GitHub connect, two steps — same shape as the agent cards. Step 1 is
+    // a choice (CLI, plus a quieter token path). Step 2 replaces that
+    // choice with the device card or the token form, never appends below
+    // the clone fields: those hide so the card is what is on screen.
     const githubBox = doc.createElement("div");
     githubBox.className = "add-project-github";
     githubBox.hidden = true;
+
+    const githubChoice = doc.createElement("div");
+    githubChoice.className = "add-project-github-choice";
+    const githubChoiceHeading = doc.createElement("div");
+    githubChoiceHeading.className = "add-project-github-heading";
+    githubChoiceHeading.textContent = "Connect GitHub";
+    const githubChoiceDesc = doc.createElement("p");
+    githubChoiceDesc.className = "add-project-github-desc";
+    githubChoiceDesc.textContent = "Sign in with the GitHub CLI. You will open a link and confirm a short code.";
+    const githubConnect = doc.createElement("button");
+    githubConnect.type = "button";
+    githubConnect.className = "onb-action add-project-github-connect";
+    githubConnect.textContent = "Connect with GitHub CLI";
+    const githubAdvanced = doc.createElement("button");
+    githubAdvanced.type = "button";
+    githubAdvanced.className = "add-project-github-advanced";
+    githubAdvanced.textContent = "Use a token instead";
+    githubChoice.appendChild(githubChoiceHeading);
+    githubChoice.appendChild(githubChoiceDesc);
+    githubChoice.appendChild(githubConnect);
+    githubChoice.appendChild(githubAdvanced);
+
+    const githubCard = doc.createElement("div");
+    githubCard.className = "add-project-github-card";
+    githubCard.hidden = true;
     const githubHeading = doc.createElement("div");
     githubHeading.className = "add-project-github-heading";
     const githubDesc = doc.createElement("p");
@@ -2320,17 +2346,55 @@
     githubCmd.appendChild(githubCode);
     githubCmd.appendChild(githubCopy);
     const githubOpen = doc.createElement("a");
-    githubOpen.className = "add-project-github-open";
+    githubOpen.className = "onb-action add-project-github-open";
     githubOpen.target = "_blank";
     githubOpen.rel = "noopener noreferrer";
     githubOpen.textContent = "Open the sign-in page";
     const githubNote = doc.createElement("p");
     githubNote.className = "add-project-github-note";
-    githubBox.appendChild(githubHeading);
-    githubBox.appendChild(githubDesc);
-    githubBox.appendChild(githubCmd);
-    githubBox.appendChild(githubOpen);
-    githubBox.appendChild(githubNote);
+    githubCard.appendChild(githubHeading);
+    githubCard.appendChild(githubDesc);
+    githubCard.appendChild(githubCmd);
+    githubCard.appendChild(githubOpen);
+    githubCard.appendChild(githubNote);
+
+    const githubToken = doc.createElement("div");
+    githubToken.className = "add-project-github-token";
+    githubToken.hidden = true;
+    const githubTokenHeading = doc.createElement("div");
+    githubTokenHeading.className = "add-project-github-heading";
+    githubTokenHeading.textContent = "Connect with a token";
+    const githubTokenHint = doc.createElement("p");
+    githubTokenHint.className = "add-project-github-desc";
+    githubTokenHint.textContent = "Paste a fine-grained token (one repository, Contents: Read, an expiry) or a classic PAT. It is sent once and never shown again.";
+    const githubTokenInput = doc.createElement("input");
+    githubTokenInput.type = "password";
+    githubTokenInput.className = "add-project-github-token-input";
+    githubTokenInput.autocomplete = "off";
+    githubTokenInput.spellcheck = false;
+    githubTokenInput.setAttribute("aria-label", "GitHub token");
+    const githubTokenError = doc.createElement("p");
+    githubTokenError.className = "add-project-github-token-error";
+    githubTokenError.setAttribute("role", "alert");
+    githubTokenError.hidden = true;
+    const githubTokenSubmit = doc.createElement("button");
+    githubTokenSubmit.type = "button";
+    githubTokenSubmit.className = "onb-action add-project-github-token-submit";
+    githubTokenSubmit.textContent = "Connect with token";
+    const githubTokenBack = doc.createElement("button");
+    githubTokenBack.type = "button";
+    githubTokenBack.className = "add-project-github-advanced";
+    githubTokenBack.textContent = "Back";
+    githubToken.appendChild(githubTokenHeading);
+    githubToken.appendChild(githubTokenHint);
+    githubToken.appendChild(githubTokenInput);
+    githubToken.appendChild(githubTokenError);
+    githubToken.appendChild(githubTokenSubmit);
+    githubToken.appendChild(githubTokenBack);
+
+    githubBox.appendChild(githubChoice);
+    githubBox.appendChild(githubCard);
+    githubBox.appendChild(githubToken);
     el.appendChild(githubBox);
 
     githubCopy.addEventListener("click", function () {
@@ -2368,6 +2432,9 @@
     let activeIndex = 0;
     let paintedRows = [];
     let requestedRepos = false;
+    // `choice` until they press Connect / token. Reopening builds a new form,
+    // so this cannot carry a stale card across opens.
+    let githubPhase = "choice";
 
     function cloneUrlFromRow(row) {
       if (!row) return "";
@@ -2402,11 +2469,6 @@
       btn.id = listboxId + "-" + index;
       btn.setAttribute("aria-selected", index === activeIndex ? "true" : "false");
       if (index === activeIndex) btn.classList.add("is-active");
-      if (row.kind === "connect") {
-        btn.classList.add("is-connect");
-        btn.textContent = "Connect GitHub to see your repositories";
-        return btn;
-      }
       if (row.kind === "typed") {
         btn.textContent = row.label;
         return btn;
@@ -2442,9 +2504,7 @@
       const rows = [];
       const connected = !!(githubState && githubState.connected && githubState.error !== true);
       if (parsed.typed) rows.push({ kind: "typed", value: parsed.typed.value, label: parsed.typed.label });
-      if (!connected) {
-        rows.push({ kind: "connect" });
-      } else if (!parsed.typed) {
+      if (connected && !parsed.typed) {
         const matches = filterGithubRepos(repos || [], parsed.filter);
         for (const repo of matches) {
           rows.push({ kind: "repo", nameWithOwner: repo.nameWithOwner, isPrivate: !!repo.isPrivate, updatedAt: repo.updatedAt });
@@ -2466,14 +2526,10 @@
       const active = rows[activeIndex] && listboxId + "-" + activeIndex;
       if (active) input.setAttribute("aria-activedescendant", active);
       else input.removeAttribute("aria-activedescendant");
-      listbox.hidden = false;
+      listbox.hidden = githubPhase !== "choice" || rows.length === 0;
     }
 
     function activateRow(row) {
-      if (row.kind === "connect") {
-        if (typeof o.onConnect === "function") o.onConnect();
-        return;
-      }
       if (row.kind === "typed") input.value = row.value;
       else if (row.kind === "repo") input.value = row.nameWithOwner;
       paintDest();
@@ -2483,11 +2539,7 @@
     function fire() {
       if (submit.disabled) return;
       if (kind === "clone") {
-        const row = paintedRows[activeIndex];
-        if (row && row.kind === "connect") {
-          if (typeof o.onConnect === "function") o.onConnect();
-          return;
-        }
+        if (githubPhase !== "choice") return;
         const url = currentCloneUrl();
         if (!url) return;
         const extra = !collisionInput.hidden && collisionInput.value.trim()
@@ -2524,28 +2576,36 @@
       if (typeof o.onCancel === "function") o.onCancel();
     });
     fixBtn.addEventListener("click", function () {
+      if (fixBtn.dataset.fix === "auth-gh") {
+        startGithubCli();
+        return;
+      }
       if (typeof o.onFix === "function") o.onFix(fixBtn.dataset.fix);
     });
 
-    function paintGithub(s) {
-      const g = (kind === "clone" && s.github && typeof s.github === "object") ? s.github : null;
-      const status = g && typeof g.status === "string" ? g.status : "";
-      if (!status) {
-        githubBox.hidden = true;
-        return false;
-      }
-      githubBox.hidden = false;
+    function canGithubCli() {
+      return o.canGithubCli !== false;
+    }
+
+    function canUseToken() {
+      return o.canUseToken !== false;
+    }
+
+    function setCloneFieldsHidden(hidden) {
+      body.hidden = hidden;
+      label.hidden = hidden;
+      input.hidden = hidden;
+      dest.hidden = hidden;
+      submit.hidden = hidden;
+    }
+
+    function paintGithubCard(g) {
+      const status = g && typeof g.status === "string" ? g.status : "starting";
       githubBox.dataset.status = status;
-      const url = typeof g.url === "string" && /^https?:\/\//i.test(g.url) ? g.url : "";
-      const code = typeof g.code === "string" ? g.code : "";
-      if (status === "starting") {
-        githubHeading.textContent = "Connecting GitHub";
-        githubDesc.textContent = "Asking the GitHub CLI for a sign-in code…";
-        githubDesc.hidden = false;
-        githubCmd.hidden = true;
-        githubOpen.hidden = true;
-        githubNote.hidden = true;
-      } else if (status === "waiting" && url) {
+      const url = g && typeof g.url === "string" && /^https?:\/\//i.test(g.url) ? g.url : "";
+      const code = g && typeof g.code === "string" ? g.code : "";
+      githubOpen.removeAttribute("href");
+      if (status === "waiting" && url) {
         githubHeading.textContent = "Finish signing in to GitHub";
         githubDesc.textContent = code
           ? "Open the link, then confirm this code:"
@@ -2560,27 +2620,123 @@
         githubOpen.href = url;
         githubNote.hidden = false;
         githubNote.textContent = "Keep this page open — it finishes on its own.";
-      } else if (status === "done") {
+        return true;
+      }
+      if (status === "done") {
         githubHeading.textContent = "GitHub connected";
-        githubDesc.textContent = typeof g.message === "string" && g.message
+        githubDesc.textContent = g && typeof g.message === "string" && g.message
           ? g.message
           : "Signed in to GitHub. Try to clone again.";
         githubDesc.hidden = false;
         githubCmd.hidden = true;
         githubOpen.hidden = true;
         githubNote.hidden = true;
-      } else if (status === "failed") {
+        return false;
+      }
+      if (status === "failed") {
         githubHeading.textContent = "Could not connect GitHub";
-        githubDesc.textContent = typeof g.message === "string" ? g.message : "";
+        githubDesc.textContent = g && typeof g.message === "string" ? g.message : "";
         githubDesc.hidden = !githubDesc.textContent;
         githubCmd.hidden = true;
         githubOpen.hidden = true;
         githubNote.hidden = true;
-      } else {
+        return false;
+      }
+      githubHeading.textContent = "Connecting GitHub";
+      githubDesc.textContent = "Asking the GitHub CLI for a sign-in code…";
+      githubDesc.hidden = false;
+      githubCmd.hidden = true;
+      githubOpen.hidden = true;
+      githubNote.hidden = true;
+      return true;
+    }
+
+    function startGithubCli() {
+      if (typeof o.onConnect === "function") o.onConnect();
+      if (!canGithubCli()) return;
+      githubPhase = "cli";
+      paintGithub({ github: { status: "starting" } });
+    }
+
+    function startGithubToken() {
+      if (!canUseToken()) return;
+      githubPhase = "token";
+      githubTokenInput.value = "";
+      githubTokenError.hidden = true;
+      githubTokenError.textContent = "";
+      paintGithub({});
+    }
+
+    githubConnect.addEventListener("click", startGithubCli);
+    githubAdvanced.addEventListener("click", startGithubToken);
+    githubTokenBack.addEventListener("click", function () {
+      githubPhase = "choice";
+      githubTokenInput.value = "";
+      paintGithub({});
+    });
+    githubTokenSubmit.addEventListener("click", function () {
+      const token = githubTokenInput.value;
+      githubTokenInput.value = "";
+      if (!token.trim()) return;
+      if (typeof o.onLoginWithToken === "function") o.onLoginWithToken(token.trim());
+    });
+    githubTokenInput.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") { e.preventDefault(); githubTokenSubmit.click(); }
+    });
+
+    function paintGithub(s) {
+      if (kind !== "clone") {
         githubBox.hidden = true;
         return false;
       }
-      return status === "starting" || status === "waiting";
+      const connected = !!(githubState && githubState.connected && githubState.error !== true);
+      if (connected) {
+        githubPhase = "choice";
+        githubBox.hidden = true;
+        githubBox.dataset.phase = "hidden";
+        delete githubBox.dataset.status;
+        setCloneFieldsHidden(false);
+        return false;
+      }
+      githubBox.hidden = false;
+      githubAdvanced.hidden = !canUseToken();
+      if (githubPhase === "token") {
+        githubBox.dataset.phase = "token";
+        delete githubBox.dataset.status;
+        githubChoice.hidden = true;
+        githubCard.hidden = true;
+        githubToken.hidden = false;
+        setCloneFieldsHidden(true);
+        const tokenErr = githubState && githubState.error && typeof githubState.message === "string"
+          ? githubState.message
+          : "";
+        githubTokenError.textContent = tokenErr;
+        githubTokenError.hidden = !tokenErr;
+        return false;
+      }
+      if (githubPhase === "cli") {
+        const g = (s.github && typeof s.github === "object") ? s.github : null;
+        // A failed login is posted as `error` / `fix`, not as github.failed —
+        // drop back to the choice so that message is readable.
+        if (!g && s.error) {
+          githubPhase = "choice";
+        } else {
+          githubBox.dataset.phase = "cli";
+          githubChoice.hidden = true;
+          githubToken.hidden = true;
+          githubCard.hidden = false;
+          setCloneFieldsHidden(true);
+          return paintGithubCard(g || { status: "starting" });
+        }
+      }
+      githubPhase = "choice";
+      githubBox.dataset.phase = "choice";
+      delete githubBox.dataset.status;
+      githubChoice.hidden = false;
+      githubCard.hidden = true;
+      githubToken.hidden = true;
+      setCloneFieldsHidden(false);
+      return false;
     }
 
     /** Apply a `projectSetup` frame. Everything the host says, in one place. */
@@ -2613,12 +2769,13 @@
       }
       el.classList.toggle("is-busy", busy);
       const githubLive = paintGithub(s);
-      const message = busy || githubLive ? "" : (typeof s.error === "string" ? s.error : "");
+      const githubStepped = githubPhase === "cli" || githubPhase === "token";
+      const message = busy || githubLive || githubStepped ? "" : (typeof s.error === "string" ? s.error : "");
       problem.textContent = message;
       problem.hidden = !message;
       // The fix button only ever appears with the failure that earned it, so a
       // stale "Sign in to GitHub" cannot outlive the error it belonged to.
-      const fix = busy || githubLive || !message ? "" : (s.fix || "");
+      const fix = busy || githubLive || githubStepped || !message ? "" : (s.fix || "");
       fixBtn.hidden = !fix;
       fixBtn.dataset.fix = fix || "";
       if (fix === "auth-gh") fixBtn.textContent = "Sign in to GitHub";
@@ -2626,8 +2783,8 @@
         fixBtn.textContent = s.fixCommand ? "Install the GitHub CLI (" + s.fixCommand + ")" : "Install the GitHub CLI";
       }
       const taken = typeof s.collision === "string" ? s.collision : "";
-      collisionLabel.hidden = !taken;
-      collisionInput.hidden = !taken;
+      collisionLabel.hidden = githubStepped || !taken;
+      collisionInput.hidden = githubStepped || !taken;
       if (taken && !collisionInput.value) collisionInput.value = taken;
       if (kind === "clone" && !requestedRepos && githubState && githubState.connected && githubState.error !== true) {
         requestedRepos = true;
@@ -2639,6 +2796,7 @@
 
     if (kind === "clone") {
       paintList();
+      paintGithub({});
       if (githubState && githubState.connected && githubState.error !== true && typeof o.onRequestRepos === "function") {
         requestedRepos = true;
         o.onRequestRepos();

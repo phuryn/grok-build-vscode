@@ -993,13 +993,13 @@ export class GrokSidebar {
     }
   >();
   /**
-   * Headless GitHub sign-in for the clone form. One at a time: a second tap
-   * while the first is polling would spawn a second child racing the first
-   * to write the same credential, and would replace a code the user may
-   * already be typing. Separate from `deviceLogins` because that map is
-   * keyed by agent provider.
+   * Headless GitHub sign-in for the clone form / Settings. One at a time: a
+   * new tap cancels the orphan rather than repeating its code. Separate from
+   * `deviceLogins` because that map is keyed by agent provider.
    */
+  private githubLoginGen = 0;
   private githubDeviceLogin?: {
+    gen: number;
     handle?: DeviceLoginHandle;
     clientId?: string;
     tabToken?: string;
@@ -1721,6 +1721,11 @@ export class GrokSidebar {
         cliPath,
         onModels: (models, currentModelId) => this.cacheProviderModels("claude", models, currentModelId),
         log: (message) => this.host.appendLine(message),
+        // Same refusal Codex saw: `session/new` answering "Internal error" for
+        // a session in a bare temp directory on Windows, so the cache never
+        // filled and Claude never appeared connected (#146). The workspace is
+        // the cwd a real session uses, so it is known to work.
+        fallbackCwd: this.workspaceRoot() || undefined,
       });
       this.setProviderNeedsLogin("claude", false);
       return true;
@@ -1728,6 +1733,13 @@ export class GrokSidebar {
       this.host.appendLine(`[claude] model-cache warm-up failed: ${(error as Error).message}`);
       if (isClaudeCredentialError(error)) {
         this.setProviderNeedsLogin("claude", true);
+      } else {
+        // Anything else says nothing about the sign-in, and a stale needs-login
+        // left standing made Codex permanently unusable in exactly this way: it
+        // never cleared, so the account stayed out of the model picker and out
+        // of the "connected" confirmation however many times the user signed
+        // in. Claude had no such branch until #146.
+        this.setProviderNeedsLogin("claude", false);
       }
       return false;
     }
@@ -6718,24 +6730,36 @@ Only continue if you trust this code.`,
   }
 
   /**
+   * Stop a headless GitHub login without reporting a failure. Closing the
+   * clone form, picking the token path, or starting again all land here so
+   * `gh` is not left polling.
+   */
+  private cancelGithubDeviceLogin(): void {
+    const running = this.githubDeviceLogin;
+    if (!running) return;
+    this.githubDeviceLogin = undefined;
+    try { running.handle?.cancel(); } catch { /* already gone */ }
+    this.postGithubState();
+  }
+
+  /**
    * Headless `gh auth login --web` plus `gh auth setup-git`, reported only to
    * the client that asked. A code is for the person holding that device.
    */
   private startGithubDeviceLogin(clientId?: string, source: "clone" | "settings" = "clone"): void {
-    const running = this.githubDeviceLogin;
-    if (running?.handle) {
-      running.clientId = clientId;
-      running.source = source;
-      if (clientId) running.tabToken = this.remoteClients.tabToken(clientId) ?? running.tabToken;
-      if (running.last) running.send(running.last);
-      this.host.appendLine("[github] device login already in flight; repeated its state to the new tap");
-      return;
+    if (this.githubDeviceLogin) {
+      const prev = this.githubDeviceLogin;
+      this.githubDeviceLogin = undefined;
+      try { prev.handle?.cancel(); } catch { /* already gone */ }
     }
 
+    const gen = ++this.githubLoginGen;
     const send = (github: ProjectSetupGithub) => {
-      if (this.githubDeviceLogin) this.githubDeviceLogin.last = github;
+      const entry = this.githubDeviceLogin;
+      if (!entry || entry.gen !== gen) return;
+      entry.last = github;
       const id = this.githubAskerId(clientId);
-      if (this.githubDeviceLogin?.source !== "settings") {
+      if (entry.source !== "settings") {
         const message = this.projectSetupMessage({ github });
         if (id) this.sendRemoteClient(id, message);
         else this.post(message);
@@ -6744,6 +6768,7 @@ Only continue if you trust this code.`,
     };
 
     this.githubDeviceLogin = {
+      gen,
       clientId,
       tabToken: clientId ? this.remoteClients.tabToken(clientId) : undefined,
       source,
@@ -6770,8 +6795,9 @@ Only continue if you trust this code.`,
       },
       onDone: (result) => {
         settled = true;
-        if (this.githubDeviceLogin) this.githubDeviceLogin.handle = undefined;
         this.endDeviceLoginWork(workId);
+        if (this.githubDeviceLogin?.gen !== gen) return;
+        this.githubDeviceLogin.handle = undefined;
         const elapsed = Math.round((Date.now() - startedAt) / 1000);
         if (result.ok) {
           this.host.appendLine(`[github] device login completed after ${elapsed}s`);
@@ -6793,7 +6819,7 @@ Only continue if you trust this code.`,
         this.host.appendLine(`[github] device login cancelled after ${elapsed}s`);
       },
     });
-    if (!settled && this.githubDeviceLogin) {
+    if (!settled && this.githubDeviceLogin?.gen === gen) {
       this.githubDeviceLogin.handle = handle;
     }
   }
@@ -11028,6 +11054,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         break;
       }
       case "cancelDeviceLogin": {
+        if (msg.provider === "github") {
+          this.cancelGithubDeviceLogin();
+          break;
+        }
         const provider: AcpProvider = isAcpProvider(msg.provider) ? msg.provider : "grok";
         const running = this.deviceLogins.get(provider);
         if (!running) break;

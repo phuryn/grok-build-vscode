@@ -1039,7 +1039,10 @@ export type WebviewMsg =
   | { type: "runGrokLogin"; provider?: "grok" | "codex" | "claude" }
   // Stop a headless sign-in the host is running. Only reachable while one is in
   // flight, and it kills a child process this same user started moments ago.
-  | { type: "cancelDeviceLogin"; provider?: "grok" | "codex" | "claude" }
+  // `github` is the clone-form / Settings `gh auth login --web` child, not an
+  // agent; an older host that does not know the value no-ops rather than
+  // cancelling Grok.
+  | { type: "cancelDeviceLogin"; provider?: "grok" | "codex" | "claude" | "github" }
   // Paste-code half of a headless sign-in: the person typed the vendor's code
   // into the card and we write it to the CLI's stdin. Additive — an older host
   // simply has no handler, and an older client never posts it.

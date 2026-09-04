@@ -206,4 +206,22 @@ describe("the local vs remote branch in the host", () => {
     expect(start).not.toMatch(/\bspawn\s*\(/);
     expect(start).not.toContain("execFile");
   });
+
+  it("a new GitHub login tap cancels the orphan rather than repeating its code", () => {
+    const start = methodBody("private startGithubDeviceLogin(");
+    expect(start).toContain("prev.handle?.cancel()");
+    expect(start).not.toContain("already in flight; repeated its state");
+  });
+
+  it("cancelDeviceLogin with provider github stops the gh child", () => {
+    const cancel = methodBody("private cancelGithubDeviceLogin(");
+    expect(cancel).toContain("running.handle?.cancel()");
+    expect(cancel).toContain("this.postGithubState()");
+    const handler = sidebar.slice(
+      sidebar.indexOf('case "cancelDeviceLogin"'),
+      sidebar.indexOf('case "recheckConnection"'),
+    );
+    expect(handler).toContain('msg.provider === "github"');
+    expect(handler).toContain("cancelGithubDeviceLogin");
+  });
 });

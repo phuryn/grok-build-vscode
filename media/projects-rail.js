@@ -1030,6 +1030,11 @@
   let addProjectFormKeydown = null;
 
   function closeAddProjectForm() {
+    const wasClone = !!(addProjectFormApi && addProjectFormApi.el && addProjectFormApi.el.dataset.kind === "clone");
+    if (wasClone) {
+      state.projectGithub = null;
+      vscode.postMessage({ type: "cancelDeviceLogin", provider: "github" });
+    }
     if (addProjectFormScrim) addProjectFormScrim.remove();
     // Capture-phase listener: leaving it attached would swallow Escape in this
     // view for the rest of the window.
@@ -1044,6 +1049,10 @@
     if (!helpers || typeof helpers.addProjectForm !== "function") return;
     closeAddProjectForm();
     closeMenu();
+    if (kind === "clone") {
+      state.projectGithub = null;
+      vscode.postMessage({ type: "cancelDeviceLogin", provider: "github" });
+    }
     const api = helpers.addProjectForm({
       kind,
       root: state.projectRoot,
@@ -1060,6 +1069,7 @@
         action: fix === "install-gh" ? "install" : "auth",
       }),
       onConnect: () => vscode.postMessage({ type: "setupGithubCli", action: "auth" }),
+      onLoginWithToken: (token) => vscode.postMessage({ type: "githubLoginWithToken", token }),
       onRequestRepos: () => vscode.postMessage({ type: "listGithubRepos" }),
       githubState: state.githubState || undefined,
       repos: state.githubRepos,
@@ -1083,7 +1093,6 @@
     document.addEventListener("keydown", addProjectFormKeydown, true);
     api.update({
       root: state.projectRoot,
-      github: state.projectGithub || undefined,
       githubState: state.githubState || undefined,
       repos: state.githubRepos,
     });
@@ -1646,7 +1655,7 @@
           break;
         }
         if (msg.busy) state.projectGithub = null;
-        else if (msg.github && typeof msg.github === "object") state.projectGithub = msg.github;
+        else if (addProjectFormApi && msg.github && typeof msg.github === "object") state.projectGithub = msg.github;
         else if (msg.error) state.projectGithub = null;
         if (addProjectFormApi) addProjectFormApi.update({
           ...msg,
