@@ -408,13 +408,15 @@ try {
       }),
     };
   });
-  // Knowledge work is the desktop default, so the clone ACTION is not on this
-  // menu — but since 4.1.0 a hint is, because an absent affordance explains
-  // nothing to the person who opened this menu looking for it. Order matters:
-  // the hint is last, after the two things that do work here.
+  // Knowledge work is the desktop default, and since 4.1.6 cloning WORKS here
+  // rather than being a hint pointing at a setting. That hint existed because
+  // an absent affordance explains nothing; an affordance that simply works
+  // explains even less badly, and cloning was never a coding-only act — it is
+  // how you get a project at all. Order matters: it leads, because someone who
+  // opened this menu to clone something should meet it first.
   assert.deepEqual(
     menu.labels,
-    ["New project", "Import a folder", "Clone from GitHub?"],
+    ["Clone from GitHub", "New project", "Import a folder"],
     `desk: add-project menu — ${JSON.stringify(menu)}`,
   );
   assert.ok(menu.descriptions.every(Boolean), `desk: every entry needs its second line — ${JSON.stringify(menu)}`);
@@ -424,12 +426,12 @@ try {
   // the number here would fail the next time that scale is tuned. Zero is the
   // failure worth catching — three empty boxes once shipped through a green
   // suite and three review rounds.
-  // The knowledge-work hint is DELIBERATELY iconless — the owner looked at the
-  // rendered row on 2026-09-01 and kept it that way. Exempted by label rather
-  // than by index or by relaxing the rule: an iconless row is normally the bug
-  // this assertion exists to catch, and "some row may have no icon" would hand
-  // that back. Everything that is meant to be painted still must be.
-  const iconExempt = new Set(["Clone from GitHub?"]);
+  // Nothing is exempt any more: the one iconless row was the knowledge-work
+  // hint, and it is gone. Kept as an empty set rather than deleted, because the
+  // exemption is expressed by LABEL — the next row that legitimately has no
+  // icon names itself here, instead of the rule being relaxed to "some row may
+  // have none", which would hand back the bug this catches.
+  const iconExempt = new Set([]);
   const mustPaint = menu.iconSizes.filter((_, i) => !iconExempt.has(menu.labels[i]));
   assert.equal(
     mustPaint.length,
@@ -443,7 +445,10 @@ try {
   await shot("desk-1d-add-project-menu");
   log(`add project menu: ${menu.labels.join(" / ")}`);
 
-  await page.click(".rail-menu-item");
+  // By LABEL, not by position. This used to click the first row because
+  // "New project" happened to be it; cloning now leads, so an index would
+  // silently exercise a different form and assert the wrong thing about it.
+  await page.click('.rail-menu-item:has(.rail-menu-label:text-is("New project"))');
   await page.waitForSelector(".add-project-form", { timeout: 5000 });
   await page.fill(".add-project-input", "Q3 Positioning");
   const formBox = await page.evaluate(() => {

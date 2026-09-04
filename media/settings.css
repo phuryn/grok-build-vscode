@@ -1351,9 +1351,9 @@ textarea.settings-routine-prompt {
 a.settings-github-flow-open {
   color: var(--vscode-button-foreground);
 }
-.settings-github-flow-cancel,
-.settings-github-advanced,
-.settings-github-flow-recheck {
+/* "Use a token instead" stays a quiet link: it is the advanced path, offered
+   under the main action rather than competing with it. */
+.settings-github-advanced {
   align-self: flex-start;
   background: none;
   border: none;
@@ -1364,10 +1364,37 @@ a.settings-github-flow-open {
   text-decoration: underline;
   cursor: pointer;
 }
-.settings-github-flow-cancel:hover,
-.settings-github-advanced:hover,
-.settings-github-flow-recheck:hover {
+.settings-github-advanced:hover {
   color: var(--vscode-foreground, CanvasText);
+}
+
+/* Re-check and Cancel are the same two actions an agent provider row offers
+   while a terminal sign-in is running, so they wear the same clothes. These
+   rules are `.settings-action`'s, copied rather than shared: the class itself
+   cannot be used here, because the row binder takes the FIRST
+   `.settings-action` in a row as that row's primary control — and once the
+   two-step card replaces Connect, that would be this button. Which is exactly
+   how pressing Re-check opened a second sign-in terminal. */
+.settings-github-flow-recheck,
+.settings-github-flow-cancel {
+  /* Full width, like every other action on this page. A natural-width button
+     here reads as a lesser control than the identical pair on the agent rows
+     directly above it. */
+  align-self: stretch;
+  text-align: center;
+  border: 1px solid var(--vscode-button-border, var(--vscode-editorWidget-border));
+  border-radius: 4px;
+  padding: 4px 10px;
+  background: var(--vscode-button-secondaryBackground, transparent);
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+  font: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+.settings-github-flow-recheck:hover,
+.settings-github-flow-cancel:hover {
+  background: var(--vscode-button-secondaryHoverBackground, var(--vscode-list-hoverBackground));
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
 }
 .settings-github-token-link {
   color: var(--vscode-textLink-foreground, inherit);
