@@ -2185,4 +2185,72 @@ describe("settings: the GitHub token path matches what the host will accept", ()
     expect(waiting.textContent).toContain("0D15-6BD9");
     expect(waiting.querySelector(".settings-github-connect")).toBeNull();
   });
+
+  it("makes 'fine-grained token' a new-tab link in the token step", () => {
+    const { root } = mountAt("providers", {
+      snapshot: { githubState: { connected: false, cliPresent: true } },
+    });
+    const advanced = root.querySelector(".settings-github-advanced") as HTMLButtonElement;
+    advanced.click();
+    const link = root.querySelector(".settings-github-token-link") as HTMLAnchorElement;
+    expect(link).toBeTruthy();
+    expect(link.textContent).toBe("fine-grained token");
+    expect(link.getAttribute("href")).toBe("https://github.com/settings/personal-access-tokens/new");
+    expect(link.target).toBe("_blank");
+    expect(link.rel).toContain("noopener");
+  });
+
+  it("offers Re-check connection on a desk GitHub terminal sign-in", () => {
+    const { root, posted } = mountAt("providers", {
+      snapshot: { githubState: { connected: false, cliPresent: true } },
+    });
+    posted.length = 0;
+    (root.querySelector(".settings-github-connect") as HTMLButtonElement).click();
+    expect(posted).toContainEqual({ type: "setupGithubCli", action: "auth", surface: "settings" });
+    const recheck = root.querySelector(".settings-github-flow-recheck") as HTMLButtonElement;
+    expect(recheck).toBeTruthy();
+    expect(recheck.textContent).toBe("Re-check connection");
+    expect(root.querySelector(".settings-github-flow-cancel")?.textContent).toBe("Cancel");
+    posted.length = 0;
+    recheck.click();
+    expect(posted).toContainEqual({ type: "refreshProviders" });
+  });
+
+  it("offers Re-check connection once a desk provider row starts a terminal sign-in", () => {
+    const { root, posted } = mountAt("providers", {
+      snapshot: {
+        providers: [{ id: "grok", connected: false, needsLogin: false }],
+      },
+    });
+    posted.length = 0;
+    const connect = root.querySelector('[data-id="providerGrok"] .settings-action') as HTMLButtonElement;
+    expect(connect.textContent).toBe("Connect");
+    connect.click();
+    expect(posted).toContainEqual({ type: "runGrokLogin", provider: "grok" });
+    expect(root.querySelector('[data-id="providerGrok"] .settings-action')?.textContent)
+      .toBe("Connecting…");
+    const recheck = root.querySelector(".settings-provider-recheck") as HTMLButtonElement;
+    expect(recheck).toBeTruthy();
+    expect(recheck.textContent).toBe("Re-check connection");
+    expect(root.querySelector(".settings-provider-terminal-cancel")?.textContent).toBe("Cancel");
+    posted.length = 0;
+    recheck.click();
+    expect(posted).toContainEqual({ type: "recheckConnection", provider: "grok" });
+  });
+
+  it("does not offer Re-check on a remote GitHub device-code wait", () => {
+    const { root } = mountAt("providers", {
+      env: {
+        isRemote: true,
+        hostCaps: {
+          relocateView: false, showOutput: false, toggleDevTools: true,
+          remoteGithubSignIn: true,
+        },
+      },
+      snapshot: { githubState: { connected: false, cliPresent: true } },
+    });
+    (root.querySelector(".settings-github-connect") as HTMLButtonElement).click();
+    expect(root.querySelector(".settings-github-flow-recheck")).toBeNull();
+    expect(root.querySelector(".settings-github-flow-cancel")).toBeTruthy();
+  });
 });

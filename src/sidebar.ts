@@ -974,7 +974,11 @@ export class GrokSidebar {
   /** Headless sign-ins in flight, one per provider, with the remote client that
    *  asked. Keyed by provider rather than by client because the CREDENTIAL is
    *  per-provider: two phones both connecting Grok want one flow and one code,
-   *  not two codes racing to write the same file. */
+   *  not two codes racing to write the same file.
+   *
+   *  A reconnecting tab (new socket, same tab token, already showing a code) is
+   *  adopted; an explicit Connect press starts over. See
+   *  {@link shouldAdoptInFlightDeviceLogin}. */
   private readonly deviceLogins = new Map<
     AcpProvider,
     {
@@ -993,9 +997,10 @@ export class GrokSidebar {
     }
   >();
   /**
-   * Headless GitHub sign-in for the clone form / Settings. One at a time: a
-   * new tap cancels the orphan rather than repeating its code. Separate from
-   * `deviceLogins` because that map is keyed by agent provider.
+   * Headless GitHub sign-in for the clone form / Settings. One at a time.
+   * Same adopt-vs-restart rule as `deviceLogins`: a reconnecting tab is
+   * adopted into the live flow; an explicit Connect press starts over.
+   * Separate map because that one is keyed by agent provider.
    */
   private githubLoginGen = 0;
   private githubDeviceLogin?: {
@@ -1904,18 +1909,22 @@ export class GrokSidebar {
     // spawn a second child racing the first to write the same credential file,
     // and would replace a code the user may already be typing.
     //
-    // But answering the tap with SILENCE made the button read as dead for up
-    // to fifteen minutes (the first real cloud test, 2026-08-31): on a phone,
-    // every trip to the vendor's code page reconnects this client, and the
-    // reconnected tab had no card and was sent nothing. Adopt the tapper and
-    // repeat the flow's current state to them.
+    // A reconnecting phone (new socket, same tab, already has a code) is
+    // adopted so the card comes back. An explicit Connect press — including a
+    // tap while the flow is still on `starting` — starts over: repeating a
+    // wedged starting card is how clone-form GitHub sat for 899s.
     const running = this.deviceLogins.get(provider);
     if (running) {
-      running.clientId = clientId;
-      if (clientId) running.tabToken = this.remoteClients.tabToken(clientId) ?? running.tabToken;
-      if (running.last) running.send(running.last);
-      this.host.appendLine(`[${provider}] device login already in flight; repeated its state to the new tap`);
-      return;
+      if (this.shouldAdoptInFlightDeviceLogin(running, clientId)) {
+        running.clientId = clientId;
+        if (clientId) running.tabToken = this.remoteClients.tabToken(clientId) ?? running.tabToken;
+        if (running.last) running.send(running.last);
+        this.host.appendLine(`[${provider}] device login already in flight; repeated its state to the new tap`);
+        return;
+      }
+      this.deviceLogins.delete(provider);
+      try { running.handle.cancel(); } catch { /* already gone */ }
+      this.host.appendLine(`[${provider}] device login restarted by an explicit press`);
     }
 
     send({ status: "starting" });
@@ -1929,7 +1938,8 @@ export class GrokSidebar {
     // failure — and registering the entry after that would park a settled
     // flow in the map forever, silently blocking every later attempt.
     let settled = false;
-    const handle = runDeviceLogin(cliPath, plan.args, {
+    let handle: DeviceLoginHandle | undefined;
+    handle = runDeviceLogin(cliPath, plan.args, {
       onPrompt: (prompt) => {
         send({
           status: "waiting",
@@ -1940,7 +1950,9 @@ export class GrokSidebar {
       },
       onDone: (result) => {
         settled = true;
-        this.deviceLogins.delete(provider);
+        if (this.deviceLogins.get(provider)?.handle === handle) {
+          this.deviceLogins.delete(provider);
+        }
         // The hold is NOT released here on success: confirmDeviceLogin is still
         // to come, it probes the CLI, and a machine paused underneath that is
         // the same failure one step later. Its `finally` is the single exit.
@@ -1977,9 +1989,35 @@ export class GrokSidebar {
       },
     }, undefined, undefined, { needsCode: !!plan.needsCode });
     if (!settled) {
-      entry.handle = handle;
-      this.deviceLogins.set(provider, entry as typeof entry & { handle: DeviceLoginHandle });
+      if (handle) {
+        entry.handle = handle;
+        this.deviceLogins.set(provider, entry as typeof entry & { handle: DeviceLoginHandle });
+      }
     }
+  }
+
+  /**
+   * Reconnecting tab vs an explicit Connect press.
+   *
+   * A phone that left for the vendor's page comes back under a new client id
+   * with the same tab token. That tap is the same attempt, so adopt it and
+   * repeat the code — but only once there IS a code. Repeating `starting`
+   * is how a wedged flow sat on "Asking the CLI for a sign-in code" for the
+   * full device-code window.
+   *
+   * Any other tap (same socket, no code yet, a different tab) starts over.
+   */
+  private shouldAdoptInFlightDeviceLogin(
+    running: { clientId?: string; tabToken?: string; last?: { status?: string; url?: string } } | undefined,
+    clientId?: string,
+  ): boolean {
+    if (!running || !clientId) return false;
+    const incomingTab = this.remoteClients.tabToken(clientId);
+    const sameTab = !!(incomingTab && running.tabToken && incomingTab === running.tabToken);
+    const sameClient = running.clientId === clientId;
+    const last = running.last;
+    const hasPrompt = !!(last && last.status === "waiting" && typeof last.url === "string" && last.url);
+    return hasPrompt && sameTab && !sameClient;
   }
 
   /**
@@ -6749,6 +6787,13 @@ Only continue if you trust this code.`,
   private startGithubDeviceLogin(clientId?: string, source: "clone" | "settings" = "clone"): void {
     if (this.githubDeviceLogin) {
       const prev = this.githubDeviceLogin;
+      if (this.shouldAdoptInFlightDeviceLogin(prev, clientId)) {
+        prev.clientId = clientId;
+        if (clientId) prev.tabToken = this.remoteClients.tabToken(clientId) ?? prev.tabToken;
+        if (prev.last) prev.send(prev.last);
+        this.host.appendLine("[github] device login already in flight; repeated its state to the new tap");
+        return;
+      }
       this.githubDeviceLogin = undefined;
       try { prev.handle?.cancel(); } catch { /* already gone */ }
     }

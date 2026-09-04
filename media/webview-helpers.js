@@ -2122,6 +2122,24 @@
     return items;
   }
 
+  const GITHUB_FINE_GRAINED_TOKEN_URL = "https://github.com/settings/personal-access-tokens/new";
+
+  /** Token-step copy. The words "fine-grained token" are the link to mint one. */
+  function fillFineGrainedTokenHint(el, doc, className) {
+    el.textContent = "";
+    el.appendChild(doc.createTextNode("Paste a "));
+    const a = doc.createElement("a");
+    a.href = GITHUB_FINE_GRAINED_TOKEN_URL;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    if (className) a.className = className;
+    a.textContent = "fine-grained token";
+    el.appendChild(a);
+    el.appendChild(doc.createTextNode(
+      " (one repository, Contents: Read, an expiry) or a classic PAT. It is sent once and never shown again.",
+    ));
+  }
+
   /** Copy for each form, keyed the same way the menu items are. */
   const ADD_PROJECT_FORMS = {
     "new": {
@@ -2352,11 +2370,17 @@
     githubOpen.textContent = "Open the sign-in page";
     const githubNote = doc.createElement("p");
     githubNote.className = "add-project-github-note";
+    const githubRecheck = doc.createElement("button");
+    githubRecheck.type = "button";
+    githubRecheck.className = "add-project-github-recheck";
+    githubRecheck.textContent = "Re-check connection";
+    githubRecheck.hidden = true;
     githubCard.appendChild(githubHeading);
     githubCard.appendChild(githubDesc);
     githubCard.appendChild(githubCmd);
     githubCard.appendChild(githubOpen);
     githubCard.appendChild(githubNote);
+    githubCard.appendChild(githubRecheck);
 
     const githubToken = doc.createElement("div");
     githubToken.className = "add-project-github-token";
@@ -2366,7 +2390,7 @@
     githubTokenHeading.textContent = "Connect with a token";
     const githubTokenHint = doc.createElement("p");
     githubTokenHint.className = "add-project-github-desc";
-    githubTokenHint.textContent = "Paste a fine-grained token (one repository, Contents: Read, an expiry) or a classic PAT. It is sent once and never shown again.";
+    fillFineGrainedTokenHint(githubTokenHint, doc, "add-project-github-token-link");
     const githubTokenInput = doc.createElement("input");
     githubTokenInput.type = "password";
     githubTokenInput.className = "add-project-github-token-input";
@@ -2397,6 +2421,9 @@
     githubBox.appendChild(githubToken);
     el.appendChild(githubBox);
 
+    githubRecheck.addEventListener("click", function () {
+      if (typeof o.onRecheck === "function") o.onRecheck();
+    });
     githubCopy.addEventListener("click", function () {
       const code = githubCopy.dataset.cmd || "";
       if (!code || !navigator.clipboard || typeof navigator.clipboard.writeText !== "function") return;
@@ -2526,14 +2553,19 @@
       const active = rows[activeIndex] && listboxId + "-" + activeIndex;
       if (active) input.setAttribute("aria-activedescendant", active);
       else input.removeAttribute("aria-activedescendant");
-      listbox.hidden = githubPhase !== "choice" || rows.length === 0;
+      // Keep the list mounted once GitHub is connected so filtering cannot
+      // change the dialog's height. An empty match set still occupies the
+      // five-row well; hiding it is what made the popup jump.
+      const showList = githubPhase === "choice" && (connected || rows.length > 0);
+      listbox.hidden = !showList;
     }
 
     function activateRow(row) {
+      // Fill only. Clone is the button's job — picking a row used to
+      // submit, which is how selecting a repository cloned it.
       if (row.kind === "typed") input.value = row.value;
       else if (row.kind === "repo") input.value = row.nameWithOwner;
       paintDest();
-      fire();
     }
 
     function fire() {
@@ -2565,7 +2597,15 @@
         paintList();
         return;
       }
-      if (e.key === "Enter") { e.preventDefault(); fire(); }
+      if (e.key === "Enter") {
+        e.preventDefault();
+        if (kind === "clone" && paintedRows.length) {
+          const row = paintedRows[activeIndex];
+          if (row) activateRow(row);
+          return;
+        }
+        fire();
+      }
     });
     collisionInput.addEventListener("input", paintDest);
     collisionInput.addEventListener("keydown", function (e) {
@@ -2620,6 +2660,7 @@
         githubOpen.href = url;
         githubNote.hidden = false;
         githubNote.textContent = "Keep this page open — it finishes on its own.";
+        githubRecheck.hidden = true;
         return true;
       }
       if (status === "done") {
@@ -2631,6 +2672,7 @@
         githubCmd.hidden = true;
         githubOpen.hidden = true;
         githubNote.hidden = true;
+        githubRecheck.hidden = true;
         return false;
       }
       if (status === "failed") {
@@ -2640,14 +2682,19 @@
         githubCmd.hidden = true;
         githubOpen.hidden = true;
         githubNote.hidden = true;
+        githubRecheck.hidden = true;
         return false;
       }
       githubHeading.textContent = "Connecting GitHub";
-      githubDesc.textContent = "Asking the GitHub CLI for a sign-in code…";
+      const deskTerminal = o.terminalSignIn === true && typeof o.onRecheck === "function";
+      githubDesc.textContent = deskTerminal
+        ? "A terminal opened for GitHub sign-in. When it finishes, re-check."
+        : "Asking the GitHub CLI for a sign-in code…";
       githubDesc.hidden = false;
       githubCmd.hidden = true;
       githubOpen.hidden = true;
       githubNote.hidden = true;
+      githubRecheck.hidden = !deskTerminal;
       return true;
     }
 
@@ -2715,7 +2762,10 @@
         return false;
       }
       if (githubPhase === "cli") {
-        const g = (s.github && typeof s.github === "object") ? s.github : null;
+        const fromFrame = (s.github && typeof s.github === "object") ? s.github : null;
+        const fromState = (githubState && githubState.loginFlow && typeof githubState.loginFlow === "object")
+          ? githubState.loginFlow : null;
+        const g = fromFrame || fromState;
         // A failed login is posted as `error` / `fix`, not as github.failed —
         // drop back to the choice so that message is readable.
         if (!g && s.error) {
@@ -2842,7 +2892,7 @@
     return `${hr}h ${min % 60}m`;
   }
 
-  const api = { WELCOME_TIPS, welcomeTipById, welcomeTipsFor, welcomeTipCopy, splitWelcomeTipCopy, addProjectMenuItems, addProjectFolderPreview, addProjectForm, parseCloneQuery, filterGithubRepos, githubRepoNameParts, formatWaitElapsed, FILE_EXTS, HOST_MESSAGE_TYPES, WEBVIEW_MESSAGE_TYPES, isKnownHostMessage, composerHasSendIntent, explicitVisibleChips, normalizeQueuedSends, queuedSendsText, queuedSendsChips, contextOverheadTokens, nextContextBreakdown, contextBreakdownIsCurrent, createPendingOverlay, getMentionQuery, applyMentionPick, looksLikeFileRef, formatRelativeTime, modelPickerLabel, modelDisplayName, MIC_STATES, nextMicState, trailingSendPhrase, versionedSiblingUrl, buildQuestionAnswers, isFreeTextOptionLabel, isSubagentToolCall, subagentLabel, cleanSubagentOutput, parseSubagentTaskResult, shouldStickToBottom, stickThresholdPx, splitMath, stripUnsupportedTex, toolFailureText, isMediaGenToolCall, mediaGenZeroRetentionHint, TOOL_LABEL_MAX, middleElide, isAdvertisedSkill, getSlashQuery, applySlashPick, filterCommands, highlightQueryParts, appendHighlightedText, commandProgramLabel, commandTextPreview, MAX_COMMAND_OUTPUT_CHARS, capCommandOutput, extractToolResultOutput, commandOutputWasCancelled, commandOutputTruncationNote, computeLineDiff, parseAttachmentContext, parseSelectionBlocks, parseImageTags, orderPermissionOptions, defaultPermissionIndex, shouldFocusPermissionCard, isTypeThroughKey, isInterjectionText, stripInterjectionEnvelope, spokenTextFromMarkdown, isRelaySendRejection, panelReclampOnResizeAllowed, wireFullscreenSafeReclamp, distributeSidePanelWidths, chatZoomFactor, unzoomClientPx, exportSessionMarkdown, exportSessionFilename, isExportableSessionEvent, replayedUserBubbleVerdict, truncateExportEvents, flattenHistoryMessages, splitHistoryWindow, countHistoryReplayCounters, partitionHistoryCards };
+  const api = { WELCOME_TIPS, welcomeTipById, welcomeTipsFor, welcomeTipCopy, splitWelcomeTipCopy, addProjectMenuItems, addProjectFolderPreview, addProjectForm, parseCloneQuery, filterGithubRepos, githubRepoNameParts, formatWaitElapsed, FILE_EXTS, HOST_MESSAGE_TYPES, WEBVIEW_MESSAGE_TYPES, isKnownHostMessage, composerHasSendIntent, explicitVisibleChips, normalizeQueuedSends, queuedSendsText, queuedSendsChips, contextOverheadTokens, nextContextBreakdown, contextBreakdownIsCurrent, createPendingOverlay, getMentionQuery, applyMentionPick, looksLikeFileRef, formatRelativeTime, modelPickerLabel, modelDisplayName, MIC_STATES, nextMicState, trailingSendPhrase, versionedSiblingUrl, buildQuestionAnswers, isFreeTextOptionLabel, isSubagentToolCall, subagentLabel, cleanSubagentOutput, parseSubagentTaskResult, shouldStickToBottom, stickThresholdPx, splitMath, stripUnsupportedTex, toolFailureText, isMediaGenToolCall, mediaGenZeroRetentionHint, TOOL_LABEL_MAX, middleElide, isAdvertisedSkill, getSlashQuery, applySlashPick, filterCommands, highlightQueryParts, appendHighlightedText, commandProgramLabel, commandTextPreview, MAX_COMMAND_OUTPUT_CHARS, capCommandOutput, extractToolResultOutput, commandOutputWasCancelled, commandOutputTruncationNote, computeLineDiff, parseAttachmentContext, parseSelectionBlocks, parseImageTags, orderPermissionOptions, defaultPermissionIndex, shouldFocusPermissionCard, isTypeThroughKey, isInterjectionText, stripInterjectionEnvelope, spokenTextFromMarkdown, isRelaySendRejection, panelReclampOnResizeAllowed, wireFullscreenSafeReclamp, distributeSidePanelWidths, chatZoomFactor, unzoomClientPx, exportSessionMarkdown, exportSessionFilename, isExportableSessionEvent, replayedUserBubbleVerdict, truncateExportEvents, flattenHistoryMessages, splitHistoryWindow, countHistoryReplayCounters, partitionHistoryCards, GITHUB_FINE_GRAINED_TOKEN_URL, fillFineGrainedTokenHint };
 
   if (typeof module !== "undefined" && module.exports) {
     module.exports = api;

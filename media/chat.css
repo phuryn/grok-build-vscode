@@ -5210,9 +5210,9 @@ body.vscode-light .preview-overlay {
   inset: 0;
   z-index: 60;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
-  padding: 16px;
+  padding: 8vh 16px 16px;
   background: rgba(0, 0, 0, 0.42);
 }
 .add-project-form {
@@ -5263,7 +5263,12 @@ body.vscode-light .preview-overlay {
 .add-project-list {
   display: flex;
   flex-direction: column;
-  max-height: 220px;
+  /* Five compact rows. Fixed, not max, so filtering cannot change the
+     dialog's height. flex-shrink lets a short phone keep Clone on screen. */
+  height: 13.75rem;
+  max-height: 13.75rem;
+  min-height: 5.5rem;
+  flex: 1 1 auto;
   overflow: auto;
   border: 1px solid var(--vscode-editorWidget-border, var(--vscode-panel-border, currentColor));
   border-radius: 6px;
@@ -5382,6 +5387,7 @@ body.vscode-light .preview-overlay {
 .add-project-github-desc[hidden],
 .add-project-github-note[hidden],
 .add-project-github-advanced[hidden],
+.add-project-github-recheck[hidden],
 .add-project-github-token-error[hidden] { display: none; }
 .add-project-github-heading { font-size: 13px; font-weight: 600; line-height: 1.3; }
 .add-project-github-desc,
@@ -5393,15 +5399,18 @@ body.vscode-light .preview-overlay {
   color: var(--vscode-descriptionForeground, currentColor);
 }
 .add-project-github-token-error { color: var(--vscode-errorForeground, currentColor); }
+.add-project-github-token-link {
+  color: var(--vscode-textLink-foreground, inherit);
+}
 .add-project-github-cmd {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 44px;
+  min-height: 28px;
   background: var(--vscode-textCodeBlock-background);
   border: 1px solid var(--vscode-editorWidget-border, var(--vscode-panel-border, currentColor));
   border-radius: 4px;
-  padding: 6px 6px 6px 10px;
+  padding: 4px 6px 4px 10px;
   font-family: var(--vscode-editor-font-family, monospace);
   font-size: 12px;
   box-sizing: border-box;
@@ -5424,8 +5433,6 @@ body.vscode-light .preview-overlay {
   border-radius: 3px;
   font: inherit;
   font-size: 12px;
-  min-height: 44px;
-  min-width: 44px;
 }
 .add-project-github-copy:hover {
   background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.15));
@@ -5435,12 +5442,13 @@ body.vscode-light .preview-overlay {
 .add-project-github-open,
 .add-project-github-connect,
 .add-project-github-token-submit {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 44px;
-  padding: 7px 10px;
-  border: none;
+  align-self: flex-start;
+  min-height: 28px;
+  padding: 4px 10px;
+  border: 1px solid var(--vscode-button-border, transparent);
   border-radius: 4px;
   background: var(--vscode-button-background);
   color: var(--vscode-button-foreground);
@@ -5460,23 +5468,23 @@ body.vscode-light .preview-overlay {
 a.add-project-github-open {
   color: var(--vscode-button-foreground);
 }
-.add-project-github-advanced {
+.add-project-github-advanced,
+.add-project-github-recheck {
   align-self: flex-start;
   background: none;
   border: none;
-  padding: 8px 0;
-  min-height: 44px;
+  padding: 4px 0;
   color: var(--vscode-descriptionForeground, currentColor);
   font: inherit;
   font-size: 12px;
   text-decoration: underline;
   cursor: pointer;
 }
-.add-project-github-advanced:hover { color: var(--vscode-foreground, CanvasText); }
+.add-project-github-advanced:hover,
+.add-project-github-recheck:hover { color: var(--vscode-foreground, CanvasText); }
 .add-project-github-token-input {
   width: 100%;
   box-sizing: border-box;
-  min-height: 44px;
   padding: 7px 9px;
   font: inherit;
   font-size: 13px;
@@ -5490,6 +5498,7 @@ a.add-project-github-open {
   justify-content: flex-end;
   gap: 8px;
   margin-top: 4px;
+  flex-shrink: 0;
 }
 .add-project-btn {
   font: inherit;
@@ -5514,7 +5523,13 @@ a.add-project-github-open {
 @media (hover: none), (pointer: coarse) {
   .add-project-btn, .add-project-fix, .add-project-input,
   .add-project-github-copy, .add-project-github-open, .add-project-github-connect,
-  .add-project-github-token-submit, .add-project-github-advanced, .add-project-option { min-height: 44px; }
+  .add-project-github-token-submit, .add-project-github-advanced, .add-project-github-recheck,
+  .add-project-option, .add-project-github-token-input, .add-project-github-cmd { min-height: 44px; }
+  .add-project-github-copy { min-width: 44px; }
+}
+@media (max-height: 520px) {
+  .add-project-scrim { padding-top: 12px; }
+  .add-project-list { height: 8.25rem; max-height: 8.25rem; }
 }
 /* The pre-flight step list. Numbered because these are steps in an order, and
    the reader is following them in another window. */

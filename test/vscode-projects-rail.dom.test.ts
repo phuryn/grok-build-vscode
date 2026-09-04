@@ -735,6 +735,33 @@ describe("VS Code projects rail renderer", () => {
       expect(doc.querySelectorAll(".rail-repo").length).toBeGreaterThan(0);
     });
 
+    it("the wide Add project button opens a menu that stays on screen", () => {
+      // The header + stops the opening click from bubbling; the wide button
+      // did not, so the document listener closed the menu on the same click
+      // and the button looked dead. Helpers must be loaded so there is a
+      // menu to open rather than a one-item fallthrough to the picker.
+      const helpers = read("../media/webview-helpers.js");
+      const { doc, window, posted } = bootRail();
+      window.eval(helpers);
+      railApi(window).onMessage({
+        type: "repos",
+        entries: repos,
+        selectedCwd: "/work/alpha",
+        activeCwd: "/work/alpha",
+        canAddProject: true,
+        canCreateProject: true,
+        canCloneProject: true,
+      });
+      posted.length = 0;
+      const wide = doc.querySelector(".rail-add-project-wide") as HTMLButtonElement;
+      expect(wide).toBeTruthy();
+      wide.click();
+      const menu = doc.querySelector(".rail-menu") as HTMLElement;
+      expect(menu).toBeTruthy();
+      expect(menu.textContent).toMatch(/Clone from GitHub/);
+      expect(posted.some((m) => m.type === "addProjectFolder")).toBe(false);
+    });
+
     it("offers a way out of an empty rail, where no head is rendered", () => {
       const { doc, window, posted } = bootRail();
       railApi(window).onMessage({

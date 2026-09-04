@@ -6186,7 +6186,10 @@
     plus.textContent = "+";
     add.appendChild(plus);
     add.appendChild(document.createTextNode("Add project"));
-    add.onclick = () => openAddProjectMenu(add);
+    add.onclick = (e) => {
+      e.stopPropagation();
+      openAddProjectMenu(add);
+    };
     return add;
   }
 
@@ -6364,6 +6367,8 @@
       },
       githubState: state.githubState || undefined,
       repos: state.githubRepos,
+      terminalSignIn: !IS_REMOTE,
+      onRecheck: () => vscode.postMessage({ type: "refreshProviders" }),
       touch: remoteUsesTouchComposer() || (typeof window.matchMedia === "function"
         && window.matchMedia("(hover: none), (pointer: coarse)").matches),
       onCancel: closeAddProjectForm,

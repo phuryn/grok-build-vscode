@@ -255,6 +255,24 @@
       : { type: "setupGithubCli", action: "auth", surface: "settings" };
   }
 
+  const GITHUB_FINE_GRAINED_TOKEN_URL = "https://github.com/settings/personal-access-tokens/new";
+
+  function fillGithubTokenHint(el) {
+    const doc = el.ownerDocument;
+    el.textContent = "";
+    el.appendChild(doc.createTextNode("Paste a "));
+    const a = doc.createElement("a");
+    a.href = GITHUB_FINE_GRAINED_TOKEN_URL;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    a.className = "settings-github-token-link";
+    a.textContent = "fine-grained token";
+    el.appendChild(a);
+    el.appendChild(doc.createTextNode(
+      " (one repository, Contents: Read, an expiry) or a classic PAT. It is sent once and never shown again.",
+    ));
+  }
+
   /**
    * Does this remote row have a button, or is it just a status line?
    *
@@ -638,6 +656,7 @@
       visible: (s, env) => !!(env && !env.isRemote && env.providersKnown),
       describe: (s) => providerDescription(providerOf(s, "grok")),
       actionLabel: (s) => providerAction(providerOf(s, "grok")),
+      keepOpen: true,
       message: (s) => {
         const provider = providerOf(s, "grok");
         return provider.connected && provider.needsLogin !== true
@@ -657,6 +676,7 @@
       visible: (s, env) => !!(env && !env.isRemote && env.providersKnown),
       describe: (s) => providerDescription(providerOf(s, "codex")),
       actionLabel: (s) => providerAction(providerOf(s, "codex")),
+      keepOpen: true,
       message: (s) => {
         const provider = providerOf(s, "codex");
         return provider.connected && provider.needsLogin !== true
@@ -676,6 +696,7 @@
       visible: (s, env) => !!(env && !env.isRemote && env.providersKnown),
       describe: (s) => providerDescription(providerOf(s, "claude")),
       actionLabel: (s) => providerAction(providerOf(s, "claude")),
+      keepOpen: true,
       message: (s) => {
         const provider = providerOf(s, "claude");
         return provider.connected && provider.needsLogin !== true
@@ -2031,6 +2052,10 @@
   /** The provider row waiting on the host, if any. One at a time: it exists to
    *  stop the second click, so a second pending row would be a contradiction. */
   const PROVIDER_PENDING = { id: "", label: "", wanted: false, at: 0 };
+  /** Desk-only: a terminal sign-in was launched from this row. The host cannot
+   *  observe that terminal finishing, so the row offers Re-check connection
+   *  instead of guessing. */
+  const PROVIDER_TERMINAL = { id: "" };
   /** Longer than the host's own 30s CLI timeout plus a relay round trip, so in
    *  every case this covers, the real answer arrives first. */
   const PROVIDER_PENDING_MS = 45000;
@@ -2040,6 +2065,10 @@
     PROVIDER_PENDING.label = "";
   }
 
+  function clearProviderTerminal() {
+    PROVIDER_TERMINAL.id = "";
+  }
+
   /** Drop the pending label once the host has answered — or given up. */
   function reconcileProviderPending(snapshot) {
     if (!PROVIDER_PENDING.id) return;
@@ -2047,6 +2076,11 @@
     if (providerConnectedNow(snapshot, PROVIDER_PENDING.id) === PROVIDER_PENDING.wanted) {
       clearProviderPending();
     }
+  }
+
+  function reconcileProviderTerminal(snapshot) {
+    if (!PROVIDER_TERMINAL.id) return;
+    if (providerConnectedNow(snapshot, PROVIDER_TERMINAL.id)) clearProviderTerminal();
   }
 
   function providerPendingLabel(row) {
@@ -2607,7 +2641,9 @@
       heading.textContent = "Connecting GitHub";
       const p = document.createElement("p");
       p.className = "settings-github-flow-desc";
-      p.textContent = "Asking the GitHub CLI for a sign-in code…";
+      p.textContent = opts && opts.terminal
+        ? "A terminal opened for GitHub sign-in. When it finishes, re-check."
+        : "Asking the GitHub CLI for a sign-in code…";
       box.appendChild(heading);
       box.appendChild(p);
     } else {
@@ -2656,6 +2692,13 @@
       note.textContent = "Keep this page open — it finishes on its own.";
       box.appendChild(note);
     }
+    if (opts && opts.terminal) {
+      const recheck = document.createElement("button");
+      recheck.type = "button";
+      recheck.className = "settings-action settings-github-flow-recheck";
+      recheck.textContent = "Re-check connection";
+      box.appendChild(recheck);
+    }
     const cancel = document.createElement("button");
     cancel.type = "button";
     cancel.className = "settings-github-flow-cancel";
@@ -2678,7 +2721,7 @@
     form.className = "settings-github-token";
     const hint = document.createElement("p");
     hint.className = "settings-github-token-hint";
-    hint.textContent = "Paste a fine-grained token (one repository, Contents: Read, an expiry) or a classic PAT. It is sent once and never shown again.";
+    fillGithubTokenHint(hint);
     const input = document.createElement("input");
     input.type = "password";
     input.className = "settings-github-token-input";
@@ -2826,12 +2869,22 @@
       const githubStepped = isGithub && (
         !!githubCliStarted || githubCliLive(snapshot) || !!(githubTokenForm && githubTokenForm.open)
       );
-      if (!githubStepped) {
+      const terminalStarted = !!(row.provider && PROVIDER_TERMINAL.id === row.provider
+        && !(env && env.isRemote));
+      if (terminalStarted) {
+        const busy = document.createElement("button");
+        busy.type = "button";
+        busy.className = "settings-action";
+        busy.textContent = "Connecting…";
+        busy.disabled = true;
+        busy.setAttribute("aria-busy", "true");
+        control.appendChild(busy);
+      } else if (!githubStepped) {
         const btn = document.createElement("button");
         btn.type = "button";
         btn.className = "settings-action";
         if (isGithub && !githubConnectedNow(snapshot)) {
-          btn.classList.add("settings-github-connect", "is-primary");
+          btn.classList.add("settings-github-connect");
         }
         const pending = providerPendingLabel(row);
         btn.textContent = pending || rowActionLabel(row, snapshot, env);
@@ -2847,12 +2900,29 @@
       if (githubCliLive(snapshot) || githubCliStarted) {
         appendGithubLoginFlow(el, snapshot, {
           pending: !!githubCliStarted && !githubCliLive(snapshot),
+          terminal: !(env && env.isRemote) && !!githubCliStarted && !githubCliLive(snapshot),
         });
       } else if (githubTokenForm && githubTokenForm.open) {
         appendGithubTokenForm(el, githubTokenForm);
       } else if (!githubConnectedNow(snapshot) && githubTokenAvailable(snapshot, env)) {
         appendGithubAdvanced(el);
       }
+    }
+    if (row.provider && PROVIDER_TERMINAL.id === row.provider && !(env && env.isRemote)) {
+      const bar = document.createElement("div");
+      bar.className = "settings-provider-terminal";
+      const recheck = document.createElement("button");
+      recheck.type = "button";
+      recheck.className = "settings-action settings-provider-recheck";
+      recheck.dataset.provider = row.provider;
+      recheck.textContent = "Re-check connection";
+      const cancel = document.createElement("button");
+      cancel.type = "button";
+      cancel.className = "settings-action settings-provider-terminal-cancel";
+      cancel.dataset.provider = row.provider;
+      cancel.textContent = "Cancel";
+      bar.append(recheck, cancel);
+      el.appendChild(bar);
     }
     return el;
   }
@@ -3082,11 +3152,13 @@
         // Which row is waiting on the host: local state that changes a label
         // and a disabled attribute, so the key has to carry it.
         providerPending: PROVIDER_PENDING.id + ":" + PROVIDER_PENDING.label,
+        providerTerminal: PROVIDER_TERMINAL.id,
       });
     }
 
     function paint() {
       reconcileProviderPending(snapshot);
+      reconcileProviderTerminal(snapshot);
       const chrome = describeChrome(container);
       ensureCategory();
       maybeCheckAbout();
@@ -3428,6 +3500,13 @@
               paint();
               return;
             }
+            if (row.provider && !(env && env.isRemote)
+              && !providerConnectedNow(snapshot, row.provider)) {
+              PROVIDER_TERMINAL.id = row.provider;
+              runAction(row);
+              paint();
+              return;
+            }
             runAction(row);
           };
         }
@@ -3513,6 +3592,26 @@
           e.stopPropagation();
           githubCliStarted = false;
           post({ type: "cancelDeviceLogin", provider: "github" });
+          paint();
+        });
+      });
+      body.querySelectorAll(".settings-github-flow-recheck").forEach((btn) => {
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          post({ type: "refreshProviders" });
+        });
+      });
+      body.querySelectorAll(".settings-provider-recheck").forEach((btn) => {
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const provider = btn.dataset.provider;
+          if (provider) post({ type: "recheckConnection", provider });
+        });
+      });
+      body.querySelectorAll(".settings-provider-terminal-cancel").forEach((btn) => {
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          if (btn.dataset.provider === PROVIDER_TERMINAL.id) clearProviderTerminal();
           paint();
         });
       });
@@ -3811,7 +3910,10 @@
         if (nextEnv) Object.assign(env, nextEnv);
         if (githubConnectedNow(snapshot)) githubTokenForm = { open: false, value: "" };
         if (nextSnapshot && Object.prototype.hasOwnProperty.call(nextSnapshot, "githubState")) {
-          githubCliStarted = false;
+          // A githubState frame is not "the terminal finished". Desk sign-in
+          // cannot be observed, so keep the Re-check row until the account
+          // is actually connected or a live device-code card takes over.
+          if (githubConnectedNow(snapshot) || githubCliLive(snapshot)) githubCliStarted = false;
         }
         // Before the key: the answer this was waiting for is usually IN this
         // snapshot, and a stale "Disconnecting…" left in the key would make

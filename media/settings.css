@@ -1292,11 +1292,11 @@ textarea.settings-routine-prompt {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 44px;
+  min-height: 28px;
   background: var(--vscode-textCodeBlock-background);
   border: 1px solid var(--vscode-editorWidget-border, var(--vscode-panel-border, currentColor));
   border-radius: 4px;
-  padding: 6px 6px 6px 10px;
+  padding: 4px 6px 4px 10px;
   font-family: var(--vscode-editor-font-family, monospace);
   font-size: 12px;
   box-sizing: border-box;
@@ -1314,27 +1314,36 @@ textarea.settings-routine-prompt {
   padding: 4px 8px;
   font: inherit;
   font-size: 12px;
-  min-height: 44px;
-  min-width: 44px;
 }
 .settings-github-flow-open,
 .settings-github-connect {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 44px;
-  padding: 7px 10px;
-  border: none;
+  align-self: flex-start;
+  min-height: 0;
+  padding: 4px 10px;
+  border: 1px solid var(--vscode-button-border, var(--vscode-editorWidget-border));
   border-radius: 4px;
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-secondaryBackground, transparent);
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
   text-decoration: none;
-  font-size: 12px;
+  font: inherit;
+  font-size: inherit;
   box-sizing: border-box;
   cursor: pointer;
 }
-.settings-github-flow-open:hover,
+.settings-github-connect.is-primary,
+.settings-github-flow-open {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  border-color: var(--vscode-button-border, transparent);
+}
 .settings-github-connect:hover {
+  background: var(--vscode-button-secondaryHoverBackground, var(--vscode-list-hoverBackground));
+}
+.settings-github-flow-open:hover,
+.settings-github-connect.is-primary:hover {
   background: var(--vscode-button-hoverBackground, var(--vscode-button-background));
   color: var(--vscode-button-foreground);
   text-decoration: none;
@@ -1343,12 +1352,12 @@ a.settings-github-flow-open {
   color: var(--vscode-button-foreground);
 }
 .settings-github-flow-cancel,
-.settings-github-advanced {
+.settings-github-advanced,
+.settings-github-flow-recheck {
   align-self: flex-start;
   background: none;
   border: none;
-  padding: 8px 0;
-  min-height: 44px;
+  padding: 4px 0;
   color: var(--vscode-descriptionForeground, currentColor);
   font: inherit;
   font-size: 12px;
@@ -1356,13 +1365,16 @@ a.settings-github-flow-open {
   cursor: pointer;
 }
 .settings-github-flow-cancel:hover,
-.settings-github-advanced:hover {
+.settings-github-advanced:hover,
+.settings-github-flow-recheck:hover {
   color: var(--vscode-foreground, CanvasText);
+}
+.settings-github-token-link {
+  color: var(--vscode-textLink-foreground, inherit);
 }
 .settings-github-token-input {
   width: 100%;
   box-sizing: border-box;
-  min-height: 44px;
   padding: 7px 9px;
   font: inherit;
   font-size: 13px;
@@ -1370,6 +1382,27 @@ a.settings-github-flow-open {
   background: var(--vscode-input-background, Canvas);
   border: 1px solid var(--vscode-input-border, var(--vscode-editorWidget-border, currentColor));
   border-radius: 5px;
+}
+.settings-provider-terminal {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+@media (hover: none), (pointer: coarse) {
+  .settings-github-flow-cmd,
+  .settings-github-flow-copy,
+  .settings-github-flow-open,
+  .settings-github-connect,
+  .settings-github-flow-cancel,
+  .settings-github-flow-recheck,
+  .settings-github-advanced,
+  .settings-github-token-input,
+  .settings-provider-terminal .settings-action {
+    min-height: 44px;
+  }
+  .settings-github-flow-copy { min-width: 44px; }
 }
 .settings-github-token-actions {
   display: flex;

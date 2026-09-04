@@ -117,6 +117,7 @@
   };
 
   let menuEl = null;
+  let menuAnchorEl = null;
   let colorPickerEl = null;
 
   /**
@@ -386,6 +387,7 @@
       menuEl.remove();
       menuEl = null;
     }
+    menuAnchorEl = null;
   }
 
   function closeMenu() {
@@ -505,10 +507,15 @@
     const mw = el.offsetWidth;
     const mh = el.offsetHeight;
     const anchorTop = at ? at.y : rect.top;
+    const anchorBottom = at ? at.y : rect.bottom;
     let left = at ? at.x : rect.right - mw;
-    let top = (at ? at.y : rect.bottom) + 2;
+    // Prefer below the anchor. Flip above when there is no room — the wide
+    // Add project control sits at the bottom of the rail, so opening only
+    // downward would put the menu off-screen.
+    let top = anchorBottom + 2;
     left = Math.max(4, Math.min(left, window.innerWidth - mw - 4));
     if (top + mh > window.innerHeight - 4) top = Math.max(4, anchorTop - mh - 2);
+    if (top + mh > window.innerHeight - 4) top = Math.max(4, window.innerHeight - mh - 4);
     el.style.left = left + "px";
     el.style.top = top + "px";
   }
@@ -561,6 +568,7 @@
     }
     document.body.appendChild(menu);
     menuEl = menu;
+    menuAnchorEl = anchor;
     placePopover(menu, anchor, at);
   }
 
@@ -620,8 +628,16 @@
   }
 
   document.addEventListener("click", (e) => {
-    if (menuEl && !menuEl.contains(e.target)) closeMenu();
-    else if (colorPickerEl && !colorPickerEl.contains(e.target)) closeColorPicker();
+    if (menuEl) {
+      if (menuEl.contains(e.target)) return;
+      // The opening click bubbles here. The header + stops it; the wide
+      // Add project button did not, so the menu opened and immediately
+      // closed — which read as a button that does nothing.
+      if (menuAnchorEl && menuAnchorEl.contains(e.target)) return;
+      closeMenu();
+      return;
+    }
+    if (colorPickerEl && !colorPickerEl.contains(e.target)) closeColorPicker();
   });
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") closeMenu();
@@ -896,7 +912,10 @@
     plus.textContent = "+";
     add.appendChild(plus);
     add.appendChild(document.createTextNode("Add project"));
-    add.onclick = () => openAddProjectMenu(add);
+    add.onclick = (e) => {
+      e.stopPropagation();
+      openAddProjectMenu(add);
+    };
     return add;
   }
 
@@ -1073,6 +1092,8 @@
       onRequestRepos: () => vscode.postMessage({ type: "listGithubRepos" }),
       githubState: state.githubState || undefined,
       repos: state.githubRepos,
+      terminalSignIn: true,
+      onRecheck: () => vscode.postMessage({ type: "refreshProviders" }),
       touch: typeof window.matchMedia === "function"
         && window.matchMedia("(hover: none), (pointer: coarse)").matches,
     });

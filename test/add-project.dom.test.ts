@@ -12,6 +12,8 @@
  * that one.
  */
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { bootWebview, click, dispatch, type Harness } from "./webview-harness";
 
 const CAPS = {
@@ -533,7 +535,11 @@ describe("add project", () => {
     input(h).value = "https://github.com/you/other";
     input(h).dispatchEvent(new h.window.Event("input", { bubbles: true }));
     expect(optionLabels(h).some((t) => t.includes("Clone https://github.com/you/other"))).toBe(true);
+    h.posted.length = 0;
     click(h.window, h.doc.querySelector(".add-project-option")!);
+    expect(h.posted.some((m) => m.type === "cloneProject")).toBe(false);
+    expect(input(h).value).toBe("https://github.com/you/other");
+    click(h.window, submit(h));
     expect(h.posted).toContainEqual({ type: "cloneProject", url: "https://github.com/you/other" });
   });
 
@@ -620,5 +626,208 @@ describe("add project", () => {
     expect(h.doc.querySelector(".add-project-github-token")?.hidden).toBe(false);
     expect(h.doc.querySelector(".add-project-github-token-input")).toBeTruthy();
     expect(githubConnect(h)?.closest(".add-project-github-choice")?.hidden).toBe(true);
+  });
+
+  it("picking a repository fills the field and does not clone until the button is pressed", () => {
+    const h = boot({ coding: true });
+    installOpener(h);
+    openMenu(h);
+    click(h.window, [...h.doc.querySelectorAll(".rail-menu-item")][0]);
+    dispatch(h.window, {
+      type: "githubState",
+      github: { connected: true, login: "phuryn", cliPresent: true },
+    });
+    dispatch(h.window, {
+      type: "githubRepos",
+      repos: [
+        { nameWithOwner: "phuryn/afkpilot", isPrivate: false, updatedAt: "2026-09-03T21:55:15Z" },
+        { nameWithOwner: "phuryn/secret", isPrivate: true, updatedAt: "2026-09-01T00:00:00Z" },
+      ],
+    });
+    h.posted.length = 0;
+    const row = [...h.doc.querySelectorAll(".add-project-option")].find((el) =>
+      (el.textContent || "").includes("afkpilot"),
+    )!;
+    click(h.window, row);
+    expect(h.posted).toEqual([]);
+    expect(input(h).value).toBe("phuryn/afkpilot");
+    expect(dest(h)).toContain("afkpilot");
+    click(h.window, submit(h));
+    expect(h.posted).toContainEqual({
+      type: "cloneProject",
+      url: "https://github.com/phuryn/afkpilot",
+    });
+  });
+
+  it("Enter on a highlighted row selects it and does not clone", () => {
+    const h = boot({ coding: true });
+    installOpener(h);
+    openMenu(h);
+    click(h.window, [...h.doc.querySelectorAll(".rail-menu-item")][0]);
+    dispatch(h.window, {
+      type: "githubState",
+      github: { connected: true, login: "phuryn", cliPresent: true },
+    });
+    dispatch(h.window, {
+      type: "githubRepos",
+      repos: [
+        { nameWithOwner: "phuryn/afkpilot", isPrivate: false, updatedAt: "2026-09-03T21:55:15Z" },
+      ],
+    });
+    h.posted.length = 0;
+    input(h).dispatchEvent(new h.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    expect(h.posted.some((m) => m.type === "cloneProject")).toBe(false);
+    expect(input(h).value).toBe("phuryn/afkpilot");
+  });
+
+  it("keeps the repository list mounted while filtering so the dialog cannot jump", () => {
+    const h = boot({ coding: true });
+    installOpener(h);
+    openMenu(h);
+    click(h.window, [...h.doc.querySelectorAll(".rail-menu-item")][0]);
+    dispatch(h.window, {
+      type: "githubState",
+      github: { connected: true, login: "phuryn", cliPresent: true },
+    });
+    dispatch(h.window, {
+      type: "githubRepos",
+      repos: [
+        { nameWithOwner: "phuryn/afkpilot", isPrivate: false, updatedAt: "2026-09-03T21:55:15Z" },
+        { nameWithOwner: "phuryn/secret", isPrivate: true, updatedAt: "2026-09-01T00:00:00Z" },
+        { nameWithOwner: "phuryn/one", isPrivate: false, updatedAt: "2026-08-01T00:00:00Z" },
+        { nameWithOwner: "phuryn/two", isPrivate: false, updatedAt: "2026-08-02T00:00:00Z" },
+        { nameWithOwner: "phuryn/three", isPrivate: false, updatedAt: "2026-08-03T00:00:00Z" },
+      ],
+    });
+    const list = h.doc.querySelector(".add-project-list") as HTMLElement;
+    expect(list.hidden).toBe(false);
+    input(h).value = "zzz-no-match";
+    input(h).dispatchEvent(new h.window.Event("input", { bubbles: true }));
+    expect(list.hidden).toBe(false);
+    expect(list.querySelectorAll(".add-project-option").length).toBe(0);
+    const css = [
+      readFileSync(fileURLToPath(new URL("../media/chat.css", import.meta.url)), "utf8"),
+      readFileSync(fileURLToPath(new URL("../media/projects-rail.css", import.meta.url)), "utf8"),
+    ].join("\n");
+    expect(css).toMatch(/\.add-project-list\s*\{[^}]*height:\s*13\.75rem/);
+    expect(css).toMatch(/\.add-project-scrim\s*\{[^}]*align-items:\s*flex-start/);
+  });
+
+  it("paints a waiting GitHub code from githubState.loginFlow, not only projectSetup.github", () => {
+    const h = boot({
+      remote: true,
+      coding: true,
+      caps: { ...CAPS, remoteGithubSignIn: true },
+    });
+    installOpener(h);
+    openMenu(h);
+    click(h.window, [...h.doc.querySelectorAll(".rail-menu-item")][0]);
+    dispatch(h.window, {
+      type: "githubState",
+      github: { connected: false, cliPresent: true },
+    });
+    click(h.window, githubConnect(h)!);
+    dispatch(h.window, {
+      type: "githubState",
+      github: {
+        connected: false,
+        cliPresent: true,
+        loginFlow: {
+          status: "waiting",
+          url: "https://github.com/login/device",
+          code: "0D15-6BD9",
+        },
+      },
+    });
+    expect(githubBox(h)?.textContent).toContain("0D15-6BD9");
+    expect(githubOpen(h)?.getAttribute("href")).toBe("https://github.com/login/device");
+  });
+
+  it("does not wipe a waiting GitHub card when a later githubState frame omits github", () => {
+    const h = boot({
+      remote: true,
+      coding: true,
+      caps: { ...CAPS, remoteGithubSignIn: true },
+    });
+    installOpener(h);
+    openMenu(h);
+    click(h.window, [...h.doc.querySelectorAll(".rail-menu-item")][0]);
+    click(h.window, githubConnect(h)!);
+    dispatch(h.window, {
+      type: "projectSetup",
+      root: "~/Grok Build",
+      github: {
+        status: "waiting",
+        url: "https://github.com/login/device",
+        code: "0D15-6BD9",
+      },
+    });
+    expect(githubBox(h)?.textContent).toContain("0D15-6BD9");
+    dispatch(h.window, {
+      type: "githubState",
+      github: {
+        connected: false,
+        cliPresent: true,
+        loginFlow: {
+          status: "waiting",
+          url: "https://github.com/login/device",
+          code: "0D15-6BD9",
+        },
+      },
+    });
+    expect(githubBox(h)?.textContent).toContain("0D15-6BD9");
+    expect(githubBox(h)?.dataset.status).not.toBe("starting");
+  });
+
+  it("offers Re-check connection after a desk GitHub CLI sign-in from the clone form", () => {
+    const h = boot({ coding: true });
+    installOpener(h);
+    openMenu(h);
+    click(h.window, [...h.doc.querySelectorAll(".rail-menu-item")][0]);
+    dispatch(h.window, {
+      type: "githubState",
+      github: { connected: false, cliPresent: true },
+    });
+    h.posted.length = 0;
+    click(h.window, githubConnect(h)!);
+    expect(h.posted).toContainEqual({ type: "setupGithubCli", action: "auth" });
+    const recheck = h.doc.querySelector(".add-project-github-recheck") as HTMLButtonElement;
+    expect(recheck.hidden).toBe(false);
+    expect(recheck.textContent).toBe("Re-check connection");
+    h.posted.length = 0;
+    click(h.window, recheck);
+    expect(h.posted).toContainEqual({ type: "refreshProviders" });
+  });
+
+  it("does not offer Re-check on a remote clone-form device-code wait", () => {
+    const h = boot({
+      remote: true,
+      coding: true,
+      caps: { ...CAPS, remoteGithubSignIn: true },
+    });
+    installOpener(h);
+    openMenu(h);
+    click(h.window, [...h.doc.querySelectorAll(".rail-menu-item")][0]);
+    click(h.window, githubConnect(h)!);
+    const recheck = h.doc.querySelector(".add-project-github-recheck") as HTMLButtonElement;
+    expect(recheck.hidden).toBe(true);
+  });
+
+  it("makes 'fine-grained token' a new-tab link in the token step", () => {
+    const h = boot({ coding: true });
+    installOpener(h);
+    openMenu(h);
+    click(h.window, [...h.doc.querySelectorAll(".rail-menu-item")][0]);
+    dispatch(h.window, {
+      type: "githubState",
+      github: { connected: false, cliPresent: true },
+    });
+    click(h.window, h.doc.querySelector(".add-project-github-advanced") as HTMLElement);
+    const link = h.doc.querySelector(".add-project-github-token-link") as HTMLAnchorElement;
+    expect(link).toBeTruthy();
+    expect(link.textContent).toBe("fine-grained token");
+    expect(link.getAttribute("href")).toBe("https://github.com/settings/personal-access-tokens/new");
+    expect(link.target).toBe("_blank");
+    expect(link.rel).toContain("noopener");
   });
 });
