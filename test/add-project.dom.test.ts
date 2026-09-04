@@ -223,7 +223,7 @@ describe("add project", () => {
     const h = boot({
       remote: true,
       coding: true,
-      caps: { ...CAPS, remoteGithubSignIn: true },
+      caps: { ...CAPS, remoteGithubSignIn: true, remoteGithubToken: true },
     });
     installOpener(h);
     openMenu(h);
@@ -284,7 +284,7 @@ describe("add project", () => {
     const h = boot({
       remote: true,
       coding: true,
-      caps: { ...CAPS, remoteGithubSignIn: true },
+      caps: { ...CAPS, remoteGithubSignIn: true, remoteGithubToken: true },
     });
     installOpener(h);
     openMenu(h);
@@ -339,7 +339,7 @@ describe("add project", () => {
   });
 
   it("a waiting GitHub login with no form open leaves the DOM alone", () => {
-    const h = boot({ remote: true, coding: true, caps: { ...CAPS, remoteGithubSignIn: true } });
+    const h = boot({ remote: true, coding: true, caps: { ...CAPS, remoteGithubSignIn: true, remoteGithubToken: true } });
     dispatch(h.window, {
       type: "projectSetup",
       root: "~/Grok Build",
@@ -358,7 +358,7 @@ describe("add project", () => {
     const h = boot({
       remote: true,
       coding: true,
-      caps: { ...CAPS, remoteGithubSignIn: true },
+      caps: { ...CAPS, remoteGithubSignIn: true, remoteGithubToken: true },
     });
     installOpener(h);
     openMenu(h);
@@ -437,7 +437,7 @@ describe("add project", () => {
   it("never posts an install from a remote, however capable the host says it is", () => {
     // Merge, don't replace: the form needs the project capabilities to render
     // at all, and a bare override silently produces a page with no menu.
-    const h = boot({ coding: true, remote: true, caps: { ...CAPS, remoteGithubSignIn: true } });
+    const h = boot({ coding: true, remote: true, caps: { ...CAPS, remoteGithubSignIn: true, remoteGithubToken: true } });
     installOpener(h);
     openMenu(h);
     click(h.window, [...h.doc.querySelectorAll(".rail-menu-item")][0]);
@@ -601,7 +601,7 @@ describe("add project", () => {
   });
 
   it("still connects when the host advertises that it can", () => {
-    const h = boot({ remote: true, caps: { ...CAPS, remoteGithubSignIn: true } });
+    const h = boot({ remote: true, caps: { ...CAPS, remoteGithubSignIn: true, remoteGithubToken: true } });
     h.posted.length = 0;
     click(h.window, openConnectChoice(h));
     expect(h.posted).toContainEqual({ type: "setupGithubCli", action: "auth" });
@@ -611,7 +611,7 @@ describe("add project", () => {
     const h = boot({
       remote: true,
       coding: true,
-      caps: { ...CAPS, remoteGithubSignIn: true },
+      caps: { ...CAPS, remoteGithubSignIn: true, remoteGithubToken: true },
     });
     installOpener(h);
     openMenu(h);
@@ -717,7 +717,7 @@ describe("add project", () => {
     const h = boot({
       remote: true,
       coding: true,
-      caps: { ...CAPS, remoteGithubSignIn: true },
+      caps: { ...CAPS, remoteGithubSignIn: true, remoteGithubToken: true },
     });
     installOpener(h);
     openMenu(h);
@@ -747,7 +747,7 @@ describe("add project", () => {
     const h = boot({
       remote: true,
       coding: true,
-      caps: { ...CAPS, remoteGithubSignIn: true },
+      caps: { ...CAPS, remoteGithubSignIn: true, remoteGithubToken: true },
     });
     installOpener(h);
     openMenu(h);
@@ -803,7 +803,7 @@ describe("add project", () => {
     const h = boot({
       remote: true,
       coding: true,
-      caps: { ...CAPS, remoteGithubSignIn: true },
+      caps: { ...CAPS, remoteGithubSignIn: true, remoteGithubToken: true },
     });
     installOpener(h);
     openMenu(h);

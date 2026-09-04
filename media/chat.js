@@ -6296,11 +6296,23 @@
   let addProjectFormScrim = null;
   let addProjectFormKeydown = null;
 
+  /**
+   * Cancel a GitHub device login, but only at a host that knows what that
+   * means. An older one maps every unrecognised provider to `grok`, so sending
+   * it there either does nothing (no Grok login running) or cancels somebody
+   * else's Grok sign-in. Silence costs the abandoned login its 15-minute
+   * timeout, which is exactly the behaviour those hosts already had.
+   */
+  function cancelGithubDeviceLoginIfSupported() {
+    if (IS_REMOTE && !(state.hostCaps && state.hostCaps.remoteGithubToken)) return;
+    vscode.postMessage({ type: "cancelDeviceLogin", provider: "github" });
+  }
+
   function closeAddProjectForm() {
     const wasClone = !!(addProjectFormApi && addProjectFormApi.el && addProjectFormApi.el.dataset.kind === "clone");
     if (wasClone) {
       state.projectGithub = null;
-      vscode.postMessage({ type: "cancelDeviceLogin", provider: "github" });
+      cancelGithubDeviceLoginIfSupported();
     }
     if (addProjectFormScrim) addProjectFormScrim.remove();
     // Capture-phase, so it must come off again — a listener left behind would
@@ -6325,14 +6337,19 @@
     closeRailMenu();
     if (kind === "clone") {
       state.projectGithub = null;
-      vscode.postMessage({ type: "cancelDeviceLogin", provider: "github" });
+      cancelGithubDeviceLoginIfSupported();
     }
     const githubSignIn = !IS_REMOTE || !!(state.hostCaps && state.hostCaps.remoteGithubSignIn);
+    // The token path is NOT covered by remoteGithubSignIn: that flag promises
+    // the device-code flow and nothing else, and a host advertising it but
+    // predating `githubLoginWithToken` takes the credential across the relay
+    // and drops it, clearing the field with no error.
+    const githubToken = !IS_REMOTE || !!(state.hostCaps && state.hostCaps.remoteGithubToken);
     const api = helpers.addProjectForm({
       kind,
       root: state.projectRoot,
       canGithubCli: githubSignIn,
-      canUseToken: githubSignIn,
+      canUseToken: githubToken,
       onSubmit: (value, extra) => {
         vscode.postMessage(
           kind === "clone"

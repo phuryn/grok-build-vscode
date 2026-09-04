@@ -1906,7 +1906,7 @@ describe("GitHub connection row", () => {
   const githubCaps = {
     hostCaps: {
       relocateView: false, showOutput: false, toggleDevTools: true,
-      remoteGithubSignIn: true,
+      remoteGithubSignIn: true, remoteGithubToken: true,
     },
   };
 
@@ -2091,14 +2091,14 @@ describe("settings: the GitHub token path matches what the host will accept", ()
   it("offers it to a remote on a cloud machine — its only way in", () => {
     expect(tokenOffered({
       isRemote: true,
-      hostCaps: { remoteGithubSignIn: true, remoteAgentSignOut: true },
+      hostCaps: { remoteGithubSignIn: true, remoteGithubToken: true, remoteAgentSignOut: true },
     }, { connected: false, cliPresent: true })).toBe(true);
   });
 
   it("offers it to a phone driving a desk too — the host accepts it there", () => {
     expect(tokenOffered({
       isRemote: true,
-      hostCaps: { remoteGithubSignIn: true, remoteAgentSignOut: false },
+      hostCaps: { remoteGithubSignIn: true, remoteGithubToken: true, remoteAgentSignOut: false },
     }, { connected: false, cliPresent: true })).toBe(true);
   });
 
@@ -2108,6 +2108,19 @@ describe("settings: the GitHub token path matches what the host will accept", ()
     expect(tokenOffered({
       isRemote: true,
       hostCaps: { remoteGithubSignIn: false },
+    }, { connected: false, cliPresent: true })).toBe(false);
+  });
+
+  it("withholds it from a host that can do the DEVICE flow but not a token", () => {
+    // The gap `remoteGithubSignIn` cannot cover. Every host between 4.1.0 and
+    // the release that added `githubLoginWithToken` advertises the first and
+    // knows nothing of the second, and the relay always serves a client newer
+    // than the extension — so this is the ordinary case for anyone who has not
+    // updated, not an exotic one. Offering the row there sends a credential
+    // across the relay to be dropped in silence.
+    expect(tokenOffered({
+      isRemote: true,
+      hostCaps: { remoteGithubSignIn: true },
     }, { connected: false, cliPresent: true })).toBe(false);
   });
 
@@ -2214,6 +2227,10 @@ describe("settings: the GitHub token path matches what the host will accept", ()
     posted.length = 0;
     recheck.click();
     expect(posted).toContainEqual({ type: "refreshProviders" });
+    // And ONLY that. The row binder claims any `.settings-action` inside a row
+    // as its primary control, so while this button carried that class it fired
+    // Connect first and opened a second sign-in terminal behind the refresh.
+    expect(posted.some((m) => m.type === "setupGithubCli")).toBe(false);
   });
 
   it("offers Re-check connection once a desk provider row starts a terminal sign-in", () => {

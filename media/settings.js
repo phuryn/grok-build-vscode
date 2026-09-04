@@ -230,8 +230,11 @@
   }
 
   function githubTokenAvailable(snapshot, env) {
+    // NOT canGithubSignInFromRemote: that capability promises the device-code
+    // flow only. A host advertising it but predating `githubLoginWithToken`
+    // takes the pasted credential across the relay and drops it in silence.
     return !!(githubKnown(snapshot) && !githubConnectedNow(snapshot)
-      && (!env || !env.isRemote || canGithubSignInFromRemote(env)));
+      && (!env || !env.isRemote || canGithubTokenFromRemote(env)));
   }
 
   function githubCliLive(snapshot) {
@@ -241,6 +244,18 @@
 
   function canGithubSignInFromRemote(env) {
     return !!(env && env.hostCaps && env.hostCaps.remoteGithubSignIn);
+  }
+
+  /** A pasted token AND `cancelDeviceLogin` with `provider: "github"` — the two
+   *  affordances added after `remoteGithubSignIn`, which shipped together. */
+  function canGithubTokenFromRemote(env) {
+    return !!(env && env.hostCaps && env.hostCaps.remoteGithubToken);
+  }
+
+  /** Cancelling is only safe to send where `github` is understood: an older
+   *  host maps any unrecognised provider to `grok`. */
+  function canCancelGithubLogin(env) {
+    return !env || !env.isRemote || canGithubTokenFromRemote(env);
   }
 
   function githubRemoteActionable(snapshot, env) {
@@ -2695,7 +2710,11 @@
     if (opts && opts.terminal) {
       const recheck = document.createElement("button");
       recheck.type = "button";
-      recheck.className = "settings-action settings-github-flow-recheck";
+      // Deliberately NOT `settings-action`: the row binder treats that class as
+      // the row's primary control, so this button was firing Connect — opening
+      // a SECOND sign-in terminal — before its own listener could ask for a
+      // refresh. It styles itself completely, so the class bought nothing.
+      recheck.className = "settings-github-flow-recheck";
       recheck.textContent = "Re-check connection";
       box.appendChild(recheck);
     }
@@ -3577,7 +3596,7 @@
       body.querySelectorAll(".settings-github-advanced").forEach((btn) => {
         btn.addEventListener("click", (e) => {
           e.stopPropagation();
-          if (githubCliStarted || githubCliLive(snapshot)) {
+          if ((githubCliStarted || githubCliLive(snapshot)) && canCancelGithubLogin(env)) {
             post({ type: "cancelDeviceLogin", provider: "github" });
           }
           githubCliStarted = false;
@@ -3591,7 +3610,7 @@
         btn.addEventListener("click", (e) => {
           e.stopPropagation();
           githubCliStarted = false;
-          post({ type: "cancelDeviceLogin", provider: "github" });
+          if (canCancelGithubLogin(env)) post({ type: "cancelDeviceLogin", provider: "github" });
           paint();
         });
       });

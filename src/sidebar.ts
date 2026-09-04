@@ -15796,6 +15796,13 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     "cloneProject",
     "setupGithubCli",
     "listGithubRepos",
+    // The rail renders the same clone form as the chat, so it can reach every
+    // step of that form — including the token paste and the cancel that ends a
+    // device login. Omitting them made both silently ignored from the rail:
+    // the token field cleared with GitHub still disconnected, and Cancel left
+    // the login running for its full 15-minute timeout.
+    "githubLoginWithToken",
+    "cancelDeviceLogin",
     "listSessions",
     "listRepoSessions",
     "selectRepo",

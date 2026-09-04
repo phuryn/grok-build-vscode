@@ -98,6 +98,15 @@ export const HOST_CAPABILITIES = {
   // `setupGithubCli` as `host-local` and drop it silently, so the Sign in
   // button must not be offered as a working control until this is present.
   remoteGithubSignIn: true,
+  // And again for the two GitHub affordances added after it: pasting a token,
+  // and cancelling with `provider: "github"`. `remoteGithubSignIn` cannot stand
+  // in for either — it promises only the device-code flow, and every host that
+  // advertises it but predates these two would take a pasted credential across
+  // the relay and drop it in silence, while a cancel would be read as `grok`
+  // (the old handler maps any unrecognised provider to it) and either do
+  // nothing or cancel somebody's Grok sign-in instead. One flag covers both
+  // because they shipped together and always will.
+  remoteGithubToken: true,
   // Same shape again, for Rewind and Edit on user bubbles. Every host built
   // before 4.1.0 classifies `rewindSession` / `editLastMessage` /
   // `uiConfirmAnswer` as host-local and drops them, so a browser client — which
@@ -188,6 +197,14 @@ export type HostUiCapabilities = {
    * `setupGithubCli` at a host that would drop it.
    */
   remoteGithubSignIn?: boolean;
+  /**
+   * Whether this host accepts a pasted GitHub token (`githubLoginWithToken`)
+   * and understands `cancelDeviceLogin` with `provider: "github"`. OPT-IN:
+   * absent/false = the remote hides the token path entirely and does not send
+   * the GitHub cancel, because an older host drops the first in silence and
+   * misreads the second as `grok`.
+   */
+  remoteGithubToken?: boolean;
   /**
    * Whether this host accepts Rewind and Edit from a remote. OPT-IN:
    * absent/false = the browser hides both controls rather than offering
