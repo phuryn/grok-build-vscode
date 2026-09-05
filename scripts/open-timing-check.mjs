@@ -10,6 +10,9 @@
 // two conversations through the rail (the SECOND one is the session switch that
 // #133 and #138 describe), then read the log the app wrote and check the
 // arithmetic on every line it produced.
+// Also count actual catalog enumerations in main: every rail open must do zero,
+// including deferred work after its timing line. Walks scheduled by startup are
+// reported separately, even when its continuation runs after a rail click.
 import { _electron as electron } from "playwright";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -61,7 +64,7 @@ let logPath;
  * FILLER_SESSIONS=N writes N synthesised conversations beside the real ones so
  * the heartbeat can say whether that cost is flat or grows. Contents are
  * generated; nothing is ever copied from a real store. Off by default: it makes
- * the check slower and the assertions above are about the LINE, not about load.
+ * the check slower; the walk gate applies at every catalog size.
  */
 function writeFillerSessions(fixture) {
   const NL = String.fromCharCode(10); // literal newline, no escape to lose
@@ -186,6 +189,9 @@ try {
   if (filler) log(`wrote ${filler} synthesised conversations beside the fixture's ${qa.sessions.length}`);
   const env = { ...process.env, GROK_HOME: qa.grokHome };
   delete env.ELECTRON_RUN_AS_NODE;
+  const electronArgs = JSON.parse(process.env.OPEN_TIMING_ELECTRON_ARGS || "[]");
+  assert.ok(Array.isArray(electronArgs) && electronArgs.every((arg) => typeof arg === "string"));
+  if (electronArgs.length) log(`extra Electron arguments: ${JSON.stringify(electronArgs)}`);
   app = await electron.launch({
     executablePath: electronExe,
     args: [
@@ -193,6 +199,7 @@ try {
       `--workspace=${qa.project}`,
       `--user-data-dir=${userData}`,
       `--config-json=${path.join(userData, "test-config.json")}`,
+      ...electronArgs,
     ],
     env,
     timeout: 60000,
@@ -231,6 +238,86 @@ try {
     electronApp.once("will-quit", () => clearInterval(timer));
   }, BEAT_MS);
 
+  // Instrument the filesystem seam used by the catalog walkers, not a product
+  // counter or just postSessionsList (which would miss other callers). Reading
+  // GROK_HOME/sessions itself only discovers projects; reading one of its direct
+  // children enumerates a conversation catalog. Deeper reads are single sessions.
+  await app.evaluate(({ app: electronApp }, { root, grokHome }) => {
+    const nodeRequire = process.getBuiltinModule("module").createRequire(`${root}/package.json`);
+    const nodePath = nodeRequire("node:path");
+    const { defaultFs } = nodeRequire(nodePath.join(root, "out", "sessions.js"));
+    const sidebarPath = nodePath.join(root, "out", "sidebar.js");
+    const { GrokSidebar } = nodeRequire(sidebarPath);
+    // The startup .then callback is anonymous in V8's stack. Resolve its owning
+    // method's range from THIS compiled build, never a hardcoded line number or
+    // a wall-clock cutoff. A late postInitialState continuation is still startup.
+    const sidebarSource = nodeRequire("node:fs").readFileSync(sidebarPath, "utf8");
+    const startupSource = GrokSidebar.prototype.postInitialState.toString();
+    const startupAt = sidebarSource.indexOf(startupSource);
+    if (startupAt < 0) throw new Error("cannot locate postInitialState for catalog startup attribution");
+    const startupFirstLine = sidebarSource.slice(0, startupAt).split("\n").length;
+    const startupLastLine = startupFirstLine + startupSource.split("\n").length - 1;
+    const scheduledByStartup = (stack = "") => stack.split("\n").some((frame) => {
+      const marker = `${sidebarPath}:`;
+      const at = frame.indexOf(marker);
+      if (at < 0) return false;
+      const line = Number(frame.slice(at + marker.length).split(":")[0]);
+      return line >= startupFirstLine && line <= startupLastLine;
+    });
+    const sessionsRoot = nodePath.join(grokHome, "sessions");
+    const original = defaultFs.readdirSync;
+    const state = { walks: [] };
+    globalThis.__catalogWalks = state;
+    // A deferred walk's stack ends at setImmediate. Keep the scheduling stack
+    // too, so a nonzero gate names the caller that requested the rebuild.
+    const pendingRefreshes = [];
+    let refreshing = [];
+    const postList = GrokSidebar.prototype.postSessionsList;
+    const postListNow = GrokSidebar.prototype.postSessionsListNow;
+    GrokSidebar.prototype.postSessionsList = function (...args) {
+      const stack = new Error("catalog refresh requested").stack;
+      const request = { stack, startup: scheduledByStartup(stack) };
+      // Paged requests run immediately and don't consume a queued whole-list
+      // refresh's provenance, just as they don't consume that refresh itself.
+      if (args[0]) {
+        const previous = refreshing;
+        refreshing = [request];
+        try { return postList.apply(this, args); }
+        finally { refreshing = previous; }
+      }
+      pendingRefreshes.push(request);
+      return postList.apply(this, args);
+    };
+    GrokSidebar.prototype.postSessionsListNow = function (...args) {
+      const previous = refreshing;
+      if (!args[0]) refreshing = pendingRefreshes.splice(0);
+      try { return postListNow.apply(this, args); }
+      finally { refreshing = previous; }
+    };
+    defaultFs.readdirSync = function (dir) {
+      const relative = nodePath.relative(sessionsRoot, dir);
+      if (relative && relative !== ".." && !nodePath.isAbsolute(relative) && !relative.includes(nodePath.sep)) {
+        const stack = new Error("catalog walk").stack;
+        // A coalesced refresh requested by an open AND startup still counts.
+        const startup = refreshing.length ? refreshing.every((request) => request.startup) : scheduledByStartup(stack);
+        state.walks.push({ dir, stack, requestedBy: refreshing.map((request) => request.stack), startup });
+      }
+      return original.call(this, dir);
+    };
+    // Positive control: exercise the real wrapper once, then discard it. This
+    // costs one readdir, with no per-conversation stats or transcript reads.
+    const [leaf] = original(sessionsRoot);
+    if (!leaf) throw new Error("catalog counter has no fixture to verify against");
+    defaultFs.readdirSync(nodePath.join(sessionsRoot, leaf));
+    if (state.walks.length !== 1) throw new Error("catalog counter positive control failed");
+    state.walks.length = 0;
+    electronApp.once("will-quit", () => {
+      defaultFs.readdirSync = original;
+      GrokSidebar.prototype.postSessionsList = postList;
+      GrokSidebar.prototype.postSessionsListNow = postListNow;
+    });
+  }, { root, grokHome: qa.grokHome });
+
   await page.waitForSelector(".rail-session", { timeout: 60000 });
   const titles = await page.evaluate(
     () => [...document.querySelectorAll(".rail-session")].map((n) => (n.textContent || "").trim()),
@@ -265,8 +352,10 @@ try {
   };
 
   const clicked = [];
+  const catalogOpens = [];
   const openByName = async (name, { requireLine = true } = {}) => {
     await settle();
+    const walksBefore = await app.evaluate(() => globalThis.__catalogWalks.walks.length);
     // Count FIRST. The app opens a conversation of its own on startup, so the
     // log already has a line in it whose clock started before this click — and
     // measuring against that one produces a negative prelude, which is how this
@@ -278,6 +367,19 @@ try {
     // it: the re-focus case is the documented success, and paying 60s for it
     // made a passing run a minute longer for nothing.
     const got = await waitForOpenLines(page, before + 1, requireLine ? 60000 : 4000);
+    // postSessionsList schedules setImmediate, and post-open cleanup can run
+    // after the line. Include the quiet window in THIS open's count.
+    await settle();
+    const observed = await app.evaluate((_, before) => globalThis.__catalogWalks.walks.slice(before), walksBefore);
+    const walks = observed.filter((walk) => !walk.startup);
+    catalogOpens.push({ name, walks });
+    log(`catalog walks opening "${name}": ${walks.length}`);
+    const startupWalks = observed.length - walks.length;
+    if (startupWalks) log(`excluded ${startupWalks} walk(s) scheduled by postInitialState startup`);
+    for (const walk of observed) {
+      log(walk.stack);
+      for (const request of walk.requestedBy) log(request);
+    }
     const line = got[before];
     if (!line) {
       // Returning to a conversation whose client is still alive takes the
@@ -414,7 +516,11 @@ try {
       );
     }
   }
-  log(`PASS — ${lines.length} real lines, every one accounting for its own total; widest resolve ${widestResolve}ms`);
+  assert.ok(
+    catalogOpens.every((open) => open.walks.length === 0),
+    `expected zero catalog walks per rail open: ${catalogOpens.map((open) => `${JSON.stringify(open.name)}=${open.walks.length}`).join(", ")}`,
+  );
+  log(`PASS — zero catalog walks on all ${catalogOpens.length} rail opens; ${lines.length} real lines, every one accounting for its own total; widest resolve ${widestResolve}ms`);
   console.log("\n----- what the line does NOT cover -----");
   for (const p of preludes) {
     const share = p.prelude + p.totalMs > 0 ? Math.round((100 * p.prelude) / (p.prelude + p.totalMs)) : 0;

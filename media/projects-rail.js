@@ -1761,6 +1761,21 @@
         requestPreviews();
         break;
       }
+      case "sessionRemoved": {
+        if (!msg.id) break;
+        state.currentSessions = state.currentSessions.filter((s) => s.id !== msg.id);
+        state.pinnedSessions = state.pinnedSessions.filter((s) => s.id !== msg.id);
+        for (const preview of Object.values(state.previews)) {
+          const before = preview.entries.length;
+          preview.entries = preview.entries.filter((s) => s.id !== msg.id);
+          if (typeof preview.total === "number") {
+            preview.total = Math.max(0, preview.total - (before - preview.entries.length));
+          }
+        }
+        delete state.dots[msg.id];
+        render();
+        break;
+      }
       case "sessions": {
         // Local `sessions` is the SELECTED project's list — it used to be the
         // workspace root unconditionally, which is why this frame and

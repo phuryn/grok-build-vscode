@@ -792,6 +792,9 @@ export type HostMsg =
   // from the on-disk index, not entries shown (hidden subagent sessions occupy
   // slots without producing rows).
   | { type: "sessions"; entries: SessionListEntry[]; activeId?: string | null; dots: Record<string, Dot>; offset: number; total: number; hasMore: boolean; nextOffset: number; providerCursor?: { grokOffset: number; codexHighWater?: { updatedAt: number; id: string } }; query: string }
+  /** A known conversation was removed. Drop it from every catalog view without
+   *  changing the client's active conversation or requesting a fresh list. */
+  | { type: "sessionRemoved"; id: string; cwd: string }
   // A preview page for ONE repo, answering `listRepoSessions`. Deliberately a
   // separate frame from `sessions`: that one is the focused history list and
   // owns paging/search/auto-open state, so a sibling repo's rows arriving on it
@@ -1254,7 +1257,7 @@ const HOST_MESSAGE_TYPE_MAP: Record<HostMsg["type"], true> = {
   xaiNotification: true, subagentUpdate: true, childStream: true, runProgress: true, commandOutput: true, expandCommandOutputs: true, steerByDefault: true,
   soundNotifications: true, processingSound: true, readRepliesAloud: true, summarizeRepliesAloud: true, speechSummary: true, imageFull: true, moveComposerCaret: true, remoteStatus: true,
   setAllToolDetails: true, focusInput: true, findInSession: true, restoreComposer: true, truncateMessages: true, uiConfirmRequest: true,
-  sessions: true, repoSessions: true, pinnedSessions: true, repos: true, sessionDot: true, queuedSends: true, submitQueuedSend: true,
+  sessions: true, sessionRemoved: true, repoSessions: true, pinnedSessions: true, repos: true, sessionDot: true, queuedSends: true, submitQueuedSend: true,
   steerUnavailable: true, feedbackAvailability: true, turnFeedbackAck: true, usage: true,
 };
 

@@ -12532,6 +12532,14 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     this.sendRemoteSession(session, message);
   }
 
+  private postSessionRemoved(id: string | undefined, cwd: string): void {
+    if (!id) return;
+    const message: HostMsg = { type: "sessionRemoved", id, cwd };
+    this.postLocal(message);
+    // Every tab holds previews and pins, including for projects it isn't viewing.
+    this.deliverRemote(this.remoteClients.clients(), message, cwd);
+  }
+
   private liveSessionEntry(
     session: Session,
     id: string,
@@ -15810,6 +15818,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   private static readonly PROJECTS_RAIL_HOST_TYPES = new Set<HostMsg["type"]>([
     "repos",
     "sessions",
+    "sessionRemoved",
     "repoSessions",
     "pinnedSessions",
     "sessionDot",
@@ -16796,13 +16805,17 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     const id = cur.activeSessionId;
     const cwd = this.sessionCwd(cur);
     const provider = cur.provider;
+    // Retain the pipe for session/delete. disposeSession still owns all pool
+    // and remote bookkeeping; its second detach finds no client to terminate.
+    const client = isAdapterProvider(provider) ? this.detachClient(cur) : undefined;
     this.disposeSession(cur);
-    if (isAdapterProvider(provider)) void this.discardAdapterEmptySession(provider, id, cwd);
-    else this.removeSessionFromDisk(id, cwd);
-    // This one KEEPS its rebuild, unlike focusSession above: a row genuinely
-    // disappeared. Abandoning an empty session deletes its directory, so the
-    // list on screen is now wrong and no other frame says so.
-    this.postSessionsList();
+    if (isAdapterProvider(provider)) {
+      void this.discardAdapterEmptySession(provider, id, cwd, client).finally(() => client?.dispose()).then((removed) => {
+        if (removed) this.postSessionRemoved(id, cwd);
+      }).catch((error) => {
+        this.host.appendLine(`[${provider}] empty-session cleanup failed: ${(error as Error).message}`);
+      });
+    } else if (this.removeSessionFromDisk(id, cwd)) this.postSessionRemoved(id, cwd);
   }
 
   /** Remote counterpart of parkFocused: abandoning an empty tab session
@@ -16832,9 +16845,15 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     const id = current.activeSessionId;
     const cwd = this.sessionCwd(current);
     const provider = current.provider;
+    const client = isAdapterProvider(provider) ? this.detachClient(current) : undefined;
     this.disposeSession(current);
-    if (isAdapterProvider(provider)) void this.discardAdapterEmptySession(provider, id, cwd);
-    else this.removeSessionFromDisk(id, cwd);
+    if (isAdapterProvider(provider)) {
+      void this.discardAdapterEmptySession(provider, id, cwd, client).finally(() => client?.dispose()).then((removed) => {
+        if (removed) this.postSessionRemoved(id, cwd);
+      }).catch((error) => {
+        this.host.appendLine(`[${provider}] empty-session cleanup failed: ${(error as Error).message}`);
+      });
+    } else if (this.removeSessionFromDisk(id, cwd)) this.postSessionRemoved(id, cwd);
   }
 
   /** The sole remote-client release path: abandon its session before deleting ownership. */
@@ -16875,8 +16894,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   /** Delete a session's on-disk dir + drop its meta override and read-cache entry.
    *  Used when an empty session is abandoned or a legacy primer-only session is swept. Best-effort —
    *  a locked/already-gone dir is logged, not thrown. */
-  private removeSessionFromDisk(id: string | undefined, sessionCwd?: string): void {
-    if (!id) return;
+  private removeSessionFromDisk(id: string | undefined, sessionCwd?: string): boolean {
+    if (!id) return false;
     const overrides = this.state.get<SessionMetaOverrides>(SESSION_META_KEY, {});
     const cwd =
       sessionCwd ||
@@ -16884,8 +16903,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       this.sessionCache.get(id)?.entry.cwd ||
       this.workspaceRoot();
     const grokHome = resolveGrokHome(process.env);
+    let removed = false;
     try {
       deleteSessionDir({ fs: defaultFs, grokHome, cwd, id });
+      removed = true;
     } catch (e) {
       this.host.appendLine(`[sessions] could not remove empty session ${id}: ${(e as Error).message}`);
     }
@@ -16896,6 +16917,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       void this.state.update(SESSION_META_KEY, next);
     }
     this.sessionCache.delete(id);
+    return removed;
   }
 
   /** Every session id in a repo that has been PROVEN to hold real work, for this
@@ -17388,21 +17410,24 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     id: string | undefined,
     cwd: string,
     liveClient?: AcpClient,
-  ): Promise<void> {
-    if (!id || !isAdapterProvider(provider)) return;
+  ): Promise<boolean> {
+    if (!id || !isAdapterProvider(provider)) return false;
     let temporary: AcpClient | undefined;
     try {
-      const cliPath = this.locateProvider(provider);
-      const backend = this.createProviderBackend(provider);
-      if (!cliPath || !backend) throw new Error(`${providerDisplayName(provider)} CLI is not available.`);
-      const client = liveClient ?? (temporary = new AcpClient({
-        cliPath,
-        cwd,
-        env: { ...process.env },
-        backend,
-        log: (message) => this.host.appendLine(message),
-      }));
-      if (temporary) await temporary.start();
+      let client = liveClient;
+      if (!client) {
+        const cliPath = this.locateProvider(provider);
+        const backend = this.createProviderBackend(provider);
+        if (!cliPath || !backend) throw new Error(`${providerDisplayName(provider)} CLI is not available.`);
+        client = temporary = new AcpClient({
+          cliPath,
+          cwd,
+          env: { ...process.env },
+          backend,
+          log: (message) => this.host.appendLine(message),
+        });
+        await client.start();
+      }
       await client.deleteSession(id);
       const history = this.adapterHistory(provider);
       if (history) {
@@ -17416,8 +17441,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         delete next[id];
         await this.state.update(SESSION_META_KEY, next);
       }
+      return true;
     } catch (error) {
       this.host.appendLine(`[${provider}] could not discard empty session ${id}: ${(error as Error).message}`);
+      return false;
     } finally {
       if (temporary) await temporary.dispose();
     }

@@ -4476,7 +4476,7 @@
     historyFooterEl.hidden = !(loadedClearable || moreUnloaded);
   }
 
-  function renderSessionRows() {
+  function renderSessionRows(autoPage = true) {
     const list = historyListEl;
     if (!list) return;
     list.innerHTML = "";
@@ -4504,7 +4504,7 @@
       list.appendChild(more);
     }
     updateHistoryFooter();
-    requestNextSessionsPageIfUnderfilled();
+    if (autoPage) requestNextSessionsPageIfUnderfilled();
   }
 
   function renderSessionRow(s) {
@@ -7675,9 +7675,8 @@
     return el;
   }
 
-  /** Take an unfiltered first page as the selected repo's rail rows. The one
-   *  place `railSelectedRows` is written, so "the rail's list" can only ever be
-   *  a whole, unsearched page for the repo currently selected. */
+  /** Take an unfiltered first page as the selected repo's rail rows. Targeted
+   *  removals also prune it, without adopting the history popover's search. */
   function adoptRailRows(entries) {
     state.railSelectedRows = uniqueSessionRows(entries);
     state.railSelectedRowsKnown = true;
@@ -17388,6 +17387,34 @@
         break;
       case "xaiNotification":
         break;
+      case "sessionRemoved": {
+        if (!msg.id) break;
+        const removed = state.sessions.find((s) => s.id === msg.id);
+        state.sessions = state.sessions.filter((s) => s.id !== msg.id);
+        state.railSelectedRows = state.railSelectedRows.filter((s) => s.id !== msg.id);
+        state.pinnedSessions = state.pinnedSessions.filter((s) => s.id !== msg.id);
+        for (const preview of Object.values(state.repoPreviews)) {
+          const before = preview.entries.length;
+          preview.entries = preview.entries.filter((s) => s.id !== msg.id);
+          if (typeof preview.total === "number") {
+            preview.total = Math.max(0, preview.total - (before - preview.entries.length));
+          }
+        }
+        if (removed) {
+          state.sessionTotal = Math.max(0, state.sessionTotal - 1);
+          if (state.sessionNextOffset != null) state.sessionNextOffset = Math.max(0, state.sessionNextOffset - 1);
+          if (state.sessionProviderCursor && (!removed.provider || removed.provider === "grok")) {
+            state.sessionProviderCursor.grokOffset = Math.max(0, state.sessionProviderCursor.grokOffset - 1);
+          }
+        }
+        delete state.dots[msg.id];
+        if (rememberedRemoteSession?.id === msg.id) saveRememberedRemoteSession(null);
+        // A removal carries no focus confirmation. Preserve an in-flight rail
+        // transition until sessionName names the conversation being opened.
+        if (!historyPopover.hidden) renderSessionRows(false);
+        renderRail();
+        break;
+      }
       case "sessions": {
         const entries = uniqueSessionRows(msg.entries);
         const offset = msg.offset || 0;

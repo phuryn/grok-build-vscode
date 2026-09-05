@@ -79,6 +79,45 @@ const usableItem = (menu: Element, label: string) => {
 };
 
 describe("projects rail", () => {
+  it("removes a known session from history, selected rows, previews and pins without requesting a list", () => {
+    const { doc, window, posted } = boot();
+    const empty = { ...row("empty", "/work/alpha", "Abandoned empty"), numMessages: 0, pinned: true };
+    const kept = row("kept", "/work/alpha", "Keep this conversation");
+    dispatch(window, { ...sessionsFrame([empty, kept]), activeId: "kept" });
+    dispatch(window, { type: "sessionName", sessionId: "kept", name: kept.displayName, cwd: kept.cwd });
+    dispatch(window, { type: "repoSessions", cwd: empty.cwd, entries: [empty, kept], dots: {}, total: 2 });
+    dispatch(window, { type: "pinnedSessions", entries: [empty], dots: { empty: "idle" } });
+    click(window, doc.getElementById("history-btn")!);
+    dispatch(window, { ...sessionsFrame([empty, kept]), activeId: "kept", hasMore: true, total: 100, nextOffset: 50 });
+    // Clearing the request's loading state could trigger automatic pagination;
+    // the removal itself must not issue any new catalog request.
+    posted.length = 0;
+    dispatch(window, { type: "sessionRemoved", id: "empty", cwd: empty.cwd });
+    dispatch(window, { type: "sessionRemoved", id: "empty", cwd: empty.cwd });
+    expect(doc.querySelectorAll('[data-session-id="empty"]')).toHaveLength(0);
+    expect(doc.querySelector('#history-popover [data-session-id="kept"]')).not.toBeNull();
+    expect(doc.querySelector('.rail-session.active')?.getAttribute("data-session-id")).toBe("kept");
+    expect(posted).toEqual([]);
+    // Switching projects hands selected rows back to previews. The removed row
+    // must not reappear from either the old preview or the selected snapshot.
+    dispatch(window, { type: "repos", entries: repos, selectedCwd: "/work/beta", activeCwd: "/work/alpha" });
+    expect(doc.querySelectorAll('[data-session-id="empty"]')).toHaveLength(0);
+    expect(doc.getElementById("session-head-title")?.textContent).toBe(kept.displayName);
+  });
+
+  it("keeps the pending rail target while the empty session being left is removed", () => {
+    const { doc, window } = boot();
+    dispatch(window, { ...sessionsFrame([
+      row("empty", "/work/alpha", "Empty"), row("target", "/work/alpha", "Target"),
+    ]), activeId: "empty" });
+    click(window, doc.querySelector('#projects-rail [data-session-id="target"]')!);
+    dispatch(window, { type: "sessionRemoved", id: "empty", cwd: "/work/alpha" });
+    expect(doc.querySelector('.rail-session.active')?.getAttribute("data-session-id")).toBe("target");
+    dispatch(window, { type: "sessionName", sessionId: "target", name: "Target", cwd: "/work/alpha" });
+    expect(doc.querySelector('.rail-session.active')?.getAttribute("data-session-id")).toBe("target");
+    expect(doc.querySelectorAll('[data-session-id="empty"]')).toHaveLength(0);
+  });
+
   it("does not mount without a #projects-rail element, even when repos arrives", () => {
     // Regression guard for VS Code: getHtml never includes the mount, so a
     // `repos` frame (sent for clear-all naming) must not light a rail column.

@@ -101,6 +101,31 @@ function loadSessions(
   });
 }
 
+it("removes abandoned sessions from selected rows, previews, pins and Recent without changing focus", () => {
+  const { window, doc, posted } = bootRail();
+  const api = railApi(window);
+  loadCatalog(api);
+  const empty = { ...row("empty", "/work/alpha", "Abandoned empty"), pinned: true };
+  const kept = row("kept", "/work/alpha", "Keep this conversation");
+  loadSessions(api, [empty, kept], "kept");
+  api.onMessage({ type: "repoSessions", cwd: empty.cwd, entries: [empty, kept], total: 2, dots: {} });
+  api.onMessage({ type: "pinnedSessions", entries: [empty], dots: { empty: "idle" } });
+  posted.length = 0;
+  api.onMessage({ type: "sessionRemoved", id: "empty", cwd: empty.cwd });
+  api.onMessage({ type: "sessionRemoved", id: "empty", cwd: empty.cwd });
+  expect(api.state.currentSessions).toEqual([kept]);
+  expect(api.state.pinnedSessions).toEqual([]);
+  expect(Object.values(api.state.previews as Record<string, unknown>)).toEqual([{ entries: [kept], total: 1 }]);
+  expect(api.state.dots).toEqual({});
+  expect(api.state.activeSessionId).toBe("kept");
+  expect(api.recentRows().map((s) => s.id)).toEqual(["kept"]);
+  expect(doc.querySelectorAll('[data-session-id="empty"]')).toHaveLength(0);
+  expect(posted).toEqual([]);
+  loadCatalog(api, "/work/beta");
+  expect(api.recentRows().map((s) => s.id)).toEqual(["kept"]);
+  window.close();
+});
+
 function openProjectMenu(doc: Document, window: Window, repoLabel: string) {
   const labels = [...doc.querySelectorAll(".rail-repo-label")];
   const labelEl = labels.find((e) => e.textContent === repoLabel);
