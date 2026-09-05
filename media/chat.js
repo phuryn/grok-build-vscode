@@ -3592,6 +3592,9 @@
       closePopovers();
       if (showingThis) return;
     }
+    // One popover at a time (#148): the donut, mode and add menus stayed up
+    // under the gear because only their own openers dismissed the others.
+    closePopovers();
     state.gearSurface = surface;
     renderGearMain();
     positionGearPopover(fromBtn || activeGearButton());
@@ -3983,6 +3986,7 @@
 
   function openModePopover() {
     if (!modePopover.hidden) { closePopovers(); return; }
+    closePopovers();
     modePopover.innerHTML = "";
     for (const [id, meta] of Object.entries(MODE_META)) {
       // Plan is Grok's extension-owned plan gate. Codex owns its own plan
