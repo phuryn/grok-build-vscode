@@ -725,7 +725,20 @@ the steady-state fix.
 - **Empty sessions never accumulate (#24).** Beyond the model/effort restart
   case above, *any* time you leave an empty (`hasHistory === false`)
   session — New Session or switching to another — `parkFocused` deletes its on-disk
-  dir, so at most one untitled **New session** exists at a time. `sweepEmptySessions`
+  dir, so at most one untitled **New session** exists at a time. That departure is also
+  what made **opening** a conversation slow: the deletion was announced by rebuilding
+  the entire session list — a walk of every catalog in the project, so the cost grew
+  with the store — and a fresh ACP adapter process was spawned purely to issue one
+  `session/delete`. Both are gone. The removal goes out as a targeted `sessionRemoved`
+  frame (`{id, cwd}`), delivered locally and to every remote tab (`message-cwd`
+  authorization, because a tab holds pins and previews for projects it is not
+  viewing), and the delete reuses the client already attached to the session being
+  abandoned. The client prunes that row from its list, pins, rail selection and every
+  project preview it holds, adjusting paging only for a row it had actually loaded.
+  The skew to respect is therefore the **release order**: a host that sends the frame
+  to a client vendored before it leaves the abandoned row on screen until the next
+  list, so the relay carrying the client is promoted before the extension that sends
+  it. `sweepEmptySessions`
   covers what parking cannot reach — a window closed without a prompt, a host that
   crashed — and runs on activation and after every new/opened session, in that
   session's repo. Each candidate is confirmed by reading `chat_history.jsonl`
