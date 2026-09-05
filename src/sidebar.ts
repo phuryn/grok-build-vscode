@@ -964,6 +964,14 @@ export class GrokSidebar {
     "githubLoginWithToken",
     "runGrokLogin",
     "refreshProviders",
+    // Both halves of a terminal sign-in started FROM this page. Without them
+    // the buttons were dead and said nothing: `recheckConnection` is what an
+    // agent row's "Re-check connection" sends, and `cancelDeviceLogin` is what
+    // either row's Cancel sends. GitHub's Re-check happened to work only
+    // because it asks for `refreshProviders`, which was already listed — two
+    // identical-looking buttons, one alive, and no way to tell from the page.
+    "recheckConnection",
+    "cancelDeviceLogin",
     "checkGrokUpdate",
     "updateGrok",
     "openRemotePortal",
