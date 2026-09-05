@@ -160,7 +160,7 @@ describe("an agent that will not authenticate", () => {
   it("a real remote history request classifies the uncoded Codex failure, not an empty list", async () => {
     const sidebar = makeSidebar();
     sidebar.remoteTargetableCwd = vi.fn(() => true);
-    sidebar.remoteAuthorizedSessionCwds = vi.fn(() => ["/repo"]);
+    sidebar.authorizedSessionCwds = vi.fn(() => ["/repo"]);
     sidebar.isAuthorizedCwd = vi.fn(() => true);
     sidebar.remoteClients.ready("phone");
     const session = new Session();
@@ -180,7 +180,7 @@ describe("an agent that will not authenticate", () => {
   it("leaves an account alone when the failure is billing rather than credentials", async () => {
     const sidebar = makeSidebar();
     sidebar.remoteTargetableCwd = vi.fn(() => true);
-    sidebar.remoteAuthorizedSessionCwds = vi.fn(() => ["/repo"]);
+    sidebar.authorizedSessionCwds = vi.fn(() => ["/repo"]);
     sidebar.isAuthorizedCwd = vi.fn(() => true);
     sidebar.remoteClients.ready("phone");
     const session = new Session();
@@ -203,7 +203,7 @@ describe("an agent that will not authenticate", () => {
     const sidebar = makeSidebar();
     probe.error = new Error("unauthorized model for project");
     sidebar.remoteTargetableCwd = vi.fn(() => true);
-    sidebar.remoteAuthorizedSessionCwds = vi.fn(() => ["/repo"]);
+    sidebar.authorizedSessionCwds = vi.fn(() => ["/repo"]);
     sidebar.isAuthorizedCwd = vi.fn(() => true);
     sidebar.remoteClients.ready("phone");
     const session = new Session();
@@ -222,7 +222,7 @@ describe("remote account boundary", () => {
   it("drops durable re-check but allows retrying an already-connected provider session", async () => {
     const sidebar = makeSidebar();
     sidebar.remoteTargetableCwd = vi.fn(() => true);
-    sidebar.remoteAuthorizedSessionCwds = vi.fn(() => ["/repo"]);
+    sidebar.authorizedSessionCwds = vi.fn(() => ["/repo"]);
     sidebar.isAuthorizedCwd = vi.fn(() => true);
     sidebar.remoteClients.ready("phone");
     const session = new Session();

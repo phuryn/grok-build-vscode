@@ -161,7 +161,7 @@ export function selectProjectsToSeed(
 /**
  * Strip archive fields so the webview's capability probe
  * (`typeof repo.archived === "boolean"`) reports "host cannot archive".
- * Used when {@link Host.canArchiveRepos} is false (desktop curated rail).
+ * Used when {@link Host.canArchiveRepos} is false.
  */
 export function withoutArchiveFields<T extends { archived?: boolean; archivedAt?: number }>(
   entry: T,

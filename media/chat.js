@@ -5223,7 +5223,7 @@
    *  outranks it, and there is no flag left behind to go stale. */
   function railSections() {
     const ordered = railRepos();
-    // Host without archive capability (desktop curated open/close): no Project
+    // Host without archive capability (older desktop builds): no Project
     // Archive group and no age rule. Presence of `archived` on rows is the
     // signal — see railArchiveSupported.
     if (!railArchiveSupported()) {
@@ -7192,12 +7192,7 @@
         title: "Tint this project's folder icon so it is easy to find",
         onSelect: () => openRepoColorPicker(projectMenuBtn, repo),
       }, null] : []),
-      // The desktop's equivalent, and a different act despite the same intent.
-      // Its rail IS the set of open folders, so putting a project away means
-      // closing it — there is no archive flag to set, and the browser client
-      // has no business closing folders on the machine it is borrowing. Same
-      // capability as the + that adds them: a host that can open a folder can
-      // close one, and one that cannot never grows either control.
+      // Hide closes a local folder; archiving only changes its rail group.
       ...(canRemoveProjectFolder() ? [{
         label: "Hide project",
         icon: ICON.archive,

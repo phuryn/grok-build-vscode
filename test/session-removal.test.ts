@@ -47,7 +47,7 @@ function setup(origin: "local" | "remote", provider: "grok" | "codex" | "claude"
   sidebar.view = { webview: { postMessage: vi.fn() } };
   sidebar.projectsRail = { webview: { postMessage: vi.fn() } };
   sidebar.uplink = { broadcastTo: vi.fn() };
-  sidebar.remoteAuthorizedSessionCwds = () => [cwd];
+  sidebar.authorizedSessionCwds = () => [cwd];
   sidebar.state = { get: (_key: string, fallback: unknown) => fallback };
   sidebar.sessionCache = new Map();
   sidebar.host = { appendLine: vi.fn() };
@@ -193,7 +193,7 @@ describe.each(["local", "remote"] as const)("abandoning an empty %s session", (o
 
 it("keeps removal local after its project loses remote authorization", () => {
   const { sidebar, park, delivered } = setup("local");
-  sidebar.remoteAuthorizedSessionCwds = () => [];
+  sidebar.authorizedSessionCwds = () => [];
   park();
   expect(delivered()).toEqual([{ type: "sessionRemoved", id, cwd }]);
   expect(sidebar.uplink.broadcastTo).not.toHaveBeenCalled();

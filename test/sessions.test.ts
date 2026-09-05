@@ -30,8 +30,6 @@ import {
   orderedResumeCwdCandidates,
   readContextUsage,
   readSessionEntries,
-  remoteAuthorizedCwds,
-  archivedProjectKeys,
   expiredArchiveChoiceKeys,
   newestTranscriptMtime,
   encodeSessionCatalogLeaf,
@@ -1705,54 +1703,6 @@ describe("session ordering follows the transcript, not a visit", () => {
       fs, grokHome: home, cwd, ids: ["fresh"], overrides: {}, platform: "linux",
     });
     expect(entry.updatedAt).toBe(Date.parse("2026-03-04T05:06:07Z"));
-  });
-});
-
-describe("the archive fence", () => {
-  const A = "/work/a";
-  const B = "/work/b";
-  const AWT = "/home/u/.grok/worktrees/a/feat";
-  const k = (c: string) => normalizeRepoPath(c, "linux");
-  const trusted = [
-    { cwd: A, repoCwd: A },
-    { cwd: AWT, repoCwd: A },
-    { cwd: B, repoCwd: B },
-  ];
-  const choice = (cwd: string, archived: boolean, at = 1000) => ({ cwd, at, archived });
-
-  const blocked = (archives: object, openCwds: string[] = []) =>
-    archivedProjectKeys({ archives: archives as never, openCwds, platform: "linux" });
-  const fence = (archivedProjects: ReadonlySet<string>) =>
-    remoteAuthorizedCwds({ trusted, archivedProjects, platform: "linux" });
-
-  it("fences an archived project and everything belonging to it", () => {
-    expect(fence(blocked({ [k(A)]: choice(A, true) }))).toEqual([B]);
-  });
-
-  it("fences by OWNING PROJECT, so a worktree learned later cannot slip past", () => {
-    // The blocked set names projects, and the trusted set carries each cwd's
-    // project with it. Matching exact cwds instead let a worktree the host
-    // discovered after the fence was built walk straight through.
-    const late = [...trusted, { cwd: "/home/u/.grok/worktrees/a/just-made", repoCwd: A }];
-    expect(remoteAuthorizedCwds({
-      trusted: late, archivedProjects: blocked({ [k(A)]: choice(A, true) }), platform: "linux",
-    })).toEqual([B]);
-  });
-
-  it("passes everything through when nothing is archived", () => {
-    expect(fence(blocked({}))).toEqual([A, AWT, B]);
-    // "not archived" is a real stored answer, not the absence of one.
-    expect(fence(blocked({ [k(A)]: choice(A, false) }))).toEqual([A, AWT, B]);
-  });
-
-  it("never fences a project the host has OPEN, worktrees included", () => {
-    // Opening a project does not clear its flag; fencing it anyway would blind
-    // the phone to the conversation the desk is working in.
-    expect(fence(blocked({ [k(A)]: choice(A, true) }, [A]))).toEqual([A, AWT, B]);
-  });
-
-  it("ignores a stored choice with no cwd rather than fencing everything", () => {
-    expect(fence(blocked({ x: { at: 1, archived: true } }))).toEqual([A, AWT, B]);
   });
 });
 

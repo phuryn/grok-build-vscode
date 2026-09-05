@@ -1197,6 +1197,9 @@
 
   /** Split the catalog into what belongs in Projects and what belongs in the Archive. */
   function splitByArchive(repos) {
+    if (!state.repos.some((r) => typeof r.archived === "boolean")) {
+      return { active: repos, archived: [] };
+    }
     const now = Date.now();
     const byActivity = state.repos.slice().sort((a, b) => repoActivity(b) - repoActivity(a));
     const floorKeys = new Set(

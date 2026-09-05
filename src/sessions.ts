@@ -302,7 +302,7 @@ export interface RepoPin {
 }
 export type RepoPins = Record<string, RepoPin>;
 
-/** The user's own last word on where a project belongs in the remote client's
+/** The user's own last word on where a project belongs in the client's
  *  rail, and when they said it. A choice is only in force until the project is
  *  worked in again: any conversation newer than `at` overrides it, which is what
  *  makes "using an archived project brings it back" need no bookkeeping.
@@ -317,51 +317,7 @@ export interface RepoArchiveChoice {
 }
 export type RepoArchives = Record<string, RepoArchiveChoice>;
 
-/**
- * A cwd a remote may be allowed to name, and the project it belongs to.
- *
- * Provenance travels with the cwd because the alternative is re-deriving it in
- * the fence, and the fence runs on every inbound AND outbound remote message.
- * The trusted-set builder already knows which project each cwd came from — it
- * expanded the project to get there — so carrying the answer out costs nothing
- * and turns the archive check into a map lookup.
- */
-export interface TrustedSessionCwd {
-  cwd: string;
-  /** The project this cwd belongs to: itself, or the project owning a worktree. */
-  repoCwd: string;
-}
-
-/**
- * Archive choices that newer work has already made moot.
- *
- * `RepoArchiveChoice` has always said a choice holds "only until the project is
- * worked in again", and the renderer implemented that as a timestamp comparison
- * re-derived on every paint. Once the host began fencing remotes on the stored
- * flag, the two sides could disagree about the same project: the desk showed it
- * in Projects while the phone could not reach it, and no refresh helped.
- *
- * Resolving the expiry in the STORE — rather than at every read — is what keeps
- * the fence itself a cheap lookup, and what makes both sides read one answer.
- *
- * ## The part that took four review rounds
- *
- * Two earlier attempts deleted the choice from a session lifecycle event, and
- * both handed a remote back a project the user had archived. Session start
- * includes a reconnecting phone's recovery restart, which bypasses inbound
- * authorization by design; "a completed turn" was no better, because a plain
- * CLI exit reports `error` down the same status path.
- *
- * Fixing the trigger was the wrong instinct. What made those reachable was the
- * EVIDENCE: session-directory mtimes — and `events.jsonl` — move when a
- * conversation is merely loaded, so a remote could manufacture the proof.
- * `newestActivityAt` must therefore be {@link newestTranscriptMtime}, which
- * stats `updates.jsonl` only and never falls back to `events.jsonl` or
- * `summary.json` the way {@link indexSessions} does. A remote cannot move that
- * file without running a turn, and it cannot run a turn in a project it is
- * fenced out of. With evidence that cannot be forged, it stops mattering
- * which event asks the question.
- */
+/** Stored archive choices superseded by newer transcript activity. */
 export function expiredArchiveChoiceKeys(opts: {
   archives: RepoArchives;
   /** Newest TRANSCRIPT mtime across the project and its worktrees, ms. */
@@ -380,63 +336,6 @@ export function expiredArchiveChoiceKeys(opts: {
     }
   }
   return out;
-}
-
-/**
- * Projects that are archived, as normalised keys.
- *
- * Assumes {@link expiredArchiveChoiceKeys} has already retired the stale ones,
- * which is what lets this stay a plain read of the store on a hot path.
- *
- * A project the host has OPEN is never archived here, matching the rail's own
- * rule. Opening a project does not clear its flag, and fencing one the desk is
- * working in would blind the phone to the conversation on screen.
- */
-export function archivedProjectKeys(opts: {
-  archives: RepoArchives;
-  openCwds: readonly string[];
-  platform?: NodeJS.Platform;
-}): Set<string> {
-  const platform = opts.platform ?? process.platform;
-  const key = (c: string) => normalizeRepoPath(c, platform);
-  const open = new Set(opts.openCwds.filter(Boolean).map(key));
-  const out = new Set<string>();
-  for (const choice of Object.values(opts.archives ?? {})) {
-    if (!choice?.archived || !choice.cwd) continue;
-    const k = key(choice.cwd);
-    if (k && !open.has(k)) out.add(k);
-  }
-  return out;
-}
-
-/**
- * The host's trusted cwds, minus everything belonging to an archived project.
- *
- * A REMOTE-only narrowing. On the desk, archiving means "fold this away" — the
- * project is one keystroke from being worked in — so subtracting it locally
- * would break the thing archiving is for. From a phone it should mean what it
- * looks like: out of reach.
- *
- * Filters by each cwd's OWNING PROJECT, not by the cwd itself. A worktree is
- * not something you archive separately, and matching only exact cwds let a
- * worktree the host learned about after the fence was built walk straight
- * through it — the project is the unit, so the project is what is checked.
- *
- * Note what `archived` does NOT include: a project the rail merely hides for
- * being 30 days idle is still reachable here. That rule lives in the renderer
- * and moves on its own, so binding a capability to it would revoke a phone's
- * access with nobody having done anything, mid-conversation included.
- */
-export function remoteAuthorizedCwds(opts: {
-  trusted: readonly TrustedSessionCwd[];
-  archivedProjects: ReadonlySet<string>;
-  platform?: NodeJS.Platform;
-}): string[] {
-  if (!opts.archivedProjects.size) return opts.trusted.map((t) => t.cwd);
-  const platform = opts.platform ?? process.platform;
-  return opts.trusted
-    .filter((t) => !opts.archivedProjects.has(normalizeRepoPath(t.repoCwd, platform)))
-    .map((t) => t.cwd);
 }
 
 /**
@@ -476,12 +375,8 @@ export interface RepoListEntry {
   worktreeLabel?: string;
   /**
    * Archive choice flattened for the wire. **Present when the host supports
-   * archiving** (VS Code / discovered list) — even when nothing is archived,
-   * which is how the client tells "nothing archived" from "this host cannot
-   * archive" without a version number. **Omitted** when the host's project
-   * list is curated open/close (desktop): close already removes a row, so
-   * archive would be a second weaker mechanism. Ordering in
-   * {@link discoverRepos} deliberately ignores these fields.
+   * archiving**, including desktop. Field presence advertises support even
+   * when nothing is archived. Ordering in {@link discoverRepos} ignores them.
    */
   archived?: boolean;
   archivedAt?: number;
@@ -837,7 +732,7 @@ export interface DiscoverReposDeps {
   fs: FsLike;
   grokHome: string;
   pins: RepoPins;
-  /** Remote-rail archive choices. Reported on every row and acted on by nobody
+  /** Archive choices for every rail. Reported on every row and acted on by nobody
    *  here — see RepoListEntry.archived. */
   archives?: RepoArchives;
   /** Project folder colours. Always flattened onto every row as `color` (empty
@@ -1271,13 +1166,8 @@ export function indexSessions(deps: IndexDeps): SessionIndexEntry[] {
 /**
  * Newest real-activity mtime under `cwd`'s session catalogs, or 0.
  *
- * Deliberately NOT `indexSessions` / {@link statSessionActivity}: those fall
- * back to `events.jsonl` then `summary.json` so a brand-new or pre-updates
- * conversation still lists. That fallback is right for ordering and wrong
- * for authorization — grok restamps both files on a mere `session/load`. A
- * remote could therefore manufacture "this project was worked in" by getting
- * a session reloaded, which is exactly how the archive fence was bypassed.
- *
+ * Loading a conversation restamps events and summaries, so those files must
+ * not expire a presentation choice.
  * `updates.jsonl` is the only persist file a load leaves alone and a real
  * turn advances. No fallback. A dir that never grew that log reports
  * nothing, even if `events.jsonl` exists.

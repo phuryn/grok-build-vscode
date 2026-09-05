@@ -1046,7 +1046,7 @@ describe("projects rail", () => {
 
     /** Five projects: one selected, three recent (which the floor would protect
      *  anyway), and two long-idle ones past the floor. */
-    function bootArchive(overrides: Record<string, Record<string, unknown>> = {}) {
+    function bootArchive(overrides: Record<string, Record<string, unknown>> = {}, remote = true) {
       const catalog = [
         repo("home", ago(0), overrides.home),
         repo("one", ago(1), overrides.one),
@@ -1055,7 +1055,7 @@ describe("projects rail", () => {
         repo("stale", ago(80), overrides.stale),
         repo("ancient", ago(400), overrides.ancient),
       ];
-      const h = bootWebview({ remote: true, beforeScripts: withRail });
+      const h = bootWebview({ remote, beforeScripts: withRail });
       dispatch(h.window, { type: "repos", entries: catalog, selectedCwd: "/work/home", activeCwd: "/work/home" });
       // Give every project rows, so activity is read from conversations rather
       // than from the catalog's directory mtime.
@@ -1071,6 +1071,48 @@ describe("projects rail", () => {
       }
       return h;
     }
+
+    it.each([false, true])("archives and restores through the catalog on desktop/remote=%s", (remote) => {
+      const h = bootArchive({}, remote);
+      const head = (name: string) => [...h.doc.querySelectorAll(".rail-repo-head")]
+        .find((el) => el.querySelector(".rail-repo-label")?.textContent === name)!;
+      click(h.window, menuItem(openMenu(h.window, head("one")), "Archive project")!);
+      expect(h.posted).toContainEqual({ type: "setRepoArchived", cwd: "/work/one", archived: true });
+      const catalog = ["home", "one", "two", "three", "stale", "ancient"].map((name) =>
+        repo(name, ago(0), name === "one" ? { archived: true, archivedAt: Date.now() } : {}));
+      dispatch(h.window, { type: "repos", entries: catalog, selectedCwd: "/work/home", activeCwd: "/work/home" });
+      expect(sectionRepos(h.doc, "projects")).not.toContain("one");
+      const archiveButton = [...h.doc.querySelectorAll(".rail-head-btn")]
+        .find((el) => el.textContent?.includes("Project Archive"))!;
+      click(h.window, archiveButton);
+      expect(sectionRepos(h.doc, "archived")).toContain("one");
+      click(h.window, menuItem(openMenu(h.window, head("one")), "Move to Projects")!);
+      expect(h.posted).toContainEqual({ type: "setRepoArchived", cwd: "/work/one", archived: false });
+      dispatch(h.window, {
+        type: "repos", selectedCwd: "/work/home", activeCwd: "/work/home",
+        entries: catalog.map((r) => r.label === "one" ? { ...r, archived: false } : r),
+      });
+      expect(sectionRepos(h.doc, "projects")).toContain("one");
+      h.window.close();
+    });
+
+    it.each([false, true])("age grouping keeps conversation actions usable on desktop/remote=%s", (remote) => {
+      const h = bootArchive({}, remote);
+      click(h.window, [...h.doc.querySelectorAll(".rail-head-btn")]
+        .find((el) => el.textContent?.includes("Project Archive"))!);
+      const stale = [...h.doc.querySelectorAll(".rail-archived .rail-repo")]
+        .find((el) => el.querySelector(".rail-repo-label")?.textContent === "stale")!;
+      expect(stale).toBeTruthy();
+      const menu = openMenu(h.window, stale.querySelector(".rail-repo-head")!);
+      expect(usableItem(menu, "Move to Projects")).toBe(true);
+      expect(usableItem(menu, "Clear all history")).toBe(true);
+      h.doc.dispatchEvent(new h.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      h.posted.length = 0;
+      click(h.window, stale.querySelector('[data-session-id="stale1"]')!);
+      expect(h.posted).toContainEqual(expect.objectContaining({ type: "resumeSession", id: "stale1", cwd: "/work/stale" }));
+      expect(h.posted.some((m) => m.type === "setRepoArchived")).toBe(false);
+      h.window.close();
+    });
 
     it("drops long-idle projects into a folded Project Archive section", () => {
       const { doc } = bootArchive();
@@ -1495,8 +1537,8 @@ describe("projects rail", () => {
       expect(css).toMatch(/\.rail-head-btn\s*\{[^}]*text-transform:\s*uppercase/s);
     });
 
-    it("omits Project Archive and archive actions when the host omits archive fields (desktop)", () => {
-      // Capability = presence of `archived` on rows. Desktop strips the fields;
+    it("omits Project Archive and archive actions when the host omits archive fields (older desktop)", () => {
+      // Capability = presence of `archived` on rows. Older desktop hosts strip the fields;
       // age rule and Archive menu must not run.
       const day = 24 * 60 * 60 * 1000;
       const t = (days: number) => Date.now() - days * day;

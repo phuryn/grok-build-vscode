@@ -1278,7 +1278,7 @@ export function createElectronHost(opts: ElectronHostOptions): Host {
     // not openFile (which would hand the file to the OS image viewer).
     canOpenInEditor: false,
     canSwitchWorkspaceFolder: true,
-    canArchiveRepos: false,
+    canArchiveRepos: true,
     // This host owns its own app-resource:// handler, and that handler answers
     // byte ranges — see app-resource-handler.ts. No other host may claim this.
     canServeMediaRanges: true,
@@ -1315,7 +1315,7 @@ export function discoverSeedProjectPaths(opts?: {
     grokHome,
     pins: {},
     tmpDir,
-    // No archives on the seed path — desktop never archives.
+    // Seeding chooses folders independently of their archive presentation.
     log: opts?.log,
   });
   const candidates = discovered.map((repo) => ({

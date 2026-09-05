@@ -144,6 +144,22 @@ function menuItem(menu: Element, label: string) {
   ) as HTMLElement | undefined;
 }
 
+it("keeps old hosts without archive fields in Projects even after previews arrive", () => {
+  const { window, doc } = bootRail();
+  const api = railApi(window);
+  const catalog = ["alpha", "beta", "gamma", "delta", "epsilon"].map((label) => ({
+    cwd: `/work/${label}`, label, available: true, updatedAt: 1,
+  }));
+  loadCatalog(api, "/work/alpha", catalog);
+  for (const repo of catalog) {
+    api.onMessage({ type: "repoSessions", cwd: repo.cwd, entries: [row(repo.label, repo.cwd, repo.label)], total: 1, dots: {} });
+  }
+  expect(sectionTitles(doc)).not.toContain("Project Archive");
+  expect(repoLabels(doc)).toEqual(expect.arrayContaining(catalog.map((r) => r.label)));
+  expect(menuItem(openProjectMenu(doc, window, "epsilon"), "Archive project")).toBeUndefined();
+  window.close();
+});
+
 describe("VS Code projects rail renderer", () => {
   let h: ReturnType<typeof bootRail>;
 

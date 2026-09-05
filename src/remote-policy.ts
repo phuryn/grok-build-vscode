@@ -824,16 +824,7 @@ export function repoScopeFor(
  */
 export const DESK_ONLY_CAPABILITIES = [
   "servesMediaRanges",
-  // Hiding a project is desk-only, and 4.1.2 briefly made it a cloud
-  // capability before an independent review showed what that costs: on a
-  // cloud machine Add project is Create and Clone only — importing an
-  // existing folder needs the native picker, which no remote has — and
-  // Create refuses a destination that already exists. So Hide there was
-  // one-way, from the only surface that person has, under a confirmation
-  // that promised Add project would bring it back. Withholding the
-  // capability is what stops the control being drawn at all; reversible
-  // put-away belongs to the archive model, which is a feature and not an
-  // override (see the backlog entry).
+  // Closing folders stays at the desk; archive is available on every surface.
   "removeProjectFolder",
   "showInFolder",
   "previewInApp",
@@ -1469,22 +1460,7 @@ export function transformHostMsgForRemote(msg: HostMsg, deps: MediaInlineDeps): 
   }
 }
 
-/**
- * Trim a `routines` frame to what one connection may reach.
- *
- * Both lists carry cwds and both must be filtered, but for different reasons.
- * The ROWS are the routines themselves. The PROJECTS are the form's picker, and
- * the desk deliberately offers archived projects there — archiving hides a
- * project from the rail, and a routine is not the rail. Remotes are the other
- * way round: `remoteAuthorizedCwds` excludes archived projects on purpose, so
- * archiving revokes remote access to them.
- *
- * Those two correct rules compose into a bug if the frame is merely CHECKED:
- * one archived project anywhere makes `mayDeliverRemoteHostMsg` refuse the
- * whole page, and a phone then sees nothing at all — including routines in
- * projects it may perfectly well reach. Filtering first is what keeps the
- * authorization check a backstop rather than an outage.
- */
+/** Omit absent projects and redact retained runs from removed projects. */
 export function routinesMessageForRemote(
   msg: Extract<HostMsg, { type: "routines" }>,
   authorizedCwds: readonly string[],
@@ -1524,10 +1500,9 @@ export function repoSessionsMessageForRemote(
  *
  * A routine's project can be edited, so its retained runs can name a DIFFERENT
  * project from the one it points at now — and that older project may since have
- * been archived, which is how a remote loses access to it. Filtering the
- * routine's current cwd is then not enough: the entry passes under its new
- * project while a retained run still carries the old path, its session id, and
- * a `detail` string that may quote either.
+ * been removed. Filtering the routine's current cwd is then not enough: the
+ * entry passes under its new project while a retained run still carries the old
+ * path, its session id, and a `detail` string that may quote either.
  *
  * Redacted rather than dropped, because the run DID happen and the health count
  * beside it is computed host-side from the full list. Removing the row would

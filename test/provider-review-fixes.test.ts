@@ -63,7 +63,7 @@ describe("multi-provider review regressions", () => {
     instance.remoteTargetableCwd = vi.fn(() => true);
     // The project closes after ingress validation but before the list builder.
     // The combined builder must own the second check because it owns the scan.
-    instance.remoteAuthorizedSessionCwds = vi
+    instance.authorizedSessionCwds = vi
       .fn()
       .mockReturnValueOnce([closed])
       .mockReturnValue([open]);
@@ -129,7 +129,6 @@ describe("multi-provider review regressions", () => {
         cwd,
         { offset: 0, limit: 2 },
         null,
-        "local",
       );
 
       expect(result.entries.map((entry: SessionListEntry) => entry.id)).toEqual(["mtime-old", "mtime-new"]);

@@ -325,7 +325,14 @@ posted.
   choice overridden the moment the project is worked in again, an explicit un-archive
   surviving the age rule, the floor that keeps the three newest projects visible, the
   project you are reading never being filed away, and the age rule refusing to run at all
-  on a host that cannot supply real activity
+  on a host that cannot supply real activity. Desktop and remote DOM tests exercise
+  archive/restore from the same catalog and conversation actions inside the age-derived
+  Archive group; hosts without archive fields retain the earlier rail.
+- **Archive leaves projects reachable** — `project-archive.test.ts` sends archive and
+  unarchive through remote ingress without a bound session, then checks catalog delivery,
+  previews, pins, and transcript delivery for Grok, Codex, and Claude. Shared worktrees
+  remain authorized with both owning projects archived. Desktop fallback rows advertise
+  archive support, routines retain archived projects/runs, and cloud omits Hide.
 - **The project holding the live conversation stays open** — its twisty is disabled, and a
   project folded *before* the conversation moved there springs open — including when that
   conversation lives in a worktree, whose cwd is not a catalog row

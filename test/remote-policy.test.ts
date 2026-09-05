@@ -364,15 +364,10 @@ describe("mayDeliverRemoteHostMsg (outbound project authorization)", () => {
     });
 
     describe("routinesMessageForRemote", () => {
-      // The desk offers archived projects in the picker on purpose (archiving
-      // hides a project from the RAIL, and a routine is not the rail), while
-      // `remoteAuthorizedCwds` excludes them on purpose (archiving revokes
-      // remote access). Both rules are right; composed without a filter they
-      // meant one archived project anywhere blanked the whole page on a phone.
       it("drops what a connection may not reach instead of dropping the page", () => {
         const full = frame(
           [routine(open[0]), routine(closed)],
-          [{ cwd: open[0], label: "open" }, { cwd: closed, label: "archived" }],
+          [{ cwd: open[0], label: "open" }, { cwd: closed, label: "removed" }],
         ) as Extract<HostMsg, { type: "routines" }>;
 
         expect(mayDeliverRemoteHostMsg(full, open, undefined, same)).toBe(false);
@@ -396,8 +391,8 @@ describe("mayDeliverRemoteHostMsg (outbound project authorization)", () => {
         expect(trimmed.models).toEqual(clean.models);
       });
 
-      // Repoint a routine from A to B, then archive A. The entry now passes
-// under B while a RETAINED run still names A — so the routine's own cwd
+      // Repoint a routine from A to B, then remove A. The entry now passes
+      // under B while a RETAINED run still names A — so the routine's own cwd
       // does not vouch for its history, and filtering only the top level sends
       // a revoked project's path and session id across the wire.
       const withRun = (routineCwd: string, runCwd: string) => {
@@ -464,7 +459,7 @@ describe("mayDeliverRemoteHostMsg (outbound project authorization)", () => {
       });
 
       it("yields an empty page rather than nothing when NOTHING is reachable", () => {
-        const none = frame([routine(closed)], [{ cwd: closed, label: "archived" }]) as Extract<
+        const none = frame([routine(closed)], [{ cwd: closed, label: "removed" }]) as Extract<
           HostMsg,
           { type: "routines" }
         >;

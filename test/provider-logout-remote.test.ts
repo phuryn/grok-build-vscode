@@ -237,7 +237,7 @@ describe("provider logout real-entry wiring", () => {
 
       await logoutFromRealCommand(sidebar);
 
-      sidebar.remoteAuthorizedSessionCwds = vi.fn(() => ["/repo"]);
+      sidebar.authorizedSessionCwds = vi.fn(() => ["/repo"]);
       sidebar.localRepoCatalogEntries = vi.fn(() => []);
       sidebar.buildInitialStateMsg = vi.fn(() => ({ type: "initialState", cwd: "/repo" }));
       sidebar.providerStateMessage = vi.fn(() => ({ type: "providerState", providers: [] }));

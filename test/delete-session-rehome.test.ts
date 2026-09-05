@@ -72,7 +72,6 @@ function makeSidebar(): any {
   sidebar.setSessionCwd = vi.fn((session: Session, next: string) => { session.cwd = next; });
   sidebar.defaultProviderForProject = vi.fn(() => "grok");
   sidebar.authorizedSessionCwds = vi.fn(() => [cwd]);
-  sidebar.remoteAuthorizedSessionCwds = vi.fn(() => [cwd]);
   sidebar.sessionCwdsForRepo = vi.fn(() => [cwd]);
   sidebar.resolveLocalRepoTarget = vi.fn(() => ({ cwd, available: true }));
   sidebar.remoteSessionTarget = vi.fn(() => ({ cwd }));

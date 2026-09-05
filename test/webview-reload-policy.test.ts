@@ -102,7 +102,7 @@ describe("source gates — capability at the ownership boundary", () => {
     expect(src).toMatch(/canPreviewInApp:\s*true/);
     expect(src).toMatch(/canOpenSettingsEditor:\s*false/);
     expect(src).toMatch(/canSwitchWorkspaceFolder:\s*true/);
-    expect(src).toMatch(/canArchiveRepos:\s*false/);
+    expect(src).toMatch(/canArchiveRepos:\s*true/);
   });
 
   it("link flow formats installId through the host suffix helper", () => {

@@ -237,15 +237,8 @@ describe("sidebar close-revocation wiring (source)", () => {
     const remoteTargetBody = src.slice(remoteTarget, remoteTarget + 200);
     // Delegates to the shared authorized set, narrowed for remotes — not a
     // second walk of the open set, and not the catalog (which is wider).
-    expect(remoteTargetBody).toContain("remoteAuthorizedSessionCwds");
+    expect(remoteTargetBody).toContain("authorizedSessionCwds");
     expect(remoteTargetBody).not.toContain("localRepoCatalogEntries");
-    // ...and that narrowing is itself built from the shared query, so there is
-    // still exactly one definition of "authorized" with one subtraction on top.
-    const narrowStart = src.indexOf("private remoteAuthorizedSessionCwds(");
-    expect(narrowStart).toBeGreaterThan(0);
-    const narrowBody = src.slice(narrowStart, narrowStart + 1200);
-    expect(narrowBody).toContain("localTrustedSessionEntries");
-    expect(narrowBody).toContain("archivedProjectKeys");
   });
 
   it("every outbound remote builder enforces authorizedListCwd at build time", () => {
@@ -256,10 +249,6 @@ describe("sidebar close-revocation wiring (source)", () => {
     const listBody = src.slice(listStart, listEnd > listStart ? listEnd : listStart + 800);
     expect(listBody).toContain("authorizedListCwd");
     expect(listBody).toContain("authorizedSessionCwds");
-    // Remote lists use the narrower set, and the DEFAULT is the strict one so a
-    // caller that forgets to say whose list it is errs toward withholding.
-    expect(listBody).toContain("remoteAuthorizedSessionCwds");
-    expect(listBody).toMatch(/scope:\s*"local"\s*\|\s*"remote"\s*=\s*"remote"/);
     // Empty list when unauthorized (no indexSessions for closed cwd).
     expect(listBody).toMatch(/type:\s*"sessions"/);
     expect(listBody).toContain("entries: []");
@@ -276,9 +265,7 @@ describe("sidebar close-revocation wiring (source)", () => {
     const snapEnd = src.indexOf("private getHtml(", snapStart);
     const snapBody = src.slice(snapStart, snapEnd);
     expect(snapBody).toContain("authorizedListCwd");
-    // Remote-narrowed: a tab reconnecting into a project archived while it was
-    // away must come back unbound rather than resuming inside it.
-    expect(snapBody).toContain("remoteAuthorizedSessionCwds");
+    expect(snapBody).toContain("authorizedSessionCwds");
     expect(snapBody).toContain("buildSessionsList");
     expect(snapBody).toContain("buildPinnedSessions");
     // Must not assume revoke already cleared per-tab cwd.
@@ -296,103 +283,8 @@ describe("sidebar close-revocation wiring (source)", () => {
     const reposMsgBody = src.slice(reposMsgStart, reposMsgStart + 1600);
     expect(reposMsgBody).toContain("authorizedListCwd");
     expect(reposMsgBody).toContain('selectedCwd');
-    // Rows a remote cannot reach are dropped, not merely refused when named:
-    // the catalog is what the client builds its own Archive group from, so
-    // leaving them in would paint a section whose every row fails.
+    // Rows for removed projects cannot reach the wire.
     expect(reposMsgBody).toContain("entries.filter((r) => cwdIsAuthorized(r.cwd, authorized, pathsEqual))");
-  });
-
-  it("narrows the BUILDERS a remote reads from, not only the gate they pass through", () => {
-    // The class of bug this pins. Narrowing delivery without narrowing what
-    // feeds it produced three separate failures in one review round, and two of
-    // them were worse than the leak the fence was closing.
-    const src = sidebarSrc();
-
-    // Pins: `pinnedSessions` is authorized as a WHOLE — every entry or nothing —
-    // so one pin in an archived project refused the entire frame and took every
-    // other pin off the phone with it. It has to be filtered at build time.
-    const pinStart = src.indexOf("private buildPinnedSessions(");
-    const pinBody = src.slice(pinStart, src.indexOf("private postPinnedSessions(", pinStart));
-    expect(pinBody).toContain("remoteAuthorizedSessionCwds");
-    expect(pinBody).toMatch(/scope:\s*"local"\s*\|\s*"remote"\s*=\s*"remote"/);
-
-    // ...and built per audience, not built once and fanned out to both.
-    const postStart = src.indexOf("private postPinnedSessions(");
-    const postBody = src.slice(postStart, postStart + 1400);
-    expect(postBody).toContain('this.buildPinnedSessions("local")');
-    expect(postBody).toContain('this.buildPinnedSessions("remote")');
-
-    // Images: a handle minted before the project was archived must not outlive
-    // it. The outbound gate cannot catch this — it scopes the reply to the
-    // client's CURRENT project, which by then is an allowed one.
-    const imgStart = src.indexOf("private isImagePathAuthorizedNow(");
-    const imgBody = src.slice(imgStart, imgStart + 900);
-    expect(imgBody).toContain("remoteAuthorizedSessionCwds");
-    expect(src).toContain('this.isImagePathAuthorizedNow(source, "remote")');
-  });
-
-  it("decides archived-ness on evidence a remote cannot manufacture", () => {
-    // Four review rounds, four ways in, one root cause. Two versions deleted
-    // the choice from a session lifecycle event; both let a reconnecting phone
-    // regain a project it had been fenced out of, because session start
-    // includes the recovery restart and "a completed turn" includes a plain CLI
-    // exit reporting `error`.
-    //
-    // Chasing the trigger was the mistake. What made those reachable was the
-    // EVIDENCE — session-directory mtimes move when a conversation is merely
-    // loaded, so a remote could produce the proof. Reading the transcript and
-    // nothing else makes the trigger stop mattering.
-    const src = sidebarSrc();
-    const sessions = fs.readFileSync(path.join(root, "src", "sessions.ts"), "utf8");
-    expect(src).not.toContain("retireArchiveChoiceOnActivity");
-    expect(src).toContain("newestTranscriptMtime(");
-    // indexSessions falls back to summary.json on purpose (a new conversation
-    // must still list); that fallback must never decide authorization.
-    const norm = src.indexOf("private normalizeArchiveChoices(");
-    const normBody = src.slice(norm, norm + 1400);
-    expect(normBody).toContain("newestTranscriptMtime(");
-    expect(normBody).not.toContain("indexSessions(");
-    const transcript = sessions.indexOf("export function newestTranscriptMtime(");
-    expect(sessions.slice(transcript, transcript + 900)).not.toContain("summary.json");
-
-    // Worktree activity counts for its project, or the host and the rail
-    // disagree again — the rail merges those catalogs for the same question.
-    expect(normBody).toContain("this.sessionCwdsForRepo(cwd, overrides)");
-
-    // Expiry is resolved in the STORE, so the fence stays a lookup rather than
-    // a stat per session in every archived project on every message.
-    const post = src.indexOf("private postRepoCatalog(");
-    expect(src.slice(post, post + 400)).toContain("this.normalizeArchiveChoices();");
-    // ...and from NOWHERE else. Hanging this off the session lifecycle — start,
-    // then turn completion, then a prompt commit point — was a hole every time,
-    // because each version inferred "work happened after the archive" from a
-    // proxy that turned out to be reachable or ambiguous. The lag that leaves
-    // instead is at most one catalog build, and it self-heals.
-    const calls = src.match(/this\.normalizeArchiveChoices\(/g) ?? [];
-    expect(calls).toHaveLength(2); // the lazy first-use guard, and postRepoCatalog
-    const turn = src.indexOf("private refreshSessionOrderAfterTurn(");
-    expect(src.slice(turn, turn + 1200)).not.toContain("this.normalizeArchiveChoices(");
-    // ...and a window that has not normalised yet must not trust stale flags.
-    const narrow = src.indexOf("private remoteAuthorizedSessionCwds(");
-    expect(src.slice(narrow, narrow + 1200))
-      .toContain("if (!this.archiveChoicesNormalized) this.normalizeArchiveChoices();");
-  });
-
-  it("fences by owning PROJECT, so a late-learned worktree cannot slip past", () => {
-    // The trusted set is rebuilt live from the pool, metadata and worktree
-    // cache, so a worktree can appear after any snapshot of the fence. Carrying
-    // each cwd's project with it is what keeps the two in step.
-    const src = sidebarSrc();
-    const entries = src.indexOf("private localTrustedSessionEntries(");
-    expect(entries).toBeGreaterThan(0);
-    const nextMember = src.indexOf("  private ", entries + 10);
-    const body = src.slice(entries, nextMember);
-    expect(body).toContain("repoCwd");
-    expect(body).toContain("add(c, repo.cwd)");
-    // The old cwd-list builder still exists, and is now derived from this one —
-    // two independently-built sets would drift.
-    const legacy = src.indexOf("private localTrustedSessionCwds(");
-    expect(src.slice(legacy, legacy + 200)).toContain("this.localTrustedSessionEntries(overrides).map");
   });
 
   it("RemoteUplink is the sole socket write path and enforces project auth", () => {
@@ -413,9 +305,7 @@ describe("sidebar close-revocation wiring (source)", () => {
 
     // Sidebar wires live auth into the uplink (not a one-shot capture).
     expect(src).toMatch(/auth:\s*\{/);
-    // The socket gate takes the REMOTE set: it is the last thing between an
-    // archived project and the wire.
-    expect(src).toContain("authorizedCwds: () => this.remoteAuthorizedSessionCwds()");
+    expect(src).toContain("authorizedCwds: () => this.authorizedSessionCwds()");
     expect(src).toContain("scopeCwdForClient:");
 
     // deliverRemote remains the live fan-out orchestrator (transform + postTap)

@@ -41,7 +41,6 @@ function makeSidebar(): any {
   sidebar.setSessionCwd = vi.fn((session: Session, next: string) => { session.cwd = next; });
   sidebar.sessionCwdsForRepo = vi.fn((repoCwd: string) => [repoCwd]);
   sidebar.remoteTargetableCwd = vi.fn(() => true);
-  sidebar.remoteAuthorizedSessionCwds = vi.fn(() => [cwd]);
   sidebar.authorizedSessionCwds = vi.fn(() => [cwd]);
   sidebar.isAuthorizedCwd = vi.fn(() => true);
   sidebar.dropRemoteVoice = vi.fn();

@@ -94,7 +94,6 @@ function makeSidebar(options: {
   sidebar.stopVoiceInput = vi.fn();
   sidebar.workspaceRoot = vi.fn(() => cwd);
   sidebar.authorizedSessionCwds = vi.fn(() => [cwd]);
-  sidebar.remoteAuthorizedSessionCwds = vi.fn(() => [cwd]);
   sidebar.sessionCwd = vi.fn((session: Session) => session.cwd || cwd);
   sidebar.setSessionCwd = vi.fn((session: Session, target: string) => { session.cwd = target; });
   sidebar.persistWorktreeBinding = vi.fn(async () => {});

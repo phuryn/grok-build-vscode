@@ -349,11 +349,8 @@ import {
   readContextUsage,
   relativePathWithin,
   readSessionEntries,
-  remoteAuthorizedCwds,
-  archivedProjectKeys,
   expiredArchiveChoiceKeys,
   newestTranscriptMtime,
-  type TrustedSessionCwd,
   resolveGrokHome,
   sessionCatalogDirs,
   sessionDirFor,
@@ -483,17 +480,14 @@ const PROVIDER_CONNECTIONS_KEY = "grok.providerConnections";
 const PROVIDER_MODEL_CACHE_KEY = "grok.providerModelCache";
 const PROJECT_PROVIDER_DEFAULTS_KEY = "grok.projectProviderDefaults";
 const REPO_PINS_KEY = "grok.repoPins";
-/** Shared client-state key for the remote rail's Archived section. Stored under
- *  ~/.grok/client-state so the choice follows you to a phone and survives a
- *  cleared browser — archiving
- *  is curation of your projects, not a preference about one sidebar. Read by the
- *  browser client only; the VS Code repo picker ignores it entirely. */
+/** Timestamped archive choices, stored under ~/.grok/client-state rather than
+ *  per-client so the choice follows you to a phone and survives a cleared
+ *  browser — archiving is curation of your projects, not a preference about one
+ *  sidebar. Every rail reads it; the VS Code repo picker ignores it entirely. */
 const REPO_ARCHIVES_KEY = "grok.repoArchives";
 /** Shared client-state key for per-project folder colours in the conversation
  *  rail. Stored under ~/.grok/client-state so the choice follows you to a phone
- *  and survives a cleared browser — same home as pins/archives. Both desktop
- *  and VS Code host this (unlike archives, which desktop strips because open/
- *  close already owns the curated list). */
+ *  and survives a cleared browser — same home as pins/archives. */
 const REPO_COLORS_KEY = "grok.repoColors";
 /**
  * Folders the user added to the rail by hand, on a host that cannot open them.
@@ -1405,20 +1399,13 @@ export class GrokSidebar {
     };
   }
 
-  /**
-   * Three audiences, two frames.
-   *
-   * The desk (chat webview + the standalone Settings tab) gets everything,
-   * archived projects included. Remotes get the same frame trimmed to what they
-   * may reach — filtered rather than merely checked, so one archived project
-   * cannot blank the whole page for a phone. See `routinesMessageForRemote`.
-   */
+  /** Remote routines omit projects outside the host's current trusted set. */
   private postRoutines(): void {
     const message = this.buildRoutinesMessage();
     this.postLocal(message);
     void this.settingsEditor?.webview.postMessage(message);
     this.broadcastRemoteDevice(
-      routinesMessageForRemote(message, this.remoteAuthorizedSessionCwds(), pathsEqual),
+      routinesMessageForRemote(message, this.authorizedSessionCwds(), pathsEqual),
     );
     // The routine count is one of the two facts the empty-state tip pool cannot
     // observe for itself, and it just changed. Posted from here rather than
@@ -1508,7 +1495,7 @@ export class GrokSidebar {
     if (!cwd) return false;
     if (origin !== "remote") return !!this.resolveLocalRepoTarget(cwd);
     void clientId;
-    return cwdIsAuthorized(cwd, this.remoteAuthorizedSessionCwds(), pathsEqual);
+    return cwdIsAuthorized(cwd, this.authorizedSessionCwds(), pathsEqual);
   }
 
   private providerConnections(): ProviderConnections {
@@ -3606,7 +3593,7 @@ Only continue if you trust this code.`,
    * the whole wait and a brand-new conversation is missing entirely.
    *
    * Every project and every session is treated the same; there is no special
-   * case for archived, which is a VS Code presentation concept and has no
+   * case for archived, which is a client presentation concept and has no
    * business in the activity path.
    */
   private noteSessionActivity(session: Session): void {
@@ -5724,8 +5711,6 @@ Only continue if you trust this code.`,
       fs: defaultFs,
       grokHome: resolveGrokHome(process.env),
       pins,
-      // Desktop ignores shared repo-archives.json (canArchiveRepos false);
-      // VS Code still applies stored choices.
       archives: this.host.canArchiveRepos
         ? this.state.get<RepoArchives>(REPO_ARCHIVES_KEY, {})
         : undefined,
@@ -5802,12 +5787,15 @@ Only continue if you trust this code.`,
           // keeps its tint when Grok has not created a sessions catalog yet.
           const colors = this.state.get<RepoColors>(REPO_COLORS_KEY, {});
           const colorChoice = colors[key]?.color;
+          const archiveChoice = this.state.get<RepoArchives>(REPO_ARCHIVES_KEY, {})[key];
           entries.push({
             cwd,
             label: path.basename(cwd) || cwd,
             available: true,
             pinned: false,
             updatedAt: 0,
+            archived: !!archiveChoice?.archived,
+            archivedAt: archiveChoice?.at ?? 0,
             // Stored choices are non-empty ids; missing/invalid → "" for none.
             color: colorChoice && (REPO_COLOR_IDS as readonly string[]).includes(colorChoice)
               ? colorChoice
@@ -5892,86 +5880,12 @@ Only continue if you trust this code.`,
     return this.localTrustedSessionCwds(overrides);
   }
 
-  /**
-   * Cwds a REMOTE client may name: the trusted set, minus everything belonging
-   * to an archived project.
-   *
-   * A narrowing, and deliberately remote-only. Archiving on the desk means "fold
-   * this away" — the project stays one keystroke from being worked in, so
-   * subtracting it from the LOCAL set would break the thing archiving is for.
-   * From a phone it should mean what it looks like: gone.
-   *
-   * Cheap on purpose: this runs on every inbound AND outbound remote message.
-   * The stored choices are read as they are, because expired ones have already
-   * been retired from the store ({@link normalizeArchiveChoices}), and the
-   * filter is by each cwd's owning project, which the trusted-set builder
-   * recorded on the way past.
-   *
-   * Nothing to subtract on a host that cannot archive: desktop ignores stored
-   * choices entirely, and its remote set is already just the open folders.
-   */
-  private remoteAuthorizedSessionCwds(): string[] {
-    const overrides = this.state.get<SessionMetaOverrides>(SESSION_META_KEY, {});
-    const trusted = this.localTrustedSessionEntries(overrides);
-    if (!this.host.canArchiveRepos) return trusted.map((t) => t.cwd);
-    // First use in this window: retire stale choices before trusting them, so a
-    // project worked in before the extension started is not fenced on a flag
-    // that expired long ago.
-    if (!this.archiveChoicesNormalized) this.normalizeArchiveChoices();
-    return remoteAuthorizedCwds({
-      trusted,
-      archivedProjects: archivedProjectKeys({
-        archives: this.state.get<RepoArchives>(REPO_ARCHIVES_KEY, {}),
-        openCwds: [...this.openWorkspaceFolders(), this.workspaceRoot()],
-      }),
-    });
-  }
-
-  /** Whether stale archive choices have been retired since this window opened. */
-  private archiveChoicesNormalized = false;
-
-  /**
-   * Retire archive choices that newer work has already made moot, in the store.
-   *
-   * Called from ONE place — building the catalog — and deliberately from
-   * nowhere else.
-   *
-   * ## Why it is not wired into the session lifecycle
-   *
-   * Earlier versions hung this off session start, then turn completion, then a
-   * prompt commit point, each time to make the phone's view agree with the
-   * rail's the instant the desk worked in a project. Every one of those was a
-   * hole, because every one inferred "work happened after the archive" from a
-   * proxy — an event, a pool membership, a queued-vs-ordinary flag — and each
-   * proxy turned out to be reachable or ambiguous.
-   *
-   * The reason those were treated as holes at all was a framing mistake worth
-   * recording: a remote here is the OWNER'S OWN authenticated device, and the
-   * worst outcome of a stale answer is that they see a project they had tidied
-   * away. Archiving is a decluttering gesture — the rail even applies it
-   * automatically after 30 days idle, which nothing that gates a capability
-   * could ever do. Building race-free machinery for it put complexity into the
-   * path that decides whether a prompt runs, in exchange for preventing
-   * something nobody is harmed by.
-   *
-   * So: correct in the steady state, and lagging by at most one catalog build.
-   * A project worked in at the desk stays out of the phone's view until the
-   * next session open, project switch or pin — all of which post a catalog.
-   * Erring toward withholding is the safe direction and it self-heals.
-   *
-   * The evidence is still `updates.jsonl` and not the session directory
-   * ({@link newestTranscriptMtime}), because that part cost nothing and a
-   * signal that moves when a conversation is merely loaded is simply wrong.
-   * Activity in a WORKTREE counts for its project, since the rail merges those
-   * catalogs when it answers the same question.
-   */
+  /** Retire choices superseded by transcript activity, including worktrees.
+   *  Store maintenance only, performed when publishing the catalog. */
   private normalizeArchiveChoices(): void {
     if (!this.host.canArchiveRepos) return;
     const archives = this.state.get<RepoArchives>(REPO_ARCHIVES_KEY, {});
-    if (!Object.keys(archives).length) {
-      this.archiveChoicesNormalized = true;
-      return;
-    }
+    if (!Object.keys(archives).length) return;
     const overrides = this.state.get<SessionMetaOverrides>(SESSION_META_KEY, {});
     const grokHome = resolveGrokHome(process.env);
     const expired = expiredArchiveChoiceKeys({
@@ -5985,7 +5899,6 @@ Only continue if you trust this code.`,
         return newest;
       },
     });
-    this.archiveChoicesNormalized = true;
     if (!expired.length) return;
     const next: RepoArchives = { ...archives };
     for (const key of expired) {
@@ -5995,19 +5908,12 @@ Only continue if you trust this code.`,
     void this.state.update(REPO_ARCHIVES_KEY, next);
   }
 
-  /**
-   * Every cwd a remote client may legitimately name. Delegates to the shared
-   * authorization query, narrowed by {@link remoteAuthorizedSessionCwds} —
-   * never a separate recomputation of the open set.
-   */
   private remoteTargetableCwd(cwd: string): boolean {
     if (!cwd) return false;
-    return cwdIsAuthorized(cwd, this.remoteAuthorizedSessionCwds(), pathsEqual);
+    return cwdIsAuthorized(cwd, this.authorizedSessionCwds(), pathsEqual);
   }
 
   private postRepoCatalog(): void {
-    // The catalog changing is exactly when "which projects are archived" can
-    // change, so it is recomputed here and read cheaply everywhere else.
     this.normalizeArchiveChoices();
     // Both local and remote attached clients see the host's catalog: curated
     // open folders on desktop, full discovery on VS Code. Archive fields only
@@ -6081,7 +5987,7 @@ Only continue if you trust this code.`,
       defaultProvider: this.defaultProviderForProject(entry.cwd),
     })),
   ): HostMsg {
-    const authorized = this.remoteAuthorizedSessionCwds();
+    const authorized = this.authorizedSessionCwds();
     const selectedCwd =
       authorizedListCwd(this.remoteClients.cwdIfPresent(clientId), authorized, pathsEqual) ?? "";
     const active = this.remoteClients.active(clientId);
@@ -6090,13 +5996,7 @@ Only continue if you trust this code.`,
       const sc = this.sessionCwd(active);
       if (authorizedListCwd(sc, authorized, pathsEqual)) activeCwd = sc;
     }
-    // Archived projects are dropped from the ROWS, not merely refused when
-    // named. A row a phone cannot open is a dead affordance, and the catalog is
-    // also what the client builds its own Archive group from — leaving them in
-    // would put a section on screen whose every row fails.
-    // Against the set already computed above — `remoteTargetableCwd` would
-    // rebuild it per row, and on VS Code building it re-runs project discovery,
-    // so a per-row call turns one catalog post into one disk walk per project.
+    // Per-tab fields and rows must still exclude projects actually removed.
     const reachable = entries.filter((r) => cwdIsAuthorized(r.cwd, authorized, pathsEqual));
     return {
       type: "repos",
@@ -6158,15 +6058,6 @@ Only continue if you trust this code.`,
       this.host.appendLine(`[rail] listRepoSessions failed: project unavailable (${scope})`);
       return { type: "repoSessions", cwd, entries: [], dots: {}, total: 0, error: "project-unavailable" };
     }
-    // `listRepoSessions` is already gated on remoteTargetableCwd at the inbound
-    // choke point, so an archived repo never gets this far from a phone. Said
-    // again here because this method resolves through the CATALOG, which is the
-    // wider set — a future caller reaching it another way would otherwise get
-    // rows the fence exists to withhold.
-    if (scope === "remote" && !this.remoteTargetableCwd(hit.cwd)) {
-      this.host.appendLine("[rail] listRepoSessions failed: project unavailable (remote)");
-      return { type: "repoSessions", cwd, entries: [], dots: {}, total: 0, error: "project-unavailable" };
-    }
     // Clamp: the rail wants a handful, and an unbounded limit would make every
     // repo row a full history read.
     const size = Math.max(1, Math.min(20, Math.trunc(Number(limit)) || REPO_PREVIEW_SIZE));
@@ -6174,7 +6065,6 @@ Only continue if you trust this code.`,
       hit.cwd,
       { offset: 0, limit: size },
       activeId,
-      scope,
     );
     if (list.type !== "sessions") {
       this.host.appendLine(`[rail] listRepoSessions failed: session list unavailable (${scope})`);
@@ -6578,7 +6468,7 @@ Only continue if you trust this code.`,
    *
    * "Done" has to mean usable from the surface that asked. Host-owned: this
    * reuses the same `selectRemoteRepo` an explicit tap goes through, including
-   * its archived/targetable checks, so it grants a remote nothing it could not
+   * its project checks, so it grants a remote nothing it could not
    * already ask for.
    */
   private async enterProjectForRequester(
@@ -7426,14 +7316,6 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // Same catalog the client was sent (open folders on desktop, full on VS Code).
     const hit = this.localRepoCatalogEntries().find((r) => pathsEqual(r.cwd, cwd));
     if (!hit || !hit.available) return;
-    // The catalog is the WIDER set. `selectRepo` is already gated on
-    // remoteTargetableCwd at the inbound choke point, so this is belt — but it
-    // is the belt that matters, because selecting is how a tab acquires the cwd
-    // every later message is judged against.
-    if (!this.remoteTargetableCwd(hit.cwd)) {
-      this.host.appendLine(`[remote] refused selectRepo (archived project): ${hit.cwd}`);
-      return;
-    }
     if (this.remoteVoice.has(clientId)) void this.handleRemoteVoiceStop(clientId, true);
     this.parkRemoteSession(clientId);
     this.remoteClients.select(clientId, hit.cwd);
@@ -7495,13 +7377,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   /** Record where a project belongs in the rail. Both answers are stored,
    *  including "not archived" — that one exists to hold a long-idle project in
    *  view against the rail's own age rule, so forgetting it is not the same as
-   *  storing it (see RepoArchiveChoice). No-op when the host cannot archive
-   *  (desktop curated open/close) — the shared repo-archives.json file is
-   *  simply ignored, so a project archived in VS Code and then opened on the
-   *  desktop still shows. */
+   *  storing it (see RepoArchiveChoice). */
   private async setRepoArchived(cwd: string, archived: boolean): Promise<void> {
     if (!this.host.canArchiveRepos) return;
-    const hit = this.repoCatalog().find((r) => pathsEqual(r.cwd, cwd));
+    const hit = this.localRepoCatalogEntries().find((r) => pathsEqual(r.cwd, cwd));
     if (!hit) return;
     const archives = this.state.get<RepoArchives>(REPO_ARCHIVES_KEY, {});
     const key = normalizeRepoPath(hit.cwd);
@@ -7653,18 +7532,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   /** Every pinned conversation across every repo, newest pin first. Reads are
    *  grouped by the stored home cwd so this costs one index scan per repo that
    *  actually holds a pin — not one per repo in the catalog. */
-  private buildPinnedSessions(
-    /** Whose pins these are. Remote gets the archive-narrowed set — and it has
-     *  to be applied HERE, not at delivery: `pinnedSessions` is authorized as a
-     *  whole (every entry or nothing), so one pin in an archived project would
-     *  otherwise refuse the entire frame and take every other pin off the phone
-     *  with it. Defaults to the stricter answer. */
-    scope: "local" | "remote" = "remote",
-  ): { entries: SessionListEntry[]; dots: Record<string, Dot> } {
+  private buildPinnedSessions(): { entries: SessionListEntry[]; dots: Record<string, Dot> } {
     const overrides = this.state.get<SessionMetaOverrides>(SESSION_META_KEY, {});
     // Enforce authorization at build time — never trust pin metadata alone.
-    const authorized =
-      scope === "remote" ? this.remoteAuthorizedSessionCwds() : this.authorizedSessionCwds();
+    const authorized = this.authorizedSessionCwds();
     const grokHome = resolveGrokHome(process.env);
     const log = (m: string) => this.host.appendLine(m);
     const byCwd = new Map<string, { cwd: string; ids: string[] }>();
@@ -7732,20 +7603,13 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // Desktop multi-folder rail OR the VS Code primary-side-bar projects view.
     const hasLocalRail = this.host.canSwitchWorkspaceFolder || !!this.projectsRail;
     if (!clientId && !hasRemote && !hasLocalRail) return;
-    // Built PER AUDIENCE, not once and fanned out: the desk keeps its pins in
-    // archived projects (archiving folds a project away, it does not put it out
-    // of your own reach), while a remote must not receive them at all.
+    const message: HostMsg = { type: "pinnedSessions", ...this.buildPinnedSessions() };
     if (clientId) {
-      this.sendRemoteClient(clientId, { type: "pinnedSessions", ...this.buildPinnedSessions("remote") });
+      this.sendRemoteClient(clientId, message);
       return;
     }
-    if (hasLocalRail) {
-      this.postLocal({ type: "pinnedSessions", ...this.buildPinnedSessions("local") });
-    }
-    const remotes = this.remoteClients.clients();
-    if (!remotes.length) return;
-    const forRemote: HostMsg = { type: "pinnedSessions", ...this.buildPinnedSessions("remote") };
-    for (const id of remotes) this.sendRemoteClient(id, forRemote);
+    if (hasLocalRail) this.postLocal(message);
+    for (const id of this.remoteClients.clients()) this.sendRemoteClient(id, message);
   }
 
   private annotateWorktreeLabels(
@@ -9285,10 +9149,6 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // Worktree sessions pin cwd at creation/open; everyone else uses the workspace root.
     const cwd = session.cwd || this.workspaceRoot();
     session.cwd = cwd;
-    // Note there is deliberately nothing here about archiving. Whether a
-    // project counts as archived is DERIVED when the catalog is built, never
-    // written from a lifecycle event like this one — see
-    // effectiveArchivedRepoKeys for the two attempts that taught us why.
     // Re-bind worktree meta from override when resuming (cold open may only have cwd).
     if (!session.worktree && resumeId) {
       const o = this.state.get<SessionMetaOverrides>(SESSION_META_KEY, {})[resumeId];
@@ -10298,7 +10158,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         if (!source) break;
         // Revalidate against the current open set — a handle minted while a
         // folder was open must not survive closing that folder.
-        if (!this.isImagePathAuthorizedNow(source, "remote")) {
+        if (!this.isImagePathAuthorizedNow(source)) {
           this.host.appendLine(`[remote] refused imageFull (path no longer authorized)`);
           break;
         }
@@ -12101,7 +11961,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
 
   private postSessionsListNow(opts?: SessionsListOptions): void {
     const localCwd = this.historyCwdFor("local");
-    const local = this.buildSessionsList(localCwd, opts, undefined, "local");
+    const local = this.buildSessionsList(localCwd, opts, undefined);
     this.postLocal(local);
     this.postSessionName(this.focused);
     if (opts) return;
@@ -12131,11 +11991,9 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     cwd: string,
     opts?: SessionsListOptions,
     activeId: string | null | undefined = this.focused.activeSessionId,
-    scope: "local" | "remote" = "remote",
   ): Extract<HostMsg, { type: "sessions" }> {
     const offset = Math.max(0, opts?.offset ?? 0);
-    const authorized =
-      scope === "remote" ? this.remoteAuthorizedSessionCwds() : this.authorizedSessionCwds();
+    const authorized = this.authorizedSessionCwds();
     const listCwd = authorizedListCwd(cwd, authorized, pathsEqual);
     if (!listCwd) {
       return {
@@ -12158,7 +12016,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // listing is disk/buffer-truth and must not wait for a located grok binary.
     // Adapter rows come from session/list, so they legitimately require that CLI.
     if (!adapterProviders.length) {
-      return this.buildGrokSessionsList(cwd, opts, activeId, scope);
+      return this.buildGrokSessionsList(cwd, opts, activeId);
     }
 
     const query = opts?.query ?? "";
@@ -12166,7 +12024,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     const providerCursor = opts?.providerCursor ?? { grokOffset: offset };
     const grok = this.buildGrokSessionsList(cwd, query
           ? { offset: 0, limit: Number.MAX_SAFE_INTEGER, query }
-          : { offset: providerCursor.grokOffset, limit, query }, activeId, scope);
+          : { offset: providerCursor.grokOffset, limit, query }, activeId);
     const overrides = this.state.get<SessionMetaOverrides>(SESSION_META_KEY, {});
     const adapter: SessionListEntry[] = [];
     if (providers.includes("codex")) adapter.push(...(this.codexSessionCache.get(projectProviderKey(cwd)) ?? []));
@@ -12307,19 +12165,12 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     cwd: string,
     opts?: GrokSessionsListOptions,
     activeId: string | null | undefined = this.focused.activeSessionId,
-    /** Whose list this is. Remote gets the narrower set — see
-     *  {@link remoteAuthorizedSessionCwds}. Defaults to the stricter answer so a
-     *  new caller that forgets to say is wrong in the safe direction. */
-    scope: "local" | "remote" = "remote",
   ): GrokSessionsListMessage {
     const offset = Math.max(0, opts?.offset ?? 0);
     const limit = opts?.limit ?? SESSION_PAGE_SIZE;
     const query = (opts?.query ?? "").trim().toLowerCase();
-    // Authorization at the point of build: stale per-tab / selected cwd must not
-    // scan a closed project's session catalog (round 12), and a remote must not
-    // list an archived one at all.
-    const authorized =
-      scope === "remote" ? this.remoteAuthorizedSessionCwds() : this.authorizedSessionCwds();
+    // Stale per-tab / selected cwds must not scan a closed project's catalog.
+    const authorized = this.authorizedSessionCwds();
     const listCwd = authorizedListCwd(cwd, authorized, pathsEqual);
     if (!listCwd) {
       return {
@@ -13005,7 +12856,6 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       cwd,
       { limit: Number.MAX_SAFE_INTEGER },
       undefined,
-      origin === "local" ? "local" : "remote",
     ).entries;
     if (isAdapterProvider(provider)) {
       // A FAILED DELETE MUST STILL REMOVE THE ROW.
@@ -15606,12 +15456,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         // flags and keeps offering only the picker.
         createProject: this.canAddProjectFolder(),
         cloneProject: this.canAddProjectFolder(),
-        // The same ownership argument as addProjectFolder — a host that owns
-        // its folder set can drop one — but a SEPARATE flag, because the
-        // reach differs: capabilitiesForRemote withholds this from a remote
-        // driving a desk and keeps it on a cloud machine, where there is no
-        // desk to walk to.
-        removeProjectFolder: this.canAddProjectFolder(),
+        // Closing an open folder is meaningful only at a local desk.
+        removeProjectFolder: !isCloudEnvironment() && this.canAddProjectFolder(),
       },
     };
   }
@@ -15918,7 +15764,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     scopeCwd?: string,
   ): void {
     if (clientIds.length === 0) return;
-    const authorized = this.remoteAuthorizedSessionCwds();
+    const authorized = this.authorizedSessionCwds();
     const remoteMessage = this.messageForRemote(message);
     if (message.type === "repoSessions" && remoteMessage.type === "repoSessions"
       && remoteMessage.entries.length !== message.entries.length) {
@@ -15950,7 +15796,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     if (message.type === "repoSessions") {
       return repoSessionsMessageForRemote(
         message,
-        this.remoteAuthorizedSessionCwds(),
+        this.authorizedSessionCwds(),
         pathsEqual,
       );
     }
@@ -15984,7 +15830,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     const scope = this.sessionCwd(session);
     // Belt: refuse before iterating so a disposed/closed-folder session cannot
     // drip transcript to any remaining holder.
-    if (!mayDeliverRemoteHostMsg(message, this.remoteAuthorizedSessionCwds(), scope, pathsEqual)) {
+    if (!mayDeliverRemoteHostMsg(message, this.authorizedSessionCwds(), scope, pathsEqual)) {
       this.host.appendLine(
         `[remote] dropped ${message.type} for session (cwd not authorized: ${scope})`,
       );
@@ -17234,10 +17080,6 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   private refreshSessionOrderAfterTurn(session: Session): void {
     const cwd = this.sessionCwd(session);
     if (!cwd) return;
-    // Deliberately no archive bookkeeping here. Expiry is resolved when the
-    // catalog is built and nowhere else — see normalizeArchiveChoices for why
-    // hanging it off the session lifecycle kept producing holes, and why the
-    // lag it leaves instead is the right trade.
     for (const delay of [400, 1600]) {
       const timer = setTimeout(() => {
         this.turnOrderTimers.delete(timer);
@@ -18274,42 +18116,28 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
    * checkout under grok home). That is the v3.1.0 behaviour and must not regress.
    */
   private localTrustedSessionCwds(overrides: SessionMetaOverrides): string[] {
-    return this.localTrustedSessionEntries(overrides).map((e) => e.cwd);
-  }
-
-  /**
-   * The same set, each cwd carrying the PROJECT it came from.
-   *
-   * Provenance is recorded here because here is where it is known — every cwd
-   * below arrives by expanding a project — and re-deriving it later means
-   * resolving a worktree back to its owner on a path that runs for every remote
-   * message. It is also what lets the archive fence check the project rather
-   * than the exact cwd: matching cwds let a worktree the host learned about
-   * after the fence was built pass straight through it.
-   */
-  private localTrustedSessionEntries(overrides: SessionMetaOverrides): TrustedSessionCwd[] {
-    const out: TrustedSessionCwd[] = [];
+    const out: string[] = [];
     const seen = new Set<string>();
-    const add = (cwd: string | undefined, repoCwd: string | undefined) => {
+    const add = (cwd: string | undefined) => {
       if (!cwd) return;
       const key = normalizeRepoPath(cwd);
       if (!key || seen.has(key)) return;
       seen.add(key);
-      out.push({ cwd, repoCwd: repoCwd || cwd });
+      out.push(cwd);
     };
     if (this.host.canSwitchWorkspaceFolder) {
       for (const repoCwd of this.openWorkspaceFolders()) {
-        for (const c of this.sessionCwdsForRepo(repoCwd, overrides)) add(c, repoCwd);
+        for (const c of this.sessionCwdsForRepo(repoCwd, overrides)) add(c);
       }
       // Active root as a backstop if the folders list is empty mid-init.
-      add(this.workspaceRoot(), this.workspaceRoot());
+      add(this.workspaceRoot());
       return out;
     }
     // VS Code: full historical catalog.
-    add(this.workspaceRoot(), this.workspaceRoot());
-    if (this.selectedRepoCwd) add(this.selectedRepoCwd, this.selectedRepoCwd);
+    add(this.workspaceRoot());
+    if (this.selectedRepoCwd) add(this.selectedRepoCwd);
     for (const repo of this.repoCatalog()) {
-      for (const c of this.sessionCwdsForRepo(repo.cwd, overrides)) add(c, repo.cwd);
+      for (const c of this.sessionCwdsForRepo(repo.cwd, overrides)) add(c);
     }
     return out;
   }
@@ -18691,18 +18519,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   }
 
   /** Fetch-time revalidation for remote image handles (open-set + session media). */
-  private isImagePathAuthorizedNow(
-    imagePath: string,
-    /** Whose request this is. A remote gets the archive-narrowed set: an image
-     *  handle minted before the project was archived must not outlive it, the
-     *  same way one minted before a folder was closed does not. Handles are
-     *  opaque and long-lived, so this is the only place that can say no —
-     *  the outbound gate scopes the reply to the client's CURRENT project,
-     *  which by then is an allowed one. Defaults to the stricter answer. */
-    scope: "local" | "remote" = "remote",
-  ): boolean {
-    const authorized =
-      scope === "remote" ? this.remoteAuthorizedSessionCwds() : this.authorizedSessionCwds();
+  private isImagePathAuthorizedNow(imagePath: string): boolean {
+    const authorized = this.authorizedSessionCwds();
     let home: string | undefined;
     try {
       home = resolveGrokHome(process.env);
@@ -18808,21 +18626,14 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         // it has a client cwd (after ready), that cwd must remain authorized.
         if (
           boundCwd !== undefined &&
-          !remoteBoundCwdStillAuthorized(boundCwd, this.remoteAuthorizedSessionCwds(), pathsEqual)
+          !remoteBoundCwdStillAuthorized(boundCwd, this.authorizedSessionCwds(), pathsEqual)
         ) {
           this.host.appendLine(
             `[remote] dropped ${m.type} (bound cwd no longer authorized: ${boundCwd})`,
           );
-          // Two different things end up here and they deserve different words.
-          // Archiving is something the user just DID and can undo; a closed
-          // folder is a state of the desk. Telling someone their project is
-          // closed when they archived it sends them looking for the wrong fix.
-          const archived = this.isAuthorizedCwd(boundCwd);
           this.sendRemoteClient(clientId, {
             type: "error",
-            text: archived
-              ? "That project is archived, so it is not available from here. Un-archive it on the desktop to carry on."
-              : "That project folder is no longer open on the desktop. Select another project to continue.",
+            text: "That project folder is no longer open on the desktop. Select another project to continue.",
           });
           return;
         }
@@ -18982,9 +18793,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       // Socket-level project gate — also covers the catch-up snapshot path,
       // which never enters deliverRemote.
       auth: {
-        // The narrowed set on purpose: this is the socket-level gate, and it is
-        // the last thing standing between an archived project and the wire.
-        authorizedCwds: () => this.remoteAuthorizedSessionCwds(),
+        authorizedCwds: () => this.authorizedSessionCwds(),
         scopeCwdForClient: (clientId) => {
           const active = this.remoteClients.active(clientId);
           if (active) return this.sessionCwd(active);
@@ -19240,9 +19049,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   private buildRemoteSnapshot(clientId: string): HostMsg[] {
     const cwd = this.remoteClients.cwdIfPresent(clientId) ?? "";
     // Live authorized set for this host — not "whatever the tab last selected".
-    // Remote-narrowed, so a tab reconnecting into a project archived while it
-    // was away comes back unbound rather than resuming inside it.
-    const authorized = this.remoteAuthorizedSessionCwds();
+    const authorized = this.authorizedSessionCwds();
     const listCwd = authorizedListCwd(cwd, authorized, pathsEqual);
     const demoted = this.remoteClients.requiresExplicitSession(clientId)
       && !this.remoteClients.active(clientId);
@@ -19338,7 +19145,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // remote is answered HERE and never reaches onMessage's switch, so anything
     // pushed from there would simply never arrive on a fresh tab or a reconnect.
     // buildPinnedSessions filters to the live authorized set.
-    snap.push({ type: "pinnedSessions", ...this.buildPinnedSessions("remote") });
+    snap.push({ type: "pinnedSessions", ...this.buildPinnedSessions() });
     const out: HostMsg[] = [];
     for (const m of snap) {
       const t = transformHostMsgForRemote(m, this.remoteMediaDeps);
