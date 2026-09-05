@@ -333,6 +333,37 @@ describe("after the sign-in succeeds", () => {
     expect((h.doc.getElementById("welcome") as HTMLElement).hidden).toBe(true);
   });
 
+  it("keeps offering while the connected account still needs a sign-in", () => {
+    // The frame order a fresh cloud machine sends on its first attach: the
+    // credential probe fails, the host posts connect-agent, then a broadcast
+    // providerState lands BEHIND it with grok configured (connected) but
+    // needsLogin. Dismissing on "connected" alone hid the card, and the owner
+    // saw an empty page until a reload (2026-09-05).
+    const h = boot({ remote: true });
+    dispatch(h.window, { type: "onboarding", state: "connect-agent", platform: "linux" });
+    dispatch(h.window, {
+      type: "providerState",
+      providers: [
+        { id: "grok", connected: true, cliVersion: "1.0.13", needsLogin: true },
+        { id: "codex", connected: false },
+        { id: "claude", connected: false },
+      ],
+    });
+    expect((h.doc.getElementById("welcome") as HTMLElement).hidden).toBe(false);
+    expect(actions(h)).toContain("Connect Grok Build");
+
+    // The sign-in lands: the same frame without needsLogin answers the card.
+    dispatch(h.window, {
+      type: "providerState",
+      providers: [
+        { id: "grok", connected: true, cliVersion: "1.0.13" },
+        { id: "codex", connected: false },
+        { id: "claude", connected: false },
+      ],
+    });
+    expect((h.doc.getElementById("welcome") as HTMLElement).hidden).toBe(true);
+  });
+
   it("keeps offering while the account it asked about is still not connected", () => {
     const h = boot({ remote: true });
     onboarding(h, { provider: "codex" });
