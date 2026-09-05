@@ -92,6 +92,8 @@
     "These apps are available to Grok, Codex, and Claude. Most open a browser to sign in; GitHub uses a personal access token you paste here. Tokens stay on this machine.";
   const CONNECTOR_BLURB_HERE_REMOTE =
     "These apps are connected on the machine running this workspace. Sign-in happens there — it cannot be changed from this page.";
+  const CONNECTOR_DISCONNECT_COPY =
+    "Disconnect affects future conversations and reopened ones. Tools in already running sessions remain available. It does not revoke access at the vendor or clear saved OAuth sign-ins.";
   const CONNECTOR_BLURB_GROK =
     "These follow your Grok account, so they are shared across every Grok session on every machine.";
   const CONNECTOR_BLURB_LOCAL =
@@ -1872,14 +1874,18 @@
     return !!(connector && connector.auth === "key");
   }
 
-  function connectorDescription(connector, env) {
+  function canManageConnectors(snapshot, env) {
+    return !(env && env.isRemote) || snapshot.mcpRemoteConnect === true;
+  }
+
+  function connectorDescription(connector, env, snapshot) {
     if (connector.status === "connecting") {
       return isKeyConnectorView(connector)
         ? "Checking the token…"
         : "Waiting for the browser sign-in to finish…";
     }
     if (connector.status === "error" && connector.error) return connector.error;
-    if (env && env.isRemote) {
+    if (env && env.isRemote && !canManageConnectors(snapshot, env)) {
       if (isKeyConnectorView(connector) && connector.connected && connector.keySet !== true) {
         return connector.description + " Connected, but no key on the desk.";
       }
@@ -1962,9 +1968,12 @@
     el.dataset.id = "connectorsCatalog";
     const warning = document.createElement("div");
     warning.className = "settings-mcp-warning";
-    warning.textContent = env && env.isRemote
-      ? CONNECTOR_BLURB_HERE_REMOTE
-      : CONNECTOR_BLURB_HERE;
+    const canManage = canManageConnectors(snapshot, env);
+    warning.textContent = (env && env.isRemote
+      ? (canManage
+        ? "Connect apps on the machine running this workspace. Open the sign-in link on this device, then paste the failed callback address here. GitHub uses a token. Credentials stay on the host."
+        : CONNECTOR_BLURB_HERE_REMOTE)
+      : CONNECTOR_BLURB_HERE) + " " + CONNECTOR_DISCONNECT_COPY;
     el.appendChild(warning);
     const connectors = sortConnectorsForDisplay(
       Array.isArray(snapshot.mcpConnectors) ? snapshot.mcpConnectors : [],
@@ -1995,13 +2004,13 @@
       name.appendChild(document.createTextNode(connector.name));
       const desc = document.createElement("div");
       desc.className = "settings-row-desc";
-      desc.textContent = connectorDescription(connector, env);
+      desc.textContent = connectorDescription(connector, env, snapshot);
       copy.append(name, desc);
       const control = document.createElement("div");
       control.className = "settings-row-control";
       const connecting = connector.status === "connecting";
       const formOpen = !!(keyForm && keyForm.id === connector.id);
-      if (!(env && env.isRemote)) {
+      if (canManage) {
         if (isKeyConnectorView(connector) && connector.connected && !formOpen) {
           const replace = document.createElement("button");
           replace.type = "button";
@@ -2018,6 +2027,7 @@
         btn.dataset.id = connector.id;
         btn.dataset.auth = isKeyConnectorView(connector) ? "key" : "oauth";
         btn.dataset.connected = connector.connected ? "true" : "false";
+        if (connector.connected) btn.title = CONNECTOR_DISCONNECT_COPY;
         if (isKeyConnectorView(connector) && !connector.connected) {
           btn.textContent = connecting ? "Connecting…" : (formOpen ? "Cancel" : "Connect");
           btn.dataset.action = formOpen ? "cancel" : "open";
@@ -2034,7 +2044,7 @@
         control.appendChild(span);
       }
       row.append(copy, control);
-      if (!(env && env.isRemote) && isKeyConnectorView(connector) && connector.connected && connector.keySet === true && !formOpen) {
+      if (canManage && isKeyConnectorView(connector) && connector.connected && connector.keySet === true && !formOpen) {
         const readonly = document.createElement("label");
         readonly.className = "settings-connector-readonly settings-connector-readonly-live";
         const box = document.createElement("input");
@@ -2048,8 +2058,40 @@
         readonly.appendChild(document.createTextNode("Read-only (the agent can look, not write)"));
         row.appendChild(readonly);
       }
-      if (!(env && env.isRemote) && isKeyConnectorView(connector) && formOpen && !connecting) {
+      if (canManage && isKeyConnectorView(connector) && formOpen && !connecting) {
         row.appendChild(renderConnectorKeyForm(connector, keyForm));
+      }
+      const authorization = snapshot.mcpConnectorAuthorization;
+      if (canManage && env.isRemote && authorization && authorization.id === connector.id) {
+        const form = document.createElement("div");
+        form.className = "settings-connector-key settings-connector-oauth";
+        if (authorization.error) form.appendChild(renderMcpSectionState(authorization.error, true));
+        if (authorization.status === "waiting" && authorization.url) {
+          const link = document.createElement("a");
+          link.className = "settings-connector-oauth-link";
+          link.href = authorization.url;
+          link.target = "_blank";
+          link.rel = "noopener noreferrer";
+          link.textContent = "Open sign-in";
+          form.appendChild(link);
+          form.appendChild(renderMcpSectionState("After approving access, the callback page may fail to load. Copy its full address from the address bar and paste it below. Keep this tab open."));
+          const input = document.createElement("input");
+          input.type = "text";
+          input.className = "settings-text settings-connector-oauth-input";
+          input.autocomplete = "off";
+          input.spellcheck = false;
+          input.setAttribute("aria-label", "Callback address for " + connector.name);
+          input.placeholder = "Paste the full callback address";
+          form.appendChild(input);
+          const submit = document.createElement("button");
+          submit.type = "button";
+          submit.className = "settings-action settings-connector-oauth-submit";
+          submit.textContent = "Complete sign-in";
+          form.appendChild(submit);
+        } else if (authorization.status === "submitted") {
+          form.appendChild(renderMcpSectionState("Completing sign-in on the host…"));
+        }
+        row.appendChild(form);
       }
       list.appendChild(row);
     }
@@ -2953,6 +2995,7 @@
     let categoryId = opts.category || "general";
     let query = "";
     let keyForm = { id: "", value: "", readOnly: false };
+    let oauthForm = { attemptId: "", value: "" };
     let githubTokenForm = { open: false, value: "" };
     let githubCliStarted = false;
     let pendingRestore = null;
@@ -3543,7 +3586,7 @@
       body.querySelectorAll(".settings-connector-action").forEach((btn) => {
         btn.addEventListener("click", (e) => {
           e.stopPropagation();
-          if (env.isRemote || btn.disabled) return;
+          if (!canManageConnectors(snapshot, env) || btn.disabled) return;
           const id = btn.dataset.id;
           if (!id) return;
           if (btn.dataset.auth === "key" && btn.dataset.connected !== "true") {
@@ -3563,7 +3606,7 @@
       body.querySelectorAll(".settings-connector-key-open").forEach((btn) => {
         btn.addEventListener("click", (e) => {
           e.stopPropagation();
-          if (env.isRemote || btn.disabled) return;
+          if (!canManageConnectors(snapshot, env) || btn.disabled) return;
           const id = btn.dataset.id;
           if (!id) return;
           const row = snapshot.mcpConnectors.find((c) => c && c.id === id);
@@ -3579,7 +3622,7 @@
       body.querySelectorAll(".settings-connector-key-submit").forEach((btn) => {
         btn.addEventListener("click", (e) => {
           e.stopPropagation();
-          if (env.isRemote || btn.disabled) return;
+          if (!canManageConnectors(snapshot, env) || btn.disabled) return;
           const id = btn.dataset.id;
           if (!id) return;
           const form = btn.closest(".settings-connector-key");
@@ -3662,6 +3705,28 @@
           if (tokenSubmit) tokenSubmit.click();
         });
       }
+      const oauthInput = body.querySelector(".settings-connector-oauth-input");
+      const oauthSubmit = body.querySelector(".settings-connector-oauth-submit");
+      const authorization = snapshot.mcpConnectorAuthorization;
+      if (!authorization || oauthForm.attemptId !== authorization.attemptId) {
+        oauthForm = { attemptId: authorization ? authorization.attemptId : "", value: "" };
+      }
+      if (oauthInput) {
+        oauthInput.value = oauthForm.value;
+        oauthInput.addEventListener("input", () => { oauthForm.value = oauthInput.value; });
+        oauthInput.addEventListener("keydown", (e) => {
+          if (e.key === "Enter" && oauthSubmit) { e.preventDefault(); oauthSubmit.click(); }
+        });
+      }
+      if (oauthSubmit) oauthSubmit.addEventListener("click", () => {
+        if (!canManageConnectors(snapshot, env) || !authorization || !oauthInput || oauthSubmit.disabled) return;
+        const redirectUrl = oauthInput.value;
+        oauthInput.value = "";
+        oauthForm.value = "";
+        snapshot = { ...snapshot, mcpConnectorAuthorization: { ...authorization, status: "submitted", error: undefined } };
+        post({ type: "completeMcpConnectorOAuth", id: authorization.id, attemptId: authorization.attemptId, redirectUrl });
+        paint();
+      });
       body.querySelectorAll(".settings-connector-key-input").forEach((input) => {
         input.addEventListener("input", () => {
           if (keyForm.id === input.dataset.id) keyForm.value = input.value;
@@ -3799,7 +3864,7 @@
       });
       body.querySelectorAll(".settings-connector-readonly-input").forEach((box) => {
         box.addEventListener("change", () => {
-          if (env.isRemote || box.disabled) return;
+          if (!canManageConnectors(snapshot, env) || box.disabled) return;
           const id = box.dataset.id;
           if (!id) return;
           if (keyForm.id === id) keyForm.readOnly = box.checked;

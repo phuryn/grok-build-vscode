@@ -80,6 +80,9 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
       // chips: host re-validates; only require array-or-absent
       if (raw.chips !== undefined && !Array.isArray(raw.chips)) return null;
       break;
+    case "completeMcpConnectorOAuth":
+      if (!isString(raw.id) || !isString(raw.attemptId) || !isString(raw.redirectUrl)) return null;
+      break;
     case "newSession":
     case "cancel":
     case "pickModel":

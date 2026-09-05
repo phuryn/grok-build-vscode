@@ -24,6 +24,8 @@ import { existsSync, mkdtempSync, mkdirSync, readdirSync, rmSync, statSync, writ
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { completeMcpOAuthCallback, mcpOAuthChallenge } from "./mcp-oauth-redirect";
+import { writeMcpRemoteHeadlessPreload } from "./mcp-remote-headless";
 import {
   MCP_INITIALIZE_REQUEST,
   MCP_REMOTE_CONNECT_TIMEOUT_MS,
@@ -70,6 +72,10 @@ export interface AuthorizeMcpRemoteOpts {
    * token was rejected, not that the app can never work.
    */
   auth?: ConnectorAuth;
+  /** Remote OAuth only: send the link to the requester and accept its callback. */
+  onAuthorization?: (url: string, complete: (redirectUrl: string) => Promise<void>) => void;
+  /** Callback transport seam for fault-injection tests. */
+  callbackFetch?: typeof fetch;
 }
 
 export type AuthorizeMcpRemoteResult =
@@ -175,11 +181,17 @@ function runAuthorizeMcpRemote(
   let timedOut = false;
   let spawnError: { code?: string; message?: string } | undefined;
   let proc: ReturnType<McpRemoteSpawn> | undefined;
+  let authorizationUrl: string | undefined;
+  let callbackPort: number | undefined;
+  let awaitingAuthorizationUrl = false;
+  let authorizationSent = false;
+  let headless: ReturnType<typeof writeMcpRemoteHeadlessPreload> | undefined;
 
   const finish = (result: AuthorizeMcpRemoteResult): AuthorizeMcpRemoteResult => {
     if (settled) return result;
     settled = true;
     try { proc?.kill(); } catch { /* already gone */ }
+    headless?.dispose();
     return result;
   };
 
@@ -207,7 +219,7 @@ function runAuthorizeMcpRemote(
           kind,
           kind === "port-conflict" || kind === "oauth-incompatible" || kind === "key-rejected"
             ? undefined
-            : detail,
+            : opts.onAuthorization || opts.auth === "key" ? undefined : detail,
         ),
       }));
     };
@@ -230,9 +242,16 @@ function runAuthorizeMcpRemote(
     };
 
     try {
+      if (opts.onAuthorization) headless = writeMcpRemoteHeadlessPreload();
       proc = opts.spawn(opts.command, quoteSpawnArgs(opts.args, opts.shell), {
         stdio: ["pipe", "pipe", "pipe"],
-        env: opts.env,
+        env: opts.onAuthorization ? {
+          ...(opts.env ?? process.env),
+          NODE_OPTIONS: [
+            (opts.env ?? process.env).NODE_OPTIONS,
+            `--require ${JSON.stringify(headless!.path.replace(/\\/g, "/"))}`,
+          ].filter(Boolean).join(" "),
+        } : opts.env,
         shell: opts.shell,
         windowsHide: true,
       });
@@ -282,6 +301,35 @@ function runAuthorizeMcpRemote(
     const onLine = (line: string) => {
       considerOutput(line);
       if (settled) return;
+      if (opts.onAuthorization) {
+        if (line.includes("Please authorize this client by visiting:")) awaitingAuthorizationUrl = true;
+        else if (awaitingAuthorizationUrl && line.trim()) {
+          authorizationUrl = line.trim();
+          awaitingAuthorizationUrl = false;
+        }
+        const listener = /OAuth callback server running at http:\/\/127\.0\.0\.1:(\d+)\s*$/.exec(line);
+        if (listener) callbackPort = Number(listener[1]);
+        if (authorizationUrl && callbackPort && !authorizationSent) {
+          try {
+            const challenge = mcpOAuthChallenge(authorizationUrl, callbackPort);
+            authorizationSent = true;
+            let completing = false;
+            let submitted = false;
+            opts.onAuthorization(challenge.url, async (redirectUrl) => {
+              if (settled) throw new Error("This sign-in has ended. Connect again to get a new link.");
+              if (completing || submitted) throw new Error("The callback is already being completed. Wait for sign-in to finish.");
+              completing = true;
+              try {
+                await completeMcpOAuthCallback(challenge, redirectUrl, opts.callbackFetch);
+                submitted = true;
+              } finally { completing = false; }
+            });
+          } catch {
+            fail("failed");
+            return;
+          }
+        }
+      }
       const initialized = parseInitializeResult(line);
       if (initialized === true) succeed();
       if (initialized === false) {

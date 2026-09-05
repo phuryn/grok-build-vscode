@@ -195,6 +195,92 @@ describe("quoteSpawnArgs", () => {
   });
 });
 
+describe("manual remote OAuth", () => {
+  const url = "https://vendor.example/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A22227%2Foauth%2Fcallback&state=attempt-1";
+  const pasted = "http://localhost:22227/oauth/callback?code=test-code&state=attempt-1";
+
+  function begin(timeoutMs = 1000) {
+    const proc = new FakeProc();
+    const onAuthorization = vi.fn();
+    const callbackFetch = vi.fn().mockImplementation(async () => new Response("ok"));
+    const spawn = vi.fn(() => proc as never);
+    const result = authorizeMcpRemote({ command: "npx", args: mcpRemoteArgs("https://vendor.example/mcp"),
+      spawn, timeoutMs, onAuthorization, callbackFetch, env: { PATH: "npx-path", NODE_OPTIONS: "--no-warnings" } });
+    return { proc, onAuthorization, callbackFetch, spawn, result };
+  }
+
+  function issue(proc: FakeProc) {
+    proc.stderr.write("[123] Please authorize this client by visiting:\n");
+    proc.stderr.write(url.slice(0, 30));
+    proc.stderr.write(url.slice(30) + "\n\n");
+    proc.stderr.write("[123] OAuth callback server running at http://127.0.0.1:22227\n");
+  }
+
+  it("delivers one complete URL after the listener starts and completes only after MCP success", async () => {
+    const h = begin();
+    issue(h.proc);
+    expect(h.onAuthorization).toHaveBeenCalledOnce();
+    const [link, complete] = h.onAuthorization.mock.calls[0];
+    expect(link).toBe(url);
+    expect(h.spawn.mock.calls[0][2].env).toMatchObject({ PATH: "npx-path", NODE_OPTIONS: expect.stringContaining('--no-warnings --require ') });
+    await expect(complete(pasted.replace("attempt-1", "wrong"))).rejects.toThrow(/state/);
+    expect(h.callbackFetch).not.toHaveBeenCalled();
+    await complete(pasted);
+    expect(h.callbackFetch.mock.calls[0][0].href).toBe(pasted.replace("localhost", "127.0.0.1"));
+    expect(h.proc.killed).toBe(false);
+    await expect(complete(pasted)).rejects.toThrow(/already/);
+    h.proc.stderr.write("Authentication successful! Caching credentials...\n");
+    await expect(h.result).resolves.toEqual({ ok: true });
+    await expect(complete(pasted)).rejects.toThrow(/ended/);
+  });
+
+  it("lets the requester correct a failed callback request", async () => {
+    const h = begin();
+    issue(h.proc);
+    const complete = h.onAuthorization.mock.calls[0][1];
+    h.callbackFetch.mockRejectedValueOnce(new Error("network"));
+    await expect(complete(pasted)).rejects.toThrow(/host could not complete/);
+    await complete(pasted);
+    h.proc.stderr.write("Authentication successful! Caching credentials...\n");
+    await expect(h.result).resolves.toEqual({ ok: true });
+  });
+
+  it("expires the callback and never includes another tab's consent URL in failure output", async () => {
+    const h = begin(20);
+    issue(h.proc);
+    const complete = h.onAuthorization.mock.calls[0][1];
+    await expect(h.result).resolves.toMatchObject({ ok: false, kind: "timeout" });
+    await expect(complete(pasted)).rejects.toThrow(/ended/);
+    expect(h.callbackFetch).not.toHaveBeenCalled();
+    const failed = begin();
+    issue(failed.proc);
+    failed.proc.emit("close", 1);
+    const result = await failed.result;
+    expect(JSON.stringify(result)).not.toContain(url);
+    expect(JSON.stringify(result)).not.toContain("attempt-1");
+  });
+
+  it("does not retry a remote port conflict or offer a link without its listener", async () => {
+    const h = begin();
+    h.proc.stderr.write(`[123] Please authorize this client by visiting:\n${url}\n`);
+    expect(h.onAuthorization).not.toHaveBeenCalled();
+    h.proc.stderr.write("Error: listen EADDRINUSE: address already in use 127.0.0.1:22227\n");
+    await expect(h.result).resolves.toMatchObject({ ok: false, kind: "port-conflict" });
+    expect(h.spawn).toHaveBeenCalledOnce();
+    expect(h.onAuthorization).not.toHaveBeenCalled();
+  });
+
+  it("cleans up the remote preload on asynchronous spawn failure", async () => {
+    const h = begin();
+    const options = h.spawn.mock.calls[0][2].env.NODE_OPTIONS as string;
+    const preload = JSON.parse(options.slice(options.indexOf("--require ") + 10));
+    expect(existsSync(preload)).toBe(true);
+    h.proc.emit("error", new Error("spawn failed"));
+    await expect(h.result).resolves.toMatchObject({ ok: false });
+    expect(existsSync(preload)).toBe(false);
+  });
+});
+
 describe("npx spawn plan", () => {
   it("uses the Windows cmd shim with a shell", () => {
     const empty = { pathEnv: "", isFile: () => false };

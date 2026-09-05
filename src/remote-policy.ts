@@ -428,15 +428,15 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
   openGlobalConfig: "host-local",
   openProjectConfig: "host-local",
   // Read-only inventory query through the live Grok ACP session. Same class as
-  // refreshContextDetails: no turn, no mutation, no desk-local picker. Connect
-  // and disconnect stay host-local. Mirroring the last fetch is not enough if
+  // refreshContextDetails: no turn, no mutation, no desk-local picker.
+  // Mirroring the last fetch is not enough if
   // the desk never opened Settings, so a remote may ask when it opens the page.
   listMcpServers: "view",
   // Reading the page is a view op. Everything that WRITES is "full": a routine
   // schedules unattended agent runs, which is the same class as the other host
   // state a remote may change (pins, archives), not turn control.
   //
-  // Unlike connectors, these are NOT host-local. A phone is exactly where
+  // A phone is exactly where
   // someone thinks "I should get a morning brief", and a remote can already
   // send arbitrary prompts — a routine adds persistence, not reach. Reach is
   // bounded separately, by `cwd` being checked against the authorized set at
@@ -446,12 +446,11 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
   deleteRoutine: "full",
   setRoutinePaused: "full",
   runRoutineNow: "full",
-  // OAuth opens a browser on the desk and writes ~/.mcp-auth there. Key-auth
-  // pastes a secret into HostSecrets. A phone cannot complete either flow,
-  // must never set/read/clear a key, and must not change which tools every
-  // agent receives on the next session/new.
-  connectMcpConnector: "host-local",
-  disconnectMcpConnector: "host-local",
+  // Machine-wide configuration, like routines. Keys are write-only; remote
+  // OAuth is completed manually against the host's own callback listener.
+  connectMcpConnector: "full",
+  disconnectMcpConnector: "full",
+  completeMcpConnectorOAuth: "full",
   showLogs: "host-local",
   toggleDevTools: "host-local",
   openSettings: "host-local",
@@ -604,6 +603,7 @@ export const REMOTE_REQUIRES_BOUND_SESSION: Record<WebviewMsg["type"], boolean> 
   runRoutineNow: false,
   connectMcpConnector: false,
   disconnectMcpConnector: false,
+  completeMcpConnectorOAuth: false,
   showLogs: false,
   toggleDevTools: false,
   openSettings: false,
@@ -861,10 +861,11 @@ export const OUTBOUND_DISPOSITION: Record<HostMsg["type"], OutboundDisposition> 
   initialState: "mirror",
   providerState: "mirror",
   // Page fields only (`projectMcpServerForRemote`). Launch recipes stay on
-  // the desk. Same machine-global observation as mcpConnectors; remotes may
-  // look, they cannot Connect/Disconnect (inbound host-local above).
+  // the desk. Same machine-global observation as mcpConnectors.
   mcpServers: "allowlist",
   mcpConnectors: "mirror",
+  // Only deliverRemote([requestingClientId]) may send this, never post().
+  mcpConnectorAuthorization: "mirror",
   // Mirrored, but the project-auth pass above trims both cwd-bearing lists
   // first, so a tab sees only routines and projects it may already reach.
   routines: "mirror",
@@ -1031,6 +1032,7 @@ export const OUTBOUND_PROJECT_AUTH: Record<HostMsg["type"], OutboundProjectAuth>
   providerState: "none",
   mcpServers: "none",
   mcpConnectors: "none",
+  mcpConnectorAuthorization: "none",
   routines: "entries",
   codexInstallProgress: "none",
   expandCommandOutputs: "none",

@@ -760,9 +760,17 @@ describe("allowFromRemote tier gating", () => {
     }
   });
 
-  it("refuses remote connector connect/disconnect at every tier but mirrors the list", () => {
-    expect(INBOUND_DISPOSITION.connectMcpConnector).toBe("host-local");
-    expect(INBOUND_DISPOSITION.disconnectMcpConnector).toBe("host-local");
+  it("allows connector changes at full and mirrors capability plus targeted OAuth frames without project scope", () => {
+    expect(INBOUND_DISPOSITION.connectMcpConnector).toBe("full");
+    expect(INBOUND_DISPOSITION.disconnectMcpConnector).toBe("full");
+    expect(INBOUND_DISPOSITION.completeMcpConnectorOAuth).toBe("full");
+    expect(OUTBOUND_DISPOSITION.mcpConnectorAuthorization).toBe("mirror");
+    expect(OUTBOUND_PROJECT_AUTH.mcpConnectorAuthorization).toBe("none");
+    const frame: HostMsg = { type: "mcpConnectorAuthorization", id: "notion", attemptId: "attempt-1", status: "waiting", url: "https://vendor.example/authorize" };
+    expect(mayDeliverRemoteHostMsg(frame, [], undefined, pathsEqual)).toBe(true);
+    expect(transformHostMsgForRemote(frame)).toEqual(frame);
+    expect(transformHostMsgForRemote({ type: "mcpConnectors", connectors: [], remoteConnect: true }))
+      .toEqual({ type: "mcpConnectors", connectors: [], remoteConnect: true });
     expect(OUTBOUND_DISPOSITION.mcpConnectors).toBe("mirror");
     expect(OUTBOUND_DISPOSITION.mcpServers).toBe("allowlist");
     expect(OUTBOUND_PROJECT_AUTH.mcpServers).toBe(OUTBOUND_PROJECT_AUTH.mcpConnectors);
@@ -770,16 +778,16 @@ describe("allowFromRemote tier gating", () => {
     expect(allowFromRemote("listMcpServers", "read-only")).toBe(true);
     expect(allowFromRemote("listMcpServers", "propose")).toBe(true);
     expect(allowFromRemote("listMcpServers", "full")).toBe(true);
-    for (const type of ["connectMcpConnector", "disconnectMcpConnector"] as const) {
+    for (const type of ["connectMcpConnector", "disconnectMcpConnector", "completeMcpConnectorOAuth"] as const) {
       for (const tier of ["read-only", "propose", "full"] as const) {
-        expect(allowFromRemote(type, tier)).toBe(false);
+        expect(allowFromRemote(type, tier)).toBe(tier === "full");
       }
     }
   });
 
-  it("a remote cannot set, read, or clear a connector key even at full", () => {
+  it("a remote may write or clear a connector key at full", () => {
     for (const type of ["connectMcpConnector", "disconnectMcpConnector"] as const) {
-      expect(allowFromRemote(type, "full")).toBe(false);
+      expect(allowFromRemote(type, "full")).toBe(true);
     }
   });
 

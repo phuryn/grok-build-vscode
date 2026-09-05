@@ -831,7 +831,7 @@ describe("settings overlay (chat.js)", () => {
     expect((overlay.querySelector(".settings-connector-key-input") as HTMLInputElement).value).toBe("");
   });
 
-  it("a remote cannot paste, replace, or clear a GitHub key", () => {
+  it("an older host without the capability offers no remote key controls", () => {
     const h = bootWebview({ remote: true });
     seedChat(h, { capabilities: { mcpSettings: true } });
     dispatch(h.window, {
@@ -859,6 +859,65 @@ describe("settings overlay (chat.js)", () => {
     expect(overlay.textContent).toContain("Connected");
     expect(h.posted).not.toContainEqual(expect.objectContaining({ type: "connectMcpConnector" }));
     expect(h.posted).not.toContainEqual(expect.objectContaining({ type: "disconnectMcpConnector" }));
+  });
+
+  it("a capable remote writes and replaces a key without ever reading one back", () => {
+    const h = bootWebview({ remote: true });
+    seedChat(h, { capabilities: { mcpSettings: true } });
+    const row = { id: "github", name: "GitHub", description: "Repos.", auth: "key", status: "idle", connected: false };
+    dispatch(h.window, { type: "mcpConnectors", remoteConnect: true, connectors: [row] });
+    openSettings(h);
+    clickSettingsNav(h, "Connectors");
+    const overlay = h.doc.getElementById("settings-overlay")!;
+    click(h.window, overlay.querySelector(".settings-connector-action")!);
+    const input = overlay.querySelector(".settings-connector-key-input") as HTMLInputElement;
+    expect(input.type).toBe("password");
+    expect(input.value).toBe("");
+    input.value = "ghp_remote_write_only";
+    click(h.window, overlay.querySelector(".settings-connector-key-submit")!);
+    expect(h.posted).toContainEqual({ type: "connectMcpConnector", id: "github", key: "ghp_remote_write_only", readOnly: false });
+    expect(input.value).toBe("");
+    dispatch(h.window, { type: "mcpConnectors", remoteConnect: true, connectors: [{ ...row, connected: true, keySet: true }] });
+    expect(overlay.textContent).toContain("Tools in already running sessions remain available");
+    click(h.window, overlay.querySelector(".settings-connector-key-open")!);
+    expect((overlay.querySelector(".settings-connector-key-input") as HTMLInputElement).value).toBe("");
+    click(h.window, overlay.querySelector(".settings-connector-key-cancel")!);
+    click(h.window, overlay.querySelector(".settings-connector-action")!);
+    expect(h.posted).toContainEqual({ type: "disconnectMcpConnector", id: "github" });
+    expect(overlay.innerHTML).not.toContain("ghp_remote_write_only");
+  });
+
+  it("a capable remote opens its consent link and posts the failed address for manual completion", () => {
+    const h = bootWebview({ remote: true });
+    seedChat(h, { capabilities: { mcpSettings: true } });
+    const row = { id: "notion", name: "Notion", description: "Pages.", auth: "oauth", status: "idle", connected: false };
+    dispatch(h.window, { type: "mcpConnectors", remoteConnect: true, connectors: [row] });
+    openSettings(h);
+    clickSettingsNav(h, "Connectors");
+    const overlay = h.doc.getElementById("settings-overlay")!;
+    click(h.window, overlay.querySelector(".settings-connector-action")!);
+    expect(h.posted).toContainEqual({ type: "connectMcpConnector", id: "notion" });
+    const consent = { type: "mcpConnectorAuthorization", id: "notion", attemptId: "attempt-1", status: "waiting", url: "https://vendor.example/authorize?state=test" };
+    dispatch(h.window, consent);
+    const link = overlay.querySelector(".settings-connector-oauth-link") as HTMLAnchorElement;
+    expect(link.href).toBe(consent.url);
+    expect(link.target).toBe("_blank");
+    expect(link.rel).toContain("noopener");
+    expect(overlay.textContent).toMatch(/page may fail to load/);
+    const input = overlay.querySelector(".settings-connector-oauth-input") as HTMLInputElement;
+    input.value = "http://localhost:22227/oauth/callback?code=abc&state=test";
+    click(h.window, overlay.querySelector(".settings-connector-oauth-submit")!);
+    expect(h.posted).toContainEqual({ type: "completeMcpConnectorOAuth", id: "notion", attemptId: "attempt-1", redirectUrl: "http://localhost:22227/oauth/callback?code=abc&state=test" });
+    expect(input.value).toBe("");
+    expect(overlay.textContent).toMatch(/Completing sign-in/);
+    dispatch(h.window, { ...consent, error: "Use the current sign-in link (state does not match)." });
+    expect(overlay.textContent).toMatch(/state does not match/);
+    expect(overlay.querySelector(".settings-connector-oauth-input")).toBeTruthy();
+    dispatch(h.window, { ...consent, status: "finished", url: undefined });
+    expect(overlay.querySelector(".settings-connector-oauth")).toBeNull();
+    // Switching back to a host that lacks the field must drop the capability.
+    dispatch(h.window, { type: "mcpConnectors", connectors: [row] });
+    expect(overlay.querySelector(".settings-connector-action")).toBeNull();
   });
 
   it("a remote sees a connected GitHub row without a desk key as connected, with no paste", () => {

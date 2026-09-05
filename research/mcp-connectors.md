@@ -44,10 +44,10 @@ Theirs wins. grok.com managed Canva is the load-bearing case.
 `authorizeMcpRemote` is a one-shot `mcp-remote` spawn. A live Grok session
 already running that endpoint holds the OAuth callback port pinned in
 `client_info.json` (Windows skips mcp-remote's lockfile, so a second instance
-cannot see the first). `EADDRINUSE` is retried once with a free loopback port
-as `mcp-remote <url> <port>`, which forces re-registration. The first failure
-never reaches the UI. `buildMcpRemoteEntry` does not pin a port — a specified
-port on `session/new` would re-register on every conversation.
+cannot see the first). `EADDRINUSE` is reported as already signed in and in
+use; it is never retried on a different port. Changing ports would delete
+the shared registration and force every host to re-authorize. Neither
+Connect nor `buildMcpRemoteEntry` overrides the registered port.
 
 Stripe is the only catalog vendor that rejects mcp-remote's default DCR
 scopes (`openid, email, profile`). Its `oauthScope` is `"mcp"` — measured
@@ -75,12 +75,47 @@ read from (`mcpServersCwd` / `mcpSettingsServersForCwd` → `mcpNameCatalogFor`
 focused session's cwd or provider. The classified global-only view is
 stored (`mcpServersView`) and rendered anywhere; project-file rows
 never enter it.
-`connectMcpConnector` / `disconnectMcpConnector` are host-local:
-OAuth needs a browser on the machine that owns `~/.mcp-auth`; key-auth
-pastes a secret into HostSecrets. A remote may see that a key connector
-is connected and may not set, read, or clear the key. Settings →
-Connectors on a remote shows the desk-owned catalog read-only, the live Grok
-inventory, and a grok.com/connectors Open in the grok.com section header.
+`connectMcpConnector`, `disconnectMcpConnector`, and
+`completeMcpConnectorOAuth` are inbound `full`, without a bound-session
+requirement. A remote can set or replace a HostSecrets key; no response
+returns it. The existing `mcpConnectors` frame advertises `remoteConnect: true`.
+Settings enables remote controls only when that field is present; an older
+host's frame leaves the catalog read-only.
+
+Remote OAuth uses `authorizeMcpRemote.onAuthorization`. The host captures
+the printed consent URL and the callback listener's actual port, then sends
+`mcpConnectorAuthorization` only through `deliverRemote([clientId])`.
+This outbound frame is `mirror` / project auth `none`, never a snapshot or
+broadcast. It carries `id`, `attemptId`, `status` (`waiting`, `submitted`, or
+`finished`), and optional `url` / `error`. The client opens the URL on its own
+device. After vendor consent the loopback page may fail to load; the person
+copies that full address and sends `{type: "completeMcpConnectorOAuth", id,
+attemptId, redirectUrl}`. The host checks the requesting client and attempt.
+`parseMcpOAuthRedirect` requires the issued hostname (`localhost` or
+`127.0.0.1`), exact port, `/oauth/callback`, one nonempty code, and matching
+state. It rejects URL repairs and malformed encodings. Completion constructs
+a new numeric-loopback URL using only that known port, code, and state;
+redirects are refused and the pasted URL is never fetched. Errors are
+actionable and targeted; subprocess output containing consent URLs is not
+mirrored in failure messages. The attempt expires after 180 seconds.
+
+The pinned [mcp-remote OAuth provider](https://github.com/geelen/mcp-remote/blob/v0.1.37/src/lib/node-oauth-client-provider.ts)
+bundles `open` and has no headless flag. `writeMcpRemoteHeadlessPreload`
+writes a temporary CommonJS preload and adds it to this spawn's
+`NODE_OPTIONS`. It suppresses child spawning only inside the resolved
+`mcp-remote/dist/proxy.js` entry (its browser launch), leaving npm's launcher
+alone. A real temporary file works outside Electron's `app.asar`; it is
+removed when the attempt finishes. Desktop OAuth and session proxies do not
+receive the preload. `MCP_REMOTE_PACKAGE` and `REMOTE_PROTO_VERSION` stay pinned.
+The relay must add `completeMcpConnectorOAuth` to its inbound type list;
+outbound HostMsg frames are opaque and require no relay change.
+
+Disconnect removes our connected record and a key connector's HostSecrets
+entry. It does not revoke vendor access, clear `~/.mcp-auth`, or remove tools
+from already running sessions. Settings states these limits on every surface.
+
+Settings also retains the live Grok inventory and a grok.com/connectors Open
+in the grok.com section header.
 Local Grok connectors show a header Open on the desk (`openGlobalConfig`,
 even when the section is empty) and a sentence on remote; there is no
 per-row Open. A host-injected echo is omitted from Local. `listMcpServers` is inbound view

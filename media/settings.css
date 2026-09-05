@@ -541,7 +541,8 @@ body.settings-page .settings-surface {
   padding-top: 4px;
 }
 
-.settings-connector-key-input {
+.settings-connector-key-input,
+.settings-connector-oauth-input {
   width: 100%;
   max-width: none;
   min-width: 0;
@@ -553,7 +554,8 @@ body.settings-page .settings-surface {
   line-height: 1.4;
 }
 
-.settings-connector-key-docs {
+.settings-connector-key-docs,
+.settings-connector-oauth-link {
   color: var(--vscode-textLink-foreground, #3794ff);
 }
 

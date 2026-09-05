@@ -1036,6 +1036,13 @@ export class GrokSidebar {
   private mcpListSupported: boolean | undefined;
   private grokMcpReserved: ReservedMcpIdentity = { names: [], urls: [] };
   private mcpConnectingId: ConnectorId | undefined;
+  private mcpRemoteAuthorization: {
+    id: ConnectorId;
+    clientId: string;
+    attemptId: string;
+    url: string;
+    complete: (redirectUrl: string) => Promise<void>;
+  } | undefined;
   private mcpConnectError: { id: ConnectorId; message: string } | undefined;
   /** In-memory PAT cache for key-auth connectors. Never written to PersistedState. */
   private readonly mcpConnectorKeys = new Map<string, string>();
@@ -10778,10 +10785,15 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         break;
       }
       case "connectMcpConnector":
+        if (origin === "remote" && !clientId) break;
         await this.connectMcpConnector(msg.id, {
           key: typeof msg.key === "string" ? msg.key : undefined,
           readOnly: typeof msg.readOnly === "boolean" ? msg.readOnly : undefined,
+          clientId: origin === "remote" ? clientId : undefined,
         });
+        break;
+      case "completeMcpConnectorOAuth":
+        if (origin === "remote" && clientId) await this.completeMcpConnectorOAuth(msg, clientId);
         break;
       case "disconnectMcpConnector":
         await this.disconnectMcpConnector(msg.id);
@@ -11475,6 +11487,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     const store = this.connectedConnectorStore();
     return {
       type: "mcpConnectors",
+      remoteConnect: true,
       connectors: connectorViews(store, {
         connectingId: this.mcpConnectingId,
         errorId: this.mcpConnectError?.id,
@@ -11615,7 +11628,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
 
   private async connectMcpConnector(
     id: string,
-    opts: { key?: string; readOnly?: boolean } = {},
+    opts: { key?: string; readOnly?: boolean; clientId?: string } = {},
   ): Promise<void> {
     if (!isConnectorId(id)) return;
     if (this.mcpConnectingId) {
@@ -11651,6 +11664,13 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         args: mcpRemoteArgs(endpoint, undefined, metadata?.path),
         shell: npx.shell,
         env: npx.env,
+        onAuthorization: opts.clientId ? (url, complete) => {
+          const pending = { id, clientId: opts.clientId!, attemptId: randomUUID(), url, complete };
+          this.mcpRemoteAuthorization = pending;
+          this.deliverRemote([pending.clientId], {
+            type: "mcpConnectorAuthorization", id, attemptId: pending.attemptId, status: "waiting", url,
+          });
+        } : undefined,
       });
       if (this.mcpConnectingId !== id) return;
       if (!result.ok) {
@@ -11671,8 +11691,42 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       this.mcpConnectError = { id, message: (error as Error).message || "Could not connect." };
     } finally {
       try { metadata?.dispose(); } catch { /* best-effort */ }
+      const pending = this.mcpRemoteAuthorization;
+      if (pending?.id === id) {
+        this.mcpRemoteAuthorization = undefined;
+        this.deliverRemote([pending.clientId], {
+          type: "mcpConnectorAuthorization", id, attemptId: pending.attemptId, status: "finished",
+        });
+      }
       if (this.mcpConnectingId === id) this.mcpConnectingId = undefined;
       this.postMcpConnectors();
+    }
+  }
+
+  private async completeMcpConnectorOAuth(
+    msg: Extract<WebviewMsg, { type: "completeMcpConnectorOAuth" }>,
+    clientId: string,
+  ): Promise<void> {
+    const pending = this.mcpRemoteAuthorization;
+    if (!pending || pending.clientId !== clientId || pending.id !== msg.id || pending.attemptId !== msg.attemptId) {
+      this.deliverRemote([clientId], {
+        type: "mcpConnectorAuthorization", id: msg.id, attemptId: msg.attemptId, status: "finished",
+        error: "This sign-in is no longer active in this tab. Connect again to get a new link.",
+      });
+      return;
+    }
+    try {
+      await pending.complete(msg.redirectUrl);
+      if (this.mcpRemoteAuthorization !== pending) return;
+      this.deliverRemote([clientId], {
+        type: "mcpConnectorAuthorization", id: pending.id, attemptId: pending.attemptId, status: "submitted",
+      });
+    } catch (error) {
+      if (this.mcpRemoteAuthorization !== pending) return;
+      this.deliverRemote([clientId], {
+        type: "mcpConnectorAuthorization", id: pending.id, attemptId: pending.attemptId, status: "waiting",
+        url: pending.url, error: (error as Error).message,
+      });
     }
   }
 
@@ -11737,8 +11791,9 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         connectConnector(this.connectedConnectorStore(), id, endpoint, readOnly),
       );
       this.mcpConnectError = undefined;
-    } catch (error) {
-      this.mcpConnectError = { id, message: (error as Error).message || "Could not connect." };
+    } catch {
+      // Secret-store errors are not a response channel for credential values.
+      this.mcpConnectError = { id, message: "Could not save this connector's key. Try connecting again." };
     } finally {
       if (this.mcpConnectingId === id) this.mcpConnectingId = undefined;
       this.postMcpConnectors();

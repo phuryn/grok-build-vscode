@@ -2794,6 +2794,8 @@
       mcpError: state.mcpError,
       mcpWarning: state.mcpWarning,
       mcpConnectors: state.mcpConnectors,
+      mcpRemoteConnect: state.mcpRemoteConnect === true,
+      mcpConnectorAuthorization: state.mcpConnectorAuthorization,
       routines: state.routines,
       routineProjects: state.routineProjects,
       routineModels: state.routineModels,
@@ -16021,8 +16023,19 @@
         state.mcpWarning = msg.warning || "";
         refreshSettingsOverlay();
         break;
+      case "mcpConnectorAuthorization":
+        if (msg.status === "finished") {
+          if (!state.mcpConnectorAuthorization || state.mcpConnectorAuthorization.attemptId === msg.attemptId) {
+            state.mcpConnectorAuthorization = msg.error ? msg : undefined;
+          }
+        } else {
+          state.mcpConnectorAuthorization = msg;
+        }
+        refreshSettingsOverlay();
+        break;
       case "mcpConnectors":
         state.mcpConnectors = Array.isArray(msg.connectors) ? msg.connectors : [];
+        state.mcpRemoteConnect = msg.remoteConnect === true;
         refreshSettingsOverlay();
         break;
       case "routines":

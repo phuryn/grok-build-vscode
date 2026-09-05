@@ -448,13 +448,13 @@ export type HostMsg =
   /** Grok's grok.com + user-level MCP inventory (`_x.ai/mcp/list`; project-file
    *  servers omitted). The desk keeps launch recipes and `configFile`; remotes
    *  receive `projectMcpServerForRemote` (page fields only — no `tag`).
-   *  Connect/disconnect stay desk-only. */
+   *  Config-file editing stays desk-only. */
   | { type: "mcpServers"; servers: McpServerView[]; loading?: boolean; error?: string; warning: string }
-  /** Host-owned Tier-1 connector catalog. Mirrored so a remote can SEE which
-   *  apps are connected; connect/disconnect stay desk-only (OAuth + ~/.mcp-auth
-   *  and key-auth HostSecrets live on the machine running the host). Views
-   *  never carry the key. */
-  | { type: "mcpConnectors"; connectors: ConnectorView[] }
+  /** Machine-global, secret-free inventory. Presence of remoteConnect enables
+   *  remote key writes and manual OAuth; older hosts omit it. */
+  | { type: "mcpConnectors"; connectors: ConnectorView[]; remoteConnect?: true }
+  /** Targeted to the requesting client only; never part of a broadcast/snapshot. */
+  | { type: "mcpConnectorAuthorization"; id: string; attemptId: string; status: "waiting" | "submitted" | "finished"; url?: string; error?: string }
   /**
    * The Routines page, whole. Carries its own pickers rather than leaning on
    * the chat state, because the VS Code settings TAB loads settings.js and
@@ -933,9 +933,11 @@ export type WebviewMsg =
   /** Fire once, now. Deliberately takes no window key — a manual run must not
    *  consume the scheduled one. */
   | { type: "runRoutineNow"; id: string }
-  /** Desk-only: OAuth opens a browser; key-auth sends `key` once (never echoed). */
+  /** Key is write-only. Remote OAuth returns a targeted sign-in link. */
   | { type: "connectMcpConnector"; id: string; key?: string; readOnly?: boolean }
-  /** Desk-only: drop the id from our list. Key-auth also deletes the HostSecrets entry. OAuth does not delete ~/.mcp-auth tokens. */
+  | { type: "completeMcpConnectorOAuth"; id: string; attemptId: string; redirectUrl: string }
+  /** Drop the id from our list and any HostSecrets key. Does not revoke OAuth,
+   * clear ~/.mcp-auth, or remove tools from already running sessions. */
   | { type: "disconnectMcpConnector"; id: string }
   | { type: "showLogs" }
   /** Unpackaged desktop only — toggle Chromium DevTools (gear / F12). */
@@ -1242,7 +1244,7 @@ export type WebviewMsg =
 // error). The runtime arrays are just the keys, so they can never drift from the
 // union without failing the build.
 const HOST_MESSAGE_TYPE_MAP: Record<HostMsg["type"], true> = {
-  initialState: true, moveViewHint: true, welcomeTips: true, projectSetup: true, githubState: true, githubRepos: true, providerState: true, mcpServers: true, mcpConnectors: true, routines: true, codexInstallProgress: true, planModeAvailability: true, showThinking: true, appPurpose: true, fontScale: true, grokUpdateStatus: true, updateAvailable: true, updateReady: true, telemetryEnabled: true, thumbsFeedback: true,
+  initialState: true, moveViewHint: true, welcomeTips: true, projectSetup: true, githubState: true, githubRepos: true, providerState: true, mcpServers: true, mcpConnectors: true, mcpConnectorAuthorization: true, routines: true, codexInstallProgress: true, planModeAvailability: true, showThinking: true, appPurpose: true, fontScale: true, grokUpdateStatus: true, updateAvailable: true, updateReady: true, telemetryEnabled: true, thumbsFeedback: true,
   initialized: true, cliUpdating: true, session: true, sessionName: true, modelChanged: true,
   modeChanged: true, openModePopover: true, voiceState: true, voiceConfigured: true,
   voicePartial: true, voiceSubmit: true, voiceTranscript: true, voiceError: true,
@@ -1266,7 +1268,7 @@ const WEBVIEW_MESSAGE_TYPE_MAP: Record<WebviewMsg["type"], true> = {
   setMode: true, removeChip: true, toggleChip: true, openFile: true, showInFolder: true, openUrl: true,
   openText: true, openDiff: true, exportExpr: true, setEffort: true, openGlobalConfig: true,
   addProjectFolder: true, removeProjectFolder: true, createProject: true, cloneProject: true, setupGithubCli: true, listGithubRepos: true, githubSignOut: true, githubLoginWithToken: true,
-  openProjectConfig: true, listMcpServers: true, connectMcpConnector: true, disconnectMcpConnector: true,
+  openProjectConfig: true, listMcpServers: true, connectMcpConnector: true, disconnectMcpConnector: true, completeMcpConnectorOAuth: true,
   listRoutines: true, saveRoutine: true, deleteRoutine: true, setRoutinePaused: true, runRoutineNow: true, showLogs: true, toggleDevTools: true, openSettings: true, openSettingsSurface: true, closeSettingsSurface: true, dismissWelcomeTip: true, welcomeTipShown: true, moveView: true,
   setShowThinking: true, setAppPurpose: true, setExpandCommandOutputs: true, setSteerByDefault: true,
   setSoundNotifications: true, setProcessingSound: true, setReadRepliesAloud: true, setSummarizeRepliesAloud: true, setVoiceSendPhrase: true, setVoiceKeyterms: true, setTelemetryEnabled: true, setThumbsFeedback: true, summarizeSpeech: true, requestImageFull: true, composerFocus: true,
