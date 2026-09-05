@@ -98,14 +98,16 @@ home; provider scoping prevents Grok user-derived tool titles from false-matchin
 
 **Release procedure — ALWAYS tag + create a GitHub Release (with the `.vsix` attached) on a release push to `main`** (standing convention; mirrors the `v1.0.0…` tag history + GitHub Releases):
 
-**The whole procedure below (steps 2–5) is scripted** — after bumping the version + writing the changelog section (step 1, user-initiated), just run:
+**The release scripts run the gates, publish the GitHub Release and Open VSX, and install locally** — after bumping the version + writing the changelog section (step 1, user-initiated), run:
 
 ```bash
 pwsh scripts\release.ps1        # Windows (native) — what we use here
-./scripts/release.sh            # macOS / Linux / WSL
+./scripts/release.sh            # macOS / Linux / WSL — desktop installer handoff is manual
 ```
 
-It reads the version from `package.json`, runs the gate, builds the vsix, commits the working tree (`-MessageFile`/`-Message` override the default `Release vX.Y.Z`), pushes `main`, creates the annotated tag, and runs `gh release create` **with the vsix attached** — extracting the matching `## X.Y.Z` changelog section as the release notes. `-DryRun`/`--dry-run` previews; `-NoTest`/`--no-test` skips the gate. It refuses to run off `main` or when the tag already exists (i.e. the version wasn't bumped). The script does **not** call `vsce`/`ovsx`, and there is **no publish workflow** (`.github/workflows/` is just `ci.yml`) — so the GitHub Release does **not** auto-publish to any store. Store publishing is split by who runs it (step 6): the agent **always publishes Open VSX right after the script succeeds** (part of every release, no separate ask); the **VS Code Marketplace** is manual and Paweł-only.
+Both scripts read the version from `package.json`, run the gate, build the vsix, commit the working tree, push `main`, wait for CI on the pushed SHA, create the annotated tag, and run `gh release create` **with the vsix attached** — extracting the matching `## X.Y.Z` changelog section as the release notes. Both then run `npm run publish:ovsx` and install the released vsix into local editors. `-DryRun`/`--dry-run` previews the publish actions after the gate and packaging; `-NoTest`/`--no-test` skips the gate. Both refuse to run off `main` or when the tag already exists. **Open VSX is published by the scripts; the VS Code Marketplace remains manual and Paweł-only** (step 6).
+
+PowerShell also dispatches `.github/workflows/desktop-release.yml` against the release tag and waits for `.exe`, `.dmg`, and `.AppImage` assets. Missing installers are recorded, local installation is attempted (unless `-NoInstall`), and the script ends with an incomplete-release error naming the missing artifacts. `-SkipInstallers` explicitly skips that check. Bash prints the manual dispatch and asset-verification commands; its work is incomplete until those installers are attached.
 
 What the script encodes, step by step:
 
@@ -122,8 +124,9 @@ What the script encodes, step by step:
 3. **Repo-hygiene check, then** commit + push to `main` (direct-to-main, no feature branches). Never `git add -A` blind: run `git status --short` AND `git ls-files --others --exclude-standard`, and read the untracked list before staging. Anything machine-specific or agent-local that isn't ignored gets added to `.gitignore` in the same commit rather than committed and cleaned up afterwards — this repo is PUBLIC, so a stray file is published, not just committed. Offenders seen untracked-and-unignored: `.claude/settings.local.json` (machine-specific tool permissions) and ad-hoc `.verification/` output dirs left by an agent. Also confirm nothing under `media/` was hand-edited that a downstream consumer regenerates.
 4. **Annotated git tag** `vX.Y.Z` at the release commit → `git tag -a vX.Y.Z -m "Release vX.Y.Z"` → `git push origin vX.Y.Z`.
 5. **GitHub Release** for that tag → `gh release create vX.Y.Z --title "Release vX.Y.Z" --notes-file <notes> <vsix>` (notes = the new changelog section(s); include any earlier version that was bumped but never released). **Always attach the `.vsix` that this run of `npm run package` just produced** (`scripts/release.ps1` / `release.sh` do that). Never attach a leftover vsix and never hand-roll `gh release create` around an existing file — `scripts/install.ps1` builds those against staging by design.
+   **Desktop installers:** after Open VSX publication, PowerShell runs `gh workflow run desktop-release.yml --ref vX.Y.Z -f release_tag=vX.Y.Z` and checks the release for `.exe`, `.dmg`, and `.AppImage` assets. With Bash, run its printed dispatch command and verify with `gh release view vX.Y.Z --json assets`; the release is not complete until all three artifact types exist.
 6. **Store publish — split by store.**
-   - **Open VSX: ALWAYS published by the agent as part of every release** (immediately after step 5, no separate ask) — `npx ovsx publish grok-vscode-phuryn-<version>.vsix -p <key>` with the key read from `OPEN_VSX_API_KEY` in the git-ignored `.env` at the repo root (never print or commit the key).
+   - **Open VSX: both release scripts run `npm run publish:ovsx`** after creating the GitHub Release, using `OPEN_VSX_API_KEY` from the git-ignored `.env` at the repo root (never print or commit the key). No separate Open VSX publish is needed after the script succeeds.
    - **VS Code Marketplace: manual, Paweł-only.** `npm run publish` (vsce; the `PawelHuryn` publisher is registered + authenticated locally). The agent never runs this — Paweł publishes it himself.
    - **Never announce a store as "live now."** A successful `ovsx publish` is NOT public availability — Open VSX scans new versions before listing them. In issue comments / user-facing messages, say **"~10 minutes"** for BOTH stores (Open VSX and the VS Code Marketplace alike).
    Publishing ≠ tagging either way.

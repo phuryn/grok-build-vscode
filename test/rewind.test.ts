@@ -1,4 +1,7 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+import { GrokSidebar } from "../src/sidebar";
+import { RemoteClientState } from "../src/remote-client-state";
+import { Session } from "../src/session";
 import {
   parseRewindPoint,
   parseRewindPoints,
@@ -18,6 +21,144 @@ import {
   editRewindConfirmMessage,
   REWIND_MODES,
 } from "../src/rewind";
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+function makeRewindSidebar(hasFiles = true) {
+  const sidebar = Object.create(GrokSidebar.prototype) as any;
+  const session = new Session();
+  session.activeSessionId = "original-session";
+  session.hasHistory = true;
+  session.userMessageCount = 2;
+  session.status = "done";
+  const points = [0, 1].map((promptIndex) => ({
+    promptIndex, createdAt: "t", promptPreview: `message ${promptIndex}`,
+    hasFileChanges: hasFiles, numFileSnapshots: hasFiles ? 1 : 0,
+  }));
+  const fakeClient = () => ({
+    listRewindPoints: vi.fn(async () => points),
+    executeRewind: vi.fn(async () => "unsupported"),
+  });
+  const original = fakeClient();
+  const replacement = fakeClient();
+  session.client = original as any;
+  sidebar.focused = session;
+  sidebar.workspaceRoot = () => "/repo";
+  sidebar.remoteClients = new RemoteClientState<Session>("/repo");
+  sidebar.remoteClients.ready("browser-view");
+  sidebar.remoteClients.setActive("browser-view", session);
+  sidebar.pendingConfirms = new Map();
+  sidebar.confirmSeq = 0;
+  const confirmation = deferred<string>();
+  sidebar.emit = vi.fn((_session, msg) => {
+    if (msg.type === "uiConfirmRequest") confirmation.resolve(msg.id);
+  });
+  sidebar.host = {
+    appendLine: vi.fn(), showWarningMessage: vi.fn(),
+    showInformationMessage: vi.fn(), showErrorMessage: vi.fn(),
+  };
+  sidebar.sendRemoteClient = vi.fn();
+  vi.spyOn(sidebar, "reportRequester");
+  sidebar.applyRewindToView = vi.fn();
+  sidebar.restoreComposerFor = vi.fn();
+  sidebar.truncateSessionCardsAfterRewind = vi.fn();
+  return { sidebar, session, original, replacement, points, confirmation };
+}
+
+describe.each(["editLastMessage", "rewindSession"] as const)("%s lifecycle", (type) => {
+  const request = { type, userBubbleIndex: 0, text: "original draft", totalUserBubbles: 2 };
+
+  describe.each(["confirmation", "listing"] as const)("delayed %s", (delay) => {
+    it.each(["new-turn", "started-and-finished-turn", "replaced-client"])("refuses a stale browser request after %s", async (change) => {
+      // Both views hold the same Session object. Listing-only cases have no
+      // file changes, so they must be guarded even without a confirmation.
+      const { sidebar, session, original, replacement, points, confirmation } = makeRewindSidebar(delay === "confirmation");
+      const listing = deferred<typeof points>();
+      if (delay === "listing") original.listRewindPoints.mockReturnValueOnce(listing.promise);
+      const pending = sidebar.onMessage(request, "remote", "browser-view");
+      const id = delay === "confirmation" ? await confirmation.promise : undefined;
+      expect(original.listRewindPoints).toHaveBeenCalledOnce();
+      expect(original.executeRewind).not.toHaveBeenCalled();
+
+      if (change !== "replaced-client") {
+        // The desk starts another turn while the browser is waiting.
+        session.status = "working";
+        session.userMessageCount++;
+        // Finishing leaves client, generation and session id unchanged.
+        if (change === "started-and-finished-turn") session.status = "done";
+      } else {
+        session.gen++;
+        session.activeSessionId = "replacement-session";
+        session.client = replacement as any;
+      }
+
+      if (id) await sidebar.onMessage({ type: "uiConfirmAnswer", id, ok: true }, "remote", "browser-view");
+      else listing.resolve(points);
+      await pending;
+
+      expect(original.executeRewind).not.toHaveBeenCalled();
+      expect(replacement.executeRewind).not.toHaveBeenCalled();
+      expect(sidebar.reportRequester).toHaveBeenCalledOnce();
+      expect(sidebar.reportRequester).toHaveBeenCalledWith(
+        expect.objectContaining({ clientId: "browser-view" }), "warning",
+        expect.stringMatching(/(?:Edit|Rewind) cancelled because the conversation changed or another turn started/),
+      );
+      expect(sidebar.sendRemoteClient).toHaveBeenCalledWith("browser-view", expect.objectContaining({
+        type: "hostNotice", level: "warning", text: expect.stringContaining("Nothing was rewound."),
+      }));
+      expect(sidebar.host.showWarningMessage).not.toHaveBeenCalled();
+      expect(sidebar.applyRewindToView).not.toHaveBeenCalled();
+      expect(sidebar.restoreComposerFor).not.toHaveBeenCalled();
+      expect(sidebar.truncateSessionCardsAfterRewind).not.toHaveBeenCalled();
+    });
+  });
+
+  it.each(["client", "generation", "session-id", "needs-you"])("independently rechecks %s for a desk confirmation", async (change) => {
+    const { sidebar, session, original, replacement, confirmation } = makeRewindSidebar();
+    const pending = sidebar.onMessage(request, "local");
+    const id = await confirmation.promise;
+    if (change === "client") session.client = replacement as any;
+    if (change === "generation") session.gen++;
+    if (change === "session-id") session.activeSessionId = "replacement-session";
+    if (change === "needs-you") session.status = "needs-you";
+    await sidebar.onMessage({ type: "uiConfirmAnswer", id, ok: true }, "local");
+    await pending;
+    expect(original.executeRewind).not.toHaveBeenCalled();
+    expect(replacement.executeRewind).not.toHaveBeenCalled();
+    expect(sidebar.reportRequester).toHaveBeenCalledOnce();
+    expect(sidebar.reportRequester).toHaveBeenCalledWith(
+      undefined, "warning", expect.stringContaining("Nothing was rewound."),
+    );
+    expect(sidebar.host.showWarningMessage).toHaveBeenCalledOnce();
+    expect(sidebar.sendRemoteClient).not.toHaveBeenCalled();
+  });
+
+  it.each([true, false])("still executes an unchanged, finished conversation (file changes: %s)", async (hasFiles) => {
+    const { sidebar, original, confirmation } = makeRewindSidebar(hasFiles);
+    const pending = sidebar.onMessage(request, "remote", "browser-view");
+    if (hasFiles) {
+      const id = await confirmation.promise;
+      await sidebar.onMessage({ type: "uiConfirmAnswer", id, ok: true }, "remote", "browser-view");
+    }
+    await pending;
+    expect(original.executeRewind).toHaveBeenCalledOnce();
+    expect(original.executeRewind).toHaveBeenCalledWith({ targetPromptIndex: 0, mode: "all" });
+  });
+
+  it("still cancels when the confirmation is declined", async () => {
+    const { sidebar, original, confirmation } = makeRewindSidebar();
+    const pending = sidebar.onMessage(request, "remote", "browser-view");
+    const id = await confirmation.promise;
+    await sidebar.onMessage({ type: "uiConfirmAnswer", id, ok: false }, "remote", "browser-view");
+    await pending;
+    expect(original.executeRewind).not.toHaveBeenCalled();
+    expect(sidebar.reportRequester).not.toHaveBeenCalled();
+  });
+});
 
 describe("parseRewindPoints", () => {
   const row = {

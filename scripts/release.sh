@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# One-command release for grok-build-vscode — the macOS/Linux/WSL twin of
-# scripts/release.ps1. Encodes the standing "release push to main" procedure
-# from CLAUDE.md so it isn't orchestrated by hand each time.
+# Extension release for grok-build-vscode on macOS/Linux/WSL.
+# Publishes the VSIX and Open VSX; desktop installers require the manual
+# dispatch and verification commands printed below. scripts/release.ps1
+# automates that installer step as well.
 #
 # Bump package.json + write the changelog section FIRST (those stay
 # user-initiated), then run:
-#   ./scripts/release.sh                 # full release (incl. real-grok test:live)
+#   ./scripts/release.sh                 # extension release (incl. real-grok test:live)
 #   ./scripts/release.sh --no-test       # skip ALL gating (tsc + npm test + test:live)
 #   ./scripts/release.sh --skip-live     # keep tsc + npm test, skip only real-grok test:live
 #   ./scripts/release.sh --skip-integration  # skip only the real-VS-Code Extension Host smoke
@@ -47,6 +48,12 @@ while [ $# -gt 0 ]; do
 done
 
 step() { printf '\033[36m==> %s\033[0m\n' "$1"; }
+
+installer_handoff() {
+  echo "This script does not dispatch or wait for desktop installers. The release is incomplete until .exe, .dmg and .AppImage artifacts are attached."
+  echo "  gh workflow run desktop-release.yml --ref $tag -f release_tag=$tag"
+  echo "  gh release view $tag --json assets"
+}
 
 version="$(node -p "require('./package.json').version")"
 tag="v$version"
@@ -111,6 +118,7 @@ if [ "$DRY_RUN" -eq 1 ]; then
   printf '\033[33m[dry-run] would commit, tag %s, push main + tag, then:\033[0m\n' "$tag"
   echo "  gh release create $tag --title \"Release $tag\" --notes-file <notes> $vsix"
   echo "  npm run publish:ovsx"
+  installer_handoff
   [ "$NO_INSTALL" -eq 1 ] || echo "  ./scripts/install.sh $vsix --all"
   echo "--- release notes ---"; cat "$notes_file"
   exit 0
@@ -193,5 +201,6 @@ else
     echo "  (local install failed - the release itself is already published)" >&2
 fi
 
-printf '\033[32mReleased %s with %s attached.\033[0m\n' "$tag" "$vsix"
+printf '\033[33mPublished %s with %s attached, and published to Open VSX.\033[0m\n' "$tag" "$vsix"
+installer_handoff
 echo "Marketplace publish is separate: npm run publish"

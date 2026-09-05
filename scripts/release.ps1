@@ -24,12 +24,14 @@
                                        AND the .vsix attached as a release asset
     9. npm run publish:ovsx           publish that .vsix to Open VSX
    10. desktop installers             dispatch desktop-release.yml against the
-                                       TAG, wait, and assert the .exe/.dmg are
+                                       TAG, wait, and assert the .exe/.dmg/.AppImage are
                                        actually on the release (skip with
                                        -SkipInstallers)
-   10. install.ps1 -VsixPath ... -All install the released .vsix into every
+   11. install.ps1 -VsixPath ... -All install the released .vsix into every
                                        detected local editor (skip with
                                        -NoInstall; never fails the release)
+
+  Missing installers fail the release after the local install attempt.
 
   Open VSX is part of the release. The VS Code Marketplace is deliberately NOT —
   that one is the owner's, a separate explicit step (`npm run publish`).
@@ -251,6 +253,7 @@ Run "npm run publish:ovsx" { npm run publish:ovsx }
 # was dispatched. `gh release view --json assets` is the check the playbook says
 # a release is not finished without, so the script makes it rather than asking a
 # human to remember to.
+$installerFailure = $null
 if ($SkipInstallers) {
   Step "skipping the desktop installers (-SkipInstallers)"
 } else {
@@ -260,6 +263,7 @@ if ($SkipInstallers) {
   Step "waiting for the installers to be attached to $tag (up to $InstallerTimeoutMinutes min)"
   $deadline = (Get-Date).AddMinutes($InstallerTimeoutMinutes)
   $attached = $false
+  $missing = @(".exe", ".dmg", ".AppImage")
   while ((Get-Date) -lt $deadline) {
     Start-Sleep -Seconds 20
     # No `2>$null` here. Redirecting a native command's stderr under
@@ -277,20 +281,22 @@ if ($SkipInstallers) {
     }
     $hasWin = @($names | Where-Object { $_ -like "*.exe" }).Count -gt 0
     $hasMac = @($names | Where-Object { $_ -like "*.dmg" }).Count -gt 0
-    if ($hasWin -and $hasMac) { $attached = $true; break }
+    $hasLinux = @($names | Where-Object { $_ -like "*.AppImage" }).Count -gt 0
+    $missing = @(
+      if (-not $hasWin) { ".exe" }
+      if (-not $hasMac) { ".dmg" }
+      if (-not $hasLinux) { ".AppImage" }
+    )
+    if ($hasWin -and $hasMac -and $hasLinux) { $attached = $true; break }
   }
   if ($attached) {
     Step "installers attached to $tag"
   } else {
-    # Everything above is published, so this must not read as a failed release —
-    # but it must not read as a finished one either.
-    Write-Host "  Installers did NOT appear on $tag within $InstallerTimeoutMinutes min." -ForegroundColor Yellow
-    Write-Host "  The release itself is published. Check the run, then re-run:" -ForegroundColor Yellow
+    $installerFailure = "Release $tag is incomplete: missing installer artifacts $($missing -join ', ') after $InstallerTimeoutMinutes min."
+    Write-Host "  $installerFailure" -ForegroundColor Yellow
+    Write-Host "  The GitHub Release and Open VSX publish already exist. Check the installer run, then re-run:" -ForegroundColor Yellow
     Write-Host "    gh run list --workflow=desktop-release.yml --limit 3" -ForegroundColor Yellow
     Write-Host "    gh workflow run desktop-release.yml --ref $tag -f release_tag=$tag" -ForegroundColor Yellow
-    Write-Host "  A release that touches src/desktop/ or media/chat.js is not finished until" -ForegroundColor Yellow
-    Write-Host "    gh release view $tag --json assets" -ForegroundColor Yellow
-    Write-Host "  lists them." -ForegroundColor Yellow
   }
 }
 
@@ -312,10 +318,17 @@ if ($NoInstall) {
   $installExit = $LASTEXITCODE
   $ErrorActionPreference = "Stop"
   if ($installExit) {
-    Write-Host "  Local install did not complete (exit $installExit). The release itself is done;" -ForegroundColor Yellow
+    Write-Host "  Local install did not complete (exit $installExit). The GitHub Release and Open VSX publish already exist;" -ForegroundColor Yellow
     Write-Host "  re-run: scripts\install.ps1 -VsixPath $vsix -All" -ForegroundColor Yellow
   }
 }
 
-Write-Host "`nReleased $tag with $vsix attached, and published to Open VSX." -ForegroundColor Green
+if ($SkipInstallers) {
+  Write-Host "`nPublished $tag with $vsix attached and to Open VSX; installer completion was skipped (-SkipInstallers)." -ForegroundColor Yellow
+} elseif ($installerFailure) {
+  Write-Host "`nPublished $tag with $vsix attached and to Open VSX; installer completion failed." -ForegroundColor Yellow
+} else {
+  Write-Host "`nReleased $tag with $vsix and .exe/.dmg/.AppImage installers attached, and published to Open VSX." -ForegroundColor Green
+}
 Write-Host "Marketplace publish is the owner's: npm run publish" -ForegroundColor DarkGray
+if ($installerFailure) { throw $installerFailure }
