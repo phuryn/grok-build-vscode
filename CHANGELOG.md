@@ -1,5 +1,13 @@
 # Changelog
 
+## 4.1.8 — 2026-09-05
+
+**Opening a conversation no longer freezes the app when you have a lot of them.** One shortcut on the way *out* of an untouched conversation was doing two expensive things nobody asked for, and both got worse the more conversations you had on disk.
+
+### Fixed
+
+- **The window stops locking up when you open or switch conversations** ([#131](https://github.com/phuryn/grok-build-vscode/issues/131), [#133](https://github.com/phuryn/grok-build-vscode/issues/133)). Opening an existing conversation first leaves the untouched **New session** you were on, and leaving it rebuilt the entire history list by reading every conversation directory in the project, then started a second agent process purely to delete that one empty conversation. With 3000 conversations present the app stopped responding for most of a second on every open, and the cost grew with the store. The abandoned conversation is now announced on its own, and the delete reuses the process already attached to it — no directory walk at all, and no second process. Reported by @RudyParengal and @leriksen71LJR.
+
 ## 4.1.7 — 2026-09-05
 
 **A new cloud machine offers to connect an agent straight away, and the composer's menus close each other.** Two visible papercuts, and two quieter fixes: the buttons of a sign-in started from Settings did nothing, and approving an Edit or a Rewind long after asking for it could discard work done in the meantime.
