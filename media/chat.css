@@ -1521,7 +1521,13 @@ body.thinking-hidden .msg.thinking.find-reveal { display: block; }
   background: color-mix(in srgb, currentColor 10%, transparent);
 }
 .welcome-cli-update button {
-  display: inline-flex;
+  /* Its own line, always. The copy above it is an inline span, so an
+     inline-level button flows INTO the sentence and the last word wraps around
+     it — which is exactly what shipped. `display: flex` makes the box
+     block-level (new line, like the `display: block` this replaced) while
+     `width: fit-content` keeps it button-sized instead of full-bleed. */
+  display: flex;
+  width: fit-content;
   align-items: center;
   justify-content: center;
   min-height: 30px;
