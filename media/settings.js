@@ -1777,6 +1777,14 @@
     }
   }
 
+  /** Small ordinal heading for the two-device OAuth handoff. */
+  function renderOauthStep(text) {
+    const el = document.createElement("div");
+    el.className = "settings-connector-oauth-step";
+    el.textContent = text;
+    return el;
+  }
+
   function renderMcpSectionState(text, error) {
     const el = document.createElement("div");
     el.className = "settings-mcp-state" + (error ? " is-error" : "");
@@ -2067,14 +2075,34 @@
         form.className = "settings-connector-key settings-connector-oauth";
         if (authorization.error) form.appendChild(renderMcpSectionState(authorization.error, true));
         if (authorization.status === "waiting" && authorization.url) {
+          // Numbered, because the first step reads as a footnote otherwise. The
+          // owner's first run stalled here: the consent link looked like
+          // supporting prose next to a paste box, so the box appeared to be the
+          // thing to act on and the link went unclicked.
+          form.appendChild(renderOauthStep("Step 1"));
           const link = document.createElement("a");
-          link.className = "settings-connector-oauth-link";
+          link.className = "settings-action is-primary settings-connector-oauth-link";
           link.href = authorization.url;
           link.target = "_blank";
           link.rel = "noopener noreferrer";
           link.textContent = "Open sign-in";
           form.appendChild(link);
-          form.appendChild(renderMcpSectionState("After approving access, the callback page may fail to load. Copy its full address from the address bar and paste it below. Keep this tab open."));
+          form.appendChild(renderMcpSectionState("Approve access on this device."));
+          form.appendChild(renderOauthStep("Step 2"));
+          // The instruction carries the weight, not the caveat: the page failing
+          // to load is what it looks like when this has WORKED, so leading with
+          // the failure reads as an error rather than the next step.
+          const copy = document.createElement("div");
+          copy.className = "settings-connector-key-hint";
+          const strong = document.createElement("strong");
+          strong.textContent = "Copy its full address";
+          copy.appendChild(strong);
+          copy.appendChild(document.createTextNode(
+            " from the address bar and paste it below. The page it returns to will"
+            + " probably fail to load — that is expected, and the address is still"
+            + " the one we need. Keep this tab open.",
+          ));
+          form.appendChild(copy);
           const input = document.createElement("input");
           input.type = "text";
           input.className = "settings-text settings-connector-oauth-input";

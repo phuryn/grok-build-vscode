@@ -903,7 +903,24 @@ describe("settings overlay (chat.js)", () => {
     expect(link.href).toBe(consent.url);
     expect(link.target).toBe("_blank");
     expect(link.rel).toContain("noopener");
-    expect(overlay.textContent).toMatch(/page may fail to load/);
+    expect(overlay.textContent).toMatch(/probably fail to load/);
+    // The consent link is the FIRST thing to act on, and it did not read that
+    // way when it was link-coloured prose sitting beside a paste box — the box
+    // looked like the control and the link went unclicked. Pin both halves of
+    // the remedy: it is a primary button, and the steps are numbered in order.
+    expect(link.className).toContain("is-primary");
+    const steps = [...overlay.querySelectorAll(".settings-connector-oauth-step")]
+      .map((el) => el.textContent);
+    expect(steps).toEqual(["Step 1", "Step 2"]);
+    const form = link.closest(".settings-connector-oauth")!;
+    const order = [...form.querySelectorAll(".settings-connector-oauth-step, .settings-connector-oauth-link, .settings-connector-oauth-input")]
+      .map((el) => el.className.split(" ").pop());
+    expect(order).toEqual([
+      "settings-connector-oauth-step",
+      "settings-connector-oauth-link",
+      "settings-connector-oauth-step",
+      "settings-connector-oauth-input",
+    ]);
     const input = overlay.querySelector(".settings-connector-oauth-input") as HTMLInputElement;
     input.value = "http://localhost:22227/oauth/callback?code=abc&state=test";
     click(h.window, overlay.querySelector(".settings-connector-oauth-submit")!);
