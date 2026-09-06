@@ -249,6 +249,20 @@ describe("Refresh re-reads the CLI version", () => {
     for (const s of seen) expect(s.memo, s.provider).toBeUndefined();
   });
 
+  it("does not spawn --version at the binary an update is replacing", async () => {
+    // Open Settings -> Providers, which posts refreshProviders, and press
+    // Update before the credential probe ahead of the version probe returns.
+    // The updater drains the in-flight version probe and then replaces the
+    // binary, so a probe started after that drain is the one it cannot see —
+    // on Windows the replace fails and the row reports an update that never
+    // happened. reprobeProviderCredentials has carried this guard all along.
+    const sidebar = makeSidebar({ codex: true, claude: true });
+    const seen = withVersionSpy(sidebar);
+    sidebar.providerCliUpdate = { provider: "codex", done: Promise.resolve() };
+    await refresh(sidebar);
+    expect(seen.map((s) => s.provider)).toEqual(["claude"]);
+  });
+
   it("leaves Grok's version alone — it has its own update check", async () => {
     // And re-probing it would re-run the locator that refresh deliberately
     // does not touch when a test forces the CLI missing.

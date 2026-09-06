@@ -8380,6 +8380,15 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
    *  overwrites it; on failure the last known version is better than a blank
    *  row, and unlike the update path nothing here says the binary changed. */
   private async reprobeProviderVersion(provider: "codex" | "claude"): Promise<void> {
+    // Same guard reprobeProviderCredentials carries, for the same reason: a
+    // `--version` spawn holds the binary the updater is replacing. The updater
+    // drains the in-flight probe before it replaces, so a probe started after
+    // that drain is precisely the one it cannot see -- and on Windows the
+    // replace then fails and the row reports an update that did not happen.
+    // Reachable by opening Providers, which posts refreshProviders, and
+    // pressing Update before the credential probe ahead of this one returns.
+    // The updater re-reads the version itself when it finishes.
+    if (this.providerCliUpdate?.provider === provider) return;
     const inFlight = provider === "codex" ? this.codexVersionProbe : this.claudeVersionProbe;
     await inFlight?.catch(() => "");
     if (provider === "codex") this.codexVersionProbe = undefined;
