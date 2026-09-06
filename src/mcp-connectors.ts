@@ -107,8 +107,21 @@ export const MCP_CONNECTOR_SECRET_KEY_PREFIX = "grok.mcpConnector.";
 /** Paste field / SecretStorage cap. Fine-grained PATs are long; this is abuse-sized. */
 export const MAX_CONNECTOR_KEY_CHARS = 8192;
 
-/** Browser OAuth can sit on a consent page; this is a hard ceiling, not a spinner. */
+/**
+ * Ceiling on the part WE control: npx resolving the package, the proxy booting,
+ * and the authorization link appearing. Not a spinner.
+ */
 export const MCP_REMOTE_CONNECT_TIMEOUT_MS = 180_000;
+
+/**
+ * Ceiling once the link exists, replacing the one above. From that moment the
+ * clock belongs to a person reading a consent screen -- on a phone, on their
+ * own time, often signing in to the vendor first. Three minutes measured from
+ * `npx` is not that budget: Airtable's flow alone (sign in, choose a base,
+ * approve) routinely outruns it, and when it does we kill the proxy out from
+ * under a sign-in the user is still being told to finish.
+ */
+export const MCP_REMOTE_AUTHORIZATION_TIMEOUT_MS = 900_000;
 
 export type ConnectorAuth = "oauth" | "key";
 

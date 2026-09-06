@@ -199,13 +199,16 @@ describe("manual remote OAuth", () => {
   const url = "https://vendor.example/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A22227%2Foauth%2Fcallback&state=attempt-1";
   const pasted = "http://localhost:22227/oauth/callback?code=test-code&state=attempt-1";
 
-  function begin(timeoutMs = 1000) {
+  // The human window defaults to the startup ceiling so the tests written
+  // before the two were split keep asserting exactly what they used to.
+  function begin(timeoutMs = 1000, authorizationTimeoutMs = timeoutMs) {
     const proc = new FakeProc();
     const onAuthorization = vi.fn();
     const callbackFetch = vi.fn().mockImplementation(async () => new Response("ok"));
     const spawn = vi.fn(() => proc as never);
     const result = authorizeMcpRemote({ command: "npx", args: mcpRemoteArgs("https://vendor.example/mcp"),
-      spawn, timeoutMs, onAuthorization, callbackFetch, env: { PATH: "npx-path", NODE_OPTIONS: "--no-warnings" } });
+      spawn, timeoutMs, authorizationTimeoutMs, onAuthorization, callbackFetch,
+      env: { PATH: "npx-path", NODE_OPTIONS: "--no-warnings" } });
     return { proc, onAuthorization, callbackFetch, spawn, result };
   }
 
@@ -243,6 +246,27 @@ describe("manual remote OAuth", () => {
     await complete(pasted);
     h.proc.stderr.write("Authentication successful! Caching credentials...\n");
     await expect(h.result).resolves.toEqual({ ok: true });
+  });
+
+  it("hands the clock to the user once the link exists instead of spending the startup ceiling", async () => {
+    const h = begin(20, 5_000);
+    issue(h.proc);
+    // Well past the startup ceiling: a person reading a consent screen has not
+    // run out of time, and killing the proxy here would strip the listener the
+    // callback they are about to approve must come back to.
+    await new Promise((r) => setTimeout(r, 120));
+    expect(h.proc.killed).toBe(false);
+    const complete = h.onAuthorization.mock.calls[0][1];
+    await complete(pasted);
+    expect(h.callbackFetch).toHaveBeenCalledOnce();
+    h.proc.stderr.write("Authentication successful! Caching credentials...\n");
+    await expect(h.result).resolves.toEqual({ ok: true });
+  });
+
+  it("still expires while starting up, before any link has been offered", async () => {
+    const h = begin(20, 5_000);
+    await expect(h.result).resolves.toMatchObject({ ok: false, kind: "timeout" });
+    expect(h.onAuthorization).not.toHaveBeenCalled();
   });
 
   it("expires the callback and never includes another tab's consent URL in failure output", async () => {

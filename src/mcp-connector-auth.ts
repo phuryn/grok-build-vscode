@@ -28,6 +28,7 @@ import { completeMcpOAuthCallback, mcpOAuthChallenge } from "./mcp-oauth-redirec
 import { writeMcpRemoteHeadlessPreload } from "./mcp-remote-headless";
 import {
   MCP_INITIALIZE_REQUEST,
+  MCP_REMOTE_AUTHORIZATION_TIMEOUT_MS,
   MCP_REMOTE_CONNECT_TIMEOUT_MS,
   TIER1_CONNECTORS,
   classifyConnectFailure,
@@ -67,6 +68,8 @@ export interface AuthorizeMcpRemoteOpts {
   shell?: boolean;
   env?: NodeJS.ProcessEnv;
   timeoutMs?: number;
+  /** Replaces `timeoutMs` once the authorization link exists. */
+  authorizationTimeoutMs?: number;
   /**
    * Key-auth connectors: a DCR-incompatibility failure means the pasted
    * token was rejected, not that the app can never work.
@@ -176,6 +179,7 @@ function runAuthorizeMcpRemote(
   opts: AuthorizeMcpRemoteOpts,
 ): Promise<AuthorizeMcpRemoteResult> {
   const timeoutMs = opts.timeoutMs ?? MCP_REMOTE_CONNECT_TIMEOUT_MS;
+  const authorizationTimeoutMs = opts.authorizationTimeoutMs ?? MCP_REMOTE_AUTHORIZATION_TIMEOUT_MS;
   const chunks: string[] = [];
   let settled = false;
   let timedOut = false;
@@ -196,14 +200,28 @@ function runAuthorizeMcpRemote(
   };
 
   return new Promise((resolve) => {
-    const timer = setTimeout(() => {
+    const expire = () => {
       timedOut = true;
       resolve(finish({
         ok: false,
         kind: "timeout",
         message: connectFailureMessage("timeout"),
       }));
-    }, timeoutMs);
+    };
+    let timer = setTimeout(expire, timeoutMs);
+
+    /**
+     * The proxy has printed a link, so the remaining wait is a person's, not
+     * ours. Re-arm on the human budget instead of spending what is left of the
+     * startup ceiling on a consent screen.
+     */
+    let handedOver = false;
+    const handOverToHuman = () => {
+      if (handedOver || settled) return;
+      handedOver = true;
+      clearTimeout(timer);
+      timer = setTimeout(expire, authorizationTimeoutMs);
+    };
 
     const succeed = () => {
       clearTimeout(timer);
@@ -301,6 +319,8 @@ function runAuthorizeMcpRemote(
     const onLine = (line: string) => {
       considerOutput(line);
       if (settled) return;
+      // Both flows hand the clock over here: the desk user is in a browser too.
+      if (line.includes("Please authorize this client by visiting:")) handOverToHuman();
       if (opts.onAuthorization) {
         if (line.includes("Please authorize this client by visiting:")) awaitingAuthorizationUrl = true;
         else if (awaitingAuthorizationUrl && line.trim()) {
