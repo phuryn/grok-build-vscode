@@ -6014,7 +6014,13 @@
     // headings — a filtered list that still lists everything is not a filter.
     const sections = railSections();
     const repos = sections.active.filter((repo) => !q || railRepoHasMatch(repo));
-    if (repos.length) {
+    const archivedRepos = sections.archived.filter((repo) => !q || railRepoHasMatch(repo));
+    // TWIN of the same guard in projects-rail.js. Archiving the last project
+    // used to take the header, the "+" and the wide add target with it, leaving
+    // a rail with nothing to press -- and `!shownAnything` could not rescue it,
+    // because the archive section below had already set it.
+    const emptyProjects = !repos.length && !q && archivedRepos.length > 0;
+    if (repos.length || emptyProjects) {
       const forcedOpen = !!q;
       const open = forcedOpen || !railGroupIsCollapsed("projects");
       root.appendChild(railCollapsibleGroupHead({
@@ -6032,6 +6038,7 @@
         list.className = "rail-list rail-projects";
         for (const repo of repos) list.appendChild(renderRailRepo(repo, false));
         root.appendChild(list);
+        if (emptyProjects) root.appendChild(railNote("Every project is archived."));
         // Full-width target under the list, not only the small "+" in the group
         // head. With one project or none the rail is mostly empty space and the
         // header glyph is easy to miss — and on a phone, easy to miss AND hard
@@ -6042,7 +6049,7 @@
     }
 
     // Project archive: put-away + age-quiet projects. Folded by default; search opens it.
-    const archived = sections.archived.filter((repo) => !q || railRepoHasMatch(repo));
+    const archived = archivedRepos;
     if (archived.length) {
       const forcedOpen = !!q;
       const open = forcedOpen || !railGroupIsCollapsed("archived");

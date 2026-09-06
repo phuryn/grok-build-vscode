@@ -828,7 +828,14 @@
       ? [current, ...active.filter((r) => r !== current)]
       : active;
     const projectRepos = ordered.filter((r) => !q || repoHasMatch(r));
-    if (projectRepos.length) {
+    // Archiving every project must not take the screen's controls with it. The
+    // header, the "+" and the wide add target all live inside this block, so
+    // the last archived row used to leave a rail with no way to add anything --
+    // and the `!shown` fallback below could not step in, because the archive
+    // section had already set `shown`. The archive is a grouping, not a
+    // different screen, so Projects stays with an empty state of its own.
+    const emptyProjects = !projectRepos.length && !q && archived.length > 0;
+    if (projectRepos.length || emptyProjects) {
       const forcedOpen = !!q;
       const open = forcedOpen || !state.groupCollapsed.projects;
       root.appendChild(collapsibleGroupHead({
@@ -851,6 +858,12 @@
           }));
         }
         root.appendChild(list);
+        if (emptyProjects) {
+          const note = document.createElement("div");
+          note.className = "rail-note";
+          note.textContent = "Every project is archived.";
+          root.appendChild(note);
+        }
         // A full-width target under the list, not only the small "+" beside the
         // group title. The owner's reason, and it is about where the eye goes:
         // with one project or none the rail is mostly empty space, and the only
