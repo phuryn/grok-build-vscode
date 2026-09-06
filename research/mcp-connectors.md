@@ -91,8 +91,15 @@ Scope comes from the challenge/resource metadata, with the catalog's explicit
 Stripe `mcp` override. Resource indicators accompany authorization and exchange
 ([MCP authorization](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization)).
 
-The returned registration, including any client secret (Atlassian), lives in
-SecretStorage under a connector/origin-specific key. An inactive registration
+The returned registration, including any client secret (Atlassian), is written
+0600 beside the tokens it owns, as `<hash>_afkpilot-client.json` in the same
+measured store. It belongs there rather than in SecretStorage because the
+tokens are machine-global and SecretStorage is per install: a host that could
+not see the registration would omit `--static-oauth-client-info`, refresh with
+a different client ID, and the SDK would answer the rejection by deleting the
+token file. The relay origin is enforced by content — a registration whose
+`redirect_uris` do not carry the current callback is not ours. An inactive
+registration
 is reusable after cancelled consent, but cannot change a legacy proxy's client
 ID. Successful exchange seeds the measured `<hash>_tokens.json` with the complete
 token response plus `expires_at: Date.now() + expires_in * 1000`, then activates
@@ -117,11 +124,14 @@ an overlapping shutdown. Legacy connectors receive their original argv until
 reconnected. mcp-remote owns refresh: no host refresh loop and no OAuth access
 token injected as a fixed header. Both measured version constants stay pinned.
 
-The fixed token filename is shared per endpoint, while SecretStorage registrations
-are specific to a host and relay origin. Concurrent dev/prod use or hosts with
-separate secret vaults can therefore replace each other's token without sharing
-its registration. This layout needs token-provenance coordination before those
-owners can safely alternate; this flow keeps the prescribed existing store layout.
+Registration and tokens now share a directory, a hash and a lifetime, so every
+host on the machine reads the same answer and a store the proxy abandons on a
+version bump orphans both together — correct, because re-registration issues a
+client the old tokens do not belong to. mcp-remote only globs
+`<hash>_code_verifier*`, so the extra file survives its housekeeping. What is
+still shared per endpoint and not per relay is the token file itself: pointing
+one host at dev and another at production replaces one origin's token with the
+other's, and the remedy is to reconnect.
 
 `mcp-remote-headless.ts` remains as a guard on the post-seeding probe. Its
 NODE_OPTIONS preload suppresses only mcp-remote's bundled browser launcher;

@@ -11653,7 +11653,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       for (const server of servers) {
         const connector = connectorById(server.name);
         if (!connector || isKeyConnector(connector)) continue;
-        const client = await ownedMcpOAuthClient(this.context.secrets, connector.id, store[connector.id].endpoint, this.relayUrl());
+        const client = ownedMcpOAuthClient(store[connector.id].endpoint, this.relayUrl());
         if (!client) continue;
         const file = writeOAuthClientInfoFile(client);
         files.push(file);
@@ -11739,7 +11739,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     this.postMcpConnectors();
     try {
       const client = await authorizeMcpConnectorOAuth({
-        connector, endpoint, relayUrl: this.relayUrl(), secrets: this.context.secrets,
+        connector, endpoint, relayUrl: this.relayUrl(),
         env: npx.env,
         onAuthorization: async (url) => {
           if (this.mcpRemoteAuthorization !== pending) return;

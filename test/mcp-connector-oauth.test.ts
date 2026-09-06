@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { authorizeMcpConnectorOAuth, generateMcpOAuthChallenge, mcpOAuthRegistrationKey, mcpOAuthTokenPath,
+import { authorizeMcpConnectorOAuth, generateMcpOAuthChallenge, mcpOAuthRegistrationPath, mcpOAuthTokenPath,
   mcpOAuthUrls, ownedMcpOAuthClient, pollMcpOAuthResult, seedMcpOAuthTokens, writeOAuthClientInfoFile } from "../src/mcp-connector-oauth";
 import { mcpRemoteArgs, connectorById, MCP_REMOTE_STORE_VERSION } from "../src/mcp-connectors";
 import { GrokSidebar } from "../src/sidebar";
@@ -15,7 +15,7 @@ vi.mock("node:fs", async (original) => {
 
 const roots: string[] = [];
 function temp() { const root = fs.mkdtempSync(join(tmpdir(), "grok-oauth-test-")); roots.push(root); return root; }
-afterEach(() => { vi.restoreAllMocks(); for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true }); });
 
 const relayUrl = "wss://dev.relay.example/socket";
 const endpoint = "https://mcp.notion.com/mcp";
@@ -23,12 +23,9 @@ const callback = "https://dev.relay.example/mcp/oauth/callback";
 const issuer = "https://auth.example/tenant";
 const client = { client_id: "registered-client", redirect_uris: [callback] };
 const tokens = { access_token: "test-access", token_type: "Bearer", expires_in: 3600, refresh_token: "test-refresh", scope: "tools" };
-const registration = (active = true) => ({ endpoint, issuer, client, active });
-
-function secrets() {
-  const data = new Map<string, string>();
-  return { data, get: vi.fn(async (key: string) => data.get(key)), store: vi.fn(async (key: string, value: string) => { data.set(key, value); }) };
-}
+const configDir = (root: string) => ({ MCP_REMOTE_CONFIG_DIR: root });
+const writeRegistration = (root: string, active = true) =>
+  fs.writeFileSync(mcpOAuthRegistrationPath(endpoint, configDir(root)), JSON.stringify({ endpoint, issuer, client, active }));
 
 describe("state, PKCE, relay origin and token-store compatibility", () => {
   it("generates independent high-entropy state and RFC7636 S256 verifier/challenge pairs", () => {
@@ -47,15 +44,15 @@ describe("state, PKCE, relay origin and token-store compatibility", () => {
   it("uses the configured relay origin and separates production/dev registrations", () => {
     expect(mcpOAuthUrls(relayUrl)).toEqual({ origin: "https://dev.relay.example", callback, result: "https://dev.relay.example/mcp/oauth/result" });
     expect(mcpOAuthUrls("ws://127.0.0.1:8787/ws").callback).toBe("http://127.0.0.1:8787/mcp/oauth/callback");
-    expect(mcpOAuthRegistrationKey("notion", relayUrl)).toBe(mcpOAuthRegistrationKey("notion", "wss://dev.relay.example/else"));
-    expect(mcpOAuthRegistrationKey("notion", relayUrl)).not.toBe(mcpOAuthRegistrationKey("notion", "wss://prod.relay.example"));
-    expect(mcpOAuthRegistrationKey("notion", relayUrl)).not.toBe(mcpOAuthRegistrationKey("linear", relayUrl));
   });
 
   it("seeds the exact response plus millisecond expires_at at the measured hash/version path", () => {
     const root = temp();
     const path = mcpOAuthTokenPath("https://mcp.linear.app/mcp", { MCP_REMOTE_CONFIG_DIR: root }, "/unused");
     expect(path).toBe(join(root, "mcp-remote-0.1.36", "fcc436b0d1e0a1ed9a2b15bbd638eb13_tokens.json"));
+    // The registration shares the store, the hash and the lifetime of its tokens.
+    expect(mcpOAuthRegistrationPath("https://mcp.linear.app/mcp", { MCP_REMOTE_CONFIG_DIR: root }, "/unused"))
+      .toBe(join(root, "mcp-remote-0.1.36", "fcc436b0d1e0a1ed9a2b15bbd638eb13_afkpilot-client.json"));
     seedMcpOAuthTokens(path, tokens, 1700000000000);
     expect(JSON.parse(fs.readFileSync(path, "utf8"))).toEqual({ ...tokens, expires_at: 1700003600000 });
     expect(fs.readdirSync(join(root, `mcp-remote-${MCP_REMOTE_STORE_VERSION}`))).toHaveLength(1);
@@ -145,7 +142,6 @@ describe("relay polling", () => {
 
 function flow(options: { confidential?: boolean; postAuth?: boolean; outcome?: Record<string, unknown>; resourceFallback?: boolean; oidc?: boolean } = {}) {
   const root = temp();
-  const vault = secrets();
   const returnedClient = { ...client, ...(options.confidential ? { client_secret: "test-client-secret", token_endpoint_auth_method: "none" } : {}) };
   const onAuthorization = vi.fn();
   const request = vi.fn(async (input, init) => {
@@ -166,24 +162,27 @@ function flow(options: { confidential?: boolean; postAuth?: boolean; outcome?: R
     if (url.endsWith("/token")) return Response.json(tokens);
     throw new Error(`Unexpected request: ${url}`);
   });
-  const opts = { connector: connectorById("notion")!, endpoint, relayUrl, secrets: vault, onAuthorization,
-    fetch: request as typeof fetch, env: { MCP_REMOTE_CONFIG_DIR: root }, pollIntervalMs: 1 };
-  return { root, vault, request, opts, onAuthorization, returnedClient,
+  const opts = { connector: connectorById("notion")!, endpoint, relayUrl, onAuthorization,
+    fetch: request as typeof fetch, env: configDir(root), pollIntervalMs: 1 };
+  return { root, request, opts, onAuthorization, returnedClient,
+    owned: (url = endpoint, relay = relayUrl) => ownedMcpOAuthClient(url, relay, opts.env),
     tokenPath: () => mcpOAuthTokenPath(endpoint, opts.env),
     calls: (path: string) => request.mock.calls.filter(([url]) => String(url).endsWith(path)) };
 }
 
 describe("owned registration versus legacy connector", () => {
-  it("requires completed migration, matching connector endpoint, and matching relay origin", async () => {
-    const vault = secrets();
-    expect(await ownedMcpOAuthClient(vault, "notion", endpoint, relayUrl)).toBeUndefined();
+  it("requires completed migration, matching connector endpoint, and matching relay origin", () => {
+    const root = temp();
+    const env = configDir(root);
+    // An absent store must answer "we own nothing" rather than creating one.
+    expect(ownedMcpOAuthClient(endpoint, relayUrl, { MCP_REMOTE_CONFIG_DIR: join(root, "absent") })).toBeUndefined();
+    expect(ownedMcpOAuthClient(endpoint, relayUrl, env)).toBeUndefined();
     for (const active of [false, true]) {
-      vault.data.set(mcpOAuthRegistrationKey("notion", relayUrl), JSON.stringify(registration(active)));
-      expect(await ownedMcpOAuthClient(vault, "notion", endpoint, relayUrl)).toEqual(active ? client : undefined);
+      writeRegistration(root, active);
+      expect(ownedMcpOAuthClient(endpoint, relayUrl, env)).toEqual(active ? client : undefined);
     }
-    expect(await ownedMcpOAuthClient(vault, "notion", endpoint, "wss://prod.relay.example")).toBeUndefined();
-    expect(await ownedMcpOAuthClient(vault, "notion", "https://other.example/mcp", relayUrl)).toBeUndefined();
-    expect(await ownedMcpOAuthClient(vault, "linear", endpoint, relayUrl)).toBeUndefined();
+    expect(ownedMcpOAuthClient(endpoint, "wss://prod.relay.example", env)).toBeUndefined();
+    expect(ownedMcpOAuthClient("https://other.example/mcp", relayUrl, env)).toBeUndefined();
     expect(mcpRemoteArgs(endpoint)).not.toContain("--static-oauth-client-info");
   });
 
@@ -191,7 +190,7 @@ describe("owned registration versus legacy connector", () => {
     const h = flow({ outcome: { error: "access_denied" } });
     fs.writeFileSync(h.tokenPath(), "legacy-token");
     await expect(authorizeMcpConnectorOAuth(h.opts)).rejects.toThrow(/cancelled/);
-    expect(await ownedMcpOAuthClient(h.vault, "notion", endpoint, relayUrl)).toBeUndefined();
+    expect(h.owned()).toBeUndefined();
     expect(fs.readFileSync(h.tokenPath(), "utf8")).toBe("legacy-token");
     await expect(authorizeMcpConnectorOAuth(h.opts)).rejects.toThrow(/cancelled/);
     expect(h.calls("/register")).toHaveLength(1);
@@ -201,10 +200,11 @@ describe("owned registration versus legacy connector", () => {
   it.each(["grok", "codex", "claude"])("passes static client info only for our registration to %s and cleans it with its CLI", async (provider) => {
     const h = flow({ confidential: true });
     await authorizeMcpConnectorOAuth(h.opts);
+    // The host reads the same machine-global store the spawned proxy will.
+    vi.stubEnv("MCP_REMOTE_CONFIG_DIR", h.root);
     const sidebar = Object.create(GrokSidebar.prototype) as any;
     sidebar.loadMcpConnectorKeys = async () => {};
     sidebar.connectedConnectorStore = () => ({ notion: { endpoint }, linear: { endpoint: "https://mcp.linear.app/mcp" } });
-    sidebar.context = { secrets: h.vault };
     sidebar.relayUrl = () => relayUrl;
     sidebar.reservedMcpIdentityFor = () => ({ names: [], urls: [] });
     sidebar.lapsedOAuthConnectors = () => new Set();
@@ -246,7 +246,7 @@ describe("host-owned OAuth flow (all HTTP mocked)", () => {
     const seeded = JSON.parse(fs.readFileSync(h.tokenPath(), "utf8"));
     expect(seeded).toEqual({ ...tokens, expires_at: expect.any(Number) });
     expect(seeded.expires_at).toBeGreaterThanOrEqual(before + 3600000);
-    expect(await ownedMcpOAuthClient(h.vault, "notion", endpoint, relayUrl)).toEqual(h.returnedClient);
+    expect(h.owned()).toEqual(h.returnedClient);
     await authorizeMcpConnectorOAuth(h.opts);
     expect(h.calls("/register")).toHaveLength(1);
     expect(h.calls("/token")).toHaveLength(2); // Only authorization_code, never host refresh.
@@ -266,16 +266,18 @@ describe("host-owned OAuth flow (all HTTP mocked)", () => {
     expect(JSON.parse(h.calls("/register")[0][1].body).scope).toBe("mcp");
   });
 
-  it("restores legacy tokens when activating the registration in SecretStorage fails", async () => {
+  it("restores legacy tokens when activating the registration fails", async () => {
     const h = flow();
     fs.writeFileSync(h.tokenPath(), "legacy-token");
-    h.vault.store.mockImplementation(async (key, value) => {
-      if (JSON.parse(value).active) throw new Error("vault failure with secret");
-      h.vault.data.set(key, value);
+    const rename = vi.mocked(fs.renameSync).getMockImplementation()!;
+    let activations = 0;
+    vi.mocked(fs.renameSync).mockImplementation((from, to) => {
+      if (String(to).endsWith("_afkpilot-client.json") && ++activations === 2) throw new Error("disk failure with secret");
+      return rename(from, to);
     });
     await expect(authorizeMcpConnectorOAuth(h.opts)).rejects.toThrow("Could not complete connector sign-in");
     expect(fs.readFileSync(h.tokenPath(), "utf8")).toBe("legacy-token");
-    expect(await ownedMcpOAuthClient(h.vault, "notion", endpoint, relayUrl)).toBeUndefined();
+    expect(h.owned()).toBeUndefined();
   });
 
   it("does not reflect transport/secret-store details and never seeds on failure", async () => {

@@ -9,11 +9,6 @@ import { MCP_INITIALIZE_REQUEST, MCP_REMOTE_AUTHORIZATION_TIMEOUT_MS, MCP_REMOTE
   MCP_REMOTE_STORE_VERSION, type ConnectorDef } from "./mcp-connectors";
 import { httpBaseFromRelayUrl } from "./remote-frames";
 
-export interface OAuthSecrets {
-  get(key: string): PromiseLike<string | undefined>;
-  store(key: string, value: string): PromiseLike<void>;
-}
-
 export interface OAuthClientInformation extends Record<string, unknown> {
   client_id: string;
   client_secret?: string;
@@ -45,10 +40,6 @@ export function mcpOAuthUrls(relayUrl: string): { origin: string; callback: stri
   return { origin, callback: `${origin}/mcp/oauth/callback`, result: `${origin}/mcp/oauth/result` };
 }
 
-export function mcpOAuthRegistrationKey(id: string, relayUrl: string): string {
-  return `grok.mcpConnector.${id}.oauth.${createHash("sha256").update(mcpOAuthUrls(relayUrl).origin).digest("hex")}`;
-}
-
 export function generateMcpOAuthChallenge(): { state: string; verifier: string; challenge: string } {
   const verifier = randomBytes(32).toString("base64url");
   return { state: randomBytes(32).toString("base64url"), verifier,
@@ -65,9 +56,12 @@ function validClient(value: unknown, callback: string): value is OAuthClientInfo
     && Array.isArray(value.redirect_uris) && value.redirect_uris.includes(callback);
 }
 
-async function readRegistration(secrets: OAuthSecrets, id: string, endpoint: string, relayUrl: string): Promise<Registration | undefined> {
-  const raw = await secrets.get(mcpOAuthRegistrationKey(id, relayUrl));
-  if (!raw) return undefined;
+function readRegistration(endpoint: string, relayUrl: string, env: NodeJS.ProcessEnv, home: string): Registration | undefined {
+  const dir = storeDir(env, home, false);
+  if (!dir) return undefined;
+  let raw: string;
+  try { raw = readFileSync(registrationFile(dir, endpoint), "utf8"); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined; throw error; }
   const value: unknown = JSON.parse(raw);
   if (!isObject(value) || value.endpoint !== endpoint || typeof value.issuer !== "string"
     || !validClient(value.client, mcpOAuthUrls(relayUrl).callback)) return undefined;
@@ -75,13 +69,13 @@ async function readRegistration(secrets: OAuthSecrets, id: string, endpoint: str
 }
 
 /** No registration (or an abandoned migration) means the untouched legacy argv. */
-export async function ownedMcpOAuthClient(secrets: OAuthSecrets, id: string, endpoint: string, relayUrl: string): Promise<OAuthClientInformation | undefined> {
+export function ownedMcpOAuthClient(endpoint: string, relayUrl: string, env = process.env, home = homedir()): OAuthClientInformation | undefined {
   try {
-    const registration = await readRegistration(secrets, id, endpoint, relayUrl);
+    const registration = readRegistration(endpoint, relayUrl, env, home);
     return registration?.active === true ? registration.client : undefined;
   } catch {
     // Failing open could refresh an owned token with a legacy client ID.
-    throw new McpOAuthError("Could not read the connector registration from secure storage.");
+    throw new McpOAuthError("Could not read the connector registration.");
   }
 }
 
@@ -95,14 +89,58 @@ export function writeOAuthClientInfoFile(client: OAuthClientInformation, tmpRoot
   return { path, dispose };
 }
 
-export function mcpOAuthTokenPath(endpoint: string, env = process.env, home = homedir()): string {
+/**
+ * The ONE directory the running proxy reads, or `undefined` when it is not there.
+ * `create` is for the paths that are about to write; a read must never conjure
+ * a store, because an absent one is the honest answer that we own nothing here.
+ */
+function storeDir(env: NodeJS.ProcessEnv, home: string, create: boolean): string | undefined {
   const root = mcpAuthRoot(env, home);
-  mkdirSync(root, { recursive: true, mode: 0o700 });
-  // Create the measured store, then resolve it using the same helper as token-presence checks.
-  mkdirSync(join(root, `mcp-remote-${MCP_REMOTE_STORE_VERSION}`), { recursive: true, mode: 0o700 });
-  const versionDir = mcpRemoteStoreDir(readdirSync(root, { withFileTypes: true }).filter((entry) => entry.isDirectory()));
-  if (!versionDir) throw new McpOAuthError("Could not find the connector token store.");
-  return join(root, versionDir, `${mcpServerUrlHash(endpoint)}_tokens.json`);
+  if (create) {
+    mkdirSync(root, { recursive: true, mode: 0o700 });
+    // Create the measured store, then resolve it using the same helper as token-presence checks.
+    mkdirSync(join(root, `mcp-remote-${MCP_REMOTE_STORE_VERSION}`), { recursive: true, mode: 0o700 });
+  }
+  let entries;
+  try { entries = readdirSync(root, { withFileTypes: true }); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined; throw error; }
+  const versionDir = mcpRemoteStoreDir(entries.filter((entry) => entry.isDirectory()));
+  return versionDir ? join(root, versionDir) : undefined;
+}
+
+function requireStoreDir(env: NodeJS.ProcessEnv, home: string): string {
+  const dir = storeDir(env, home, true);
+  if (!dir) throw new McpOAuthError("Could not find the connector token store.");
+  return dir;
+}
+
+export function mcpOAuthTokenPath(endpoint: string, env = process.env, home = homedir()): string {
+  return join(requireStoreDir(env, home), `${mcpServerUrlHash(endpoint)}_tokens.json`);
+}
+
+/**
+ * The registration lives WITH the tokens it owns, and that is the whole point.
+ *
+ * Every host on this machine shares `~/.mcp-auth`; none of them share
+ * SecretStorage. A host that cannot see the registration omits
+ * `--static-oauth-client-info`, so mcp-remote refreshes with a different
+ * `client_id` than the one those tokens were issued to — the provider rejects
+ * it, and the SDK answers by deleting the token file and opening a loopback
+ * browser login the phone cannot reach. Signing a connector in from VS Code
+ * would break it in the desktop app an hour later, and then in both.
+ *
+ * Same directory, same name, same lifetime: a store the proxy abandons on a
+ * version bump orphans the registration and its tokens together, which is
+ * correct, because a re-registration issues a client the old tokens do not
+ * belong to. `mcp-remote` only ever globs `<hash>_code_verifier*`, so this file
+ * sits beside its own for as long as they are both wanted.
+ */
+export function mcpOAuthRegistrationPath(endpoint: string, env = process.env, home = homedir()): string {
+  return registrationFile(requireStoreDir(env, home), endpoint);
+}
+
+function registrationFile(dir: string, endpoint: string): string {
+  return join(dir, `${mcpServerUrlHash(endpoint)}_afkpilot-client.json`);
 }
 
 function replacePrivateFile(path: string, data: string | Buffer): void {
@@ -225,20 +263,22 @@ export async function pollMcpOAuthResult(opts: {
 }
 
 export async function authorizeMcpConnectorOAuth(opts: {
-  connector: ConnectorDef; endpoint: string; relayUrl: string; secrets: OAuthSecrets;
+  connector: ConnectorDef; endpoint: string; relayUrl: string;
   onAuthorization(url: string): void | Promise<void>;
   fetch?: typeof fetch; env?: NodeJS.ProcessEnv; home?: string;
   timeoutMs?: number; authorizationTimeoutMs?: number; pollIntervalMs?: number;
 }): Promise<OAuthClientInformation> {
   const controller = new AbortController();
+  const env = opts.env ?? process.env;
+  const home = opts.home ?? homedir();
   let timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? MCP_REMOTE_CONNECT_TIMEOUT_MS);
   const request: typeof fetch = (url, init) => (opts.fetch ?? fetch)(url, { ...init, signal: init?.signal ?? controller.signal, redirect: "error" });
   try {
     const { metadata, resource, scope: discoveredScope } = await discover(opts.endpoint, request);
     const scope = opts.connector.oauthScope?.trim() || discoveredScope;
     const { callback } = mcpOAuthUrls(opts.relayUrl);
-    const key = mcpOAuthRegistrationKey(opts.connector.id, opts.relayUrl);
-    let registration = await readRegistration(opts.secrets, opts.connector.id, opts.endpoint, opts.relayUrl);
+    const registrationPath = mcpOAuthRegistrationPath(opts.endpoint, env, home);
+    let registration = readRegistration(opts.endpoint, opts.relayUrl, env, home);
     if (!registration || registration.issuer !== metadata.issuer) {
       const client = await jsonResponse(await request(metadata.registration_endpoint, {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -247,7 +287,7 @@ export async function authorizeMcpConnectorOAuth(opts: {
       }), "Client registration");
       if (!validClient(client, callback)) throw new McpOAuthError("The provider did not accept our sign-in callback.");
       registration = { endpoint: opts.endpoint, issuer: metadata.issuer, client, active: false };
-      await opts.secrets.store(key, JSON.stringify(registration));
+      replacePrivateFile(registrationPath, JSON.stringify(registration));
     }
     const { state, verifier, challenge } = generateMcpOAuthChallenge();
     const authorization = new URL(metadata.authorization_endpoint);
@@ -276,14 +316,14 @@ export async function authorizeMcpConnectorOAuth(opts: {
     } else body.set("client_id", client.client_id);
     const tokens = await jsonResponse(await request(metadata.token_endpoint, { method: "POST", headers, body }), "Token exchange");
     if (controller.signal.aborted) throw timeoutError();
-    const tokenPath = mcpOAuthTokenPath(opts.endpoint, opts.env, opts.home);
+    const tokenPath = mcpOAuthTokenPath(opts.endpoint, env, home);
     let previous: Buffer | undefined;
     try { previous = readFileSync(tokenPath); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
     seedMcpOAuthTokens(tokenPath, tokens);
     try {
-      await opts.secrets.store(key, JSON.stringify({ ...registration, active: true }));
+      replacePrivateFile(registrationPath, JSON.stringify({ ...registration, active: true }));
     } catch (error) {
-      // A failed SecretStorage write must not leave a legacy spawn refreshing our token.
+      // A failed registration write must not leave a legacy spawn refreshing our token.
       if (previous) replacePrivateFile(tokenPath, previous);
       else rmSync(tokenPath, { force: true });
       throw error;
