@@ -8771,6 +8771,34 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   /** Explicit updates of user-owned CLIs. Keep Session identities (including
    * remote tab bindings), but release every process using the target binary.
    * Other providers can keep working. No native UI is involved. */
+  /**
+   * Forget a FINISHED CLI update. A running one stays — it is still true.
+   *
+   * `providerCliUpdates` had no expiry, and `providerState` carries it to every
+   * surface, so "Update completed · Codex CLI v0.153.4" reappeared on the empty
+   * state of every new conversation for the life of the host process (owner,
+   * 2026-09-06). Retaining it was deliberate — an update stops and resumes
+   * sessions, and the answer must survive that re-render rather than vanishing
+   * with the conversation that asked for it — but "survive the resume" was
+   * implemented as "never expire".
+   *
+   * Starting a new conversation is the person moving on from that answer, which
+   * is why this hangs off the inbound `newSession` message and not off
+   * `startSession`: our own post-update resume also starts a session, and
+   * clearing there would erase the outcome before anyone read it.
+   */
+  private clearSettledCliUpdates(): void {
+    const updates = this.providerCliUpdates;
+    if (!updates) return;
+    let changed = false;
+    for (const provider of Object.keys(updates) as AcpProvider[]) {
+      if (updates[provider]?.status === "running") continue;
+      delete updates[provider];
+      changed = true;
+    }
+    if (changed) this.postProviderState();
+  }
+
   private async updateProviderCliOnDemand(provider: "codex" | "claude"): Promise<void> {
     if (this.providerCliUpdate || Object.values(this.providerCliUpdates ?? {}).some((u) => u.status === "running")) return;
     const name = provider === "codex" ? "Codex CLI" : "Claude Code CLI";
@@ -8882,7 +8910,15 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
             // v0.153.4" while the conversation it had just reopened showed a red
             // "Failed to start Codex", which is the update telling the person
             // the opposite of what they are looking at (owner, 2026-09-06).
-            const resumed = await this.startSession(session.activeSessionId, session, "ensure", undefined, { silent: true });
+            // A conversation nobody has typed in yet has nothing to reopen: the
+            // id names a session the CLI never persisted, so asking it to load
+            // one fails, and the row then tells the person their conversation
+            // is gone when there was never anything in it (owner, 2026-09-06 --
+            // he watched it happen on an empty "New session"). Start a fresh
+            // one instead; there is nothing to lose, and leaving the dead id in
+            // place would only move the same failure onto his next message.
+            const resumeId = session.userMessageCount ? session.activeSessionId : undefined;
+            const resumed = await this.startSession(resumeId, session, "ensure", undefined, { silent: true });
             if (!resumed) {
               status("failed", `${name} updated, but this conversation could not be reopened. Start a new conversation.`);
             }
@@ -10432,6 +10468,9 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         }
         break;
       case "newSession":
+        // The answer to an update belongs to the update, not to every
+        // conversation opened afterwards.
+        this.clearSettledCliUpdates();
         // A remote's cwd is deliberately not forwarded: newRemoteSession starts
         // in that tab's own repo, which is the only project it is entitled to.
         if (origin === "remote" && clientId) await this.newRemoteSession(clientId);

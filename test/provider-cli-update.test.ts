@@ -24,10 +24,12 @@ function harness(provider: "codex" | "claude") {
   const local = new Session();
   local.provider = provider;
   local.activeSessionId = "local-thread";
+  local.userMessageCount = 3;
   local.cwd = "/project";
   const phone = new Session();
   phone.provider = provider;
   phone.activeSessionId = "phone-thread";
+  phone.userMessageCount = 1;
   const background = new Session();
   background.provider = provider;
   background.activeSessionId = "background-thread";
@@ -119,6 +121,47 @@ describe.each(["codex", "claude"] as const)("%s explicit CLI update", (provider)
     expect(host.providerCliUpdates[provider]).toMatchObject({ status: "failed", message: expect.stringContaining("code 7") });
     expect(exec.mock.calls.map((c) => c[1])).toEqual([["update"], ["--version"]]);
     expect(host.startSession).toHaveBeenCalledTimes(2);
+  });
+
+  it("starts a fresh session rather than reopening one nobody typed in", async () => {
+    // The owner pressed Update on an empty "New session" and was told the
+    // conversation could not be reopened. Codex never persisted a session for
+    // it -- the same absence behind "could not discard empty session ...:
+    // Internal error" in the host log -- so the load could only fail, and the
+    // row reported a loss of something that did not exist.
+    const { host, local, phone } = harness(provider);
+    local.userMessageCount = 0;
+    await host.updateProviderCliOnDemand(provider);
+    expect(host.startSession.mock.calls).toEqual([
+      [undefined, local, "ensure", undefined, { silent: true }],
+      ["phone-thread", phone, "ensure", undefined, { silent: true }],
+    ]);
+    expect(host.providerCliUpdates[provider]).toMatchObject({ status: "succeeded" });
+  });
+
+  it("forgets a finished update when the person starts a new conversation", async () => {
+    // The row had no expiry and providerState carries it everywhere, so
+    // "Update completed - Codex CLI v0.153.4" greeted the owner on the empty
+    // state of every new conversation until the host restarted (2026-09-06).
+    const { host } = harness(provider);
+    await host.updateProviderCliOnDemand(provider);
+    expect(host.providerCliUpdates[provider]).toMatchObject({ status: "succeeded" });
+    host.postProviderState = vi.fn();
+    (host as any).clearSettledCliUpdates();
+    expect(host.providerCliUpdates[provider]).toBeUndefined();
+    expect(host.postProviderState).toHaveBeenCalledOnce();
+    // Idempotent: nothing settled left to forget, so no repaint.
+    (host as any).clearSettledCliUpdates();
+    expect(host.postProviderState).toHaveBeenCalledOnce();
+  });
+
+  it("keeps an update that is still running", async () => {
+    const { host } = harness(provider);
+    host.providerCliUpdates = { [provider]: { status: "running", message: "Updating..." } };
+    host.postProviderState = vi.fn();
+    (host as any).clearSettledCliUpdates();
+    expect(host.providerCliUpdates[provider]).toMatchObject({ status: "running" });
+    expect(host.postProviderState).not.toHaveBeenCalled();
   });
 
   it("does not claim success when the conversation it reopened failed to start", async () => {
