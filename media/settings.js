@@ -483,11 +483,14 @@
       },
       // Only when there is something to take. Offering to update software that
       // is already current is noise, and this particular offer costs minutes
-      // and stops your running sessions -- so for Codex, whose current version
-      // this app pins and can compare against, a CLI that is up to date shows
-      // no row at all. Claude publishes no version to check, so its row stays:
-      // running the updater unprompted is the only path there, and the row
-      // claims an update exists no more than the button's label does.
+      // and stops your running sessions.
+      //
+      // One rule for both providers. Claude briefly had an exception -- it was
+      // always offered, on the grounds that nothing told us what its current
+      // version was -- and the owner caught it offering to update a CLI whose
+      // own "Update completed" line was directly underneath. The host pins a
+      // Claude version now, exactly as it always has for Codex, so the
+      // exception is gone rather than narrowed.
       //
       // A running update keeps its row so it cannot vanish mid-operation, and
       // a failed one keeps it so the retry is where the failure is. A SUCCEEDED
@@ -495,13 +498,15 @@
       // separate status row carries "Update completed" until the next
       // conversation clears it.
       //
-      // The `cliUpdate` test underneath all of this also advertises support:
-      // older remote hosts cannot do any of it.
+      // An older HOST sends no `updateAvailable` for Claude, so its row simply
+      // does not appear there. That is the safe direction: this app cannot
+      // update a CLI on a host that predates the feature anyway, and the
+      // `cliUpdate` test above is what advertises support in the first place.
       visible: (s) => {
         const p = entry(s) || {};
         if (!p.cliUpdate) return false;
         if (p.cliUpdate.status === "running" || p.cliUpdate.status === "failed") return true;
-        return provider === "claude" || !!p.updateAvailable;
+        return !!p.updateAvailable;
       },
       enabled: (s) => !(s.providers || []).some((p) => p.cliUpdate && p.cliUpdate.status === "running"),
       message: () => ({ type: "update" + suffix }),

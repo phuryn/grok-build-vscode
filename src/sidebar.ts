@@ -22,7 +22,7 @@ import { locateCodexCli, resolveCodexHome } from "./codex-cli-locator";
 import { CODEX_MANAGED_VERSION, codexManagedRoot, installManagedCodex } from "./codex-managed-installer";
 import { CLI_NPM_PACKAGE, cliUpdatePlan } from "./cli-update-plan";
 import { warmCodexModelCache } from "./codex-model-cache";
-import { CLAUDE_ACP_ADAPTER_VERSION, ClaudeBackend, isClaudeCredentialError } from "./claude-backend";
+import { CLAUDE_ACP_ADAPTER_VERSION, CLAUDE_PINNED_CLI_VERSION, ClaudeBackend, isClaudeCredentialError } from "./claude-backend";
 import { locateClaudeCli, parseClaudeVersionOutput } from "./claude-cli-locator";
 import { warmClaudeModelCache } from "./claude-model-cache";
 import {
@@ -2291,6 +2291,8 @@ export class GrokSidebar {
           ...(claudeConnected ? {
             adapterVersion: CLAUDE_ACP_ADAPTER_VERSION,
             cliUpdate: this.providerCliUpdates?.claude ?? { status: "idle" as const },
+            latestCliVersion: CLAUDE_PINNED_CLI_VERSION,
+            ...(versions.claude ? { updateAvailable: versionIsOlder(versions.claude, CLAUDE_PINNED_CLI_VERSION) } : {}),
           } : {}),
         },
       ],

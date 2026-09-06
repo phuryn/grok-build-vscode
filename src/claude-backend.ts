@@ -16,6 +16,20 @@ import { adapterContextOccupancy } from "./acp-dispatch";
 export const CLAUDE_ACP_ADAPTER_PACKAGE = "@agentclientprotocol/claude-agent-acp";
 export const CLAUDE_ACP_ADAPTER_VERSION = packageManifest.dependencies[CLAUDE_ACP_ADAPTER_PACKAGE];
 
+/** The Claude Code CLI version this release is built and tested against.
+ *
+ *  Codex has had `CODEX_MANAGED_VERSION` all along, and Claude had nothing —
+ *  so the Settings row offered to update Claude forever, including seconds
+ *  after an update had just reported success. "We cannot know what is current"
+ *  was true of the wire and false of the product: we know which version we
+ *  built against, which is the same thing the Codex pin claims.
+ *
+ *  There is no managed installer behind this the way there is for Codex; it
+ *  is a comparison point, nothing more. Bump it when a release is validated
+ *  against a newer CLI. Falling behind Anthropic's latest is the safe
+ *  direction — it means we stop offering, not that we offer wrongly. */
+export const CLAUDE_PINNED_CLI_VERSION = "2.1.263";
+
 const PERMISSION_TITLE_LIMIT = 80;
 
 export function resolveClaudeAgentAcpAdapter(

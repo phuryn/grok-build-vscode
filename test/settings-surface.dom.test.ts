@@ -1848,7 +1848,8 @@ describe("CLI update actions", () => {
   const providers = [
     { id: "codex", connected: true, cliVersion: "0.149.0", latestCliVersion: "0.153.4",
       updateAvailable: true, cliUpdate: { status: "idle" } },
-    { id: "claude", connected: true, cliVersion: "2.1.0", cliUpdate: { status: "idle" } },
+    { id: "claude", connected: true, cliVersion: "2.1.0", latestCliVersion: "2.1.263",
+      updateAvailable: true, cliUpdate: { status: "idle" } },
   ];
 
   it.each([false, true])("renders actions and their live outcomes (remote=%s)", (isRemote) => {
@@ -1876,16 +1877,15 @@ describe("CLI update actions", () => {
     const h = mountAt("providers", { snapshot: { providers: [
       { id: "codex", connected: true, cliVersion: "0.152.1", latestCliVersion: "0.153.4",
         updateAvailable: true, cliUpdate: { status: "idle" } },
-      { id: "claude", connected: true, cliVersion: "2.1.0", cliUpdate: { status: "idle" } },
+      { id: "claude", connected: true, cliVersion: "2.1.0", latestCliVersion: "2.1.263",
+        updateAvailable: true, cliUpdate: { status: "idle" } },
     ] } });
     const codex = h.root.querySelector('[data-id="aboutUpdateCodex"]')?.textContent || "";
     expect(codex).toContain("v0.152.1");
     expect(codex).toContain("v0.153.4 is available");
-    // The host sends latestCliVersion for Codex only, so Claude states what is
-    // installed and claims nothing about what is current.
     const claude = h.root.querySelector('[data-id="aboutUpdateClaude"]')?.textContent || "";
     expect(claude).toContain("v2.1.0");
-    expect(claude).not.toContain("is available");
+    expect(claude).toContain("v2.1.263 is available");
   });
 
   it("does not offer to update a Codex that is already current", () => {
@@ -1911,16 +1911,28 @@ describe("CLI update actions", () => {
     expect(h.root.querySelector('[data-id="aboutUpdateCodex"] button')).toBeTruthy();
   });
 
-  it("keeps Claude's row, because there is no published version to check it against", () => {
-    // The host sends latestCliVersion for Codex only. Hiding Claude's row on
-    // the same rule would hide it always, and running the updater unprompted
-    // is the only way to update Claude from here.
-    const h = mountAt("providers", { snapshot: { providers: [
-      { id: "claude", connected: true, cliVersion: "2.1.263", cliUpdate: { status: "idle" } },
-    ] } });
-    const claude = h.root.querySelector('[data-id="aboutUpdateClaude"]');
-    expect(claude?.textContent).toContain("v2.1.263");
-    expect(claude?.textContent).not.toContain("is available");
+  it("holds Claude to the same rule as Codex", () => {
+    // Claude was briefly the exception -- always offered, because nothing told
+    // us what its current version was. The owner caught it offering to update
+    // a CLI whose own "Update completed - Claude Code CLI v2.1.263" line sat
+    // directly underneath. The host pins a Claude version now, so there is no
+    // exception left to get wrong.
+    const current = { id: "claude", connected: true, cliVersion: "2.1.263",
+      latestCliVersion: "2.1.263", updateAvailable: false, cliUpdate: { status: "idle" } };
+    const h = mountAt("providers", { snapshot: { providers: [current] } });
+    expect(h.root.querySelector('[data-id="aboutUpdateClaude"]')).toBeNull();
+
+    // Exactly the shape the report showed: updated a moment ago, outcome on
+    // screen, and no second offer beside it.
+    h.surface.update({ providers: [{ ...current,
+      cliUpdate: { status: "succeeded", message: "Update completed · Claude Code CLI v2.1.263" } }] });
+    expect(h.root.querySelector('[data-id="aboutUpdateClaude"]')).toBeNull();
+    expect(h.root.textContent).toContain("Update completed · Claude Code CLI v2.1.263");
+
+    // Behind the pin, it is offered again.
+    h.surface.update({ providers: [{ ...current, cliVersion: "2.1.0", updateAvailable: true,
+      cliUpdate: { status: "idle" } }] });
+    expect(h.root.querySelector('[data-id="aboutUpdateClaude"] button')).toBeTruthy();
   });
 
   it.each([false, true])("hides absent providers and unsupported old hosts (remote=%s)", (isRemote) => {
