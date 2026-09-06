@@ -220,3 +220,42 @@ describe("Grok credential probe does not leave a project-catalog shell", () => {
     expect(remove).toBeGreaterThan(dispose);
   });
 });
+
+describe("Refresh re-reads the CLI version", () => {
+  // It used not to, and the comment saying so gave the reason: versions "do not
+  // appear on this page". True when it was written; untrue since the CLI update
+  // feature made the version the thing that decides whether an update is
+  // offered. `probeCodexVersion` memoizes for the life of the host process, so
+  // upgrading Codex in a terminal left the offer stuck on the number read at
+  // boot — and on a cloud machine there is no window to reload, which made
+  // Refresh the only door and it was the one documented not to open.
+  const withVersionSpy = (sidebar: AnySidebar) => {
+    const seen: { provider: string; memo: unknown }[] = [];
+    sidebar.codexVersionProbe = Promise.resolve("0.152.1");
+    sidebar.claudeVersionProbe = Promise.resolve("2.1.0");
+    sidebar.probeProviderVersion = vi.fn(async (provider: string) => {
+      seen.push({ provider, memo: sidebar[provider + "VersionProbe"] });
+      return "9.9.9";
+    });
+    return seen;
+  };
+
+  it("re-probes Codex and Claude, with the stale memo already cleared", async () => {
+    const sidebar = makeSidebar({ codex: true, claude: true });
+    const seen = withVersionSpy(sidebar);
+    await refresh(sidebar);
+    expect(seen.map((s) => s.provider).sort()).toEqual(["claude", "codex"]);
+    // Cleared BEFORE the fresh read, or the fresh read would return the memo.
+    for (const s of seen) expect(s.memo, s.provider).toBeUndefined();
+  });
+
+  it("leaves Grok's version alone — it has its own update check", async () => {
+    // And re-probing it would re-run the locator that refresh deliberately
+    // does not touch when a test forces the CLI missing.
+    const sidebar = makeSidebar({ grok: true });
+    const seen = withVersionSpy(sidebar);
+    sidebar.locatedProviders = vi.fn(() => ({ grok: true, codex: false, claude: false }));
+    await refresh(sidebar);
+    expect(seen).toEqual([]);
+  });
+});

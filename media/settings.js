@@ -449,20 +449,45 @@
     const entry = (s) => provider === "codex" ? codexProvider(s) : claudeProvider(s);
     const update = (s) => ((s.providers || []).find((p) => p.id === provider) || {}).cliUpdate;
     return [{
+      // The id keeps its "about" prefix: it is what the DOM suite addresses and
+      // it records where this row used to live.
       id: "aboutUpdate" + suffix,
-      category: "about",
-      title: "Update " + name,
-      description: "Run its updater on the connected machine. This stops this provider’s running sessions, then resumes visible conversations.",
+      // Providers, not About. This is a fact about a provider's CLI, so it
+      // belongs beside that provider's account rather than under the extension
+      // version and the trademark notice.
+      category: "providers",
+      title: name,
       kind: "action",
       actionLabel: "Update " + name,
       keepOpen: true,
+      // The version rides along, because a bare Update button on this page
+      // would be asking someone to act with nothing to act on. `latestCliVersion`
+      // is sent for Codex only, so Claude states the installed version and stops
+      // rather than claiming an up-to-date it cannot know.
+      describe: (s) => {
+        const p = entry(s) || {};
+        const newer = p.updateAvailable && p.latestCliVersion
+          ? "v" + p.latestCliVersion + " is available. "
+          : "";
+        // Two bare version numbers side by side leave the reader to work out
+        // which one is theirs -- rendered, "v0.152.1 · v0.153.4 is available"
+        // can be read as a range. The label settles it. A middot rather than a
+        // full stop between them for the same reason: "v0.152.1. v0.153.4 is
+        // available" reads as one broken sentence.
+        const installed = p.cliVersion
+          ? "Installed v" + p.cliVersion + (newer ? " · " : ". ")
+          : "";
+        return installed + newer
+          + "Runs its updater on the connected machine. This stops this provider’s "
+          + "running sessions, then resumes visible conversations.";
+      },
       // Presence advertises support: older remote hosts cannot handle these.
       visible: (s) => !!(entry(s) && entry(s).cliUpdate),
       enabled: (s) => !(s.providers || []).some((p) => p.cliUpdate && p.cliUpdate.status === "running"),
       message: () => ({ type: "update" + suffix }),
     }, {
       id: "about" + suffix + "UpdateStatus",
-      category: "about",
+      category: "providers",
       title: name + " updates",
       kind: "status",
       visible: (s) => !!(update(s) && update(s).message),

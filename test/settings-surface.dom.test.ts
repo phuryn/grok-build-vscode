@@ -1851,7 +1851,7 @@ describe("CLI update actions", () => {
   ];
 
   it.each([false, true])("renders actions and their live outcomes (remote=%s)", (isRemote) => {
-    const h = mountAt("about", { env: { isRemote }, snapshot: { providers } });
+    const h = mountAt("providers", { env: { isRemote }, snapshot: { providers } });
     for (const suffix of ["Codex", "Claude"]) {
       const action = h.root.querySelector(`[data-id="aboutUpdate${suffix}"] button`) as HTMLButtonElement;
       expect(action).toBeTruthy();
@@ -1863,12 +1863,32 @@ describe("CLI update actions", () => {
     expect((h.root.querySelector('[data-id="aboutUpdateCodex"] button') as HTMLButtonElement).disabled).toBe(true);
     h.surface.update({ providers: providers.map((p) => ({ ...p, cliVersion: "9.0.0", cliUpdate: { status: "failed", message: "Update failed: permission denied" } })) });
     expect(h.root.textContent).toContain("Update failed: permission denied");
-    expect(h.root.querySelector('[data-id="aboutCodexCli"]')?.textContent).toContain("v9.0.0");
+    expect(h.root.querySelector('[data-id="aboutUpdateCodex"]')?.textContent).toContain("v9.0.0");
     expect((h.root.querySelector('[data-id="aboutUpdateCodex"] button') as HTMLButtonElement).disabled).toBe(false);
   });
 
+  it("says which version is installed and which is available, on Providers", () => {
+    // It used to live in About, titled "Update Codex CLI" with no version
+    // anywhere near it, while Providers -- the page a person opens to think
+    // about Codex, and the page the release notes name -- said nothing about
+    // the CLI at all.
+    const h = mountAt("providers", { snapshot: { providers: [
+      { id: "codex", connected: true, cliVersion: "0.152.1", latestCliVersion: "0.153.4",
+        updateAvailable: true, cliUpdate: { status: "idle" } },
+      { id: "claude", connected: true, cliVersion: "2.1.0", cliUpdate: { status: "idle" } },
+    ] } });
+    const codex = h.root.querySelector('[data-id="aboutUpdateCodex"]')?.textContent || "";
+    expect(codex).toContain("v0.152.1");
+    expect(codex).toContain("v0.153.4 is available");
+    // The host sends latestCliVersion for Codex only, so Claude states what is
+    // installed and claims nothing about what is current.
+    const claude = h.root.querySelector('[data-id="aboutUpdateClaude"]')?.textContent || "";
+    expect(claude).toContain("v2.1.0");
+    expect(claude).not.toContain("is available");
+  });
+
   it.each([false, true])("hides absent providers and unsupported old hosts (remote=%s)", (isRemote) => {
-    const h = mountAt("about", { env: { isRemote }, snapshot: { providers: [
+    const h = mountAt("providers", { env: { isRemote }, snapshot: { providers: [
       { ...providers[0], connected: false }, { id: "claude", connected: true },
     ] } });
     expect(h.root.querySelector('[data-id="aboutUpdateCodex"]')).toBeNull();

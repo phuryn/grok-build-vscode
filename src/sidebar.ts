@@ -2358,11 +2358,20 @@ export class GrokSidebar {
       // lapsed account gets its needsLogin flag. reprobeProviderCredentials
       // already classifies and records that, so nothing is swallowed.
       //
-      // Versions are deliberately not re-probed. They are read once per
-      // activation by design, they do not appear on this page, and every
-      // connected account already probes its version when it connects.
+      // Versions ARE re-probed. They used not to be, on the grounds that they
+      // "do not appear on this page" — true then, and untrue since the CLI
+      // update feature: the version is what decides `updateAvailable`, so a
+      // CLI changed in a terminal left the offer stuck on whatever was read
+      // at boot. The probe is memoized for the life of the host process, and
+      // on a cloud machine there is no window to reload to clear it, which
+      // made Refresh the only door and it was shut.
       await Promise.all(installed.map(async (provider) => {
         const authenticated = await this.reprobeProviderCredentials(provider).catch(() => false);
+        // Codex and Claude only. Their version is what decides
+        // `updateAvailable`; Grok has its own update check, and re-probing it
+        // would re-run the locator this method deliberately leaves alone when
+        // a test forces the CLI missing.
+        if (provider === "codex" || provider === "claude") await this.reprobeProviderVersion(provider);
         // Promote on a SUCCESSFUL probe only. This is the sign-in that happened
         // somewhere the desk could not see; the probe is what makes it a fact
         // rather than a guess. Persisted, so it survives a reload the way the
@@ -8358,6 +8367,24 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       this.host.appendLine(`grok --version failed: ${(e as Error).message}`);
       return "";
     }
+  }
+
+  /** Forget the memoized `--version` and read the binary again.
+   *
+   *  Drains the old memo before clearing it — the ordering
+   *  updateProviderCliOnDemand uses for the same reason: a late response
+   *  from the in-flight probe would otherwise land after the fresh read and
+   *  restore the number we just replaced.
+   *
+   *  The cached version is NOT deleted first. On success the probe
+   *  overwrites it; on failure the last known version is better than a blank
+   *  row, and unlike the update path nothing here says the binary changed. */
+  private async reprobeProviderVersion(provider: "codex" | "claude"): Promise<void> {
+    const inFlight = provider === "codex" ? this.codexVersionProbe : this.claudeVersionProbe;
+    await inFlight?.catch(() => "");
+    if (provider === "codex") this.codexVersionProbe = undefined;
+    else this.claudeVersionProbe = undefined;
+    await this.probeProviderVersion(provider).catch(() => "");
   }
 
   private probeProviderVersion(provider: AcpProvider): Promise<string> {
