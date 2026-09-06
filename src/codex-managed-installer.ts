@@ -49,15 +49,24 @@ export function codexManagedRelease(
   return { target, sha256, asset, url: `${CODEX_MANAGED_BASE_URL}/${asset}` };
 }
 
+/** Every managed install, the pinned one and any a bump superseded. */
+export function codexManagedRoot(storageRoot: string): string {
+  return path.join(storageRoot, "codex-managed");
+}
+
 export function codexManagedVersionDir(storageRoot: string): string {
-  return path.join(storageRoot, "codex-managed", CODEX_MANAGED_TAG);
+  return path.join(codexManagedRoot(storageRoot), CODEX_MANAGED_TAG);
+}
+
+export function codexManagedBinaryName(platform: NodeJS.Platform = process.platform): string {
+  return platform === "win32" ? "codex.exe" : "codex";
 }
 
 export function codexManagedBinaryPath(
   storageRoot: string,
   platform: NodeJS.Platform = process.platform,
 ): string {
-  return path.join(codexManagedVersionDir(storageRoot), "bin", platform === "win32" ? "codex.exe" : "codex");
+  return path.join(codexManagedVersionDir(storageRoot), "bin", codexManagedBinaryName(platform));
 }
 
 export interface TarHeader {

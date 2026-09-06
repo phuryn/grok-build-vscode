@@ -2,7 +2,7 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { homedir } from "node:os";
 import * as path from "node:path";
-import { codexManagedBinaryPath } from "./codex-managed-installer";
+import { codexManagedBinaryName, codexManagedBinaryPath, codexManagedRoot } from "./codex-managed-installer";
 
 export interface CodexLocatorFs {
   exists(path: string): boolean;
@@ -146,6 +146,25 @@ export function locateCodexCli(options: CodexLocatorOptions = {}): string | unde
   if (options.managedStorageRoot) {
     const managed = codexManagedBinaryPath(options.managedStorageRoot, platform);
     if (fs.isFile(managed)) return managed;
+    // The install directory carries the pinned tag, so moving the pin renames
+    // it out from under someone who installed Codex through us: their working
+    // binary is still on disk and simply stops counting. On a cloud machine
+    // that is unrecoverable — `installCodex` is host-local, so the phone gets
+    // "Codex is missing at the desk" and no button — and Codex would appear to
+    // vanish on an update. So an install WE made still resolves.
+    //
+    // Ranking between leftovers does not matter: a successful install prunes
+    // the others, so there is at most one, and any binary we put there runs.
+    // Determinism does, hence the sort. Being a version behind is visible and
+    // fixable, which is the whole point — the update action is right there.
+    const root = codexManagedRoot(options.managedStorageRoot);
+    const binary = codexManagedBinaryName(platform);
+    let entries: string[] = [];
+    try { entries = [...fs.readDir(root)].sort().reverse(); } catch { /* none installed */ }
+    for (const entry of entries) {
+      const candidate = path.join(root, entry, "bin", binary);
+      if (fs.isFile(candidate)) return candidate;
+    }
   }
   return undefined;
 }
