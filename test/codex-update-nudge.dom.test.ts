@@ -16,6 +16,11 @@ describe.each([false, true])("Codex welcome update nudge (remote=%s)", (remote) 
     const h = seed(remote);
     const nudge = h.doc.getElementById("welcome-codex-update");
     expect(nudge?.textContent).toContain("v0.149.0 is older than v0.153.4");
+    // The offer button carries its own label. Asserting only the confirm
+    // dialog's label let a blank button ship: the class was dropped to restyle
+    // it and `textContent` went with it, and every test still passed because
+    // they all click `querySelector("button")` without reading it.
+    expect(nudge!.querySelector("button")?.textContent).toBe("Update Codex CLI");
     click(h.window, nudge!.querySelector("button")!);
     expect(h.doc.querySelector(".confirm-overlay")).toBeTruthy();
     expect(h.posted.some((p) => p.type === "updateCodex")).toBe(false);

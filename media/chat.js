@@ -8201,6 +8201,7 @@
     if (offer) {
       const button = document.createElement("button");
       button.type = "button";
+      button.textContent = "Update Codex CLI";
       button.disabled = (state.providers || []).some((p) => p.cliUpdate && p.cliUpdate.status === "running");
       button.onclick = async () => {
         const ok = await uiConfirm({
