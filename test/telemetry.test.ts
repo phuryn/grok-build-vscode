@@ -1,11 +1,17 @@
 import { readFileSync } from "node:fs";
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import * as telemetry from "../src/telemetry";
 import {
   aptabaseHost,
   osNameFromPlatform,
   shouldSendTelemetry,
   buildSessionStartEvent,
+  buildRemotePortalOpenedEvent,
+  buildSessionRemoteStartedEvent,
+  nextTelemetrySession,
+  TELEMETRY_SESSION_INACTIVITY_MS,
+  REMOTE_PORTAL_OPENED_ALLOWED_KEYS,
+  SESSION_REMOTE_STARTED_ALLOWED_KEYS,
   sanitizeSessionStartProps,
   sessionStartHostKind,
   sessionStartSurface,
@@ -23,6 +29,20 @@ import { GrokSidebar } from "../src/sidebar";
 import { Session } from "../src/session";
 import { RemoteClientState } from "../src/remote-client-state";
 import { normalizeRepoPath } from "../src/sessions";
+import { CLOUD_ENVIRONMENT_ENV } from "../src/remote-frames";
+
+beforeEach(() => {
+  // Existing builder spies call through: keep deferred posts off the network.
+  vi.useFakeTimers({ toFake: ["Date", "setImmediate"] });
+  vi.stubEnv(CLOUD_ENVIRONMENT_ENV, "");
+});
+
+afterEach(() => {
+  vi.clearAllTimers();
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+});
 
 const REQUIRED: SessionStartProps = {
   installId: "i",
@@ -126,6 +146,10 @@ describe("sessionStartHostKind", () => {
   it("is desktop only for the standalone app; every editor host is vscode", () => {
     expect(sessionStartHostKind(true)).toBe("desktop");
     expect(sessionStartHostKind(false)).toBe("vscode");
+  });
+  it.each([true, false])("cloud wins for desktop=%s; off-cloud classification is unchanged", (desktop) => {
+    expect(sessionStartHostKind(desktop, true)).toBe("sprite");
+    expect(sessionStartHostKind(desktop, false)).toBe(desktop ? "desktop" : "vscode");
   });
 });
 
@@ -638,6 +662,255 @@ function makeTelemetrySidebar(cwd = "/repo"): any {
   };
   return instance;
 }
+
+function makeSendingTelemetrySidebar(): any {
+  const sidebar = makeTelemetrySidebar();
+  sidebar.pendingAttach = new Set();
+  sidebar.waitForSessionStart = vi.fn(async () => {});
+  sidebar.retainUploadedFilesForSession = vi.fn(async () => {});
+  sidebar.rememberProjectProvider = vi.fn(async () => {});
+  sidebar.maybeFlushQueuedSends = vi.fn(async () => {});
+  sidebar.modelsForSession = vi.fn(() => []);
+  for (const method of [
+    "refreshImplicitChip", "postChips", "emit", "noteSessionActivity",
+    "noteLiveTurnEnded", "maybeGenerateTitle", "postSessionName", "settleUnavailablePlanTurn",
+  ]) sidebar[method] = vi.fn();
+  sidebar.setStatus = (session: Session, status: Session["status"]) => { session.status = status; };
+  sidebar.focused.priming = false;
+  sidebar.focused.activeSessionId = "private-conversation-id";
+  sidebar.focused.client = {
+    sessionId: "private-conversation-id",
+    availableCommands: [],
+    availableModels: [],
+    prompt: vi.fn(async () => ({})),
+  };
+  sidebar.remoteClients.ready("phone");
+  sidebar.remoteClients.setActive("phone", sidebar.focused);
+  sidebar.remoteClients.setMetadata("phone", { usesTouch: true });
+  sidebar.workspaceRoot = vi.fn(() => "/repo");
+  sidebar.host.openExternal = vi.fn(async () => true);
+  sidebar.relayUrl = vi.fn(() => "wss://example.invalid");
+  return sidebar;
+}
+
+describe("remote telemetry at the host send seam", () => {
+  it.each(["grok", "codex", "claude"] as const)(
+    "LOCAL first message then REMOTE second message emits remote usage once (%s)",
+    async (provider) => {
+      const post = vi.spyOn(telemetry, "postEvent").mockImplementation(() => {});
+      const sidebar = makeSendingTelemetrySidebar();
+      const session = sidebar.focused as Session;
+      session.provider = provider;
+
+      await sidebar.handleSend("local prompt must stay private", false, session, "local");
+      expect(session.userMessageCount).toBe(1);
+      expect(post).not.toHaveBeenCalled(); // the POST is deferred
+      vi.runAllTimers();
+      expect(post.mock.calls.map(([, event]) => event.eventName)).toEqual(["session_start"]);
+
+      await sidebar.handleSend("remote follow-up must stay private", false, session, "remote");
+      vi.runAllTimers();
+      expect(session.userMessageCount).toBe(2);
+      expect(post.mock.calls.map(([, event]) => event.eventName)).toEqual([
+        "session_start", "session_remote_started",
+      ]);
+      const event = post.mock.calls[1][1];
+      expect(event.props).toEqual({
+        installId: "install-wired", hostKind: "vscode", clientDevice: "mobile",
+        sessionOrigin: "local", provider,
+      });
+      expect(event.sessionId).toBe(post.mock.calls[0][1].sessionId);
+      expect(JSON.stringify(event)).not.toMatch(/private|\/repo|phone/);
+
+      for (let message = 3; message <= 5; message++) {
+        await sidebar.handleSend("another remote follow-up", false, session, "remote");
+        vi.runAllTimers();
+        expect(post).toHaveBeenCalledTimes(2);
+      }
+      expect(session.client!.prompt).toHaveBeenCalledTimes(5);
+    },
+  );
+
+  it("a REMOTE first message deliberately emits both events in the same Aptabase session", async () => {
+    const post = vi.spyOn(telemetry, "postEvent").mockImplementation(() => {});
+    const sidebar = makeSendingTelemetrySidebar();
+    await sidebar.handleSend("private", false, sidebar.focused, "remote");
+    vi.runAllTimers();
+    const events = post.mock.calls.map(([, event]) => event);
+    expect(events.map((event) => event.eventName)).toEqual(["session_start", "session_remote_started"]);
+    expect(events[0].props.sessionOrigin).toBe("remote");
+    expect(events[1].props.sessionOrigin).toBe("remote");
+    expect(events[1].sessionId).toBe(events[0].sessionId);
+  });
+
+  it.each(["send", "queueSend", "steerSend"] as const)("a phone takeover via %s counts even during a running local turn", async (type) => {
+    const post = vi.spyOn(telemetry, "postEvent").mockImplementation(() => {});
+    const sidebar = makeSendingTelemetrySidebar();
+    await sidebar.handleSend("private", false, sidebar.focused, "local");
+    vi.runAllTimers();
+    sidebar.focused.status = "working";
+    sidebar.captureRemoteRequester = vi.fn(() => ({}));
+    sidebar.steerSend = vi.fn(async () => {});
+    for (let message = 0; message < 3; message++) {
+      await sidebar.onMessage({ type, text: "remote follow-up" }, "remote", "phone");
+      vi.runAllTimers();
+      expect(post).toHaveBeenCalledTimes(2);
+    }
+    expect(post.mock.calls[1][1]).toMatchObject({
+      eventName: "session_remote_started", props: { sessionOrigin: "local", clientDevice: "mobile" },
+    });
+  });
+
+  it.each([true, false])("openRemotePortal records only intent props (withHint=%s)", async (withHint) => {
+    const post = vi.spyOn(telemetry, "postEvent").mockImplementation(() => {});
+    const sidebar = makeSendingTelemetrySidebar();
+    await sidebar.onMessage({ type: "openRemotePortal", withHint }, "local");
+    expect(sidebar.host.openExternal).toHaveBeenCalledWith(
+      "https://example.invalid" + (withHint ? "/?remoteHint=1" : ""),
+    );
+    expect(post).not.toHaveBeenCalled();
+    vi.runAllTimers();
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(post.mock.calls[0][1]).toMatchObject({
+      eventName: "remote_portal_opened",
+      props: { installId: "install-wired", hostKind: "vscode", withHint },
+    });
+    expect(Object.keys(post.mock.calls[0][1].props).sort()).toEqual([...REMOTE_PORTAL_OPENED_ALLOWED_KEYS].sort());
+  });
+
+  it.each(["global opt-out", "product opt-out", "fork"])("both new events stay silent: %s", async (gate) => {
+    const post = vi.spyOn(telemetry, "postEvent").mockImplementation(() => {});
+    const sidebar = makeSendingTelemetrySidebar();
+    if (gate === "global opt-out") sidebar.host.isTelemetryEnabled = false;
+    if (gate === "product opt-out") sidebar.host.getConfiguration = () => ({
+      get: (key: string, fallback: unknown) => key === "telemetry.enabled" ? false : fallback,
+    });
+    if (gate === "fork") sidebar.context.extensionId = "someone-else.grok-vscode-phuryn";
+    await sidebar.onMessage({ type: "openRemotePortal", withHint: true }, "local");
+    await sidebar.handleSend("private", false, sidebar.focused, "remote");
+    vi.runAllTimers();
+    expect(post).not.toHaveBeenCalled();
+    expect(sidebar.installId).not.toHaveBeenCalled();
+    expect(sidebar.focused.client.prompt).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([true, false])("all events use the existing cloud detector (desktop=%s)", async (desktop) => {
+    vi.stubEnv(CLOUD_ENVIRONMENT_ENV, "1");
+    const post = vi.spyOn(telemetry, "postEvent").mockImplementation(() => {});
+    const sidebar = makeSendingTelemetrySidebar();
+    sidebar.host.canSwitchWorkspaceFolder = desktop;
+    sidebar.reportRemotePortalOpened(false);
+    await sidebar.handleSend("private", false, sidebar.focused, "remote");
+    vi.runAllTimers();
+    expect(post).toHaveBeenCalledTimes(3);
+    for (const [, event] of post.mock.calls) expect(event.props.hostKind).toBe("sprite");
+  });
+
+  it("does not guess the original origin of a cold-resumed conversation", async () => {
+    const post = vi.spyOn(telemetry, "postEvent").mockImplementation(() => {});
+    const sidebar = makeSendingTelemetrySidebar();
+    sidebar.focused.hasHistory = true;
+    sidebar.remoteClients.setMetadata("phone", { usesTouch: false });
+    await sidebar.handleSend("private", false, sidebar.focused, "remote");
+    vi.runAllTimers();
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(post.mock.calls[0][1].props).not.toHaveProperty("sessionOrigin");
+    expect(post.mock.calls[0][1].props.clientDevice).toBe("desktop");
+  });
+
+  it("swallows construction and deferred POST failures without retrying or breaking the turn", async () => {
+    const post = vi.spyOn(telemetry, "postEvent").mockImplementation(() => { throw new Error("offline"); });
+    const sidebar = makeSendingTelemetrySidebar();
+    sidebar.installId.mockImplementation(() => { throw new Error("store unavailable"); });
+    expect(() => sidebar.reportRemotePortalOpened(false)).not.toThrow();
+    await expect(sidebar.handleSend("private", false, sidebar.focused, "remote")).resolves.toBeUndefined();
+    expect(() => vi.runAllTimers()).not.toThrow(); // session_start's cached install id still permits its POST
+    expect(post).toHaveBeenCalledTimes(1);
+    sidebar.installId.mockReturnValue("install-wired");
+    await sidebar.handleSend("private", false, sidebar.focused, "remote");
+    vi.runAllTimers();
+    expect(post).toHaveBeenCalledTimes(1);
+    sidebar.reportRemotePortalOpened(false);
+    expect(() => vi.runAllTimers()).not.toThrow();
+    expect(post).toHaveBeenCalledTimes(2);
+  });
+
+  it("shares the activity id across sidebar instances and rotates after an hour without emitted events", () => {
+    vi.setSystemTime(new Date("2099-01-01T00:00:00.000Z"));
+    const post = vi.spyOn(telemetry, "postEvent").mockImplementation(() => {});
+    const first = makeSendingTelemetrySidebar();
+    const second = makeSendingTelemetrySidebar();
+    first.reportRemotePortalOpened(true);
+    vi.runAllTimers();
+    vi.setSystemTime(Date.now() + 1000);
+    second.reportSessionStart(second.focused, "local");
+    vi.runAllTimers();
+    expect(post.mock.calls[1][1].sessionId).toBe(post.mock.calls[0][1].sessionId);
+    vi.setSystemTime(Date.now() + TELEMETRY_SESSION_INACTIVITY_MS);
+    second.host.isTelemetryEnabled = false;
+    second.reportRemotePortalOpened(false); // opted-out activity cannot prolong the session
+    second.host.isTelemetryEnabled = true;
+    vi.setSystemTime(Date.now() + 1);
+    second.reportRemoteMessage(second.focused, "remote");
+    vi.runAllTimers();
+    expect(post).toHaveBeenCalledTimes(3);
+    expect(post.mock.calls[2][1].sessionId).not.toBe(post.mock.calls[0][1].sessionId);
+  });
+});
+
+describe("lean remote payload builders and sanitizers", () => {
+  const sys = { appVersion: "1", osName: "Windows", osVersion: "10", locale: "en", isDebug: false };
+  const timestamp = "2026-09-06T00:00:00.000Z";
+  const cases = [
+    { build: buildRemotePortalOpenedEvent, sanitize: telemetry.sanitizeRemotePortalOpenedProps,
+      name: "remote_portal_opened", keys: REMOTE_PORTAL_OPENED_ALLOWED_KEYS,
+      props: { installId: "install-1", hostKind: "sprite", withHint: false } },
+    { build: buildSessionRemoteStartedEvent, sanitize: telemetry.sanitizeSessionRemoteStartedProps,
+      name: "session_remote_started", keys: SESSION_REMOTE_STARTED_ALLOWED_KEYS,
+      props: { installId: "install-1", hostKind: "sprite", clientDevice: "mobile", sessionOrigin: "local", provider: "codex" } },
+  ];
+  it.each(cases)("$name keeps exactly its disclosed props and supplied envelope", ({ build, sanitize, name, keys, props }) => {
+    const raw = { ...REQUIRED, ...props, prompt: "private text", sessionId: "private-id", branch: "main", withHint: false };
+    expect(sanitize(raw)).toEqual(props);
+    const event = build(raw as any, sys, "aptabase-id", timestamp);
+    expect(event).toMatchObject({ eventName: name, sessionId: "aptabase-id", timestamp, props });
+    expect(Object.keys(event.props).sort()).toEqual([...keys].sort());
+    const privacy = readFileSync(new URL("../docs/privacy.md", import.meta.url), "utf8");
+    expect(privacy).toContain(name);
+    for (const key of keys) expect(privacy).toMatch(key === "installId" ? /install id/i : new RegExp(key));
+  });
+  it.each(cases)("$name drops sensitive strings and wrong types", ({ build, sanitize }) => {
+    const dirty = {
+      installId: "C:\\Users\\private", hostKind: "sprite/../private", withHint: "secret text",
+      clientDevice: "phone in the office", sessionOrigin: "https://private.invalid", provider: "../secret",
+      prompt: "private", cwd: "/private", repo: "private", sessionId: "private-id",
+    };
+    expect(sanitize(dirty)).toEqual({});
+    expect(build(dirty as any, sys, "aptabase-id", timestamp).props).toEqual({});
+    for (const value of ["/home/private", "\\\\server\\share", "../private", "https://private.invalid", "x".repeat(81)]) {
+      expect(sanitize({ installId: value })).toEqual({});
+    }
+  });
+  it("does not add remote-only keys to the existing session_start baseline", () => {
+    expect(sanitizeSessionStartProps({ ...REQUIRED, withHint: true })).not.toHaveProperty("withHint");
+  });
+});
+
+describe("Aptabase inactivity sessions", () => {
+  it("uses time since the last event, reuses at exactly one hour, and rotates only beyond it", () => {
+    const createId = vi.fn().mockReturnValueOnce("first").mockReturnValueOnce("second");
+    const first = nextTelemetrySession(undefined, 0, createId);
+    const nearby = nextTelemetrySession(first, 1000, createId);
+    expect(nearby.id).toBe(first.id);
+    const boundary = nextTelemetrySession(nearby, 1000 + TELEMETRY_SESSION_INACTIVITY_MS, createId);
+    expect(boundary.id).toBe(first.id);
+    expect(createId).toHaveBeenCalledTimes(1);
+    const expired = nextTelemetrySession(boundary, boundary.lastEventAt + TELEMETRY_SESSION_INACTIVITY_MS + 1, createId);
+    expect(expired.id).toBe("second");
+    expect(createId).toHaveBeenCalledTimes(2);
+    expect(first).toEqual({ id: "first", lastEventAt: 0 }); // pure: input unchanged
+  });
+});
 
 describe("docs/privacy.md discloses every session_start prop", () => {
   const privacy = readFileSync(new URL("../docs/privacy.md", import.meta.url), "utf8");

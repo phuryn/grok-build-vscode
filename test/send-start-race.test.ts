@@ -202,6 +202,24 @@ describe("send vs concurrent startSession", () => {
   beforeEach(resetPromptControl);
   afterEach(resetPromptControl);
 
+  it("keeps remote accounting on a same-conversation restart and resets it for a new conversation", async () => {
+    const sidebar = makeSidebar("/repo");
+    await sidebar.startSession(undefined, sidebar.focused);
+    const session = sidebar.focused as Session;
+    const id = session.activeSessionId;
+    expect(id).toBeDefined();
+    session.telemetrySessionOrigin = "local";
+    session.remoteMessageReported = true;
+
+    await sidebar.startSession(id, session);
+    expect(session.telemetrySessionOrigin).toBe("local");
+    expect(session.remoteMessageReported).toBe(true);
+
+    await sidebar.startSession(undefined, session);
+    expect(session.telemetrySessionOrigin).toBeUndefined();
+    expect(session.remoteMessageReported).toBe(false);
+  });
+
   it("emits a visible turn failure when a start abandons a send after the echo", async () => {
     const sidebar = makeSidebar("/repo");
     const client = await sidebar.startSession(undefined, sidebar.focused);

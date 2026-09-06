@@ -157,12 +157,18 @@ import {
 import {
   APTABASE_APP_KEY_PROD,
   buildSessionStartEvent,
+  buildRemotePortalOpenedEvent,
+  buildSessionRemoteStartedEvent,
+  nextTelemetrySession,
   osNameFromPlatform,
   postEvent,
   sessionStartHostKind,
   sessionStartSurface,
   shouldSendTelemetry,
   OFFICIAL_EXTENSION_ID,
+  type AptabaseEvent,
+  type SystemProps,
+  type TelemetrySession,
 } from "./telemetry";
 import { randomUUID } from "node:crypto";
 import { execGrokCli } from "./cli-process";
@@ -552,6 +558,10 @@ const REMOVED_PROJECT_FOLDERS_KEY = "grok.removedProjectFolders";
  *  Send a discriminated form (`<id>:desktop`) and leave the bare id to the
  *  extension, whose already-linked rows store it bare. */
 const INSTALL_ID_KEY = "grok.installId";
+
+// Shared across sidebar instances/conversations in this extension host process.
+// Aptabase sessions measure activity windows; session_start still counts conversations.
+let telemetrySession: TelemetrySession | undefined;
 /** VS Code-local globalState key for the eye-off choice on the active-editor context chip.
  *  The chip is rebuilt from scratch on every file switch, so the user's "don't
  *  send this" has to live outside it or every switch silently re-enables the
@@ -9322,6 +9332,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     session.replayUserCounted = false;
     session.replayUserIsInterjection = false;
     session.userMessageCount = 0;
+    if (!resumeId || resumeId !== session.activeSessionId) {
+      session.telemetrySessionOrigin = undefined;
+      session.remoteMessageReported = false;
+    }
     session.inUserMessage = false;
     session.feedbackAvailable = false;
     session.feedbackUnsupported = false;
@@ -10462,6 +10476,9 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           break;
         }
         try {
+          // A phone can take over a running turn: its send may be queued before
+          // handleSend reaches the prompt commit point. Receipt is remote use.
+          if (session.hasHistory) this.reportRemoteMessage(session, origin);
           await this.handleSend(msg.text, msg.bare === true, session, origin, queuedSendCommit, msg.submissionId);
         } finally {
           if (queuedSendCommit) finishQueuedSendCommit(session, queuedSendCommit, false);
@@ -10492,6 +10509,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         const text = typeof msg.text === "string" ? msg.text : "";
         const chips = chipsForQueueSend(s.chips, msg.chips);
         if (text.trim() || chips.length) {
+          if (s.hasHistory) this.reportRemoteMessage(s, origin);
           s.queuedSendDispatch = undefined;
           // STICKY, never overwritten back to false: with desk↔remote
           // co-attach both views append to ONE queue, and the combined flush
@@ -10534,6 +10552,9 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         break;
       }
       case "steerSend":
+        if (session.hasHistory && (msg.text.trim() || msg.chips?.length || session.chips.length)) {
+          this.reportRemoteMessage(session, origin);
+        }
         await this.steerSend(msg.text, session, requester, msg.chips, msg.fromQueue === true);
         break;
       case "turnFeedback":
@@ -10584,6 +10605,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         break;
       }
       case "openRemotePortal":
+        this.reportRemotePortalOpened(msg.withHint === true);
         void this.host.openExternal(httpBaseFromRelayUrl(this.relayUrl()) + (msg.withHint ? "/?remoteHint=1" : ""));
         break;
       case "rewindSession":
@@ -13729,28 +13751,74 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     return this.state.getOrCreate(INSTALL_ID_KEY, randomUUID);
   }
 
-  /** Fire the single `session_start` telemetry event for the first real user
+  /** Build from cached state and defer the POST. All events share gates and the
+   *  process's one-hour inactivity session; neither build nor send may throw. */
+  private reportTelemetry(build: (sys: SystemProps, sessionId: string, timestamp: string) => AptabaseEvent): void {
+    try {
+      if (!shouldSendTelemetry(
+        this.host.isTelemetryEnabled,
+        this.host.getConfiguration("grok").get<boolean>("telemetry.enabled", true),
+        this.context.extensionId === OFFICIAL_EXTENSION_ID,
+      )) return;
+      const now = Date.now();
+      const next = nextTelemetrySession(telemetrySession, now, randomUUID);
+      const event = build({
+        appVersion: this.context.extensionVersion,
+        osName: osNameFromPlatform(process.platform),
+        osVersion: os.release(),
+        locale: this.host.language || "",
+        isDebug: !this.context.isProduction,
+      }, next.id, new Date(now).toISOString());
+      setImmediate(() => {
+        try { postEvent(APTABASE_APP_KEY_PROD, event); } catch { /* Silent. */ }
+      });
+      telemetrySession = next;
+    } catch {
+      // Silent — a telemetry failure must never surface to or affect the user.
+    }
+  }
+
+  private reportRemotePortalOpened(withHint: boolean): void {
+    this.reportTelemetry((sys, sessionId, timestamp) => buildRemotePortalOpenedEvent({
+      installId: this.installId(),
+      hostKind: sessionStartHostKind(this.host.canSwitchWorkspaceFolder, isCloudEnvironment()),
+      withHint,
+    }, sys, sessionId, timestamp));
+  }
+
+  private reportRemoteMessage(session: Session, origin: MsgOrigin): void {
+    if (origin !== "remote" || session.remoteMessageReported) return;
+    // Latch even when opted out or a send fails: never retry/backfill a message.
+    session.remoteMessageReported = true;
+    this.reportTelemetry((sys, sessionId, timestamp) => {
+      const remoteClientId = this.remoteClients.clientsForActiveValue(session)[0];
+      const preferences = remoteClientId ? this.remoteClients.metadata(remoteClientId) : undefined;
+      return buildSessionRemoteStartedEvent({
+        installId: this.installId(),
+        hostKind: sessionStartHostKind(this.host.canSwitchWorkspaceFolder, isCloudEnvironment()),
+        clientDevice: sessionStartSurface("remote", preferences?.usesTouch).clientDevice,
+        sessionOrigin: session.telemetrySessionOrigin,
+        provider: session.provider,
+      }, sys, sessionId, timestamp);
+    });
+  }
+
+  /** Fire the `session_start` telemetry event for the first real user
    *  message of `session` (callers gate on isFirstSend, so empty sessions
    *  never reach here). Respects VS Code's global telemetry setting + our own
    *  `grok.telemetry.enabled`; fully fire-and-forget. Must not rediscover
    *  providers or resolve credentials — those flags come from the last
    *  providerState / voiceConfigured refresh. */
   private reportSessionStart(session: Session, origin: MsgOrigin): void {
+    session.telemetrySessionOrigin ??= origin;
     // Telemetry must NEVER affect the user's turn. Build the event synchronously
     // from already-cached session + settings + the last connection/voice snapshot
     // (so it captures THIS session's mode/model/effort — focus could move during
     // the turn's awaits), then fire it asynchronously off the send path and
     // swallow any error silently. The PROD project always (dev host / local
     // installs included — only the probe script uses DEV).
-    try {
-      const enabled = shouldSendTelemetry(
-        this.host.isTelemetryEnabled,
-        this.host.getConfiguration("grok").get<boolean>("telemetry.enabled", true),
-        this.context.extensionId === OFFICIAL_EXTENSION_ID,
-      );
-      if (!enabled) return;
+    this.reportTelemetry((sys, sessionId, timestamp) => {
       const cfg = this.host.getConfiguration("grok");
-      const appVersion = this.context.extensionVersion;
       const remoteClientId = origin === "remote"
         ? this.remoteClients.clientsForActiveValue(session)[0]
         : undefined;
@@ -13766,7 +13834,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       // through to installId(), and only once ever.
       const existingInstallId = this.state.get<string>(INSTALL_ID_KEY);
       const returningInstall = existingInstallId !== undefined;
-      const event = buildSessionStartEvent(
+      return buildSessionStartEvent(
         {
           installId: existingInstallId ?? this.installId(),
           mode: this.displayMode(session),
@@ -13785,7 +13853,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           remoteReadRepliesAloud: remotePreferences?.readRepliesAloud,
           ...sessionStartSurface(origin, remotePreferences?.usesTouch),
           host: this.host.appName || undefined,
-          hostKind: sessionStartHostKind(this.host.canSwitchWorkspaceFolder),
+          hostKind: sessionStartHostKind(this.host.canSwitchWorkspaceFolder, isCloudEnvironment()),
           appPurpose: this.appPurpose(),
           voiceConfigured: this.lastVoiceConfiguredByCwd.get(normalizeRepoPath(cwd)),
           voiceStreaming: cfg.get<boolean>("voiceStreaming", true),
@@ -13798,21 +13866,11 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           worktree: !!session.worktree,
           returningInstall: returningInstall,
         },
-        {
-          appVersion,
-          osName: osNameFromPlatform(process.platform),
-          osVersion: os.release(),
-          locale: this.host.language || "",
-          isDebug: !this.context.isProduction,
-        },
-        randomUUID(),
-        new Date().toISOString(),
+        sys,
+        sessionId,
+        timestamp,
       );
-      // Off the send path entirely; postEvent is itself non-blocking + self-guarding.
-      setImmediate(() => postEvent(APTABASE_APP_KEY_PROD, event));
-    } catch {
-      // Silent — a telemetry failure must never surface to or affect the user.
-    }
+    });
   }
 
   private rememberVoiceConfigured(cwd: string, value: boolean): void {
@@ -15406,6 +15464,9 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       // One `session_start` per session, on the first real user message.
       this.reportSessionStart(session, origin);
     }
+    // A remote-first conversation deliberately emits BOTH events. This event
+    // counts every conversation ever driven remotely, including local starts.
+    this.reportRemoteMessage(session, origin);
     const sentChips = chips.filter((c) => !c.hidden);
     session.userMessageCount += 1;
     session.inUserMessage = false; // live send isn't part of the streamed-chunk count path

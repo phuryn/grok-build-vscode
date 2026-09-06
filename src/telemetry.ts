@@ -1,6 +1,7 @@
-// Privacy-first, cookieless usage telemetry via Aptabase. We send exactly ONE
-// event — `session_start`, on the first real user message of a session (never
-// empty sessions) — carrying only an anonymous install id + a low-cardinality
+// Privacy-first, cookieless usage telemetry via Aptabase. `session_start` fires
+// on the first real user message; lean remote events count portal opens and the
+// first remote message, including conversations that began locally. Only an
+// anonymous install id + a low-cardinality
 // settings snapshot (mode/model/effort, host kind, feature flags, provider
 // connection, voice configured/streaming). No content (prompts, code, paths)
 // is ever sent, and the IP is used by Aptabase only to derive country, then
@@ -8,9 +9,9 @@
 // thing is gated on VS Code's global telemetry setting + `grok.telemetry.enabled`.
 //
 // This module is pure + fire-and-forget: the builders have no I/O (unit-tested),
-// and `postEvent` never throws or blocks the caller. `sanitizeSessionStartProps`
-// is the only path into the event props object — unknown keys and path-like /
-// free-text values are dropped.
+// and `postEvent` never throws or blocks the caller. Every event's sanitizer
+// uses the same value gates and its own closed key allowlist — unknown keys and
+// path-like / free-text values are dropped.
 import * as https from "node:https";
 
 // Aptabase ingestion app keys (region-prefixed write-only keys meant to ship in
@@ -39,7 +40,7 @@ export interface SystemProps {
   isDebug: boolean;
 }
 
-export type TelemetryHostKind = "desktop" | "vscode";
+export type TelemetryHostKind = "desktop" | "vscode" | "sprite";
 export type TelemetryAppPurpose = "knowledge" | "coding";
 export type TelemetryMode = "agent" | "plan" | "yolo";
 export type TelemetryEffort = "" | "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
@@ -64,8 +65,8 @@ export interface SessionStartProps {
   soundNotifications: boolean;
   sessionOrigin: TelemetrySessionOrigin;
   clientDevice: TelemetryClientDevice;
-  /** Coarse product surface. `desktop` is Grok Build Desktop; everything else
-   *  (VS Code, Cursor, Antigravity, …) is `vscode`. */
+  /** Cloud hosts are `sprite`, including those running the desktop binary.
+   *  Off-cloud: Grok Build Desktop is `desktop`; editor hosts are `vscode`. */
   hostKind: TelemetryHostKind;
   appPurpose: TelemetryAppPurpose;
   /** Omitted (undefined) when no snapshot exists for the session's cwd. */
@@ -105,6 +106,37 @@ export interface AptabaseEvent {
   props: Record<string, string | number | boolean>;
 }
 
+export interface RemotePortalOpenedProps extends Pick<SessionStartProps, "installId" | "hostKind"> {
+  withHint: boolean;
+}
+
+export interface SessionRemoteStartedProps extends Pick<SessionStartProps, "installId" | "hostKind" | "clientDevice"> {
+  /** Omitted when the conversation's first message predates this live Session. */
+  sessionOrigin?: TelemetrySessionOrigin;
+  provider: TelemetryProvider;
+}
+
+export const TELEMETRY_SESSION_INACTIVITY_MS = 60 * 60 * 1000;
+
+export interface TelemetrySession {
+  id: string;
+  lastEventAt: number;
+}
+
+/** The host owns this state; time and id generation are supplied, never read here. */
+export function nextTelemetrySession(
+  previous: TelemetrySession | undefined,
+  now: number,
+  createId: () => string,
+): TelemetrySession {
+  return {
+    id: !previous || now - previous.lastEventAt > TELEMETRY_SESSION_INACTIVITY_MS
+      ? createId()
+      : previous.id,
+    lastEventAt: now,
+  };
+}
+
 export type SessionStartPropKey = (typeof SESSION_START_ALLOWED_KEYS)[number];
 
 /** Closed key set the builder will emit. Extra keys on the input are dropped. */
@@ -138,11 +170,16 @@ export const SESSION_START_ALLOWED_KEYS = [
   "returningInstall",
 ] as const;
 
+export const REMOTE_PORTAL_OPENED_ALLOWED_KEYS = ["installId", "hostKind", "withHint"] as const;
+export const SESSION_REMOTE_STARTED_ALLOWED_KEYS = [
+  "installId", "hostKind", "clientDevice", "sessionOrigin", "provider",
+] as const;
+
 const ALLOWED_MODES = new Set<string>(["agent", "plan", "yolo"]);
 const ALLOWED_EFFORTS = new Set<string>(["", "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
 const ALLOWED_ORIGINS = new Set<string>(["local", "remote"]);
 const ALLOWED_DEVICES = new Set<string>(["desktop", "mobile"]);
-const ALLOWED_HOST_KINDS = new Set<string>(["desktop", "vscode"]);
+const ALLOWED_HOST_KINDS = new Set<string>(["desktop", "vscode", "sprite"]);
 const ALLOWED_PURPOSES = new Set<string>(["knowledge", "coding"]);
 const ALLOWED_PROVIDERS = new Set<string>(["grok", "codex", "claude"]);
 
@@ -205,6 +242,18 @@ function pickBoundedInt(value: unknown, min: number, max: number): number | unde
  * dropped. The builder never copies input through.
  */
 export function sanitizeSessionStartProps(raw: unknown): Record<string, string | number | boolean> {
+  return sanitizeTelemetryProps(raw, SESSION_START_ALLOWED_KEYS);
+}
+
+export function sanitizeRemotePortalOpenedProps(raw: unknown): Record<string, string | number | boolean> {
+  return sanitizeTelemetryProps(raw, REMOTE_PORTAL_OPENED_ALLOWED_KEYS);
+}
+
+export function sanitizeSessionRemoteStartedProps(raw: unknown): Record<string, string | number | boolean> {
+  return sanitizeTelemetryProps(raw, SESSION_REMOTE_STARTED_ALLOWED_KEYS);
+}
+
+function sanitizeTelemetryProps(raw: unknown, allowedKeys: readonly string[]): Record<string, string | number | boolean> {
   const src = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
   const picked: Record<string, string | number | boolean> = {};
 
@@ -278,10 +327,13 @@ export function sanitizeSessionStartProps(raw: unknown): Record<string, string |
   const returningInstall = pickBoolean(src.returningInstall);
   if (returningInstall !== undefined) picked.returningInstall = returningInstall;
 
+  const withHint = pickBoolean(src.withHint);
+  if (withHint !== undefined) picked.withHint = withHint;
+
   // The allowlist is the only way a key can leave. A picker for an unlisted
   // name writes into `picked` and is dropped here.
   const out: Record<string, string | number | boolean> = {};
-  for (const key of SESSION_START_ALLOWED_KEYS) {
+  for (const key of allowedKeys) {
     if (Object.prototype.hasOwnProperty.call(picked, key)) out[key] = picked[key];
   }
   return out;
@@ -331,8 +383,9 @@ export function sessionStartSurface(
   };
 }
 
-/** Desktop app vs every VS Code-compatible host (VS Code, Cursor, Antigravity). */
-export function sessionStartHostKind(isDesktopHost: boolean): TelemetryHostKind {
+/** Cloud takes precedence: sprites run the desktop binary too. */
+export function sessionStartHostKind(isDesktopHost: boolean, isCloudHost = false): TelemetryHostKind {
+  if (isCloudHost) return "sprite";
   return isDesktopHost ? "desktop" : "vscode";
 }
 
@@ -344,10 +397,38 @@ export function buildSessionStartEvent(
   sessionId: string,
   timestamp: string,
 ): AptabaseEvent {
+  return buildEvent("session_start", sanitizeSessionStartProps(props), sys, sessionId, timestamp);
+}
+
+export function buildRemotePortalOpenedEvent(
+  props: RemotePortalOpenedProps,
+  sys: SystemProps,
+  sessionId: string,
+  timestamp: string,
+): AptabaseEvent {
+  return buildEvent("remote_portal_opened", sanitizeRemotePortalOpenedProps(props), sys, sessionId, timestamp);
+}
+
+export function buildSessionRemoteStartedEvent(
+  props: SessionRemoteStartedProps,
+  sys: SystemProps,
+  sessionId: string,
+  timestamp: string,
+): AptabaseEvent {
+  return buildEvent("session_remote_started", sanitizeSessionRemoteStartedProps(props), sys, sessionId, timestamp);
+}
+
+function buildEvent(
+  eventName: string,
+  props: AptabaseEvent["props"],
+  sys: SystemProps,
+  sessionId: string,
+  timestamp: string,
+): AptabaseEvent {
   return {
     timestamp,
     sessionId,
-    eventName: "session_start",
+    eventName,
     systemProps: {
       isDebug: sys.isDebug,
       locale: sys.locale,
@@ -356,7 +437,7 @@ export function buildSessionStartEvent(
       appVersion: sys.appVersion,
       sdkVersion: `${TELEMETRY_SDK}@${sys.appVersion}`,
     },
-    props: sanitizeSessionStartProps(props),
+    props,
   };
 }
 

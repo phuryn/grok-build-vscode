@@ -3,6 +3,7 @@ import type { HostMsg } from "./protocol";
 import type { FileChip } from "./chips";
 import { permissionOptionsForPlan } from "./plan-gate";
 import type { AcpProvider } from "./acp-backend";
+import type { TelemetrySessionOrigin } from "./telemetry";
 import {
   queuedSendsMessage,
   takeQueuedSendsPrefix,
@@ -227,6 +228,10 @@ export class Session {
    * can render plan cards inline with the conversation rather than at the end.
    */
   userMessageCount = 0;
+
+  /** Ephemeral accounting for this conversation; not reset by replay/rewind. */
+  telemetrySessionOrigin?: TelemetrySessionOrigin;
+  remoteMessageReported = false;
 
   /**
    * True while a sequence of user_message_chunk events is mid-flight, so we
