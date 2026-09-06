@@ -971,6 +971,8 @@ export class GrokSidebar {
     "cancelDeviceLogin",
     "checkGrokUpdate",
     "updateGrok",
+    "updateCodex",
+    "updateClaude",
     "openRemotePortal",
     "remoteSignIn",
     "unlinkRemoteDevice",
@@ -1054,6 +1056,9 @@ export class GrokSidebar {
   private grokVersionProbe?: Promise<string>;
   private codexVersionProbe?: Promise<string>;
   private claudeVersionProbe?: Promise<string>;
+  private providerCliUpdates: Partial<Record<AcpProvider, { status: "running" | "succeeded" | "failed"; message: string }>> = {};
+  private providerCliUpdate?: { provider: AcpProvider; done: Promise<void> };
+  private providerModelProbes = new Map<AcpProvider, Set<Promise<boolean>>>();
   /** History browsing scope. Deliberately independent of the live session cwd. */
   private selectedRepoCwd?: string;
   /**
@@ -1757,8 +1762,17 @@ export class GrokSidebar {
   /** Explicit credential observation. Unlike history refresh this never obeys
    * the listing freshness clock, so a completed sign-in is visible at once. */
   private async reprobeProviderCredentials(provider: AcpProvider): Promise<boolean> {
-    if (provider === "codex") return this.warmConnectedCodexModels();
-    if (provider === "claude") return this.warmConnectedClaudeModels();
+    if (provider === "codex" || provider === "claude") {
+      // These throwaway ACP processes hold the binary too. Don't start one
+      // during replacement; the updater explicitly re-observes afterward.
+      if (this.providerCliUpdate?.provider === provider) return false;
+      const probes = (this.providerModelProbes ??= new Map());
+      const pending = probes.get(provider) ?? new Set<Promise<boolean>>();
+      probes.set(provider, pending);
+      const probe = provider === "codex" ? this.warmConnectedCodexModels() : this.warmConnectedClaudeModels();
+      pending.add(probe);
+      try { return await probe; } finally { pending.delete(probe); }
+    }
     const cliPath = this.locateProvider("grok");
     if (!cliPath) return false;
     // session/new is what actually proves the account, but grok has no ACP
@@ -2247,9 +2261,11 @@ export class GrokSidebar {
         {
           id: "codex",
           connected: codexConnected,
+          ...(this.providerCliUpdates?.codex ? { cliUpdate: this.providerCliUpdates.codex } : {}),
           ...(codexConnected && needsLogin.codex ? { needsLogin: true } : {}),
           ...(codexConnected && versions.codex ? { cliVersion: versions.codex } : {}),
           ...(codexConnected ? {
+            cliUpdate: this.providerCliUpdates?.codex ?? { status: "idle" as const },
             adapterVersion: CODEX_ACP_ADAPTER_VERSION,
             latestCliVersion: CODEX_MANAGED_VERSION,
             ...(versions.codex ? { updateAvailable: versionIsOlder(versions.codex, CODEX_MANAGED_VERSION) } : {}),
@@ -2258,9 +2274,13 @@ export class GrokSidebar {
         {
           id: "claude",
           connected: claudeConnected,
+          ...(this.providerCliUpdates?.claude ? { cliUpdate: this.providerCliUpdates.claude } : {}),
           ...(claudeConnected && needsLogin.claude ? { needsLogin: true } : {}),
           ...(claudeConnected && versions.claude ? { cliVersion: versions.claude } : {}),
-          ...(claudeConnected ? { adapterVersion: CLAUDE_ACP_ADAPTER_VERSION } : {}),
+          ...(claudeConnected ? {
+            adapterVersion: CLAUDE_ACP_ADAPTER_VERSION,
+            cliUpdate: this.providerCliUpdates?.claude ?? { status: "idle" as const },
+          } : {}),
         },
       ],
       ...(this.providerRefreshInFlight ? { checking: true } : {}),
@@ -8380,7 +8400,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     await this.reprobeProviderCredentials(provider);
   }
 
-  /** Read `codex --version` once per activation. The adapter handshake reports
+  /** Memoize `codex --version` until an explicit update. The adapter handshake reports
    * its own package version, not the binary it launches. */
   private probeCodexVersion(): Promise<string> {
     if (this.codexVersionProbe) return this.codexVersionProbe;
@@ -8407,7 +8427,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     return this.codexVersionProbe;
   }
 
-  /** Read `claude --version` once per activation. The adapter handshake version
+  /** Memoize `claude --version` until an explicit update. The adapter handshake version
    * is a stale package constant (0.49.0 on 0.69.0) and must not be displayed. */
   private probeClaudeVersion(): Promise<string> {
     if (this.claudeVersionProbe) return this.claudeVersionProbe;
@@ -8738,6 +8758,93 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     await this.startSession(resumeId);
   }
 
+  /** Explicit updates of user-owned CLIs. Keep Session identities (including
+   * remote tab bindings), but release every process using the target binary.
+   * Other providers can keep working. No native UI is involved. */
+  private async updateProviderCliOnDemand(provider: "codex" | "claude"): Promise<void> {
+    if (this.providerCliUpdate || Object.values(this.providerCliUpdates ?? {}).some((u) => u.status === "running")) return;
+    const name = provider === "codex" ? "Codex CLI" : "Claude Code CLI";
+    const status = (state: "running" | "succeeded" | "failed", message: string) => {
+      (this.providerCliUpdates ??= {})[provider] = { status: state, message };
+      this.postProviderState();
+    };
+    const cliPath = this.locateProvider(provider);
+    if (!cliPath) {
+      status("failed", `${name} was not found. Reconnect the provider and try again.`);
+      return;
+    }
+    let release!: () => void;
+    const done = new Promise<void>((resolve) => { release = resolve; });
+    this.providerCliUpdate = { provider, done };
+    const affected = () => [...new Set([
+      ...this.pool, this.focused,
+      ...this.remoteClients.clients().map((id) => this.remoteClients.active(id)),
+    ])].filter((s): s is Session => !!s && s.provider === provider);
+    const stopped: Session[] = [];
+    let failure: string | undefined;
+    status("running", `Stopping ${name} sessions before updating…`);
+    try {
+      // A startup already past the gate can still spawn. Drain it first, then
+      // drain version/model probes, whose throwaway processes also lock the CLI.
+      await Promise.all(affected().map((s) => this.waitForSessionStart(s)));
+      await (provider === "codex" ? this.codexVersionProbe : this.claudeVersionProbe);
+      await Promise.all(this.providerModelProbes?.get(provider) ?? []);
+      await Promise.all(this.adapterHistory(provider)?.refresh?.values() ?? []);
+      const closing = affected().map((session) => {
+        stopped.push(session);
+        const client = this.detachClient(session);
+        this.setStatus(session, "idle");
+        this.emit(session, { type: "setBusy", value: true, locked: true });
+        return client?.disposeForUpdate();
+      });
+      // Await ACTUAL exit, as in disposePool. Signalling a kill alone leaves
+      // the binary locked on Windows. Settle all exits even if one rejects.
+      const exits = await Promise.allSettled(closing);
+      const rejected = exits.find((exit) => exit.status === "rejected");
+      if (rejected?.status === "rejected") throw rejected.reason;
+      status("running", `Updating ${name}… This may take a few minutes.`);
+      // Bare update is the compatibility contract. execGrokCli rejects on a
+      // nonzero exit; stdout is diagnostic text, never a success predicate.
+      const { stdout, stderr } = await execGrokCli(cliPath, ["update"], {
+        timeout: 180_000, windowsHide: true, closeStdin: true,
+      });
+      if (stdout.trim()) this.host.appendLine(stdout.trim());
+      if (stderr.trim()) this.host.appendLine(stderr.trim());
+    } catch (error) {
+      failure = errorDetail(error).slice(0, 1200);
+      this.host.appendLine(`[${provider}] update failed: ${failure}`);
+    } finally {
+      // Drain the OLD memo before clearing it, above. Otherwise its late
+      // response could overwrite the freshly observed version/catalog.
+      if (provider === "codex") this.codexVersionProbe = undefined;
+      else this.claudeVersionProbe = undefined;
+      delete this.providerCliVersions[provider];
+      this.providerCliUpdate = undefined;
+      status("running", `Checking ${name} version and models…`);
+      // Start the fresh probe BEFORE releasing queued starts, so they share it.
+      // It calls refreshModelsIfCliChanged, which re-reads the model catalog.
+      const observed = this.probeProviderVersion(provider);
+      release();
+      const version = await observed;
+      status(failure ? "failed" : "succeeded", failure
+        ? `${name} update failed: ${failure}`
+        : version ? `Update completed · ${name} v${version}`
+          : `Update completed, but the ${name} version could not be verified.`);
+      for (const session of stopped) {
+        this.emit(session, { type: "setBusy", value: false });
+        // Resume the same conversations on every visible surface. Background
+        // sessions keep their ids and load on their next send/focus.
+        if (session === this.focused || this.remoteClients.isActiveValueVisible(session)) {
+          try {
+            await this.startSession(session.activeSessionId, session, "ensure");
+          } catch (error) {
+            status("failed", `${name} update finished, but the conversation could not resume: ${errorDetail(error)}`);
+          }
+        }
+      }
+    }
+  }
+
   /** Run `grok update`, retrying once on the Windows "locked executable" error.
    *  Even after awaiting the pool teardown a lingering file lock can outlive the
    *  killed processes by a beat (antivirus / handle cleanup); a short pause-and-
@@ -8901,6 +9008,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     intent: SessionStartIntent = "replace",
     clock?: OpenClock,
   ): Promise<AcpClient | undefined> {
+    if (this.providerCliUpdate?.provider === target.provider) await this.providerCliUpdate.done;
     return this.runExclusiveSessionStart(target, () => this.startSessionBody(resumeId, target, intent, clock));
   }
 
@@ -11149,6 +11257,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         ))) break;
         await this.updateGrokCliOnDemand();
         break;
+      case "updateCodex":
+      case "updateClaude":
+        await this.updateProviderCliOnDemand(msg.type === "updateCodex" ? "codex" : "claude");
+        break;
       case "listSessions":
         if (origin === "remote" && clientId) {
           this.sendRemoteClient(clientId, this.buildSessionsList(messageCwd, {
@@ -12191,6 +12303,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   }
 
   private scheduleAdapterHistoryRefresh(provider: AcpProvider, cwd: string): void {
+    if (this.providerCliUpdate?.provider === provider) return;
     if (!isAdapterProvider(provider) || !this.connectedProviders().includes(provider)) return;
     const history = this.adapterHistory(provider);
     if (!history) return;
@@ -12216,6 +12329,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   }
 
   private async refreshAdapterHistory(provider: AcpProvider, cwd: string, key = projectProviderKey(cwd)): Promise<void> {
+    if (this.providerCliUpdate?.provider === provider) return;
     if (!isAdapterProvider(provider)) return;
     const history = this.adapterHistory(provider);
     const cliPath = this.locateProvider(provider);

@@ -8170,7 +8170,46 @@
    * places where the screen genuinely becomes empty again - a new session, and
    * the deferred transcript wipe. Every other caller is a repaint.
    */
+  function renderCodexUpdateNudge() {
+    const existing = $("welcome-codex-update");
+    if (existing) existing.remove();
+    const welcome = $("welcome");
+    const codex = (state.providers || []).find((p) => p.id === "codex");
+    if (!welcome || !codex || !codex.cliUpdate) return;
+    const update = codex.cliUpdate;
+    // Retain progress/outcome after the version changes so an empty phone
+    // conversation doesn't lose the answer to the update it just requested.
+    if ((!codex.connected || !codex.updateAvailable) && update.status === "idle") return;
+    const el = document.createElement("div");
+    el.id = "welcome-codex-update";
+    el.className = "welcome-tip welcome-cli-update muted";
+    el.setAttribute("role", "status");
+    const text = document.createElement("span");
+    text.textContent = update.message ||
+      `Codex CLI v${codex.cliVersion} is older than v${codex.latestCliVersion}, the version included with this app. Update to discover newer models. `;
+    el.appendChild(text);
+    if (codex.connected && (codex.updateAvailable || update.status === "failed") && update.status !== "running") {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "muted-link";
+      button.textContent = "Update Codex CLI";
+      button.disabled = (state.providers || []).some((p) => p.cliUpdate && p.cliUpdate.status === "running");
+      button.onclick = async () => {
+        const ok = await uiConfirm({
+          title: "Update Codex CLI?",
+          body: "This runs Codex’s updater on the connected machine. Running Codex sessions will stop, then visible conversations will resume.",
+          confirmLabel: "Update Codex CLI",
+        });
+        if (ok) vscode.postMessage({ type: "updateCodex" });
+      };
+      el.appendChild(document.createTextNode(" "));
+      el.appendChild(button);
+    }
+    welcome.appendChild(el);
+  }
+
   function renderWelcomeTip(advance) {
+    renderCodexUpdateNudge();
     // Never in the browser client. The capability is mirrored to remotes with
     // the rest of initialState, but where the chat sits is a property of the
     // machine running the extension - `moveView` is host-local and the relay
@@ -15990,6 +16029,8 @@
         // sends no frame at all, and a locally-set flag would spin forever.
         // Absent means idle, which is also what every pre-refresh host means.
         state.providersChecking = msg.checking === true;
+        renderCodexUpdateNudge();
+        refreshSettingsOverlay();
         // Connecting an additional account happens from the gear while the
         // current transcript stays mounted. The login/recovery view temporarily
         // borrows the welcome overlay; dismiss it when the provider it was

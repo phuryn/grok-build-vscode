@@ -11,10 +11,10 @@ export function grokCliNeedsShell(
 export type GrokCliExecOptions = Pick<
   ExecFileOptions,
   "cwd" | "env" | "timeout" | "windowsHide"
->;
+> & { closeStdin?: boolean };
 
 /**
- * Run a one-shot grok CLI command through the same Windows-shim policy as the
+ * Run a one-shot CLI command through the same Windows-shim policy as the
  * long-lived ACP process. All version, update-check, and update calls use this
  * wrapper so a resolved grok.cmd/grok.bat keeps working everywhere.
  */
@@ -24,11 +24,12 @@ export function execGrokCli(
   options: GrokCliExecOptions = {},
 ): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    execFile(
+    const { closeStdin, ...execOptions } = options;
+    const child = execFile(
       cliPath,
       [...args],
       {
-        ...options,
+        ...execOptions,
         encoding: "utf8",
         shell: grokCliNeedsShell(cliPath),
       },
@@ -41,5 +42,8 @@ export function execGrokCli(
         resolve({ stdout, stderr });
       },
     );
+    // An in-product updater has no terminal/input channel. EOF lets an older
+    // CLI fail promptly if it requires interaction instead of waiting unseen.
+    if (closeStdin) child.stdin?.end();
   });
 }

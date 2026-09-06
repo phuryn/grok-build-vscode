@@ -1,6 +1,7 @@
 import { MCP_REMOTE_PACKAGE } from "../src/mcp-connectors";
 import { createInterface } from "node:readline";
 import { PassThrough } from "node:stream";
+import { EventEmitter } from "node:events";
 import { describe, it, expect, vi } from "vitest";
 import {
   AcpClient,
@@ -59,6 +60,33 @@ function replyToWrites(
 }
 
 describe("AcpClient notification metadata", () => {
+  it.each([new CodexBackend(), new ClaudeBackend()])("waits beyond disposal's grace period for actual exit before updating (%s)", async (backend) => {
+    const { client } = clientWithFakeProc({ backend });
+    const proc = Object.assign(new EventEmitter(), { exitCode: null, signalCode: null });
+    (client as any).proc = proc;
+    vi.spyOn(client, "dispose").mockResolvedValue();
+    let settled = false;
+    const waiting = client.disposeForUpdate().then(() => { settled = true; });
+    await vi.waitFor(() => expect(proc.listenerCount("exit")).toBe(1));
+    expect(settled).toBe(false);
+    proc.emit("exit", 0);
+    await waiting;
+    expect(settled).toBe(true);
+  });
+
+  it("refuses a binary update when a process never exits", async () => {
+    vi.useFakeTimers();
+    try {
+      const { client } = clientWithFakeProc({ backend: new CodexBackend() });
+      (client as any).proc = Object.assign(new EventEmitter(), { exitCode: null, signalCode: null });
+      vi.spyOn(client, "dispose").mockResolvedValue();
+      const waiting = expect(client.disposeForUpdate(100)).rejects.toThrow("did not exit");
+      await vi.runAllTimersAsync();
+      await waiting;
+      expect((client as any).proc.listenerCount("exit")).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
+
   it("emits the live context count from the session/update envelope", () => {
     const { client } = clientWithFakeProc();
     const seen: number[] = [];

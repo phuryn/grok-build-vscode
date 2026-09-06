@@ -1508,6 +1508,18 @@ body.thinking-hidden .msg.thinking.find-reveal { display: block; }
 }
 .welcome-tip b { font-weight: 600; }
 .welcome-tip [role="button"] { cursor: pointer; }
+.welcome-cli-update { max-width: 46ch; overflow-wrap: anywhere; }
+.welcome-cli-update button {
+  display: block;
+  min-height: 36px;
+  padding: 4px 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.welcome-cli-update button:disabled { opacity: 0.5; cursor: default; }
 
 /* Empty-state advice shares the hint's box and measure, so the two tenants of
    this slot cannot look like different features. It differs only in being a

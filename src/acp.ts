@@ -1055,6 +1055,23 @@ export class AcpClient extends EventEmitter {
     return this.writeLine(makeQuestionCancelledResponse(requestId));
   }
 
+  /** Release the CLI for binary replacement, rejecting if it stays alive. */
+  async disposeForUpdate(timeoutMs = 3000): Promise<void> {
+    const proc = this.proc;
+    await this.dispose(timeoutMs);
+    if (!proc || proc.exitCode != null || proc.signalCode != null) return;
+    // dispose's bounded fallback may have only just signalled the hard kill.
+    // A binary replacement must observe exit or refuse to run the updater.
+    await new Promise<void>((resolve, reject) => {
+      const exited = () => { clearTimeout(timer); resolve(); };
+      const timer = setTimeout(() => {
+        proc.off("exit", exited);
+        reject(new Error("CLI process did not exit; update was not started."));
+      }, timeoutMs);
+      proc.once("exit", exited);
+    });
+  }
+
   /**
    * Tear the process down, resolving only once it has *actually* exited — a
    * caller that must replace the binary (`grok update`) can't race a still-open

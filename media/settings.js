@@ -429,6 +429,33 @@
     return "—";
   }
 
+  function cliUpdateRows(provider) {
+    const name = provider === "codex" ? "Codex CLI" : "Claude Code CLI";
+    const suffix = provider === "codex" ? "Codex" : "Claude";
+    const entry = (s) => provider === "codex" ? codexProvider(s) : claudeProvider(s);
+    const update = (s) => ((s.providers || []).find((p) => p.id === provider) || {}).cliUpdate;
+    return [{
+      id: "aboutUpdate" + suffix,
+      category: "about",
+      title: "Update " + name,
+      description: "Run its updater on the connected machine. This stops this provider’s running sessions, then resumes visible conversations.",
+      kind: "action",
+      actionLabel: "Update " + name,
+      keepOpen: true,
+      // Presence advertises support: older remote hosts cannot handle these.
+      visible: (s) => !!(entry(s) && entry(s).cliUpdate),
+      enabled: (s) => !(s.providers || []).some((p) => p.cliUpdate && p.cliUpdate.status === "running"),
+      message: () => ({ type: "update" + suffix }),
+    }, {
+      id: "about" + suffix + "UpdateStatus",
+      category: "about",
+      title: name + " updates",
+      kind: "status",
+      visible: (s) => !!(update(s) && update(s).message),
+      describe: (s) => update(s).message,
+    }];
+  }
+
   /** One sentence, one control. Visibility is decided separately. */
   const ROWS = [
     {
@@ -1148,6 +1175,7 @@
         return versionLabel(p && p.cliVersion);
       },
     },
+    ...cliUpdateRows("codex"),
     {
       id: "aboutClaudeCli",
       category: "about",
@@ -1159,17 +1187,14 @@
         return versionLabel(p && p.cliVersion);
       },
     },
-    // Deliberately absent: "Codex ACP adapter", "Claude ACP adapter" and
-    // "Codex updates". The two adapters are pinned dependencies of THIS
+    ...cliUpdateRows("claude"),
+    // Deliberately absent: "Codex ACP adapter" and "Claude ACP adapter".
+    // The two adapters are pinned dependencies of THIS
     // extension (@agentclientprotocol/codex-acp, @agentclientprotocol/
     // claude-agent-acp, exact versions in package.json) and ship inside the
     // vsix, so they move only when the extension does — a version the reader
-    // cannot act on reads as one more thing to keep current. And "Codex
-    // updates are managed at its install source" was true only when the user
-    // installed Codex themselves; when they let us install it the source is
-    // us, pinned at CODEX_MANAGED_TAG, and there is nowhere for them to go.
-    // One sentence, two meanings. Grok is the only CLI this extension
-    // actually updates, so it is the only one with an update row.
+    // cannot act on reads as one more thing to keep current. All three CLIs
+    // have explicit update actions; only Grok is updated automatically by us.
     {
       id: "aboutGrokUpdateStatus",
       category: "about",

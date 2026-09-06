@@ -363,6 +363,10 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
   retryProviderSession: "propose",
   // approvals + destructive + host-CLI mutations (full only)
   permissionAnswer: "full",
+  // Headless CLI updates: progress and results travel in providerState, so a
+  // phone can finish the action without a host modal or terminal.
+  updateCodex: "full",
+  updateClaude: "full",
   exitPlanAnswer: "full",
   // Provider accounts belong to the desk. A remote may observe providerState,
   // but it must never clear credentials or open a login terminal on the host.
@@ -582,6 +586,8 @@ export const REMOTE_REQUIRES_BOUND_SESSION: Record<WebviewMsg["type"], boolean> 
   cancelDeviceLogin: false,
   submitDeviceLoginCode: false,
   updateGrok: false,
+  updateCodex: false,
+  updateClaude: false,
   checkGrokUpdate: false,
   pickModel: true,
   openFile: false,

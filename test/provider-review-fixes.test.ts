@@ -184,7 +184,7 @@ describe("multi-provider review regressions", () => {
     expect(warm).toContain("await warmCodexModelCache(");
     expect(warm).toContain("model-cache warm-up failed");
     const reprobe = methodBody("private async reprobeProviderCredentials(");
-    expect(reprobe).toContain('if (provider === "codex")');
+    expect(reprobe).toContain('if (provider === "codex" || provider === "claude")');
     expect(reprobe).toContain("this.warmConnectedCodexModels()");
     const recheck = sidebar.slice(sidebar.indexOf('case "recheckConnection":'), sidebar.indexOf('case "logout":'));
     expect(recheck).toContain("await this.reprobeProviderCredentials(provider)");

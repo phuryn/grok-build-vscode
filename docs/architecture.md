@@ -102,8 +102,15 @@ standalone dot structure.
 The shared `media/chat.js` gear opens with **Use this app for**, then Remote
 Control (desk only; Continue remotely + Your account, or Sign in / How it works —
 unlink is Settings → Account only), then a single **Settings** entry. Versions,
-CLI update, bug/feature tracker links, contact, and the non-affiliation
-disclaimer live in Settings → About. Provider account rows appear on the desk gear only when no
+CLI updates, bug/feature tracker links, contact, and the non-affiliation
+disclaimer live in Settings → About. `updateCodex` / `updateClaude` run the
+CLI’s bare `update` command headlessly (remote tier `full`), with progress and
+outcomes in `providerState.providers[].cliUpdate`. `updateProviderCliOnDemand`
+awaits every target-provider process exit, re-probes the CLI version (refreshing
+its model cache on change), and resumes visible local and remote conversations.
+Only Grok is updated automatically by the extension; the Codex welcome nudge uses the observed
+version against `CODEX_MANAGED_VERSION`, with no registry check.
+Provider account rows appear on the desk gear only when no
 provider is connected or one needs login; healthy connected accounts live in
 Settings → Providers. The browser receives view-only connection state and
 renders no account-management controls in the gear. Desk account actions
