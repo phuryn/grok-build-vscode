@@ -1072,6 +1072,27 @@ describe("projects rail", () => {
       return h;
     }
 
+    it("archives the project you are standing in", () => {
+      // Owner, 2026-09-06: "we can stay inside.... now in the archive. archive
+      // is just a way we group projects." The rail used to refuse to file the
+      // open project under Archived, so Archive on the project a machine boots
+      // into stored the choice and changed nothing on screen -- indistinguishable
+      // from a dead button. An explicit choice outranks the heuristic.
+      const h = bootArchive({}, true);
+      const head = (name: string) => [...h.doc.querySelectorAll(".rail-repo-head")]
+        .find((el) => el.querySelector(".rail-repo-label")?.textContent === name)!;
+      click(h.window, menuItem(openMenu(h.window, head("home")), "Archive project")!);
+      expect(h.posted).toContainEqual({ type: "setRepoArchived", cwd: "/work/home", archived: true });
+      const catalog = ["home", "one", "two", "three", "stale", "ancient"].map((name) =>
+        repo(name, ago(0), name === "home" ? { archived: true, archivedAt: Date.now() } : {}));
+      dispatch(h.window, { type: "repos", entries: catalog, selectedCwd: "/work/home", activeCwd: "/work/home" });
+      expect(sectionRepos(h.doc, "projects")).not.toContain("home");
+      const archiveButton = [...h.doc.querySelectorAll(".rail-head-btn")]
+        .find((el) => el.textContent?.includes("Project Archive"))!;
+      click(h.window, archiveButton);
+      expect(sectionRepos(h.doc, "archived")).toContain("home");
+    });
+
     it.each([false, true])("archives and restores through the catalog on desktop/remote=%s", (remote) => {
       const h = bootArchive({}, remote);
       const head = (name: string) => [...h.doc.querySelectorAll(".rail-repo-head")]

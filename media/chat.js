@@ -5258,17 +5258,19 @@
   }
 
   function railRepoArchived(repo, floorKeys, now) {
-    // Never the project you are reading. Archiving it is still recorded — it
-    // drops out of sight the moment you work somewhere else — but a rail that
-    // files the open conversation under "Archived" is describing the screen
-    // wrongly.
-    if (sameCwd(repo.cwd, state.selectedRepoCwd)) return false;
     const known = railKnownRows(repo);
     const at = railRepoActivity(repo);
     // Your own last word, in force until the project is worked in again — and
     // without the project's own rows there is nothing that could have overruled
     // it, so it stands as given rather than being tested against a guess.
     if (repo.archivedAt > 0 && (!known || repo.archivedAt >= at)) return !!repo.archived;
+    // Below here every rule is a GUESS about where you are or how long it has
+    // been, and none of them may overrule the line above. The project you are
+    // reading is exempt from being archived FOR you -- not from being archived
+    // BY you. Ordering these the other way round is what made Archive look
+    // broken on the project a machine boots into: the host stored the choice,
+    // this returned false, and the row never moved.
+    if (sameCwd(repo.cwd, state.selectedRepoCwd)) return false;
     // The age rule NEVER runs on a guess. Without the project's conversations we
     // do not know when it was last worked in: `repo.updatedAt` is the session
     // DIRECTORY's mtime, and that does not move when you continue an existing

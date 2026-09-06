@@ -816,11 +816,18 @@
     }
 
     const { current, other } = partitionRepos();
-    const { active, archived } = splitByArchive(other);
+    // The open folder goes through the split like everything else. Lifting it
+    // out first was a SECOND mechanism holding it in Projects, on top of the
+    // guards in repoIsArchived -- so archiving it stored the choice and moved
+    // nothing, and fixing only the guards fixed only half of it.
+    const { active, archived } = splitByArchive(current ? [current, ...other] : other);
 
-    // Open folder stays first inside Projects; everything else remains alphabetical.
-    const projectRepos = (current ? [current, ...active] : active)
-      .filter((r) => !q || repoHasMatch(r));
+    // Open folder stays first inside Projects; everything else remains
+    // alphabetical. If the user archived it, it is not in Projects to lead.
+    const ordered = current && active.indexOf(current) > 0
+      ? [current, ...active.filter((r) => r !== current)]
+      : active;
+    const projectRepos = ordered.filter((r) => !q || repoHasMatch(r));
     if (projectRepos.length) {
       const forcedOpen = !!q;
       const open = forcedOpen || !state.groupCollapsed.projects;
@@ -1184,12 +1191,14 @@
    *    for it to have been recent about.
    */
   function repoIsArchived(repo, floorKeys, now) {
-    if (sameCwd(repo.cwd, state.workspaceCwd)) return false;
-    if (sameCwd(repo.cwd, state.currentCwd)) return false;
     const { known } = sessionsForRepo(repo);
     const at = repoActivity(repo);
     const archivedAt = Number(repo.archivedAt) || 0;
     if (archivedAt > 0 && (!known || archivedAt >= at)) return !!repo.archived;
+    // Guesses only, below an answer. Standing in a project exempts it from
+    // being archived FOR you by the age rule; it must not veto your own click.
+    if (sameCwd(repo.cwd, state.workspaceCwd)) return false;
+    if (sameCwd(repo.cwd, state.currentCwd)) return false;
     if (!known) return !!repo.archived;
     if (floorKeys.has(cwdKey(repo.cwd))) return false;
     return at > 0 ? now - at > RAIL_ARCHIVE_AFTER_MS : true;

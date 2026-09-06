@@ -600,6 +600,26 @@ describe("VS Code projects rail renderer", () => {
     });
   });
 
+  describe("archiving the open project", () => {
+    it("files the current project under Project Archive when the user asks", () => {
+      // The two guards here (workspaceCwd, currentCwd) exempt the project you
+      // are standing in from being archived FOR you by the age rule. They used
+      // to run before the stored choice was read, which silently vetoed the
+      // menu item on the one project every fresh machine opens with.
+      const { window, doc } = h;
+      const api = railApi(window);
+      const catalog = [
+        { cwd: "/work/alpha", label: "alpha", available: true, updatedAt: 30, archived: true, archivedAt: Date.now(), color: "" },
+        { cwd: "/work/beta", label: "beta", available: true, updatedAt: 10, archived: false, archivedAt: 0, color: "" },
+      ];
+      loadCatalog(api, "/work/alpha", catalog);
+      loadSessions(api, [row("a1", "/work/alpha", "here", 10)]);
+      api.onMessage({ type: "repoSessions", cwd: "/work/beta", entries: [row("b1", "/work/beta", "there", 20)], dots: {}, total: 1 });
+      expect(api.state.currentCwd).toBe("/work/alpha");
+      expect(sectionTitles(doc)).toContain("Project Archive");
+    });
+  });
+
   describe("project colour picker", () => {
     const withColors = () =>
       repos.map((r) => ({ ...r, color: r.cwd === "/work/beta" ? "teal" : "" }));
