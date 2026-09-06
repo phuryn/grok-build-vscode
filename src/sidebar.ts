@@ -19,7 +19,8 @@ import type { AcpProvider, BackendSessionListEntry } from "./acp-backend";
 import { isAdapterProvider, isAcpProvider, ACP_PROVIDERS } from "./acp-backend";
 import { CODEX_ACP_ADAPTER_VERSION, CodexBackend, isCodexCredentialError } from "./codex-backend";
 import { locateCodexCli, resolveCodexHome } from "./codex-cli-locator";
-import { CODEX_MANAGED_VERSION, installManagedCodex } from "./codex-managed-installer";
+import { CODEX_MANAGED_VERSION, codexManagedRoot, installManagedCodex } from "./codex-managed-installer";
+import { CLI_NPM_PACKAGE, cliUpdatePlan } from "./cli-update-plan";
 import { warmCodexModelCache } from "./codex-model-cache";
 import { CLAUDE_ACP_ADAPTER_VERSION, ClaudeBackend, isClaudeCredentialError } from "./claude-backend";
 import { locateClaudeCli, parseClaudeVersionOutput } from "./claude-cli-locator";
@@ -8758,6 +8759,15 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     await this.startSession(resumeId);
   }
 
+  /** Did WE install this Codex? Then our installer is its updater. No managed
+   *  store means nothing is managed — never a reason to fail an update. */
+  private isManagedCodexBinary(provider: AcpProvider, cliPath: string): boolean {
+    const storageRoot = this.context?.globalStorageUri?.fsPath;
+    if (provider !== "codex" || !storageRoot) return false;
+    const relative = path.relative(codexManagedRoot(storageRoot), cliPath);
+    return !!relative && !relative.startsWith("..") && !path.isAbsolute(relative);
+  }
+
   /** Explicit updates of user-owned CLIs. Keep Session identities (including
    * remote tab bindings), but release every process using the target binary.
    * Other providers can keep working. No native UI is involved. */
@@ -8803,13 +8813,42 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       const rejected = exits.find((exit) => exit.status === "rejected");
       if (rejected?.status === "rejected") throw rejected.reason;
       status("running", `Updating ${name}… This may take a few minutes.`);
-      // Bare update is the compatibility contract. execGrokCli rejects on a
-      // nonzero exit; stdout is diagnostic text, never a success predicate.
-      const { stdout, stderr } = await execGrokCli(cliPath, ["update"], {
-        timeout: 180_000, windowsHide: true, closeStdin: true,
+      // Update it the way it was installed. See cli-update-plan.ts — the CLI's
+      // own updater cannot reach an npm install that sits outside npm's
+      // configured prefix, which is every one of our cloud machines.
+      // npm links its global bins, so the install shape is only visible through
+      // the symlink. Resolving it is best-effort: an unresolvable path is a
+      // reason to fall back to the CLI's own updater, never to fail the update.
+      let realPath = cliPath;
+      try { realPath = await fs.promises.realpath(cliPath); } catch { /* use cliPath */ }
+      const plan = cliUpdatePlan({
+        managed: this.isManagedCodexBinary(provider, cliPath),
+        realPath,
+        packageName: CLI_NPM_PACKAGE[provider],
       });
-      if (stdout.trim()) this.host.appendLine(stdout.trim());
-      if (stderr.trim()) this.host.appendLine(stderr.trim());
+      if (plan.kind === "managed") {
+        // We put this binary here, so updating it means installing the pinned
+        // build with its verified digest — not asking a standalone binary to
+        // replace itself, which is the one shape we never measured. It also
+        // republishes the tag the locator prefers, retiring the older
+        // directory this fell back to.
+        await installManagedCodex({
+          storageRoot: this.context.globalStorageUri.fsPath,
+          signal: new AbortController().signal,
+        });
+      } else {
+        // execGrokCli rejects on a nonzero exit; stdout is diagnostic text,
+        // never a success predicate.
+        const [command, args] = plan.kind === "npm"
+          ? [process.platform === "win32" ? "npm.cmd" : "npm",
+            ["install", "-g", "--prefix", plan.prefix, plan.packageSpec]]
+          : [cliPath, ["update"]];
+        const { stdout, stderr } = await execGrokCli(command, args, {
+          timeout: 180_000, windowsHide: true, closeStdin: true,
+        });
+        if (stdout.trim()) this.host.appendLine(stdout.trim());
+        if (stderr.trim()) this.host.appendLine(stderr.trim());
+      }
     } catch (error) {
       failure = errorDetail(error).slice(0, 1200);
       this.host.appendLine(`[${provider}] update failed: ${failure}`);
