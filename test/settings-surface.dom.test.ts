@@ -183,6 +183,7 @@ describe("settings catalog", () => {
     expect(rows.find((row) => row.id === "mcpCatalog")?.category).toBe("connectors");
     expect(api.GROK_CONNECTORS_URL).toBe("https://grok.com/connectors");
     expect(api.CONNECTOR_SECTION_HERE).toBe("On this computer");
+    expect(api.CONNECTOR_SECTION_HERE_REMOTE).toBe("On the workspace machine");
     expect(api.CONNECTOR_SECTION_GROK).toBe("Grok.com connectors");
     expect(api.CONNECTOR_SECTION_LOCAL).toBe("Local Grok connectors");
     expect(api.CONNECTOR_BLURB_HERE).toMatch(/Grok, Codex, and Claude/);
@@ -878,7 +879,8 @@ describe("settings overlay (chat.js)", () => {
     expect(h.posted).toContainEqual({ type: "connectMcpConnector", id: "github", key: "ghp_remote_write_only", readOnly: false });
     expect(input.value).toBe("");
     dispatch(h.window, { type: "mcpConnectors", remoteConnect: true, connectors: [{ ...row, connected: true, keySet: true }] });
-    expect(overlay.textContent).toContain("Tools in already running sessions remain available");
+    expect((overlay.querySelector(".settings-connector-action") as HTMLElement).title)
+      .toContain("Tools in already running sessions remain available");
     click(h.window, overlay.querySelector(".settings-connector-key-open")!);
     expect((overlay.querySelector(".settings-connector-key-input") as HTMLInputElement).value).toBe("");
     click(h.window, overlay.querySelector(".settings-connector-key-cancel")!);
@@ -1013,7 +1015,7 @@ describe("settings overlay (chat.js)", () => {
     expect(overlay.textContent).toMatch(/machine running this workspace/);
     expect(overlay.querySelector(".settings-connector-action")).toBeNull();
     expect(overlay.textContent).toContain("Connected");
-    expect(overlay.textContent).toContain("On this computer");
+    expect(overlay.textContent).toContain("On the workspace machine");
     expect(overlay.textContent).toContain("Grok.com connectors");
     expect(overlay.textContent).toContain("Local Grok connectors");
     expect(overlay.textContent).toMatch(/managed on the host machine only/);
@@ -2392,5 +2394,69 @@ describe("settings: the GitHub token path matches what the host will accept", ()
     (root.querySelector(".settings-github-connect") as HTMLButtonElement).click();
     expect(root.querySelector(".settings-github-flow-recheck")).toBeNull();
     expect(root.querySelector(".settings-github-flow-cancel")).toBeTruthy();
+  });
+});
+
+describe("the connectors header speaks to the surface it is standing on", () => {
+  // Rendered on a phone, this section put "On this computer" directly above
+  // "on the machine running this workspace" -- two different machines named
+  // in two adjacent lines -- and then spent three of the paragraph's seven
+  // sentences on what Disconnect does, to a reader who had not pressed it and
+  // who on the read-only remote cannot press it at all. Seven lines of
+  // callout before the first connector.
+  const MCP_CAPS = { hostCaps: { mcpSettings: true, relocateView: false, showOutput: false, toggleDevTools: true } };
+  const CONNECTORS = [
+    { id: "linear", name: "Linear", auth: "oauth", connected: true, description: "Issues and projects." },
+  ];
+
+  function header(env: Record<string, unknown>, snapshot: Record<string, unknown> = {}) {
+    const { root } = mountAt("connectors", {
+      env: { ...MCP_CAPS, ...env },
+      snapshot: { appPurpose: "coding", mcpConnectors: CONNECTORS, ...snapshot },
+    });
+    const catalog = root.querySelector('[data-id="connectorsCatalog"]') as HTMLElement;
+    return {
+      heading: (root.querySelector(".settings-group")?.textContent || "").trim(),
+      blurb: (catalog?.querySelector(".settings-mcp-warning")?.textContent || "").trim(),
+      disconnectTitle: (catalog?.querySelector(".settings-connector-action") as HTMLElement)?.title || "",
+    };
+  }
+
+  it("names the machine the connectors are actually on", () => {
+    expect(header({}).heading).toBe("On this computer");
+    // A phone is not that computer, and the blurb underneath always knew it.
+    expect(header({ isRemote: true, isDesktop: false }, { mcpRemoteConnect: true }).heading)
+      .toBe("On the workspace machine");
+    expect(header({ isRemote: true, isDesktop: false }, { mcpRemoteConnect: false }).heading)
+      .toBe("On the workspace machine");
+  });
+
+  it("says where the sign-in happens and where the credential lands", () => {
+    expect(header({}).blurb).toMatch(/Credentials stay on this machine\.$/);
+    // The remote copy this replaces put three referents in two sentences --
+    // "the machine running this workspace", "this device", "here" -- so
+    // "approve access on this device" read as the host when it means the
+    // phone. window.open runs in the browser you are holding; only the
+    // credential travels.
+    const remote = header({ isRemote: true, isDesktop: false }, { mcpRemoteConnect: true }).blurb;
+    expect(remote).toMatch(/Sign-in opens in this browser/);
+    expect(remote).toMatch(/saved on that machine, not on this one\.$/);
+    expect(remote).not.toMatch(/this device/);
+  });
+
+  it("does not explain Disconnect to someone who has not pressed it", () => {
+    for (const surface of [
+      header({}),
+      header({ isRemote: true, isDesktop: false }, { mcpRemoteConnect: true }),
+      // And least of all here, where there is no Disconnect button at all.
+      header({ isRemote: true, isDesktop: false }, { mcpRemoteConnect: false }),
+    ]) {
+      expect(surface.blurb).not.toMatch(/Disconnect/);
+      expect(surface.blurb.split(/(?<=\.)\s+/).length).toBeLessThanOrEqual(3);
+    }
+    // It moved to the button, which is where it is read at the moment it
+    // applies. The other half of it -- "applies to new conversations and when
+    // you reopen one" -- is already in every row's own description.
+    expect(header({}).disconnectTitle).toMatch(/already running sessions remain available/);
   });
 });

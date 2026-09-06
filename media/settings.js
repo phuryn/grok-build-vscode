@@ -86,12 +86,26 @@
   const GITHUB_REPO_URL = "https://github.com/phuryn/grok-build-vscode";
   const GROK_CONNECTORS_URL = "https://grok.com/connectors";
   const CONNECTOR_SECTION_HERE = "On this computer";
+  // A phone is not the computer these live on. The desk-written heading
+  // sitting directly above the remote-written blurb named two different
+  // machines on one screen, which is most of why the section read as
+  // confusing. "Workspace machine" is true of a laptop and of a cloud
+  // machine, so one word covers both remote cases.
+  const CONNECTOR_SECTION_HERE_REMOTE = "On the workspace machine";
   const CONNECTOR_SECTION_GROK = "Grok.com connectors";
   const CONNECTOR_SECTION_LOCAL = "Local Grok connectors";
   const CONNECTOR_BLURB_HERE =
-    "These apps are available to Grok, Codex, and Claude. Most open a browser to sign in; GitHub uses a personal access token you paste here. Tokens stay on this machine.";
+    "These apps are available to Grok, Codex, and Claude. Most open a browser to sign in; GitHub takes a token you paste here. Credentials stay on this machine.";
+  // Remote, and allowed to connect. The old copy put three referents in
+  // two sentences — "the machine running this workspace", "this device",
+  // "here" — so "approve access on this device" read as the host when it
+  // means the phone. Sign-in genuinely opens in the browser you are
+  // holding (openConnectorConsent calls window.open here); only the
+  // credential travels.
+  const CONNECTOR_BLURB_HERE_REMOTE_CONNECT =
+    "These apps are available to Grok, Codex, and Claude on the machine running this workspace. Sign-in opens in this browser; GitHub takes a token you paste here. The credentials are saved on that machine, not on this one.";
   const CONNECTOR_BLURB_HERE_REMOTE =
-    "These apps are connected on the machine running this workspace. Sign-in happens there — it cannot be changed from this page.";
+    "These apps are connected on the machine running this workspace. Connecting and disconnecting are done there, not from this page.";
   const CONNECTOR_DISCONNECT_COPY =
     "Disconnect affects future conversations and reopened ones. Tools in already running sessions remain available. It does not revoke access at the vendor or clear saved OAuth sign-ins.";
   const CONNECTOR_BLURB_GROK =
@@ -1292,8 +1306,10 @@
     return !!(env && env.hostCaps && env.hostCaps.mcpSettings);
   }
 
-  function connectorSection(row) {
-    if (row.id === "connectorsCatalog") return CONNECTOR_SECTION_HERE;
+  function connectorSection(row, env) {
+    if (row.id === "connectorsCatalog") {
+      return env && env.isRemote ? CONNECTOR_SECTION_HERE_REMOTE : CONNECTOR_SECTION_HERE;
+    }
     return "";
   }
 
@@ -1362,7 +1378,7 @@
           ...snapshot.mcpServers.map((s) => [s.displayName, s.name, s.scopeName, s.configFile].filter(Boolean).join(" ")),
         ].join(" ")
       : "";
-    const section = connectorSection(row);
+    const section = connectorSection(row, env);
     return [
       rowTitle(row, snapshot, env),
       rowDescription(row, snapshot, env),
@@ -1994,11 +2010,9 @@
     const warning = document.createElement("div");
     warning.className = "settings-mcp-warning";
     const canManage = canManageConnectors(snapshot, env);
-    warning.textContent = (env && env.isRemote
-      ? (canManage
-        ? "Connect apps on the machine running this workspace. Approve access on this device and return here. GitHub uses a token. Credentials stay on the host."
-        : CONNECTOR_BLURB_HERE_REMOTE)
-      : CONNECTOR_BLURB_HERE) + " " + CONNECTOR_DISCONNECT_COPY;
+    warning.textContent = env && env.isRemote
+      ? (canManage ? CONNECTOR_BLURB_HERE_REMOTE_CONNECT : CONNECTOR_BLURB_HERE_REMOTE)
+      : CONNECTOR_BLURB_HERE;
     el.appendChild(warning);
     const connectors = sortConnectorsForDisplay(
       Array.isArray(snapshot.mcpConnectors) ? snapshot.mcpConnectors : [],
@@ -3477,7 +3491,7 @@
       } else {
         let lastSection = "";
         for (const row of rows) {
-          const section = connectorSection(row);
+          const section = connectorSection(row, env);
           if (section && section !== lastSection) {
             lastSection = section;
             const heading = document.createElement("h2");
@@ -4098,10 +4112,12 @@
     CONNECTOR_LOGO_IDS,
     sortConnectorsForDisplay,
     CONNECTOR_SECTION_HERE,
+    CONNECTOR_SECTION_HERE_REMOTE,
     CONNECTOR_SECTION_GROK,
     CONNECTOR_SECTION_LOCAL,
     CONNECTOR_BLURB_HERE,
     CONNECTOR_BLURB_HERE_REMOTE,
+    CONNECTOR_BLURB_HERE_REMOTE_CONNECT,
     CONNECTOR_BLURB_GROK,
     CONNECTOR_BLURB_LOCAL,
     CONNECTOR_BLURB_LOCAL_REMOTE,

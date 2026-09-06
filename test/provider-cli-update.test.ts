@@ -155,6 +155,25 @@ describe.each(["codex", "claude"] as const)("%s explicit CLI update", (provider)
     expect(host.postProviderState).toHaveBeenCalledOnce();
   });
 
+  it("clears a settled update wherever a new conversation is actually made", async () => {
+    // The clear lived in `case "newSession"`, which is not where a new session
+    // is made. Two deliberate doors never reach that case: a remote's New,
+    // which serializesRemoteSessionTransition routes straight to
+    // newRemoteSession, and the IDE's own newSession() command, which calls
+    // newFocusedSession. So the owner kept being greeted by "Update completed"
+    // on a fresh conversation from his phone (2026-09-06) -- with the
+    // mechanism fully covered by the test above and the wiring covered by
+    // nothing. Both constructors clear it FIRST, before anything else in them
+    // can throw, which is what makes this assertable without a whole sidebar.
+    for (const [make, arg] of [["newFocusedSession", "local"], ["newRemoteSession", "phone"]] as const) {
+      const bare = Object.create(GrokSidebar.prototype) as Record<string, unknown>;
+      const cleared = vi.fn();
+      bare.clearSettledCliUpdates = cleared;
+      await (bare[make] as (a: string) => Promise<void>).call(bare, arg).catch(() => {});
+      expect(cleared, make).toHaveBeenCalledOnce();
+    }
+  });
+
   it("keeps an update that is still running", async () => {
     const { host } = harness(provider);
     host.providerCliUpdates = { [provider]: { status: "running", message: "Updating..." } };

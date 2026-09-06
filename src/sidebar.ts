@@ -10485,9 +10485,6 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         }
         break;
       case "newSession":
-        // The answer to an update belongs to the update, not to every
-        // conversation opened afterwards.
-        this.clearSettledCliUpdates();
         // A remote's cwd is deliberately not forwarded: newRemoteSession starts
         // in that tab's own repo, which is the only project it is entitled to.
         if (origin === "remote" && clientId) await this.newRemoteSession(clientId);
@@ -17945,6 +17942,12 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
 
   /** Start a brand-new session, keeping the current one alive in the background. */
   private async newFocusedSession(origin: MsgOrigin, requestedCwd?: string): Promise<void> {
+    // The answer to a CLI update belongs to the update, not to every
+    // conversation opened afterwards. This lives in the two session
+    // constructors rather than in `case "newSession"` because a remote's
+    // New and the IDE's own New Session command both reach a new session
+    // without passing through that case.
+    this.clearSettledCliUpdates();
     // Repo selection only changes history scope; New Session is the deliberate
     // second action that starts Grok in the selected cwd — deliberate only for
     // the client that can SEE the selection. That used to exclude VS Code,
@@ -18038,6 +18041,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   }
 
   private async newRemoteSession(clientId: string, notifyCatalog = true): Promise<void> {
+    this.clearSettledCliUpdates();
     const ownerTabToken = this.remoteClients.tabToken(clientId);
     const cwd = this.remoteClients.cwd(clientId);
     const leavingId = this.remoteClients.active(clientId)?.activeSessionId;
