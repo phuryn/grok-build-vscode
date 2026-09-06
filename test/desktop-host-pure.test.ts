@@ -5061,8 +5061,11 @@ describe("chat openFile / openDiff use-time revalidation (round 16)", () => {
         path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "src", "sidebar.ts"),
         "utf8",
       );
+      // readFileForDiff and revertToolEdit share one resolver (resolveDiffFilePath)
+      // rather than each revalidating containment separately — the slice covers
+      // all three so the guard still holds after that refactor.
       const readDiff = sidebarSrc.slice(
-        sidebarSrc.indexOf("private readFileForDiff"),
+        sidebarSrc.indexOf("private resolveDiffFilePath"),
         sidebarSrc.indexOf("private closeDiffForRequest"),
       );
       expect(readDiff).toContain("revalidateOpenFileForUse");

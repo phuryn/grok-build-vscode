@@ -51,6 +51,7 @@ function makeSidebar(): any {
   sidebar.sessionCache = new Map();
   sidebar.codexSessionCache = new Map();
   sidebar.claudeSessionCache = new Map();
+  sidebar.geminiSessionCache = new Map();
   sidebar.worktreeCache = [];
   sidebar.selectedRepoCwd = cwd;
   sidebar.sessionMetaWrites = Promise.resolve();

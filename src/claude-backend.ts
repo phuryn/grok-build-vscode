@@ -12,6 +12,7 @@ import type {
   BackendUpdate,
 } from "./acp-backend";
 import { adapterContextOccupancy } from "./acp-dispatch";
+import { contentHasDiff, mergeDiffIntoContent, synthesizeEditDiff, type AcpDiffBlock } from "./diff-synthesize";
 
 export const CLAUDE_ACP_ADAPTER_PACKAGE = "@agentclientprotocol/claude-agent-acp";
 export const CLAUDE_ACP_ADAPTER_VERSION = packageManifest.dependencies[CLAUDE_ACP_ADAPTER_PACKAGE];
@@ -51,6 +52,15 @@ function selectOptions(option: any): any[] {
   return Array.isArray(option?.options) ? option.options : [];
 }
 
+export function contextWindowForClaudeModel(modelId?: string, name?: string, description?: string): number {
+  const combined = `${modelId ?? ""} ${name ?? ""} ${description ?? ""}`.toLowerCase();
+  if (/\b1m\b/i.test(combined)) return 1_000_000;
+  if (/\b200k\b/i.test(combined)) return 200_000;
+  if (/\bhaiku\b/i.test(combined) && !/\b1m\b/i.test(combined)) return 200_000;
+  if (/\bclaude-3\b/i.test(combined) && !/\b1m\b/i.test(combined)) return 200_000;
+  return 1_000_000;
+}
+
 /** session/new returns configOptions, not the models envelope the host picker reads. */
 export function modelsFromClaudeConfigOptions(configOptions: any): { currentModelId?: string; availableModels: any[] } {
   const options = Array.isArray(configOptions) ? configOptions : [];
@@ -66,6 +76,7 @@ export function modelsFromClaudeConfigOptions(configOptions: any): { currentMode
     availableModels: selectOptions(model).flatMap((entry) => {
       const modelId = typeof entry?.value === "string" ? entry.value : "";
       if (!modelId) return [];
+      const totalContextTokens = contextWindowForClaudeModel(modelId, entry?.name, entry?.description);
       return [{
         modelId,
         name: typeof entry?.name === "string" && entry.name.trim() ? entry.name : modelId,
@@ -73,6 +84,7 @@ export function modelsFromClaudeConfigOptions(configOptions: any): { currentMode
         _meta: {
           supportsReasoningEffort: effortValues.length > 0,
           reasoningEfforts: effortValues.map((value) => ({ value })),
+          totalContextTokens,
           ...(currentModelId === modelId && currentEffort && currentEffort !== "default"
             ? { reasoningEffort: currentEffort }
             : {}),
@@ -123,7 +135,42 @@ export function normalizeClaudePromptResult(result: any): any {
   };
 }
 
-export function normalizeClaudeUpdate(update: any, meta?: any): BackendUpdate {
+/**
+ * Build a `{ type: "diff" }` block from a Claude tool call's `rawInput`
+ * (docs/UNIVERSAL_DIFF_SUPPORT_PLAN.md § 4.2). Claude's Edit tool reports
+ * `old_string`/`new_string`/`file_path`(/`replace_all`); its Write tool
+ * reports `file_path`/`content` with no prior text at all. The Write side
+ * therefore always synthesizes `oldText: ""` — a real disk read would need an
+ * async host hook this synchronous normalizer cannot make, so an overwrite
+ * renders as a pure add here and gets corrected only if Claude's own
+ * completed update later carries a real diff (idempotency rule: a native
+ * diff for the path always wins).
+ */
+function synthesizeClaudeDiff(rawInput: any): AcpDiffBlock | undefined {
+  if (!rawInput || typeof rawInput !== "object") return undefined;
+  if (typeof rawInput.old_string === "string" && typeof rawInput.new_string === "string") {
+    const path = rawInput.file_path ?? rawInput.path;
+    if (typeof path !== "string" || !path) return undefined;
+    return synthesizeEditDiff({
+      path,
+      oldText: rawInput.old_string,
+      newText: rawInput.new_string,
+      replaceAll: rawInput.replace_all === true,
+    });
+  }
+  const path = rawInput.file_path ?? rawInput.path;
+  const content = rawInput.content ?? rawInput.contents;
+  if (typeof path === "string" && path && typeof content === "string") {
+    return synthesizeEditDiff({ path, oldText: "", newText: content });
+  }
+  return undefined;
+}
+
+export function normalizeClaudeUpdate(
+  update: any,
+  meta?: any,
+  diffCache?: Map<string, AcpDiffBlock>,
+): BackendUpdate {
   if (!update || typeof update !== "object") return { update, meta };
   if (update.sessionUpdate === "session_info_update") {
     const title = [update.title, update.sessionTitle, update.name, update.sessionInfo?.title, update._meta?.title]
@@ -140,19 +187,45 @@ export function normalizeClaudeUpdate(update: any, meta?: any): BackendUpdate {
       usageUpdateUsed: used,
     };
   }
+  if (update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update") {
+    const id = typeof update.toolCallId === "string" ? update.toolCallId : undefined;
+    if (contentHasDiff(update.content)) {
+      if (id && diffCache) {
+        const diff = (update.content as any[]).find((b) => b && typeof b === "object" && b.type === "diff");
+        if (diff) diffCache.set(id, diff);
+      }
+      return { update, meta };
+    }
+    const diff = synthesizeClaudeDiff(update.rawInput);
+    if (diff) {
+      if (id && diffCache) diffCache.set(id, diff);
+      return { update: { ...update, content: mergeDiffIntoContent(update.content, diff) }, meta };
+    }
+    if (id && diffCache) {
+      const cached = diffCache.get(id);
+      if (cached) {
+        return { update: { ...update, content: mergeDiffIntoContent(update.content, cached) }, meta };
+      }
+    }
+    return { update, meta };
+  }
   return { update, meta };
 }
 
 export function normalizeClaudePermissionParams(params: any): any {
   const toolCall = params?.toolCall ?? {};
-  if (typeof toolCall.title === "string" && toolCall.title.trim()) return params;
+  const diff = contentHasDiff(toolCall.content) ? undefined : synthesizeClaudeDiff(toolCall.rawInput);
+  const withDiff = diff ? { ...toolCall, content: mergeDiffIntoContent(toolCall.content, diff) } : toolCall;
+  if (typeof withDiff.title === "string" && withDiff.title.trim()) {
+    return diff ? { ...(params ?? {}), toolCall: withDiff } : params;
+  }
   const firstLine = typeof toolCall?.rawInput?.command === "string"
     ? toolCall.rawInput.command.split(/\r?\n/, 1)[0].trim()
     : "";
   const title = firstLine.length > PERMISSION_TITLE_LIMIT
     ? `${firstLine.slice(0, PERMISSION_TITLE_LIMIT - 1)}…`
     : firstLine || `permission: ${toolCall.kind || "tool"}`;
-  return { ...(params ?? {}), toolCall: { ...toolCall, title } };
+  return { ...(params ?? {}), toolCall: { ...withDiff, title } };
 }
 
 export function configStateFromClaudeOptions(response: any, fallback: BackendConfigState): BackendConfigState {
@@ -231,6 +304,7 @@ export class ClaudeBackend implements AcpBackend {
   // execution"). The client gate exists because grok's Plan still lets shell
   // through; do not port that workaround here.
   readonly usesClientPlanGate = false;
+  private readonly toolDiffsById = new Map<string, AcpDiffBlock>();
 
   constructor(private readonly options: ClaudeBackendOptions = {}) {}
 
@@ -267,7 +341,14 @@ export class ClaudeBackend implements AcpBackend {
   }
 
   normalizePromptResult(result: any): any { return normalizeClaudePromptResult(result); }
-  normalizeUpdate(update: any, meta: any): BackendUpdate { return normalizeClaudeUpdate(update, meta); }
+  normalizeUpdate(update: any, meta: any): BackendUpdate {
+    const res = normalizeClaudeUpdate(update, meta, this.toolDiffsById);
+    if (this.toolDiffsById.size > 500) {
+      const oldest = this.toolDiffsById.keys().next().value;
+      if (oldest) this.toolDiffsById.delete(oldest);
+    }
+    return res;
+  }
   normalizePermissionParams(params: any): any { return normalizeClaudePermissionParams(params); }
 
   setModel(sessionId: string, modelId: string): { method: string; params: any } {

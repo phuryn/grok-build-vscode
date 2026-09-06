@@ -680,7 +680,7 @@ describe("a replace_all renders one hunk per replaced site (_meta.details[])", (
 
   it("still ONE 'open diff →' per block, carrying the block's own region", () => {
     const { doc, window, posted } = boot(three);
-    const links = doc.querySelectorAll(".tool-item-details .preview-link");
+    const links = doc.querySelectorAll(".tool-item-details .preview-link:not(.revert-link)");
     expect(links).toHaveLength(1); // not one per site
     click(window, links[0] as HTMLElement);
     expect(posted.filter((m: any) => m.type === "openDiff")[0]).toMatchObject({

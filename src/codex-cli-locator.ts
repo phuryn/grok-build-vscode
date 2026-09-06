@@ -42,9 +42,24 @@ const defaultFs: CodexLocatorFs = {
 };
 
 function defaultWhich(name: string, platform: NodeJS.Platform): string | undefined {
+  const pathVar = process.env.PATH || process.env.Path || "";
+  const sep = platform === "win32" ? ";" : ":";
+  for (const dir of pathVar.split(sep)) {
+    if (!dir) continue;
+    const candidate = path.join(dir, name);
+    try {
+      if (existsSync(candidate) && statSync(candidate).isFile()) {
+        return candidate;
+      }
+    } catch {}
+  }
   try {
     const command = platform === "win32" ? `where ${name}` : `command -v ${name}`;
-    return execSync(command, { encoding: "utf8" }).trim().split(/\r?\n/)[0]?.trim() || undefined;
+    return execSync(command, {
+      encoding: "utf8",
+      windowsHide: true,
+      stdio: ["pipe", "pipe", "ignore"],
+    }).trim().split(/\r?\n/)[0]?.trim() || undefined;
   } catch {
     return undefined;
   }

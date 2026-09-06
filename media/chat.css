@@ -1,4 +1,4 @@
-﻿:root {
+:root {
   --pad: 8px;
   --gap: 6px;
   --radius: 6px;
@@ -2816,6 +2816,8 @@ body.vscode-light {
 }
 .tool-diff-toggle { margin: 9px 10px 2px; }
 .tool-item-diff .preview-link { display: inline-block; margin: 0 0 4px; }
+.tool-item-diff .revert-link { margin-left: 10px; }
+.tool-item-diff .revert-link:disabled { cursor: default; opacity: 0.6; text-decoration: none; }
 
 /* The line-count + "open diff" sit inline after the label on one row (they used
    to each take a full-width line via flex-basis:100%). A failure message
@@ -2946,6 +2948,46 @@ body.vscode-light {
 .msg.agent .body li, .desk-ft-md li, .files-browse-md li { margin: 3px 0; }
 .msg.agent .body li > ul, .desk-ft-md li > ul, .files-browse-md li > ul { margin: 3px 0; list-style-type: circle; }
 .msg.agent .body li > ul ul, .desk-ft-md li > ul ul, .files-browse-md li > ul ul { list-style-type: square; }
+.md-image {
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--chat-radius-8, 8px);
+  margin: 10px 0;
+  display: block;
+}
+blockquote {
+  margin: 8px 0;
+  padding: 6px 12px;
+  border-left: 3px solid var(--vscode-textBlockQuote-border, rgba(255, 255, 255, 0.2));
+  color: var(--vscode-textBlockQuote-foreground, var(--chat-fg-muted, #999));
+  background: var(--vscode-textBlockQuote-background, rgba(255, 255, 255, 0.03));
+  border-radius: 0 6px 6px 0;
+}
+.md-alert {
+  margin: 10px 0;
+  padding: 8px 12px;
+  border-left: 3px solid var(--alert-color);
+  background: var(--alert-bg);
+  border-radius: 0 6px 6px 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.md-alert-title {
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+  color: var(--alert-color);
+}
+.md-alert-body {
+  color: var(--vscode-editor-foreground, inherit);
+}
+.md-alert-note { --alert-color: #3b82f6; --alert-bg: rgba(59, 130, 246, 0.08); }
+.md-alert-tip { --alert-color: #10b981; --alert-bg: rgba(16, 185, 129, 0.08); }
+.md-alert-important { --alert-color: #8b5cf6; --alert-bg: rgba(139, 92, 246, 0.08); }
+.md-alert-warning { --alert-color: #f59e0b; --alert-bg: rgba(245, 158, 11, 0.08); }
+.md-alert-caution { --alert-color: #ef4444; --alert-bg: rgba(239, 68, 68, 0.08); }
 /* The wrapper owns the block surface (Codex-style): radius on the div,
    overflow clipped so full-width diff-line tints follow the rounded corners.
    Every fenced block renderMarkdown emits is wrapped in .code-block, in agent,

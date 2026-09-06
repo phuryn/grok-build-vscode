@@ -24,6 +24,9 @@ import { warmCodexModelCache } from "./codex-model-cache";
 import { CLAUDE_ACP_ADAPTER_VERSION, ClaudeBackend, isClaudeCredentialError } from "./claude-backend";
 import { locateClaudeCli, parseClaudeVersionOutput } from "./claude-cli-locator";
 import { warmClaudeModelCache } from "./claude-model-cache";
+import { GeminiBackend, isGeminiCredentialError } from "./gemini-backend";
+import { hasAntigravityCredentials, isAntigravityCli, locateGeminiCli, parseGeminiVersionOutput } from "./gemini-cli-locator";
+import { warmGeminiModelCache } from "./gemini-model-cache";
 import {
   adapterEntriesEligibleForClear,
   adapterListEntry,
@@ -89,7 +92,7 @@ import { summarizeForSpeech } from "./speech-summary";
 import type { PromptResultMeta, PromptUsage, SessionInfoContext } from "./acp-dispatch";
 import { MediaRef, adapterCompactSignal, adapterContextOccupancy, agentTimestampMsFromMeta, autoCompactStartedNote, childStreamFromRoute, commandOutputForToolCall, commandOutputFromLiveTerminal, contextUsedFromCompactNotification, enforceCompleteSessionCost, errorDetail, gateZeroTokenMeta, isAuthErrorText, isCredentialError, isIncompatibleAgentError, isResumeNotFound, isRateLimitError, isSubagentLifecycleUpdate, occupancyFromAdapterTurn, parseSessionInfoContext, permissionOutcomeFor, promptErrorText, rateLimitNoticeText, sessionInfoCacheFresh, sumUsage, summarizeBackgroundCommand, usageIsRealMeasurement, type UpdateRoute } from "./acp-dispatch";
 import { createMcpPrepareState, prepareMcpToolCall } from "./mcp-tool";
-import { modeToRemember, startsInYolo } from "./mode-prefs";
+import { modeToRemember, rememberedEffort, startsInYolo, withRememberedEffort, type EffortPrefs } from "./mode-prefs";
 import { beginAuthRecovery, oauthShadowsXaiApiKey } from "./auth-recovery";
 import {
   WELCOME_TIPS_KEY,
@@ -255,7 +258,7 @@ import {
   stagedUploadDirectory,
   unreferencedUploadsForRemovedSessions,
 } from "./file-upload";
-import { MAX_DIFF_EXPAND_BYTES, expandDiffToWholeFile } from "./diff-view";
+import { MAX_DIFF_EXPAND_BYTES, expandDiffToWholeFile, planEditRevert } from "./diff-view";
 import { applyAgentModeToHostPlan, effectivePlanActive, isPlanReviewPermission, permissionAnswerAllowed, permissionOptionsForPlan, pickRejectOption, planReviewVerdictForOption, planTextFromPermissionToolCall, shouldRejectPermission } from "./plan-gate";
 import { appendPlanEntry, planRestoreSource, truncateResolvedAfter, countsAsUserBubble, decideRestoreState, isInterjectionText } from "./plan-restore";
 import {
@@ -740,6 +743,9 @@ export class GrokSidebar {
   private claudeSessionCache = new Map<string, SessionListEntry[]>();
   private claudeSessionCacheAt = new Map<string, number>();
   private claudeSessionRefresh = new Map<string, Promise<void>>();
+  private geminiSessionCache = new Map<string, SessionListEntry[]>();
+  private geminiSessionCacheAt = new Map<string, number>();
+  private geminiSessionRefresh = new Map<string, Promise<void>>();
   private codexInstallAbort?: AbortController;
   private providerConnectionState: ProviderConnections = {};
   /**
@@ -891,6 +897,7 @@ export class GrokSidebar {
   private cliPath?: string;
   private codexCliPath?: string;
   private claudeCliPath?: string;
+  private geminiCliPath?: string;
   private readonly providerCliVersions: Partial<Record<AcpProvider, string>> = {};
   /** Accounts that are configured but answered an auth-shaped failure. Not the
    *  same as disconnected: the CLI is installed and the user meant to use it,
@@ -900,7 +907,7 @@ export class GrokSidebar {
    *  never rediscovers CLIs on the first-send path. Null until the first
    *  refresh so an unsnapshotted send OMITS the flags instead of reporting a
    *  constructor default as a measurement. */
-  private lastProviderConnected: { grok: boolean; codex: boolean; claude: boolean } | null = null;
+  private lastProviderConnected: { grok: boolean; codex: boolean; claude: boolean; gemini: boolean } | null = null;
   /** Last `postVoiceConfigured` result per normalized cwd. Same send-path
    *  rule: a cwd with no entry is unknown and the field is omitted, never
    *  coerced to false. Rebuilt on each refresh so removed keys cannot serve
@@ -1052,6 +1059,7 @@ export class GrokSidebar {
   private grokVersionProbe?: Promise<string>;
   private codexVersionProbe?: Promise<string>;
   private claudeVersionProbe?: Promise<string>;
+  private geminiVersionProbe?: Promise<string>;
   /** History browsing scope. Deliberately independent of the live session cwd. */
   private selectedRepoCwd?: string;
   /**
@@ -1540,11 +1548,19 @@ export class GrokSidebar {
       this.codexCliPath = located;
       return located;
     }
-    if (this.claudeCliPath && fs.existsSync(this.claudeCliPath)) return this.claudeCliPath;
-    const located = locateClaudeCli({
-      configuredPath: this.host.getConfiguration("grok").get<string>("claudeCliPath", ""),
+    if (provider === "claude") {
+      if (this.claudeCliPath && fs.existsSync(this.claudeCliPath)) return this.claudeCliPath;
+      const located = locateClaudeCli({
+        configuredPath: this.host.getConfiguration("grok").get<string>("claudeCliPath", ""),
+      });
+      this.claudeCliPath = located;
+      return located;
+    }
+    if (this.geminiCliPath && fs.existsSync(this.geminiCliPath)) return this.geminiCliPath;
+    const located = locateGeminiCli({
+      configuredPath: this.host.getConfiguration("grok").get<string>("geminiCliPath", ""),
     });
-    this.claudeCliPath = located;
+    this.geminiCliPath = located;
     return located;
   }
 
@@ -1553,6 +1569,7 @@ export class GrokSidebar {
       grok: !!this.locateProvider("grok"),
       codex: !!this.locateProvider("codex"),
       claude: !!this.locateProvider("claude"),
+      gemini: !!this.locateProvider("gemini"),
     };
   }
 
@@ -1567,16 +1584,24 @@ export class GrokSidebar {
     if (provider === "claude") {
       return { cache: this.claudeSessionCache, at: this.claudeSessionCacheAt, refresh: this.claudeSessionRefresh };
     }
+    if (provider === "gemini") {
+      return { cache: this.geminiSessionCache, at: this.geminiSessionCacheAt, refresh: this.geminiSessionRefresh };
+    }
     return undefined;
   }
 
   private allAdapterCatalogs(): Iterable<readonly SessionListEntry[]> {
-    return [...this.codexSessionCache.values(), ...this.claudeSessionCache.values()];
+    return [
+      ...(this.codexSessionCache?.values() ?? []),
+      ...(this.claudeSessionCache?.values() ?? []),
+      ...(this.geminiSessionCache?.values() ?? []),
+    ];
   }
 
-  private createProviderBackend(provider: AcpProvider): CodexBackend | ClaudeBackend | undefined {
+  private createProviderBackend(provider: AcpProvider): CodexBackend | ClaudeBackend | GeminiBackend | undefined {
     if (provider === "codex") return new CodexBackend();
     if (provider === "claude") return new ClaudeBackend();
+    if (provider === "gemini") return new GeminiBackend();
     return undefined;
   }
 
@@ -1612,7 +1637,7 @@ export class GrokSidebar {
    * something available the session's own provider is the specific gap to
    * close, so show that.
    */
-  private onboardingForSession(session: Session): "connect-agent" | "auth-required" | "codex-login" | "claude-login" {
+  private onboardingForSession(session: Session): "connect-agent" | "auth-required" | "codex-login" | "claude-login" | "gemini-login" {
     if (session.hasHistory) return providerLoginState(session.provider);
     return this.usableProviders().length ? providerLoginState(session.provider) : "connect-agent";
   }
@@ -1632,6 +1657,7 @@ export class GrokSidebar {
       grok: usedBefore && !!this.locateProvider("grok"),
       codex: false,
       claude: false,
+      gemini: false,
     };
     void this.state.update(PROVIDER_CONNECTIONS_KEY, migrated);
     return migrated;
@@ -1752,11 +1778,41 @@ export class GrokSidebar {
     }
   }
 
+  private async warmConnectedGeminiModels(): Promise<boolean> {
+    const cliPath = this.locateProvider("gemini");
+    if (!cliPath) return false;
+    try {
+      await warmGeminiModelCache({
+        cliPath,
+        onModels: (models, currentModelId) => this.cacheProviderModels("gemini", models, currentModelId),
+        log: (message) => this.host.appendLine(message),
+        fallbackCwd: this.workspaceRoot() || undefined,
+      });
+      // The Antigravity adapter answers session/new from a static model list
+      // without launching `agy`, so this warm-up proves the binary, not the
+      // account — it reported Connected while signed out. The legacy `gemini`
+      // CLI does open a real session, so it still speaks for itself.
+      const signedIn = !isAntigravityCli(cliPath) || hasAntigravityCredentials();
+      if (!signedIn) this.host.appendLine("[gemini] no Antigravity credentials found — run `agy auth login`");
+      this.setProviderNeedsLogin("gemini", !signedIn);
+      return signedIn;
+    } catch (error) {
+      this.host.appendLine(`[gemini] model-cache warm-up failed: ${(error as Error).message}`);
+      if (isGeminiCredentialError(error)) {
+        this.setProviderNeedsLogin("gemini", true);
+      } else {
+        this.setProviderNeedsLogin("gemini", false);
+      }
+      return false;
+    }
+  }
+
   /** Explicit credential observation. Unlike history refresh this never obeys
    * the listing freshness clock, so a completed sign-in is visible at once. */
   private async reprobeProviderCredentials(provider: AcpProvider): Promise<boolean> {
     if (provider === "codex") return this.warmConnectedCodexModels();
     if (provider === "claude") return this.warmConnectedClaudeModels();
+    if (provider === "gemini") return this.warmConnectedGeminiModels();
     const cliPath = this.locateProvider("grok");
     if (!cliPath) return false;
     // session/new is what actually proves the account, but grok has no ACP
@@ -2153,6 +2209,10 @@ export class GrokSidebar {
       // rest of this host, so hardcoding made the fallback miss a credential
       // that was plainly there and tell the user to sign in again (review).
       if (provider === "grok") return fs.existsSync(path.join(resolveGrokHome(process.env), "auth.json"));
+      if (provider === "gemini") {
+        const home = process.env.USERPROFILE || process.env.HOME || os.homedir();
+        return fs.existsSync(path.join(home, ".gemini", "oauth.json")) || fs.existsSync(path.join(home, ".gemini", "settings.json"));
+      }
       return false;
     } catch {
       return false;
@@ -2232,7 +2292,8 @@ export class GrokSidebar {
     const grokConnected = connected.grok === true && located.grok === true;
     const codexConnected = connected.codex === true && located.codex === true;
     const claudeConnected = connected.claude === true && located.claude === true;
-    this.lastProviderConnected = { grok: grokConnected, codex: codexConnected, claude: claudeConnected };
+    const geminiConnected = connected.gemini === true && located.gemini === true;
+    this.lastProviderConnected = { grok: grokConnected, codex: codexConnected, claude: claudeConnected, gemini: geminiConnected };
     return {
       type: "providerState",
       providers: [
@@ -2259,6 +2320,12 @@ export class GrokSidebar {
           ...(claudeConnected && needsLogin.claude ? { needsLogin: true } : {}),
           ...(claudeConnected && versions.claude ? { cliVersion: versions.claude } : {}),
           ...(claudeConnected ? { adapterVersion: CLAUDE_ACP_ADAPTER_VERSION } : {}),
+        },
+        {
+          id: "gemini",
+          connected: geminiConnected,
+          ...(geminiConnected && needsLogin.gemini ? { needsLogin: true } : {}),
+          ...(geminiConnected && versions.gemini ? { cliVersion: versions.gemini } : {}),
         },
       ],
       ...(this.providerRefreshInFlight ? { checking: true } : {}),
@@ -2317,6 +2384,7 @@ export class GrokSidebar {
       if (!this.testForceMissingGrokCli) this.cliPath = undefined;
       this.codexCliPath = undefined;
       this.claudeCliPath = undefined;
+      this.geminiCliPath = undefined;
       // Read AFTER dropping the paths, so a CLI that appeared since boot counts.
       const located = this.locatedProviders();
       const installed = ACP_PROVIDERS.filter((provider) => located[provider]);
@@ -2516,7 +2584,7 @@ export class GrokSidebar {
   private providerForRequestedModel(modelId: string, fallback: AcpProvider): AcpProvider {
     if (!modelId) return fallback;
     const cache = this.state.get<ProviderModelCache>(PROVIDER_MODEL_CACHE_KEY, {});
-    const matches = (["grok", "codex", "claude"] as const).filter((provider) =>
+    const matches = (["grok", "codex", "claude", "gemini"] as const).filter((provider) =>
       cache[provider]?.models.some((model) => model.modelId === modelId));
     return matches.length === 1 ? matches[0] : fallback;
   }
@@ -2583,6 +2651,10 @@ export class GrokSidebar {
       }
       if (e.affectsConfiguration("grok.claudeCliPath")) {
         this.claudeCliPath = undefined;
+        this.postProviderState();
+      }
+      if (e.affectsConfiguration("grok.geminiCliPath")) {
+        this.geminiCliPath = undefined;
         this.postProviderState();
       }
       if (e.affectsConfiguration("grok.expandCommandOutputs")) {
@@ -3191,7 +3263,7 @@ Only continue if you trust this code.`,
           if (session.provider === "codex") {
             await session.client.setMode("default");
             await session.client.setMode("agent-full-access");
-          } else if (session.provider === "claude") {
+          } else if (session.provider === "claude" || session.provider === "gemini") {
             await session.client.setMode("yolo");
           } else {
             await session.client.setMode(ACT_MODE_ID);
@@ -3225,7 +3297,7 @@ Only continue if you trust this code.`,
         if (session.provider === "codex") {
           await session.client.setMode("default");
           await session.client.setMode("agent");
-        } else if (session.provider === "claude") {
+        } else if (session.provider === "claude" || session.provider === "gemini") {
           await session.client.setMode("agent");
         } else {
           await session.client.setMode(ACT_MODE_ID);
@@ -3612,7 +3684,7 @@ Only continue if you trust this code.`,
       ...overrides,
       [sid]: { ...(overrides[sid] ?? {}), activeAt },
     });
-    for (const provider of (["codex", "claude"] as const)) {
+    for (const provider of (["codex", "claude", "gemini"] as const)) {
       const history = this.adapterHistory(provider);
       if (!history) continue;
       for (const [key, entries] of history.cache) {
@@ -3965,7 +4037,9 @@ Only continue if you trust this code.`,
       return;
     }
 
-    const implicitChips = session.chips.filter((chip) => isImplicitChip(chip));
+    // Steer interjections mid-turn should NOT append ambient/implicit editor context (active file/selection)
+    // to avoid token ballooning and cache thrashing during tool execution. Only explicit attachments are sent.
+    const implicitChips: FileChip[] = [];
     const slashCommand = matchSlashCommand(
       queuedSendsText(contributions) || authored,
       client.availableCommands.map((c) => c.name),
@@ -3973,7 +4047,7 @@ Only continue if you trust this code.`,
     const built = builtContributions.length === 1
       ? buildPromptWithImages(
         builtContributions[0].text,
-        [...builtContributions[0].chips, ...implicitChips],
+        builtContributions[0].chips,
         builtContributions[0].images,
         promptDeps,
         slashCommand != null,
@@ -4678,6 +4752,62 @@ Only continue if you trust this code.`,
     return session.cwd || this.workspaceRoot();
   }
 
+  private findInWorkspaceSubtree(root: string, raw: string): string | undefined {
+    if (!root || !raw || path.isAbsolute(raw) || raw.includes("..")) return undefined;
+    // 1. Check immediate subdirectories in root (e.g. root/grok-build-vscode/src/...)
+    try {
+      const entries = fs.readdirSync(root, { withFileTypes: true });
+      for (const entry of entries) {
+        if (
+          entry.isDirectory() &&
+          !entry.name.startsWith(".") &&
+          entry.name !== "node_modules" &&
+          entry.name !== "dist" &&
+          entry.name !== "out"
+        ) {
+          const directCandidate = path.resolve(root, entry.name, raw);
+          if (fs.existsSync(directCandidate) && fs.statSync(directCandidate).isFile()) {
+            return directCandidate;
+          }
+        }
+      }
+    } catch {}
+
+    // 2. Check active editor project and open workspace folders
+    try {
+      const activeEditor = this.host.getActiveTextEditor();
+      if (activeEditor && activeEditor.document.uri.scheme === "file") {
+        const activeDir = path.dirname(activeEditor.document.uri.fsPath);
+        let cur = activeDir;
+        while (cur && cur.length > 3) {
+          const candidate = path.resolve(cur, raw);
+          if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+            return candidate;
+          }
+          if (fs.existsSync(path.join(cur, ".git")) || fs.existsSync(path.join(cur, "package.json"))) {
+            break;
+          }
+          const parent = path.dirname(cur);
+          if (parent === cur) break;
+          cur = parent;
+        }
+      }
+    } catch {}
+
+    for (const folder of this.openWorkspaceFolders()) {
+      if (!pathsEqual(folder, root)) {
+        const candidate = path.resolve(folder, raw);
+        try {
+          if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+            return candidate;
+          }
+        } catch {}
+      }
+    }
+
+    return undefined;
+  }
+
   /** Resolve the same workspace/media path used by the chat openFile action. */
   private resolveChatOpenPath(session: Session, rawPath: string): {
     ref: ReturnType<typeof parseFileRef>;
@@ -4699,6 +4829,7 @@ Only continue if you trust this code.`,
       },
       realpath: (candidate) => fs.realpathSync(candidate),
       homeDir: os.homedir(),
+      findInSubtree: (root, rel) => this.findInWorkspaceSubtree(root, rel),
     });
     return { ref, path: resolved };
   }
@@ -7567,6 +7698,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       if (adapterIds.size) {
         this.scheduleAdapterHistoryRefresh("codex", cwd);
         this.scheduleAdapterHistoryRefresh("claude", cwd);
+        this.scheduleAdapterHistoryRefresh("gemini", cwd);
       }
       for (const id of adapterIds) {
         const cached = findCachedAdapterSession(
@@ -7835,7 +7967,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         );
         if (choice !== "Sign Out") return;
       }
-      const logoutArgs = provider === "claude" ? ["auth", "logout"] : ["logout"];
+      const logoutArgs = (provider === "claude" || provider === "gemini") ? ["auth", "logout"] : ["logout"];
       try {
         await execGrokCli(cliPath, logoutArgs, { timeout: 30_000, windowsHide: true });
       } catch (error) {
@@ -8322,6 +8454,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   private probeProviderVersion(provider: AcpProvider): Promise<string> {
     if (provider === "codex") return this.probeCodexVersion();
     if (provider === "claude") return this.probeClaudeVersion();
+    if (provider === "gemini") return this.probeGeminiVersion();
     if (this.grokVersionProbe) return this.grokVersionProbe;
     this.grokVersionProbe = (async () => {
       const cliPath = this.locateProvider("grok");
@@ -8383,6 +8516,31 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       }
     })();
     return this.claudeVersionProbe;
+  }
+
+  /** Read `gemini --version` once per activation. */
+  private probeGeminiVersion(): Promise<string> {
+    if (this.geminiVersionProbe) return this.geminiVersionProbe;
+    this.geminiVersionProbe = (async () => {
+      const cliPath = this.locateProvider("gemini");
+      if (!cliPath) return "";
+      try {
+        const { stdout } = await execGrokCli(cliPath, ["--version"], {
+          timeout: 30_000,
+          windowsHide: true,
+        });
+        const version = parseGeminiVersionOutput(stdout ?? "");
+        if (!version) throw new Error("unrecognized version output");
+        this.providerCliVersions.gemini = version;
+        this.postProviderState();
+        return version;
+      } catch (error) {
+        this.host.appendLine(`gemini --version failed: ${(error as Error).message}`);
+        this.postProviderState();
+        return "";
+      }
+    })();
+    return this.geminiVersionProbe;
   }
 
   /** Once per extension upgrade, from session start, with a fresh install only
@@ -8721,14 +8879,27 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     return false;
   }
 
+  /** Remember a reasoning-effort choice for the agent it was made in. The
+   *  legacy single `grok.defaultEffort` is kept in step for grok so an existing
+   *  setting keeps working and older hosts still read something sensible. */
+  private async persistEffort(provider: AcpProvider, level: string): Promise<void> {
+    const cfg = this.host.getConfiguration("grok");
+    const next = withRememberedEffort(cfg.get<EffortPrefs>("defaultEffortByProvider", {}), provider, level);
+    await cfg.update("defaultEffortByProvider", next, "global");
+    if (provider === "grok") await cfg.update("defaultEffort", level, "global");
+  }
+
   /** Confirm a restart for a setting that only applies on a fresh session
    *  (reasoning effort, cross-agent model). Returns the chosen restart mode, or
    *  undefined if the user dismissed the dialog. */
   private async pickRestartMode(message: string): Promise<"clear" | "summarize" | undefined> {
+    // Restarting plainly is offered first, and the cost of the alternative is
+    // named: summarizing runs two extra model turns — one over the whole
+    // conversation — and neither of them appears in the transcript.
     const choice = await this.host.showInformationMessage(
-      message,
-      "Summarize & Restart",
+      `${message} Summarizing first spends two extra model turns.`,
       "Just Restart",
+      "Summarize & Restart",
     );
     if (!choice) return undefined;
     return choice === "Just Restart" ? "clear" : "summarize";
@@ -9170,7 +9341,11 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     if (this.mcpConnectorKeysReady) await this.mcpConnectorKeysReady;
     if (gen !== session.gen) return undefined;
     const env = session.provider === "grok" ? this.buildEnv(cwd) : { ...process.env };
-    const effortStr = cfg.get<string>("defaultEffort", "");
+    const effortStr = rememberedEffort(
+      cfg.get<EffortPrefs>("defaultEffortByProvider", {}),
+      session.provider,
+      cfg.get<string>("defaultEffort", ""),
+    );
     const effort = effortStr ? (effortStr as EffortLevel) : undefined;
     // Transient spawn/init after an update can throw once; retry the plain
     // failure only (auth and the Windows stdio pin keep their own paths).
@@ -9867,6 +10042,18 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         clock.record("load", 0);
         clock.record("replay(post)", 0);
         session.activeSessionId = client.sessionId;
+        if (session.autoApprove) {
+          try {
+            if (session.provider === "codex") {
+              await client.setMode("default");
+              await client.setMode("agent-full-access");
+            } else if (session.provider === "claude" || session.provider === "gemini") {
+              await client.setMode("yolo");
+            } else {
+              await client.setMode(ACT_MODE_ID);
+            }
+          } catch { /* best-effort */ }
+        }
       }
       if (gen !== session.gen) { client.dispose(); session.client = undefined; return undefined; }
       this.host.appendLine(clock.summary(session.historyEventCount));
@@ -10475,6 +10662,9 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           msg.sites,
         );
         break;
+      case "revertToolEdit":
+        await this.revertToolEdit(session, msg);
+        break;
       case "exportExpr":
         await this.exportExpr(msg, session);
         break;
@@ -10669,7 +10859,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           // history (a dead client on a session WITH history must keep that history).
           const wasEmpty = !session.hasHistory;
           const discardId = session.activeSessionId;
-          await cfg2.update("defaultEffort", newLevel, "global");
+          await this.persistEffort(session.provider, newLevel);
           if (wasEmpty && isAdapterProvider(session.provider)) {
             await this.discardAdapterEmptySession(session.provider, discardId, this.sessionCwd(session), session.client);
           }
@@ -10689,7 +10879,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         if (newLevel && session.client.currentModelSupportsEffort()) {
           const applied = await session.client.setReasoningEffort(newLevel).catch(() => false);
           if (applied) {
-            await cfg2.update("defaultEffort", newLevel, "global");
+            await this.persistEffort(session.provider, newLevel);
             break;
           }
         }
@@ -10703,8 +10893,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           break;
         }
         const mode = await this.pickRestartMode("Changing reasoning effort requires restarting the session.");
-        if (!mode) break; // dismissed — leave defaultEffort untouched
-        await cfg2.update("defaultEffort", newLevel, "global");
+        if (!mode) break; // dismissed — leave the remembered effort untouched
+        await this.persistEffort(session.provider, newLevel);
         await this.restartSession(mode, session);
         break;
       }
@@ -10931,9 +11121,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           await this.startDeviceLogin(provider, cliPath, clientId);
           break;
         }
-        // Official CLI owns login. For Claude this is `claude auth login`
-        // without --claudeai — we never implement or proxy Claude.ai OAuth.
-        const loginArgs = provider === "claude" ? ["auth", "login"] : ["login"];
+        // Official CLI owns login. For Claude and Gemini this is `auth login`.
+        const loginArgs = (provider === "claude" || provider === "gemini") ? ["auth", "login"] : ["login"];
         const term = this.host.createTerminal({
           name: `${providerDisplayName(provider)} Login`,
           shellPath: cliPath,
@@ -12084,6 +12273,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     const adapter: SessionListEntry[] = [];
     if (providers.includes("codex")) adapter.push(...(this.codexSessionCache.get(projectProviderKey(cwd)) ?? []));
     if (providers.includes("claude")) adapter.push(...(this.claudeSessionCache.get(projectProviderKey(cwd)) ?? []));
+    if (providers.includes("gemini")) adapter.push(...(this.geminiSessionCache.get(projectProviderKey(cwd)) ?? []));
     for (const session of this.pool) {
       if (!isAdapterProvider(session.provider) || !session.activeSessionId || !pathsEqual(this.sessionCwd(session), cwd)) continue;
       if (adapter.some((entry) => entry.id === session.activeSessionId)) continue;
@@ -12138,7 +12328,11 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       : this.refreshAdapterHistory(provider, cwd, key))
       .catch((error) => {
         this.host.appendLine(`[${provider}] session listing failed: ${(error as Error).message}`);
-        const credential = provider === "claude" ? isClaudeCredentialError(error) : isCodexCredentialError(error);
+        const credential = provider === "claude"
+          ? isClaudeCredentialError(error)
+          : provider === "gemini"
+          ? isGeminiCredentialError(error)
+          : isCodexCredentialError(error);
         if (!credential) return;
         history.at.set(key, Date.now());
         this.setProviderNeedsLogin(provider, true);
@@ -13150,6 +13344,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       [
         { provider: "codex", entries: this.codexSessionCache.get(projectProviderKey(cwd)) ?? [] },
         { provider: "claude", entries: this.claudeSessionCache.get(projectProviderKey(cwd)) ?? [] },
+        { provider: "gemini", entries: this.geminiSessionCache.get(projectProviderKey(cwd)) ?? [] },
       ],
       adapterHistoryChecked,
     );
@@ -13488,7 +13683,12 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           installId: existingInstallId ?? this.installId(),
           mode: this.displayMode(session),
           model: session.client?.currentModelId || cfg.get<string>("defaultModel", "") || "",
-          effort: session.client?.currentReasoningEffort || cfg.get<string>("defaultEffort", "") || "",
+          effort: session.client?.currentReasoningEffort
+            || rememberedEffort(
+              cfg.get<EffortPrefs>("defaultEffortByProvider", {}),
+              session.provider,
+              cfg.get<string>("defaultEffort", ""),
+            ),
           // Feature flags + host kind + connection snapshot. Config/enum values
           // only — the same class of anonymous property as mode/model/effort,
           // never content, paths, or free text. The builder allowlists every key.
@@ -13510,6 +13710,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           grokConnected: this.lastProviderConnected?.grok,
           codexConnected: this.lastProviderConnected?.codex,
           claudeConnected: this.lastProviderConnected?.claude,
+          geminiConnected: this.lastProviderConnected?.gemini,
           provider: session.provider,
           connectorCount: Object.keys(this.connectedConnectorStore()).length,
           worktree: !!session.worktree,
@@ -14285,7 +14486,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // shows the whole file and lands on the change (#66); a pending permission
     // hasn't been written yet, so there the file on disk is the "before".
     const sides = expandDiffToWholeFile({
-      diskText: this.readFileForDiff(filePath),
+      diskText: this.readFileForDiff(session, filePath),
       oldRegion: oldText,
       newRegion: newText,
       diskIsBefore: requestId !== undefined,
@@ -14310,7 +14511,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // immediately clickable. `selection` opens a whole-file diff on the edit
     // instead of at line 1 (#66) — harmless at 0 when expansion fell back.
     const at = sides.firstChangedLine;
-    await this.host.openDiff(left, right, `Grok proposed: ${base}`, {
+    await this.host.openDiff(left, right, `${providerDisplayName(session.provider)} proposed: ${base}`, {
       preview: true,
       preserveFocus: true,
       selection: {
@@ -14326,28 +14527,116 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
    * deleted since, or one too big to hold twice — which leaves the diff at the
    * region-only fallback rather than failing the open.
    */
-  private readFileForDiff(filePath: string): string | undefined {
+  /** Resolve a diff/revert file path against the session's cwd, revalidating
+   *  containment on desktop (same TOCTOU class as openFsPath / file-tree
+   *  open) immediately before use. Returns undefined when desktop's policy
+   *  check refuses the path. VS Code keeps the plain resolve. */
+  private resolveDiffFilePath(session: Session, filePath: string): string | undefined {
+    let abs = path.isAbsolute(filePath) ? filePath : path.join(this.sessionCwd(session), filePath);
+    if (this.host.canSwitchWorkspaceFolder) {
+      const check = revalidateOpenFileForUse(abs, { allowedRoots: this.desktopAuthRoots(session) });
+      if (!check.ok) return undefined;
+      abs = check.absPath;
+    }
+    return abs;
+  }
+
+  private readFileForDiff(session: Session, filePath: string): string | undefined {
     try {
-      const session = this.focused;
-      let abs = path.isAbsolute(filePath)
-        ? filePath
-        : path.join(this.sessionCwd(session), filePath);
-      // Desktop: revalidate containment + executable policy immediately before
-      // the read (same TOCTOU class as openFsPath / file-tree open). Use only
-      // the path returned by that check — never the pre-authorize string.
-      // VS Code keeps the plain read (v3.1.0 behaviour).
-      if (this.host.canSwitchWorkspaceFolder) {
-        const check = revalidateOpenFileForUse(abs, {
-          allowedRoots: this.desktopAuthRoots(session),
-        });
-        if (!check.ok) return undefined;
-        abs = check.absPath;
-      }
+      const abs = this.resolveDiffFilePath(session, filePath);
+      if (!abs) return undefined;
       const stat = fs.statSync(abs);
       if (!stat.isFile() || stat.size > MAX_DIFF_EXPAND_BYTES) return undefined;
       return fs.readFileSync(abs, "utf8");
     } catch {
       return undefined;
+    }
+  }
+
+  /**
+   * Revert one completed edit (docs/UNIVERSAL_DIFF_SUPPORT_PLAN.md § 5). The
+   * webview sends the diff block it already rendered rather than an id into
+   * a host-side store; {@link planEditRevert} (pure — see diff-view.ts) turns
+   * that plus the file's current disk content into a plan, and this method
+   * only carries out the effects (read, confirm, write/delete) the plan asks
+   * for.
+   */
+  private async revertToolEdit(
+    session: Session,
+    msg: {
+      toolCallId: string;
+      path: string;
+      oldText: string;
+      newText: string;
+      replaceAll?: boolean;
+      sites?: { oldText: string; newText: string; oldLine?: number; newLine?: number }[];
+    },
+  ): Promise<void> {
+    const respond = (ok: boolean, reason?: string) => {
+      this.emit(session, {
+        type: "toolEditReverted",
+        toolCallId: msg.toolCallId,
+        path: msg.path,
+        ok,
+        ...(reason ? { reason } : {}),
+      });
+    };
+    const abs = this.resolveDiffFilePath(session, msg.path);
+    if (!abs) {
+      respond(false, "File could not be located.");
+      return;
+    }
+    let currentText: string | undefined;
+    try {
+      const stat = fs.statSync(abs);
+      if (stat.isFile() && stat.size <= MAX_DIFF_EXPAND_BYTES) currentText = fs.readFileSync(abs, "utf8");
+    } catch {
+      currentText = undefined;
+    }
+
+    const plan = planEditRevert({
+      oldText: msg.oldText,
+      newText: msg.newText,
+      replaceAll: msg.replaceAll,
+      sites: msg.sites,
+      currentText,
+    });
+    switch (plan.action) {
+      case "unreadable":
+        respond(false, "File could not be read.");
+        return;
+      case "conflict":
+        respond(false, "The file has changed since this edit and can't be safely reverted.");
+        return;
+      case "delete-confirm": {
+        const choice = await this.host.showWarningMessage(
+          `${path.basename(abs)} has changed since this edit. Delete it anyway?`,
+          "Delete",
+          "Cancel",
+        );
+        if (choice !== "Delete") {
+          respond(false, "Cancelled.");
+          return;
+        }
+        // falls through to the same delete as "delete"
+      }
+      // eslint-disable-next-line no-fallthrough
+      case "delete":
+        try {
+          await this.host.fs.delete(Uri.file(abs), { useTrash: true });
+          respond(true);
+        } catch {
+          respond(false, "Could not delete the file.");
+        }
+        return;
+      case "write":
+        try {
+          await this.host.fs.writeFile(Uri.file(abs), Buffer.from(plan.text, "utf8"));
+          respond(true);
+        } catch {
+          respond(false, "Could not write the file.");
+        }
+        return;
     }
   }
 
@@ -15282,9 +15571,22 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     promptBlocks: Parameters<AcpClient["prompt"]>[0],
   ): Promise<boolean> {
     const errorText = errorDetail(err);
-    if (!isAuthErrorText(errorText) && !session.client?.isCredentialError(err) && !isCredentialError(err)) return false;
+    const credential = session.client?.isCredentialError(err) === true || isCredentialError(err);
+    if (!credential && !isAuthErrorText(errorText)) return false;
     const resumeId = beginAuthRecovery(session);
     if (!resumeId) return false;
+
+    // Only a CREDENTIAL failure earns a resend. The billing/entitlement family
+    // reaches this gate because a wedged token can wear that wording — but the
+    // CLI maps a real 403 to a plain error precisely because the credential was
+    // accepted, so resending there spends a whole second turn on a wall a fresh
+    // token cannot clear. Rebuild the process either way (the next message gets
+    // the current disk token); only the credential case replays the prompt.
+    if (!credential) {
+      this.host.appendLine(`[auth] rebuilding the session without resending: ${errorText}`);
+      await this.startSession(resumeId, session);
+      return false; // the caller shows the error, which is the actionable part
+    }
     this.host.appendLine(`[auth] recoverable token error — reloading session + resending: ${errorText}`);
 
     // Fresh process, current disk token. Rebuild this same pool member and replay
@@ -15432,7 +15734,11 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     const commandLanguage = commandLanguageForDialect(resolvedTerminalShellDialect());
     return {
       type: "initialState",
-      effort: cfg.get("defaultEffort", ""),
+      effort: rememberedEffort(
+        cfg.get<EffortPrefs>("defaultEffortByProvider", {}),
+        this.focused.provider,
+        cfg.get<string>("defaultEffort", ""),
+      ),
       cwd,
       useCtrlEnter: cfg.get("useCtrlEnterToSend", false),
       extVersion: this.context.extensionVersion,
@@ -17358,6 +17664,24 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
    */
   private accumulateUsage(session: Session, meta: PromptResultMeta): PromiseLike<void> | undefined {
     const measured = usageIsRealMeasurement(meta);
+    // One line per billed turn, in the Output panel, for every agent. The
+    // donut answers "how full is the context"; this answers "what did that
+    // cost", which is the question a session limit actually raises — and it
+    // is the only per-turn record that survives the conversation being closed.
+    // `research/usage-report.cjs` adds up a saved log.
+    if (measured) {
+      const u = meta.usage ?? {};
+      this.host.appendLine(
+        `[usage] ${session.provider} turn`
+        + ` in=${u.inputTokens ?? meta.inputTokens ?? 0}`
+        + ` out=${u.outputTokens ?? meta.outputTokens ?? 0}`
+        + ` reasoning=${u.reasoningTokens ?? meta.reasoningTokens ?? 0}`
+        + ` cacheRead=${u.cachedReadTokens ?? meta.cachedReadTokens ?? 0}`
+        + ` cacheWrite=${u.cachedWriteTokens ?? meta.cachedWriteTokens ?? 0}`
+        + ` total=${u.totalTokens ?? meta.totalTokens ?? 0}`
+        + ` model=${meta.modelId ?? session.client?.currentModelId ?? "?"}`,
+      );
+    }
     // totalTokens:0 is the CLI's reliable no-inference result for native slash
     // turns such as /compact. Record that successful prompt as covered without
     // counting its stale usage siblings. A real inference with missing usage is

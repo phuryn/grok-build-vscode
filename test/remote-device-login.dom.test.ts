@@ -57,7 +57,7 @@ describe("a phone with nothing connected", () => {
   it("offers every agent when none is connected, rather than guessing", () => {
     const h = boot({ remote: true });
     dispatch(h.window, { type: "onboarding", state: "connect-agent", platform: "linux" });
-    expect(actions(h)).toEqual(["Connect Grok Build", "Connect Codex", "Connect Claude Code"]);
+    expect(actions(h)).toEqual(["Connect Grok Build", "Connect Codex", "Connect Claude Code", "Connect Gemini CLI"]);
   });
 
   it("offers Claude on a cloud machine instead of a dead-end note", () => {
@@ -68,6 +68,7 @@ describe("a phone with nothing connected", () => {
       "Connect Grok Build (recommended)",
       "Connect Codex",
       "Connect Claude Code",
+      "Connect Gemini CLI",
     ]);
   });
 

@@ -278,6 +278,11 @@
           "default": "",
           "description": "Path to the Anthropic Claude Code CLI (`claude`). Empty = auto-discover on PATH, then well-known user-bin locations. Authentication stays in Anthropic's own CLI."
         },
+        "grok.geminiCliPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the Google Antigravity or Gemini CLI (`agy` / `gemini`). Empty = auto-discover on PATH, then well-known user-bin locations. Authentication stays in Google's own CLI."
+        },
         "grok.defaultModel": {
           "type": "string",
           "default": "",
@@ -349,6 +354,14 @@
           ],
           "default": "",
           "description": "Reasoning effort passed as --reasoning-effort to grok agent stdio. Values match the grok CLI's accepted set (none, minimal, low, medium, high, xhigh). Applies live on recent CLIs (grok 0.2.101+); older CLIs, and resetting to the model default, restart the session."
+        },
+        "grok.defaultEffortByProvider": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Reasoning effort remembered per agent (grok, claude, codex, gemini). Updated automatically when you change the effort in a conversation. `grok.defaultEffort` is the grok-only fallback for agents with no entry here."
         },
         "grok.useCtrlEnterToSend": {
           "type": "boolean",

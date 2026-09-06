@@ -323,6 +323,8 @@ export type ResolveChatOpenFilePathOpts = {
   /** Home directory for a leading `~`. Injected rather than read here so this
    *  stays pure and testable; omit it and `~` is left alone. */
   homeDir?: string | undefined;
+  /** Optional resolver to find a relative path inside subtrees/subprojects of a root. */
+  findInSubtree?: (root: string, relPath: string) => string | undefined;
 };
 
 /**
@@ -348,7 +350,16 @@ export function resolveChatOpenFilePath(opts: ResolveChatOpenFilePathOpts): stri
   // Only a bare `~` counts. `~user/…` means somebody else's home, which we
   // cannot resolve without consulting the password database, and guessing a
   // sibling of our own home would be wrong. It is left as written.
-  const raw = expandLeadingHome(rawInput, opts.homeDir);
+  let raw = expandLeadingHome(rawInput, opts.homeDir);
+  if (/^file:\/\//i.test(raw)) {
+    raw = raw.replace(/^file:\/\//i, "");
+    if (/^\/[a-zA-Z]:[/\\]/.test(raw)) {
+      raw = raw.slice(1);
+    }
+    try {
+      raw = decodeURIComponent(raw);
+    } catch {}
+  }
 
   const realpath = opts.realpath ?? ((p: string) => path.resolve(p));
   const roots = opts.workspaceRoots.filter((r) => typeof r === "string" && r.length > 0);
@@ -359,10 +370,18 @@ export function resolveChatOpenFilePath(opts: ResolveChatOpenFilePathOpts): stri
     return raw;
   }
 
-  // Workspace wins when the file actually exists there.
+  // Workspace wins when the file actually exists there directly.
   for (const root of roots) {
     const candidate = path.resolve(root, raw);
     if (opts.exists(candidate)) return candidate;
+  }
+
+  // Subtree / subproject search in workspace roots when direct candidate does not exist.
+  if (opts.findInSubtree) {
+    for (const root of roots) {
+      const candidate = opts.findInSubtree(root, raw);
+      if (candidate && opts.exists(candidate)) return candidate;
+    }
   }
 
   // Session-media fallback for agent-named relative links only.

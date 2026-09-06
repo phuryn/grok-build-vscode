@@ -234,7 +234,7 @@ export class VoiceStreamer extends EventEmitter {
     }
     const args = buildFfmpegStreamArgs(process.platform, { device });
     opts.log?.(`[voice-stream] capture: ${opts.ffmpegPath} ${args.join(" ")}`);
-    const proc = spawn(opts.ffmpegPath, args, { stdio: ["pipe", "pipe", "pipe"] });
+    const proc = spawn(opts.ffmpegPath, args, { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
     this.proc = proc;
     proc.stdout?.on("data", (chunk: Buffer) => { pcm.writePcm(chunk); });
     proc.stderr?.on("data", (d) => opts.log?.(`[voice-stream ffmpeg] ${d.toString().trim()}`));

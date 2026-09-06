@@ -344,10 +344,12 @@
   const GROK_ACTIVITY_VERB = "Grokking";
   const CODEX_ACTIVITY_VERB = "Opening AI";
   const CLAUDE_ACTIVITY_VERB = "Clauding";
+  const GEMINI_ACTIVITY_VERB = "Thinking\u2026";
   const COMPOSER_PLACEHOLDER = {
     grok: "Ask Grok\u2026",
     codex: "Ask GPT\u2026",
     claude: "Ask Claude\u2026",
+    gemini: "Ask Gemini\u2026",
   };
   const EFFORT_TOOLTIPS = {
     none: "None — no extra reasoning",
@@ -512,6 +514,10 @@
     mentionActive: 0,
     mentionQuery: null,
     pendingDiffByToolCallId: new Map(),
+    // Keys are `${toolCallId}|${path}` — a completed revert (or one in
+    // flight) for a block already reverted must not offer the button again
+    // on a repaint.
+    revertedEdits: new Set(),
     // Permission requests whose diff has already been auto-opened once.
     //
     // NOT cleared by resetForNewSession, deliberately — like imagePreviews
@@ -1673,6 +1679,11 @@
           }
           return hold(`<code>${code}</code>`);
         })
+        .replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (_, alt, src) => {
+          const safeSrc = /^(?:javascript|vbscript):/i.test(src.trim()) ? "" : src.replace(/"/g, "&quot;");
+          const safeAlt = alt.replace(/"/g, "&quot;");
+          return hold(`<img class="md-image" src="${safeSrc}" alt="${safeAlt}" loading="lazy" />`);
+        })
         .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_, text, url) => {
           const safe = url.replace(/"/g, "&quot;");
           return `<a href="${hold(safe)}">${text}</a>`;
@@ -1732,6 +1743,44 @@
       s = kept.join('\n');
     }
 
+    // Blockquotes and GitHub alerts (> [!NOTE], > [!TIP], > [!IMPORTANT], > [!WARNING], > [!CAUTION])
+    const alerts = [];
+    {
+      const isQuoteLine = (l) => /^\s*>/.test(l);
+      const srcLines = s.split('\n');
+      const kept = [];
+      let i = 0;
+      while (i < srcLines.length) {
+        if (isQuoteLine(srcLines[i])) {
+          const quoteLines = [];
+          while (i < srcLines.length && isQuoteLine(srcLines[i])) {
+            quoteLines.push(srcLines[i].replace(/^\s*>\s?/, ''));
+            i++;
+          }
+          let html = '';
+          const first = quoteLines[0] ? quoteLines[0].trim() : '';
+          const alertMatch = first.match(/^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]$/i);
+          if (alertMatch) {
+            const kind = alertMatch[1].toLowerCase();
+            const title = alertMatch[1].toUpperCase();
+            const bodyLines = quoteLines.slice(1);
+            const bodyHtml = bodyLines.map((l) => inline(l)).join('<br>');
+            html = `<div class="md-alert md-alert-${kind}"><div class="md-alert-title">${title}</div>${bodyHtml ? `<div class="md-alert-body">${bodyHtml}</div>` : ''}</div>`;
+          } else {
+            const bodyHtml = quoteLines.map((l) => inline(l)).join('<br>');
+            html = `<blockquote>${bodyHtml}</blockquote>`;
+          }
+          const idx = alerts.length;
+          alerts.push(html);
+          kept.push(`\x00A${idx}\x00`);
+          continue;
+        }
+        kept.push(srcLines[i]);
+        i++;
+      }
+      s = kept.join('\n');
+    }
+
     // Expand inline numbered lists: "1. A 2. B 3. C" on one line → separate lines
     function expandInline(line) {
       if (!/^\s*\d+\. /.test(line)) return [line];
@@ -1777,6 +1826,16 @@
       if (tm) {
         closeFrom(0);
         out += `\x00T${tm[1]}\x00`;
+        lastWasBlock = true;
+        lastPara = false;
+        pendingBreak = false;
+        continue;
+      }
+
+      const am = line.trim().match(/^\x00A(\d+)\x00$/);
+      if (am) {
+        closeFrom(0);
+        out += `\x00A${am[1]}\x00`;
         lastWasBlock = true;
         lastPara = false;
         pendingBreak = false;
@@ -1861,6 +1920,7 @@
     return out
       .replace(/\x00B(\d+)\x00/g, (_, i) => codeBlocks[+i])
       .replace(/\x00T(\d+)\x00/g, (_, i) => tables[+i])
+      .replace(/\x00A(\d+)\x00/g, (_, i) => alerts[+i])
       .replace(/\x00D(\d+)\x00/g, (_, i) => mathHtml[+i])
       .replace(/\x00M(\d+)\x00/g, (_, i) => mathHtml[+i]);
   }
@@ -3465,10 +3525,10 @@
     // A signed-out agent has no knowable model list, and the placeholder shown
     // in its place ("Codex default") reads as something you can select — so its
     // rows are replaced by the one action that can actually help.
-    const signInProviders = ["grok", "codex", "claude"].filter(providerNeedsLogin);
+    const signInProviders = ["grok", "codex", "claude", "gemini"].filter(providerNeedsLogin);
     models = models.filter((model) => !signInProviders.includes(model.provider || state.activeProvider));
     if (grouped) {
-      models = ["grok", "codex", "claude"].flatMap((provider) => models.filter((model) =>
+      models = ["grok", "codex", "claude", "gemini"].flatMap((provider) => models.filter((model) =>
         (model.provider || state.activeProvider) === provider));
     }
     let group = "";
@@ -3525,7 +3585,7 @@
       gearPopover.appendChild(el);
     };
     if (grouped) {
-      for (const provider of ["grok", "codex", "claude"]) {
+      for (const provider of ["grok", "codex", "claude", "gemini"]) {
         for (const m of models) {
           if ((m.provider || state.activeProvider) === provider) renderModelRow(m);
         }
@@ -4078,6 +4138,7 @@
     codex: "M9.205 8.658v-2.26c0-.19.072-.333.238-.428l4.543-2.616c.619-.357 1.356-.523 2.117-.523 2.854 0 4.662 2.212 4.662 4.566 0 .167 0 .357-.024.547l-4.71-2.759a.797.797 0 00-.856 0l-5.97 3.473zm10.609 8.8V12.06c0-.333-.143-.57-.429-.737l-5.97-3.473 1.95-1.118a.433.433 0 01.476 0l4.543 2.617c1.309.76 2.189 2.378 2.189 3.948 0 1.808-1.07 3.473-2.76 4.163zM7.802 12.703l-1.95-1.142c-.167-.095-.239-.238-.239-.428V5.899c0-2.545 1.95-4.472 4.591-4.472 1 0 1.927.333 2.712.928L8.23 5.067c-.285.166-.428.404-.428.737v6.898zM12 15.128l-2.795-1.57v-3.33L12 8.658l2.795 1.57v3.33L12 15.128zm1.796 7.23c-1 0-1.927-.332-2.712-.927l4.686-2.712c.285-.166.428-.404.428-.737v-6.898l1.974 1.142c.167.095.238.238.238.428v5.233c0 2.545-1.974 4.472-4.614 4.472zm-5.637-5.303l-4.544-2.617c-1.308-.761-2.188-2.378-2.188-3.948A4.482 4.482 0 014.21 6.327v5.423c0 .333.143.571.428.738l5.947 3.449-1.95 1.118a.432.432 0 01-.476 0zm-.262 3.9c-2.688 0-4.662-2.021-4.662-4.519 0-.19.024-.38.047-.57l4.686 2.71c.286.167.571.167.856 0l5.97-3.448v2.26c0 .19-.07.333-.237.428l-4.543 2.616c-.619.357-1.356.523-2.117.523zm5.899 2.83a5.947 5.947 0 005.827-4.756C22.287 18.339 24 15.84 24 13.296c0-1.665-.713-3.282-1.998-4.448.119-.5.19-.999.19-1.498 0-3.401-2.759-5.947-5.946-5.947-.642 0-1.26.095-1.88.31A5.962 5.962 0 0010.205 0a5.947 5.947 0 00-5.827 4.757C1.713 5.447 0 7.945 0 10.49c0 1.666.713 3.283 1.998 4.448-.119.5-.19 1-.19 1.499 0 3.401 2.759 5.946 5.946 5.946.642 0 1.26-.095 1.88-.309a5.96 5.96 0 004.162 1.713z",
     // Four-point sparkle — distinct from the Grok/Codex marks, currentColor.
     claude: "M4.709 15.955l4.72-2.647.08-.23-.08-.128H9.2l-.79-.048-2.698-.073-2.339-.097-2.266-.122-.571-.121L0 11.784l.055-.352.48-.321.686.06 1.52.103 2.278.158 1.652.097 2.449.255h.389l.055-.157-.134-.098-.103-.097-2.358-1.596-2.552-1.688-1.336-.972-.724-.491-.364-.462-.158-1.008.656-.722.881.06.225.061.893.686 1.908 1.476 2.491 1.833.365.304.145-.103.019-.073-.164-.274-1.355-2.446-1.446-2.49-.644-1.032-.17-.619a2.97 2.97 0 01-.104-.729L6.283.134 6.696 0l.996.134.42.364.62 1.414 1.002 2.229 1.555 3.03.456.898.243.832.091.255h.158V9.01l.128-1.706.237-2.095.23-2.695.08-.76.376-.91.747-.492.584.28.48.685-.067.444-.286 1.851-.559 2.903-.364 1.942h.212l.243-.242.985-1.306 1.652-2.064.73-.82.85-.904.547-.431h1.033l.76 1.129-.34 1.166-1.064 1.347-.881 1.142-1.264 1.7-.79 1.36.073.11.188-.02 2.856-.606 1.543-.28 1.841-.315.833.388.091.395-.328.807-1.969.486-2.309.462-3.439.813-.042.03.049.061 1.549.146.662.036h1.622l3.02.225.79.522.474.638-.079.485-1.215.62-1.64-.389-3.829-.91-1.312-.329h-.182v.11l1.093 1.068 2.006 1.81 2.509 2.33.127.578-.322.455-.34-.049-2.205-1.657-.851-.747-1.926-1.62h-.128v.17l.444.649 2.345 3.521.122 1.08-.17.353-.608.213-.668-.122-1.374-1.925-1.415-2.167-1.143-1.943-.14.08-.674 7.254-.316.37-.729.28-.607-.461-.322-.747.322-1.476.389-1.924.315-1.53.286-1.9.17-.632-.012-.042-.14.018-1.434 1.967-2.18 2.945-1.726 1.845-.414.164-.717-.37.067-.662.401-.589 2.388-3.036 1.44-1.882.93-1.086-.006-.158h-.055L4.132 18.56l-1.13.146-.487-.456.061-.746.231-.243 1.908-1.312-.006.006z",
+    gemini: "M12 0C12 6.627 6.627 12 0 12c6.627 0 12 5.373 12 12 0-6.627 5.373-12 12-12-6.627 0-12-5.373-12-12z",
   };
 
   /**
@@ -4092,7 +4153,7 @@
    * An absent provider means an older host that only ever ran Grok.
    */
   function steerableProvider() {
-    return state.activeProvider !== "claude" && state.activeProvider !== "codex";
+    return state.activeProvider !== "claude" && state.activeProvider !== "codex" && state.activeProvider !== "gemini";
   }
 
   /**
@@ -4103,7 +4164,7 @@
    * nobody is at the screen to read it. Same shape as steerableProvider().
    */
   function rewindCapableProvider() {
-    if (state.activeProvider === "claude" || state.activeProvider === "codex") return false;
+    if (state.activeProvider === "claude" || state.activeProvider === "codex" || state.activeProvider === "gemini") return false;
     // A host older than 4.1.0 classifies rewindSession / editLastMessage as
     // host-local and drops them without a reply, so the buttons would be dead
     // for every remote user who has not updated — and the relay always ships
@@ -4115,11 +4176,12 @@
   function providerDisplayName(provider) {
     if (provider === "codex") return "Codex";
     if (provider === "claude") return "Claude";
+    if (provider === "gemini") return "Gemini";
     return "Grok";
   }
 
   function providerLogoId(provider) {
-    if (provider === "codex" || provider === "claude") return provider;
+    if (provider === "codex" || provider === "claude" || provider === "gemini") return provider;
     return "grok";
   }
 
@@ -7887,7 +7949,7 @@
     const host = state.welcomeTips || {};
     const providers = state.providers || [];
     const altConnected = providers.some(
-      (p) => p && (p.id === "codex" || p.id === "claude") && p.connected,
+      (p) => p && (p.id === "codex" || p.id === "claude" || p.id === "gemini") && p.connected,
     );
     return {
       appPurpose: state.appPurpose === "coding" ? "coding" : "knowledge",
@@ -8721,6 +8783,7 @@
     }
     state.welcomeVisible = true;
     state.pendingDiffByToolCallId.clear();
+    state.revertedEdits.clear();
     state.toolItemsByToolCallId.clear();
     state.toolFailuresById.clear();
     state.mediaGenCallIds.clear();
@@ -8856,6 +8919,7 @@
     const panelProvider = (state.onboardingInfo && state.onboardingInfo.provider)
       || (state.onboardingMode === "codex-login" ? "codex"
         : state.onboardingMode === "claude-login" ? "claude"
+        : state.onboardingMode === "gemini-login" ? "gemini"
         : state.onboardingMode === "auth-required" ? "grok" : undefined);
     let anyRan = false;
     for (const btn of onb.querySelectorAll(".onb-action")) {
@@ -8907,11 +8971,11 @@
   function remoteConnectPanel(mode, info, ver) {
     const device = info.device;
     const provider = info.provider
-      || (mode === "codex-login" ? "codex" : mode === "claude-login" ? "claude" : mode === "auth-required" ? "grok" : "");
+      || (mode === "codex-login" ? "codex" : mode === "claude-login" ? "claude" : mode === "gemini-login" ? "gemini" : mode === "auth-required" ? "grok" : "");
     // The products' own names, everywhere this panel speaks. Not "Grok": that
     // is the model, the extension is Grok Build, and a heading that disagrees
     // with the button beneath it reads as two different things to connect.
-    const NAMES = { grok: "Grok Build", codex: "Codex", claude: "Claude Code" };
+    const NAMES = { grok: "Grok Build", codex: "Codex", claude: "Claude Code", gemini: "Gemini CLI" };
     const name = NAMES[provider] || "an agent";
     const status = (text) => { if (ver) setWelcomeStatus(text, false); };
 
@@ -9068,7 +9132,7 @@
     // frame's provider is the specific thing being asked for again.
     const nothingConnected = !((state.providers || []).some((p) => p && p.connected));
     const cloudFresh = !!(state.hostCaps && state.hostCaps.remoteAgentSignOut) && nothingConnected;
-    const offer = provider && !cloudFresh ? [provider] : ["grok", "codex", "claude"];
+    const offer = provider && !cloudFresh ? [provider] : ["grok", "codex", "claude", "gemini"];
     // A cloud machine's three agents are not equal offers: Grok is the native
     // one. Ranking is the cloud-only part; every agent that has a headless
     // flow is offered, including Claude Code's paste-code sign-in.
@@ -9241,6 +9305,7 @@
     "connect-agent": true,
     "codex-login": true,
     "claude-login": true,
+    "gemini-login": true,
     "auth-required": true,
   };
 
@@ -9284,7 +9349,7 @@
     const onb = $("welcome-onboarding");
     const ver = $("welcome-version");
     if (!onb) return;
-    if (IS_REMOTE && (mode === "connect-agent" || mode === "codex-login" || mode === "claude-login" || mode === "auth-required")) {
+    if (IS_REMOTE && (mode === "connect-agent" || mode === "codex-login" || mode === "claude-login" || mode === "gemini-login" || mode === "auth-required")) {
       // The card is an ENTRY POINT, not a second renderer: a live flow belongs
       // to the wizard, so the card keeps showing the offer underneath it.
       // The card NEVER renders a live flow. Stripping it only while the wizard
@@ -9338,7 +9403,7 @@
       const id = info.provider || "grok";
       const done = id === "codex"
         ? "You can start working with OpenAI!"
-        : id === "claude" ? "You can start clauding!" : "You can start grokking!";
+        : id === "claude" ? "You can start clauding!" : id === "gemini" ? "You can start working with Gemini!" : "You can start grokking!";
       if (ver) setWelcomeStatus("Connected", false);
       onb.innerHTML =
         `<div class="onb onb-connected">` +
@@ -9354,13 +9419,6 @@
           `<p class="onb-heading">Connect an agent</p>` +
           `<p class="onb-desc">Choose the command-line agent that will own this conversation.</p>` +
           `<div class="onb-agent-grid">` +
-            // One row each, not a grid: three side-by-side tiles squeezed the
-            // name and the CLI into a column too narrow to read either, and the
-            // list is short enough that stacking costs nothing. Each row names
-            // the agent and the CLI it will install — "Recommended default"
-            // used to describe our ranking where the others described what the
-            // thing IS, so the row a newcomer reads first was the only one not
-            // saying what it would put on their machine.
             `<button class="onb-agent-tile primary onb-action" type="button" data-act="connectProvider" data-provider="grok">` +
               `<span class="onb-agent-mark">${providerLogoMarkup("grok")}</span><span><strong>Grok Build (Recommended)</strong><small>Grok Build CLI</small></span>` +
             `</button>` +
@@ -9369,6 +9427,9 @@
             `</button>` +
             `<button class="onb-agent-tile onb-action" type="button" data-act="connectProvider" data-provider="claude">` +
               `<span class="onb-agent-mark">${providerLogoMarkup("claude")}</span><span><strong>Claude Code</strong><small>Claude Code CLI</small></span>` +
+            `</button>` +
+            `<button class="onb-agent-tile onb-action" type="button" data-act="connectProvider" data-provider="gemini">` +
+              `<span class="onb-agent-mark">${providerLogoMarkup("gemini")}</span><span><strong>Gemini</strong><small>Antigravity CLI</small></span>` +
             `</button>` +
           `</div>` +
         `</div>`;
@@ -9455,6 +9516,32 @@
           `<p class="onb-desc">This app never implements, proxies, holds, or forwards Claude credentials. Sign-in happens entirely inside Anthropic's own CLI, which may use your Claude subscription or an Anthropic Console account depending on how you sign in.</p>` +
           `<button class="onb-action onb-secondary" type="button" data-act="connectProvider" data-provider="claude">Open terminal &amp; run <code>claude auth login</code></button>` +
           `<button class="onb-action" type="button" data-act="recheckProvider" data-provider="claude">Done - connect Claude</button>` +
+        `</div>`;
+    } else if (mode === "missing-gemini") {
+      if (ver) setWelcomeStatus("Antigravity CLI not found", false);
+      if (IS_REMOTE) {
+        onb.innerHTML = `<div class="onb"><p class="onb-heading">Antigravity / Gemini CLI is missing at the desk</p>` +
+          `<p class="onb-desc">Install Google's Antigravity (Gemini) CLI on the computer running this workspace, then refresh this remote view.</p></div>`;
+        return;
+      }
+      const installCmd = info.platform === "win32"
+        ? "irm https://antigravity.google/cli/install.ps1 | iex"
+        : "curl -fsSL https://antigravity.google/cli/install.sh | bash";
+      onb.innerHTML =
+        `<div class="onb">` +
+          `<p class="onb-heading">Install Google Antigravity (Gemini) CLI</p>` +
+          `<p class="onb-desc">Install Google's official Antigravity CLI (<code>agy</code>), then re-check:</p>` +
+          `<div class="onb-cmd"><code>${installCmd}</code><button class="onb-copy" type="button" title="Copy" data-cmd="${installCmd}">${ICON.copy}</button></div>` +
+          `<button class="onb-action" type="button" data-act="recheckProvider" data-provider="gemini">Re-check</button>` +
+        `</div>`;
+    } else if (mode === "gemini-login") {
+      if (ver) setWelcomeStatus("Finish signing in", false);
+      onb.innerHTML =
+        `<div class="onb">` +
+          `<p class="onb-heading">Sign in with Gemini</p>` +
+          `<p class="onb-desc">Sign in with the Gemini CLI in your terminal, then connect here.</p>` +
+          `<button class="onb-action onb-secondary" type="button" data-act="connectProvider" data-provider="gemini">Open terminal &amp; run <code>gemini auth login</code></button>` +
+          `<button class="onb-action" type="button" data-act="recheckProvider" data-provider="gemini">Done - connect Gemini</button>` +
         `</div>`;
     } else if (mode === "auth-required") {
       if (ver) setWelcomeStatus("Authentication required", false);
@@ -9743,7 +9830,7 @@
   }
 
   function feedbackOffered() {
-    return state.feedbackAvailable === true && state.activeProvider !== "codex" && state.activeProvider !== "claude";
+    return state.feedbackAvailable === true && state.activeProvider !== "codex" && state.activeProvider !== "claude" && state.activeProvider !== "gemini";
   }
 
   function stripTurnThumbs(actions) {
@@ -10726,6 +10813,9 @@
     if (Object.prototype.hasOwnProperty.call(update, "detailInput")) {
       merged.detailInput = update.detailInput;
     }
+    if (Array.isArray(update.content) && update.content.length) {
+      merged.content = update.content;
+    }
     item._call = merged;
     // Flatten / summarize read `_calls`, not `item._call`. Grok's first
     // use_tool row is titled "use_tool" until this update; leave the
@@ -11016,7 +11106,59 @@
   // `has-details`, governed by grok.expandCommandOutputs / the Expand-All latch /
   // a per-row click (wireCommandToggle). `diffs` is an ARRAY: a single tool call
   // can carry more than one region.
-  function attachDiffPreviewToToolItem(toolCallId, diffs) {
+  // "revert edit ↶" next to "open diff →" (docs/UNIVERSAL_DIFF_SUPPORT_PLAN.md
+  // § 5). Sends the diff block the row already rendered rather than an id —
+  // the host has no separate snapshot store to look one up in, it reconstructs
+  // the pre-edit file on demand from this same payload.
+  function buildRevertEditButton(toolCallId, diff) {
+    const key = toolCallId + "|" + diff.path;
+    const button = document.createElement("button");
+    button.className = "preview-link revert-link";
+    const alreadyReverted = state.revertedEdits.has(key);
+    button.textContent = alreadyReverted ? "reverted" : "revert edit ↶";
+    button.disabled = alreadyReverted;
+    button.dataset.revertKey = key;
+    if (!alreadyReverted) {
+      button.onclick = (e) => {
+        e.stopPropagation(); // don't toggle the row/group expand
+        button.disabled = true;
+        button.textContent = "reverting…";
+        vscode.postMessage({
+          type: "revertToolEdit",
+          toolCallId,
+          path: diff.path,
+          oldText: diff.oldText,
+          newText: diff.newText,
+          replaceAll: diff.replaceAll,
+          sites: diff.sites,
+        });
+      };
+    }
+    return button;
+  }
+
+  // Host ack for a `revertToolEdit` request: flip the matching button (there
+  // may be several buttons sharing a toolCallId across blocks, one per path)
+  // to its resolved state, or restore it to clickable on failure so the user
+  // can retry or investigate.
+  function applyToolEditReverted(msg) {
+    const key = msg.toolCallId + "|" + msg.path;
+    if (msg.ok) state.revertedEdits.add(key);
+    for (const button of document.querySelectorAll('button[data-revert-key]')) {
+      if (button.dataset.revertKey !== key) continue;
+      if (msg.ok) {
+        button.textContent = "reverted";
+        button.disabled = true;
+        button.onclick = null;
+      } else {
+        button.textContent = "revert edit ↶";
+        button.disabled = false;
+        button.title = msg.reason || "";
+      }
+    }
+  }
+
+  function attachDiffPreviewToToolItem(toolCallId, diffs, status) {
     const item = state.toolItemsByToolCallId.get(toolCallId);
     if (!item) return;
     // grok reports an edit's diff TWICE (research/edit-diff.md § Two updates per
@@ -11027,7 +11169,12 @@
     // DIFFERENT diff must WIN (an overwrite otherwise renders as pure adds forever,
     // since the echo lands first); a byte-identical repaint is a no-op, which is
     // what keeps buffer replay idempotent.
-    const sig = JSON.stringify(diffs);
+    // `status` rides along in the signature too: an edit tool whose ACTIVE and
+    // DONE updates carry byte-identical diffs (replace_file_content needs no
+    // disk read, so both phases synthesize the same block) would otherwise
+    // short-circuit the DONE repaint entirely — and with it, the only signal
+    // that flips the revert button on.
+    const sig = JSON.stringify(diffs) + "|" + (status || "");
     if (item._diffSig === sig) return;
     const existing = item.querySelector(".tool-item-details");
     if (existing && !existing.classList.contains("tool-item-diff")) return; // a command's IN/OUT owns this row
@@ -11105,6 +11252,12 @@
         requestDiffPreview(diff);
       };
       details.appendChild(preview);
+      // Revert is only ever offered for a FINISHED edit — mid-flight the file
+      // on disk doesn't yet hold `newText`, so reverting it would be a no-op
+      // at best and a race with the write at worst.
+      if (status === "completed") {
+        details.appendChild(buildRevertEditButton(toolCallId, diff));
+      }
     }
     if (fresh) {
       item.appendChild(details);
@@ -11279,25 +11432,32 @@
   }
 
   function applyToolDiffs(call) {
-    const c = call?.content;
+    const id = call?.toolCallId;
+    const item = id ? state.toolItemsByToolCallId.get(id) : null;
+    let c = call?.content;
+    if ((!Array.isArray(c) || !c.length) && item?._call && Array.isArray(item._call.content)) {
+      c = item._call.content;
+    }
     if (!Array.isArray(c)) return;
+    const rawInput = call?.rawInput || item?._call?.rawInput;
     const diffs = [];
-    for (const item of c) {
-      if (item?.type === "diff") {
-        const oldText = item.oldText ?? "";
-        const newText = item.newText ?? "";
+    for (const diffItem of c) {
+      if (diffItem?.type === "diff") {
+        const oldText = diffItem.oldText ?? "";
+        const newText = diffItem.newText ?? "";
         diffs.push({
-          path: item.path,
+          path: diffItem.path,
           oldText, // block-level: the "open diff →" payload + the permission card's line count
           newText,
-          sites: extractDiffSites(item._meta, oldText, newText),
-          replaceAll: call?.rawInput?.replace_all === true,
+          sites: extractDiffSites(diffItem._meta, oldText, newText),
+          replaceAll: rawInput?.replace_all === true,
         });
       }
     }
     if (!diffs.length) return;
-    state.pendingDiffByToolCallId.set(call.toolCallId, diffs[0]); // permission card / openDiff use the first
-    attachDiffPreviewToToolItem(call.toolCallId, diffs);
+    if (id) state.pendingDiffByToolCallId.set(id, diffs[0]); // permission card / openDiff use the first
+    const status = String(call?.status || item?._call?.status || "").toLowerCase();
+    attachDiffPreviewToToolItem(call.toolCallId, diffs, status);
   }
 
   // Render a tool failure on its row: the row goes error-colored and the reason
@@ -12712,12 +12872,14 @@
   function activityVerb() {
     if (state.activeProvider === "codex") return CODEX_ACTIVITY_VERB;
     if (state.activeProvider === "claude") return CLAUDE_ACTIVITY_VERB;
+    if (state.activeProvider === "gemini") return "Thinking\u2026";
     return GROK_ACTIVITY_VERB;
   }
 
   function activityAriaLabel() {
     if (state.activeProvider === "codex") return "OpenAI is working";
     if (state.activeProvider === "claude") return "Claude is working";
+    if (state.activeProvider === "gemini") return "Gemini is working";
     return "Grok is working";
   }
 
@@ -13996,6 +14158,14 @@
   }
 
   // ---------- donut ----------
+
+  function defaultContextWindowForProvider(provider) {
+    if (provider === "claude") return 1000000;
+    if (provider === "gemini") return 1048576;
+    if (provider === "grok") return 512000;
+    if (provider === "codex") return 258400;
+    return 200000;
+  }
 
   function updateDonut(used) {
     // Remember the last usage so a later redraw (e.g. the context window changing
@@ -15955,7 +16125,7 @@
       case "providerState":
         state.providersKnown = true;
         state.providers = Array.isArray(msg.providers) ? msg.providers.filter((provider) =>
-          provider && (provider.id === "grok" || provider.id === "codex" || provider.id === "claude")) : [];
+          provider && (provider.id === "grok" || provider.id === "codex" || provider.id === "claude" || provider.id === "gemini")) : [];
         // A confirmed account retires its device-flow mirror. Without this the
         // "Connected" flow row would resurface in Settings after a later
         // sign-out, describing a connection that no longer exists.
@@ -16330,14 +16500,18 @@
       }
       case "session": {
         state.currentModelId = msg.currentModelId;
-        state.activeProvider = msg.provider === "codex" || msg.provider === "claude" ? msg.provider : "grok";
+        state.activeProvider = msg.provider === "codex" || msg.provider === "claude" || msg.provider === "gemini" ? msg.provider : "grok";
         syncFeedbackButtons();
         syncProviderVoice();
         if (state.railTransition?.kind === "new") renderRail();
         state.isWorktree = !!msg.worktree; // gates the gear Apply/Remove worktree items
         state.availableModels = msg.models || [];
         const m = state.availableModels.find((x) => x.modelId === msg.currentModelId && (!x.provider || x.provider === state.activeProvider));
-        if (m?.totalContextTokens) state.contextWindow = m.totalContextTokens;
+        if (m?.totalContextTokens) {
+          state.contextWindow = m.totalContextTokens;
+        } else {
+          state.contextWindow = defaultContextWindowForProvider(state.activeProvider);
+        }
         state.contextBreakdown = null;
         updateDonut(0);
         reportRemotePreferences();
@@ -16390,7 +16564,12 @@
         // switch (e.g. to the configured default) recompute the max — otherwise the
         // donut keeps showing the wrong ceiling and an inflated percentage.
         const m = state.availableModels.find((x) => x.modelId === msg.modelId && (!x.provider || x.provider === state.activeProvider));
-        if (m && m.totalContextTokens) { state.contextWindow = m.totalContextTokens; updateDonut(); }
+        if (m && m.totalContextTokens) {
+          state.contextWindow = m.totalContextTokens;
+        } else {
+          state.contextWindow = defaultContextWindowForProvider(state.activeProvider);
+        }
+        updateDonut();
         break;
       }
       case "modeChanged":
@@ -16923,6 +17102,9 @@
         }
         break;
       }
+      case "toolEditReverted":
+        applyToolEditReverted(msg);
+        break;
       case "exitPlanRequest":
         addPlanCard(msg.req);
         break;
@@ -18232,6 +18414,11 @@
       // its own window. Same rule for a link in the transcript.
       if (IS_REMOTE) window.open(href, "_blank", "noopener");
       else vscode.postMessage({ type: "openUrl", url: href });
+    } else if (/^file:\/\//i.test(href)) {
+      let p = href.replace(/^file:\/\//i, "");
+      if (/^\/[a-zA-Z]:[/\\]/.test(p)) p = p.slice(1);
+      try { p = decodeURIComponent(p); } catch (_) {}
+      vscode.postMessage({ type: "openFile", path: p });
     } else if (/^[a-zA-Z]:[\\/]/.test(href) || href.startsWith("\\\\") || !/^[a-z][a-z0-9+.-]*:/i.test(href)) {
       vscode.postMessage({ type: "openFile", path: href });
     }

@@ -680,11 +680,12 @@ describe("commandLanguageForDialect (View all command language)", () => {
 describe("TerminalManager kill fallback (Windows taskkill failure)", () => {
   it("falls back to SIGTERM when taskkill errors, so waitForExit still settles", async () => {
     const calls: Array<{ file: string; args: string[] }> = [];
-    const failingExec = ((file: string, args: string[], cb: (err: Error | null) => void) => {
+    const failingExec = ((file: string, args: string[], ...rest: any[]) => {
       calls.push({ file, args });
+      const cb = rest.find((r) => typeof r === "function");
       // Simulate taskkill running and failing (e.g. Access Denied) — async like
       // the real execFile callback.
-      setImmediate(() => cb(new Error("ERROR: The process could not be terminated. Access is denied.")));
+      setImmediate(() => cb?.(new Error("ERROR: The process could not be terminated. Access is denied.")));
     }) as unknown as typeof import("node:child_process").execFile;
 
     const m = new TerminalManager({ execFileImpl: failingExec, platform: "win32" });
@@ -710,8 +711,8 @@ describe("TerminalManager kill fallback (Windows taskkill failure)", () => {
 
   it("does not signal when taskkill fails but the process already exited", async () => {
     let exec: ((err: Error | null) => void) | undefined;
-    const capturedExec = ((_f: string, _a: string[], cb: (err: Error | null) => void) => {
-      exec = cb; // hold the callback so we control when taskkill "fails"
+    const capturedExec = ((_f: string, _a: string[], ...rest: any[]) => {
+      exec = rest.find((r) => typeof r === "function"); // hold the callback so we control when taskkill "fails"
     }) as unknown as typeof import("node:child_process").execFile;
 
     const m = new TerminalManager({ execFileImpl: capturedExec, platform: "win32" });

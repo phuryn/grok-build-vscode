@@ -3,6 +3,7 @@ import {
   MAX_DIFF_EXPAND_BYTES,
   expandDiffToWholeFile,
   firstChangedLine,
+  planEditRevert,
 } from "../src/diff-view";
 
 describe("expandDiffToWholeFile", () => {
@@ -244,3 +245,66 @@ describe("firstChangedLine", () => {
     expect(firstChangedLine("one\ntwo", "one\ntwo\nthree")).toBe(2);
   });
 });
+
+describe("planEditRevert", () => {
+  it("reverts a single-site edit by reconstructing the whole pre-edit file", () => {
+    expect(planEditRevert({
+      oldText: "41",
+      newText: "42",
+      currentText: "header\nconst answer = 42;\nfooter\n",
+    })).toEqual({ action: "write", text: "header\nconst answer = 41;\nfooter\n" });
+  });
+
+  it("deletes a pure creation whose content still matches what the edit wrote", () => {
+    expect(planEditRevert({
+      oldText: "",
+      newText: "hello\n",
+      currentText: "hello\n",
+    })).toEqual({ action: "delete" });
+  });
+
+  it("asks for confirmation before deleting a creation that has since diverged", () => {
+    expect(planEditRevert({
+      oldText: "",
+      newText: "hello\n",
+      currentText: "hello\nand more\n",
+    })).toEqual({ action: "delete-confirm" });
+  });
+
+  it("refuses a creation whose file no longer exists", () => {
+    expect(planEditRevert({ oldText: "", newText: "hello\n", currentText: undefined }))
+      .toEqual({ action: "unreadable" });
+  });
+
+  it("refuses any edit when the file can't be read", () => {
+    expect(planEditRevert({ oldText: "a", newText: "b", currentText: undefined }))
+      .toEqual({ action: "unreadable" });
+  });
+
+  it("reports a conflict when the edited region can no longer be found", () => {
+    expect(planEditRevert({
+      oldText: "old-region",
+      newText: "new-region",
+      currentText: "the file moved on and no longer contains that region",
+    })).toEqual({ action: "conflict" });
+  });
+
+  it("reverts every site of a replace_all edit", () => {
+    expect(planEditRevert({
+      oldText: "TOKEN",
+      newText: "REPLACED",
+      replaceAll: true,
+      currentText: "REPLACED once, REPLACED twice",
+    })).toEqual({ action: "write", text: "TOKEN once, TOKEN twice" });
+  });
+
+  it("reverts cleanly when site has oldLine but newLine is undefined (e.g. line count changed)", () => {
+    expect(planEditRevert({
+      oldText: "old line",
+      newText: "new line 1\nnew line 2",
+      sites: [{ oldText: "old line", newText: "new line 1\nnew line 2", oldLine: 2, newLine: undefined }],
+      currentText: "header\nnew line 1\nnew line 2\nfooter\n",
+    })).toEqual({ action: "write", text: "header\nold line\nfooter\n" });
+  });
+});
+

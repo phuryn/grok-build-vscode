@@ -24,9 +24,24 @@ export function locateGrokCli(configuredPath: string): string | undefined {
     const candidate = path.join(homeBin, name);
     if (existsSync(candidate)) return candidate;
   }
+  const pathVar = process.env.PATH || process.env.Path || "";
+  const sep = IS_WIN ? ";" : ":";
+  for (const dir of pathVar.split(sep)) {
+    if (!dir) continue;
+    for (const name of candidateNames()) {
+      const candidate = path.join(dir, name);
+      try {
+        if (existsSync(candidate) && statSync(candidate).isFile()) return candidate;
+      } catch {}
+    }
+  }
   try {
     const cmd = IS_WIN ? "where grok" : "command -v grok";
-    const out = execSync(cmd, { encoding: "utf8" }).trim();
+    const out = execSync(cmd, {
+      encoding: "utf8",
+      windowsHide: true,
+      stdio: ["pipe", "pipe", "ignore"],
+    }).trim();
     const first = out.split(/\r?\n/)[0]?.trim();
     if (first && existsSync(first)) return first;
   } catch {

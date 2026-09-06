@@ -38,6 +38,18 @@ export const CONTEXT_TAG_OPEN =
 export const CONTEXT_TAG_CLOSE = "</vscode-context>";
 
 /**
+ * Where a selection stops being embedded and becomes a reference.
+ *
+ * The active-editor chip is not a one-shot attachment: `consumeChips` keeps it
+ * across sends, so a selection is re-read from disk and re-embedded on EVERY
+ * message of the conversation. Selecting a whole large file therefore sent that
+ * file again with every turn. Past these bounds the range is named instead —
+ * the agent has the path and can read exactly those lines if it wants them.
+ */
+export const MAX_SELECTION_LINES = 400;
+export const MAX_SELECTION_CHARS = 20_000;
+
+/**
  * Build the final prompt text from a typed message + active chips.
  *
  * - Hidden chips are skipped.
@@ -88,9 +100,19 @@ export function buildPrompt(
       const lines = content
         .split("\n")
         .slice(chip.selectionStart - 1, chip.selectionEnd);
+      const snippet = lines.join("\n");
+      if (lines.length > MAX_SELECTION_LINES || snippet.length > MAX_SELECTION_CHARS) {
+        // Too big to repeat every turn — name the range in the bucket the chip
+        // belongs to, so an ambient editor selection still reads as ambient and
+        // an attached one still reads as "act on this".
+        const ref = `${chip.relPath} (lines ${chip.selectionStart}-${chip.selectionEnd})`;
+        if (isImplicitChip(chip)) openInEditor.push(ref);
+        else attached.push(ref);
+        continue;
+      }
       const ext = deps.extName(chip.path).replace(/^\./, "");
       blocks.push(
-        `\`${chip.relPath}\` (lines ${chip.selectionStart}-${chip.selectionEnd}):\n\`\`\`${ext}\n${lines.join("\n")}\n\`\`\``,
+        `\`${chip.relPath}\` (lines ${chip.selectionStart}-${chip.selectionEnd}):\n\`\`\`${ext}\n${snippet}\n\`\`\``,
       );
     } else if (isImplicitChip(chip)) {
       openInEditor.push(chip.relPath);
@@ -178,7 +200,7 @@ export function buildPromptWithImages(
   const promptText = ordered.filter(Boolean).join("\n\n");
   const blocks: PromptContentBlock[] = [{ type: "text", text: promptText }];
   for (const im of sorted) {
-    blocks.push({ type: "image", mimeType: im.mimeType, data: im.data });
+    blocks.push({ type: "image", mimeType: im.mimeType, data: im.data, ...(im.path ? { path: im.path } : {}) });
   }
   return { text: promptText, blocks };
 }

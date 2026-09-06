@@ -36,12 +36,12 @@ export interface SessionListEntry {
    *  the projects rail's Pinned group; absent means unpinned. */
   pinnedAt?: number;
   /** Agent that owns this immutable session. Absent means Grok for compatibility. */
-  provider?: "grok" | "codex" | "claude";
+  provider?: "grok" | "codex" | "claude" | "gemini";
 }
 
 export interface SessionMetaOverride {
   /** Agent that owns the session. Existing records omit it and therefore mean Grok. */
-  provider?: "grok" | "codex" | "claude";
+  provider?: "grok" | "codex" | "claude" | "gemini";
   /** Provider-reported cwd for stores that are not laid out under the Grok home. */
   providerCwd?: string;
   /**
@@ -371,7 +371,7 @@ export interface RepoListEntry {
   updatedAt: number;
   /** Provider a fresh conversation in this project will use. Optional so older
    * hosts keep rendering their existing provider-neutral New-session row. */
-  defaultProvider?: "grok" | "codex" | "claude";
+  defaultProvider?: "grok" | "codex" | "claude" | "gemini";
   worktreeLabel?: string;
   /**
    * Archive choice flattened for the wire. **Present when the host supports

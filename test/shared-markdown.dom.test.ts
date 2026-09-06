@@ -53,6 +53,33 @@ describe("shared markdown renderer (window.__grokRenderMarkdown)", () => {
     expect(html).toContain("&lt;img");
   });
 
+  it("renders markdown images as safe img tags", () => {
+    const html = render("![Diagram](images/flow.png)\n");
+    expect(html).toContain('<img class="md-image" src="images/flow.png" alt="Diagram" loading="lazy" />');
+  });
+
+  it("renders GitHub alerts for NOTE, TIP, WARNING, IMPORTANT, CAUTION", () => {
+    const noteHtml = render("> [!NOTE]\n> This is a note.\n");
+    expect(noteHtml).toContain("md-alert md-alert-note");
+    expect(noteHtml).toContain("NOTE");
+    expect(noteHtml).toContain("This is a note.");
+
+    const warnHtml = render("> [!WARNING]\n> Warning details.\n");
+    expect(warnHtml).toContain("md-alert md-alert-warning");
+    expect(warnHtml).toContain("WARNING");
+    expect(warnHtml).toContain("Warning details.");
+  });
+
+  it("renders standard blockquotes", () => {
+    const html = render("> Plain quote line 1\n> Plain quote line 2\n");
+    expect(html).toContain("<blockquote>Plain quote line 1<br>Plain quote line 2</blockquote>");
+  });
+
+  it("renders file:// links in markdown", () => {
+    const html = render("[Plan File](file:///C:/Users/test/implementation_plan.md)\n");
+    expect(html).toContain('<a href="file:///C:/Users/test/implementation_plan.md">Plan File</a>');
+  });
+
   it("survives a null or undefined body without throwing", () => {
     const h = bootWebview({ ready: true });
     const fn = (h.window as any).__grokRenderMarkdown;

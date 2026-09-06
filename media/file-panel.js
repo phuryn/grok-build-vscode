@@ -2429,8 +2429,14 @@
    */
   function resolveMarkdownLink(fromRelPath, href) {
     if (typeof href !== "string") return null;
-    const raw = href.trim();
-    if (!raw || raw.startsWith("#") || raw.startsWith("//") || /^[a-z][a-z0-9+.-]*:/i.test(raw)) {
+    let raw = href.trim();
+    if (!raw || raw.startsWith("#") || raw.startsWith("//")) {
+      return null;
+    }
+    if (/^file:\/\//i.test(raw)) {
+      raw = raw.replace(/^file:\/\//i, "");
+      if (/^\/[a-zA-Z]:[/\\]/.test(raw)) raw = raw.slice(1);
+    } else if (/^[a-z][a-z0-9+.-]*:/i.test(raw)) {
       return null;
     }
     const clean = raw.split(/[?#]/)[0];

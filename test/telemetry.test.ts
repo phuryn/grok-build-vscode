@@ -45,6 +45,7 @@ const REQUIRED: SessionStartProps = {
   grokConnected: true,
   codexConnected: false,
   claudeConnected: false,
+  geminiConnected: false,
 };
 
 describe("aptabaseHost — region from app key", () => {
@@ -174,6 +175,7 @@ describe("buildSessionStartEvent", () => {
       grokConnected: true,
       codexConnected: false,
       claudeConnected: false,
+      geminiConnected: false,
     });
   });
 
@@ -315,6 +317,7 @@ describe("session_start — feature flags + host (analytics)", () => {
       "grokConnected",
       "codexConnected",
       "claudeConnected",
+      "geminiConnected",
       "provider",
       "connectorCount",
       "worktree",
@@ -564,6 +567,7 @@ describe("sanitizeSessionStartProps — allowlist, no paths, no free text", () =
       grokConnected: false,
       codexConnected: true,
       claudeConnected: false,
+      geminiConnected: false,
       provider: "codex",
       connectorCount: 2,
       worktree: true,
@@ -590,7 +594,7 @@ function sidebarMethodBody(signature: string): string {
 
 function makeTelemetrySidebar(cwd = "/repo"): any {
   const instance = Object.create(GrokSidebar.prototype) as any;
-  instance.lastProviderConnected = { grok: true, codex: false, claude: false };
+  instance.lastProviderConnected = { grok: true, codex: false, claude: false, gemini: false };
   instance.lastVoiceConfiguredByCwd = new Map([[normalizeRepoPath(cwd), true]]);
   instance.locatedProviders = vi.fn(() => {
     throw new Error("reportSessionStart must not rediscover providers");
@@ -720,12 +724,12 @@ describe("sidebar session_start wiring", () => {
 
   it("snapshots connected flags when providerState refreshes", () => {
     const sidebar = Object.create(GrokSidebar.prototype) as any;
-    sidebar.providerConnections = vi.fn(() => ({ grok: true, codex: true, claude: true }));
-    sidebar.locatedProviders = vi.fn(() => ({ grok: true, codex: false, claude: true }));
+    sidebar.providerConnections = vi.fn(() => ({ grok: true, codex: true, claude: true, gemini: false }));
+    sidebar.locatedProviders = vi.fn(() => ({ grok: true, codex: false, claude: true, gemini: false }));
     sidebar.providerCliVersions = {};
     sidebar.providerNeedsLogin = {};
     sidebar.providerStateMessage();
-    expect(sidebar.lastProviderConnected).toEqual({ grok: true, codex: false, claude: true });
+    expect(sidebar.lastProviderConnected).toEqual({ grok: true, codex: false, claude: true, gemini: false });
   });
 
   it("omits voice and provider flags when no snapshot exists (never a fake false)", () => {

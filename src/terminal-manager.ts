@@ -107,7 +107,11 @@ function whichOnPath(name: string): string | undefined {
   try {
     // stderr → ignore so `where`'s "Could not find files" line on a miss never
     // reaches the extension's logs; stdout is still returned for a hit.
-    const out = execFileSync("where", [name], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    const out = execFileSync("where", [name], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      windowsHide: true,
+    });
     for (const line of out.split(/\r?\n/)) {
       const p = line.trim();
       if (!p || /[\\/]WindowsApps[\\/]/i.test(p)) continue;
@@ -562,7 +566,7 @@ export class TerminalManager {
     // on a POSIX box and still have to spawn a real local command.
     let proc: ChildProcess;
     if (process.platform === "win32") {
-      proc = spawn(params.command, { cwd, env, shell: terminalShell(), detached });
+      proc = spawn(params.command, { cwd, env, shell: terminalShell(), detached, windowsHide: true });
     } else {
       const { file, args } = posixSpawnArgv(params.command, terminalShell());
       proc = spawn(file, args, { cwd, env, detached });
@@ -681,7 +685,7 @@ export class TerminalManager {
       if (plan.kind === "taskkill" && t.exitCode != null) return;
       if (plan.kind === "taskkill") {
         const exec = this.deps.execFileImpl ?? execFile;
-        exec(plan.file, plan.args, (err) => {
+        (exec as any)(plan.file, plan.args, { windowsHide: true }, (err: Error | null) => {
           // taskkill can run-but-FAIL (Access Denied, protected child) with the
           // tree still alive — fire-and-forget left the agent's wait_for_exit
           // pending forever. Fall back to a direct signal so the exit listeners

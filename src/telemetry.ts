@@ -45,7 +45,7 @@ export type TelemetryMode = "agent" | "plan" | "yolo";
 export type TelemetryEffort = "" | "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
 export type TelemetrySessionOrigin = "local" | "remote";
 export type TelemetryClientDevice = "desktop" | "mobile";
-export type TelemetryProvider = "grok" | "codex" | "claude";
+export type TelemetryProvider = "grok" | "codex" | "claude" | "gemini";
 
 export interface SessionStartProps {
   /** Anonymous, per-install GUID — a property like model/effort, not an identity. */
@@ -78,6 +78,7 @@ export interface SessionStartProps {
   grokConnected?: boolean;
   codexConnected?: boolean;
   claudeConnected?: boolean;
+  geminiConnected?: boolean;
   /** The CLI this session is running on, as of the first user message.
    *  Independent of the *Connected flags (those are availability). */
   provider?: TelemetryProvider;
@@ -132,6 +133,7 @@ export const SESSION_START_ALLOWED_KEYS = [
   "grokConnected",
   "codexConnected",
   "claudeConnected",
+  "geminiConnected",
   "provider",
   "connectorCount",
   "worktree",
@@ -144,7 +146,7 @@ const ALLOWED_ORIGINS = new Set<string>(["local", "remote"]);
 const ALLOWED_DEVICES = new Set<string>(["desktop", "mobile"]);
 const ALLOWED_HOST_KINDS = new Set<string>(["desktop", "vscode"]);
 const ALLOWED_PURPOSES = new Set<string>(["knowledge", "coding"]);
-const ALLOWED_PROVIDERS = new Set<string>(["grok", "codex", "claude"]);
+const ALLOWED_PROVIDERS = new Set<string>(["grok", "codex", "claude", "gemini"]);
 
 const INSTALL_ID_RE = /^[A-Za-z0-9._-]{1,80}$/;
 /** Picker / CLI model ids: `grok-build`, `grok-4.5`, `gpt-5.6-sol`. Empty = CLI default. */
@@ -266,6 +268,8 @@ export function sanitizeSessionStartProps(raw: unknown): Record<string, string |
   if (codexConnected !== undefined) picked.codexConnected = codexConnected;
   const claudeConnected = pickBoolean(src.claudeConnected);
   if (claudeConnected !== undefined) picked.claudeConnected = claudeConnected;
+  const geminiConnected = pickBoolean(src.geminiConnected);
+  if (geminiConnected !== undefined) picked.geminiConnected = geminiConnected;
 
   const provider = pickEnum(src.provider, ALLOWED_PROVIDERS);
   if (provider !== undefined) picked.provider = provider;

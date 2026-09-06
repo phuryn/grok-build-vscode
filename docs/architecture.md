@@ -33,11 +33,28 @@ webview / browser
        ▼
 sidebar host ──► AcpClient ──► GrokBackend   ──► grok agent stdio
                          ├────► CodexBackend  ──► node codex-acp (CODEX_PATH=codex)
-                         └────► ClaudeBackend ──► node claude-agent-acp
-                                                   (CLAUDE_CODE_EXECUTABLE=claude)
+                         ├────► ClaudeBackend ──► node claude-agent-acp
+                         │                        (CLAUDE_CODE_EXECUTABLE=claude)
+                         └────► GeminiBackend ──► gemini --acp  (native)
+                                            └───► node agy-acp-adapter.js (Antigravity/agy)
        ▲                         │
        └── established internal events ◄── Codex wire normalization
 ```
+
+`GeminiBackend.spawn` starts the native `gemini --acp` CLI unless the located
+binary is Antigravity (`isAntigravityCli`), in which case it instead spawns
+`src/agy-acp-adapter.ts` under Node (`AGY_PATH`, `ELECTRON_RUN_AS_NODE=1`) —
+a bespoke ACP-over-stdio bridge in front of `agy`'s own `--input-format
+stream-json` protocol, not a real ACP agent. The UI label stays "Gemini"
+either way; provider identity is `gemini` in both cases. Antigravity has no
+`session/request_permission` (writes run through, `--dangerously-skip-permissions`
+under Auto accept) and its tool steps carry only raw parameters, so
+[src/diff-synthesize.ts](../src/diff-synthesize.ts) builds the same
+`{type:"diff"}` block Grok/Codex send natively — `agy-acp-adapter.ts` does
+this for its own live tool_call/tool_call_update pairs and (best-effort,
+docs/UNIVERSAL_DIFF_SUPPORT_PLAN.md § 4.6) its `session/load` transcript
+replay; `claude-backend.ts` / `gemini-backend.ts` normalizers do it for
+Claude and native `gemini --acp` tool calls that arrive without one.
 
 Grok supplies the mandatory `fs/*` and `terminal/*` callbacks, native
 `x.ai/exit_plan_mode` / `x.ai/ask_user_question`, and its private notification
@@ -445,10 +462,12 @@ The full pedagogical write-up lives in
 |---|---|
 | [src/extension.ts](../src/extension.ts) | Entry point — registers commands, keybindings, output channel |
 | [src/sidebar.ts](../src/sidebar.ts) | Webview provider, message routing, fs handlers, native diff opening, logout, generated-media serving (`postGeneratedMedia` → `asWebviewUri`, base64 fallback) |
-| [src/diff-view.ts](../src/diff-view.ts) | Pure whole-file native-diff reconstruction (#66) — combines Grok's replaced regions + positioned sites with disk content, bounds expansion size, and finds the first changed line |
+| [src/diff-view.ts](../src/diff-view.ts) | Pure whole-file native-diff reconstruction (#66) — combines Grok's replaced regions + positioned sites with disk content, bounds expansion size, and finds the first changed line; `planEditRevert` runs the same reconstruction in reverse against the file's current content to decide how a single-edit revert should proceed (write/delete/conflict — docs/UNIVERSAL_DIFF_SUPPORT_PLAN.md) |
+| [src/diff-synthesize.ts](../src/diff-synthesize.ts) | Pure universal-diff synthesis — builds the ACP `{type:"diff"}` block from a tool's raw edit parameters so Antigravity/Claude/native-Gemini tool calls get the same inline diff + revert support Grok/Codex already carry natively; `mergeDiffIntoContent` appends without ever replacing existing content, idempotent per path (a native diff always wins) |
 | [src/acp.ts](../src/acp.ts) | Provider-neutral ACP client — spawns the selected backend, manages session lifecycle, normalizes through its backend hooks, and emits the extension's established events. `interject` (#52 Steer; `{sessionId, text}` plus additive `content` for images, omitted when text-only), `forkSession` (#48), `submitFeedback` (#114), and worktree RPCs (P2-8) call the unadvertised `_x.ai/*` methods, returning `"unsupported"` on -32601 rather than throwing |
 | [src/feedback.ts](../src/feedback.ts) | Pure thumbs-feedback helpers (#114) — availability plus `grok.thumbsFeedback` opt-in (default off), snake_case params, no `turn_number` (agent attributes the current turn); see [research/turn-feedback.md](../research/turn-feedback.md) |
-| [src/acp-backend.ts](../src/acp-backend.ts) / [src/grok-backend.ts](../src/grok-backend.ts) / [src/codex-backend.ts](../src/codex-backend.ts) / [src/claude-backend.ts](../src/claude-backend.ts) | Backend contract, Grok identity, Codex and Claude host normalization. Codex uses `session/set_config_option`; Claude maps `configOptions` into the host model picker, lists sessions with `{ cwd }`, and maps Agent/Auto-accept onto native permission modes |
+| [src/acp-backend.ts](../src/acp-backend.ts) / [src/grok-backend.ts](../src/grok-backend.ts) / [src/codex-backend.ts](../src/codex-backend.ts) / [src/claude-backend.ts](../src/claude-backend.ts) / [src/gemini-backend.ts](../src/gemini-backend.ts) | Backend contract, Grok identity, Codex/Claude/Gemini host normalization. Codex uses `session/set_config_option`; Claude and Gemini map `configOptions` into the host model picker, list sessions with `{ cwd }`, and map Agent/Auto-accept onto native permission modes. Claude's and Gemini's normalizers also synthesize a diff block onto tool calls that arrive without one (see `src/diff-synthesize.ts` above) |
+| [src/gemini-cli-locator.ts](../src/gemini-cli-locator.ts) / [src/agy-acp-adapter.ts](../src/agy-acp-adapter.ts) | Locates `gemini`/Antigravity's `agy` binary (`isAntigravityCli`); the adapter is a standalone ACP-over-stdio bridge in front of `agy`'s own stream-json protocol — tool-call mapping, plan-review bridging (`x.ai/exit_plan_mode`), session listing from agy's SQLite + a JSON resume-id store, transcript-based `session/load` replay, and universal-diff synthesis for `write_to_file` / `replace_file_content` / `multi_replace_file_content` |
 | [src/codex-model-cache.ts](../src/codex-model-cache.ts) / [src/claude-model-cache.ts](../src/claude-model-cache.ts) | Short-lived connect warm-up that caches adapter models from a scratch `session/new`, deletes the temporary adapter-owned session, and cleans up the client/cwd |
 | [src/provider-ui.ts](../src/provider-ui.ts) | Pure provider presentation/state policy — Grok-first model grouping, empty-model default sentinel, normalized project defaults, adapter listing-time freeze (`adapterActivityAt` pins Codex and Claude to the host-observed clock), clear-all refresh guard (`adapterEntriesEligibleForClear`), and mixed-provider recency merge |
 | [src/worktree.ts](../src/worktree.ts) | Pure worktree helpers (P2-8) — parse create/list/apply/remove/status, multi-cwd history merge; wire notes in [research/worktree.md](../research/worktree.md) |

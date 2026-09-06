@@ -168,16 +168,16 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
     case "logout":
     case "recheckConnection":
     case "retryProviderSession":
-      if (raw.provider !== undefined && raw.provider !== "grok" && raw.provider !== "codex" && raw.provider !== "claude") return null;
+      if (raw.provider !== undefined && raw.provider !== "grok" && raw.provider !== "codex" && raw.provider !== "claude" && raw.provider !== "gemini") return null;
       break;
     case "cancelDeviceLogin":
       if (raw.provider !== undefined
         && raw.provider !== "grok" && raw.provider !== "codex"
-        && raw.provider !== "claude" && raw.provider !== "github") return null;
+        && raw.provider !== "claude" && raw.provider !== "gemini" && raw.provider !== "github") return null;
       break;
     case "submitDeviceLoginCode":
       if (!isString(raw.code)) return null;
-      if (raw.provider !== undefined && raw.provider !== "grok" && raw.provider !== "codex" && raw.provider !== "claude") return null;
+      if (raw.provider !== undefined && raw.provider !== "grok" && raw.provider !== "codex" && raw.provider !== "claude" && raw.provider !== "gemini") return null;
       break;
     case "setMode":
       if (raw.modeId !== "agent" && raw.modeId !== "plan" && raw.modeId !== "yolo") {
@@ -275,7 +275,7 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
       break;
     case "setModel":
       if (!isString(raw.modelId)) return null;
-      if (raw.provider !== undefined && raw.provider !== "grok" && raw.provider !== "codex" && raw.provider !== "claude") return null;
+      if (raw.provider !== undefined && raw.provider !== "grok" && raw.provider !== "codex" && raw.provider !== "claude" && raw.provider !== "gemini") return null;
       break;
     case "listSessions":
       if (!opt(raw.offset, isNumber) || !opt(raw.limit, isNumber) || !opt(raw.query, isString)) {

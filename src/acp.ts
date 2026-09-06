@@ -80,7 +80,7 @@ export type EffortLevel = "none" | "minimal" | "low" | "medium" | "high" | "xhig
 
 export type PromptContentBlock =
   | { type: "text"; text: string }
-  | { type: "image"; mimeType: string; data: string };
+  | { type: "image"; mimeType: string; data: string; path?: string };
 
 /**
  * Oldest grok whose `_x.ai/interject` honors `content` (text + image blocks).
@@ -407,6 +407,7 @@ export class AcpClient extends EventEmitter {
       cwd: this.opts.cwd,
       env: spawnSpec.env,
       shell: needsShell,
+      windowsHide: true,
     });
 
     this.rl = createInterface({ input: this.proc.stdout });
@@ -1068,7 +1069,10 @@ export class AcpClient extends EventEmitter {
         const abruptKill = () => {
           if (process.platform === "win32" && proc.pid !== undefined) {
             try {
-              const tk = spawn("taskkill", ["/PID", String(proc.pid), "/T", "/F"]);
+              const tk = spawn("taskkill", ["/PID", String(proc.pid), "/T", "/F"], {
+                stdio: "ignore",
+                windowsHide: true,
+              });
               tk.on("error", () => { try { proc.kill(); } catch { /* already gone */ } });
             } catch { try { proc.kill(); } catch { /* already gone */ } }
           } else {
@@ -1096,7 +1100,10 @@ export class AcpClient extends EventEmitter {
         // grok.exe locked; `/T` kills the tree, `/F` forces it. Fall back to a
         // plain signal if taskkill can't be spawned.
         try {
-          const tk = spawn("taskkill", ["/PID", String(proc.pid), "/T", "/F"]);
+          const tk = spawn("taskkill", ["/PID", String(proc.pid), "/T", "/F"], {
+            stdio: "ignore",
+            windowsHide: true,
+          });
           tk.on("error", fallbackKill);
         } catch {
           fallbackKill();

@@ -816,7 +816,7 @@ export function collectReservedMcpIdentity(text: string): ReservedMcpIdentity {
 
 export function mcpConfigPaths(opts: {
   cwd: string;
-  provider: "grok" | "codex" | "claude";
+  provider: "grok" | "codex" | "claude" | "gemini";
   grokHome: string;
   userHome: string;
 }): string[] {
@@ -844,6 +844,9 @@ export function mcpConfigPaths(opts: {
   if (opts.provider === "codex") {
     paths.push(`${opts.userHome}/.codex/config.toml`);
   }
+  if (opts.provider === "gemini") {
+    paths.push(`${opts.userHome}/.gemini/settings.json`);
+  }
   return paths;
 }
 
@@ -860,7 +863,7 @@ export type McpConfigLayer = "project" | "user";
  */
 export function mcpConfigLayer(
   filePath: string,
-  opts: { cwd: string; provider: "grok" | "codex" | "claude" },
+  opts: { cwd: string; provider: "grok" | "codex" | "claude" | "gemini" },
 ): McpConfigLayer {
   const cwd = opts.cwd.replace(/[\\/]+$/, "");
   if (filePath === `${cwd}/.mcp.json` || filePath === `${cwd}/.grok/config.toml`) {

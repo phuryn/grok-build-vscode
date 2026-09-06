@@ -25,6 +25,7 @@ repository; start with its
 
 - [Development](development.md) — build, test and repo conventions for this repository.
 - [Architecture](architecture.md) — how the VS Code and desktop clients are put together.
+- [Google Antigravity & Gemini integration](ANTIGRAVITY_INTEGRATION_COMPLETE_DOCUMENTATION.md) — complete bridge architecture, models, session lifecycle, and quota analysis.
 - [Desktop update spec](desktop-update-spec.md) — the current-state update and feed contract.
 
 ## Maintainer and upstream notes

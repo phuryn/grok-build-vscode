@@ -33,7 +33,7 @@ export function resolveWindowsAudioDevice(ffmpegPath: string, log?: (m: string) 
     let stderr = "";
     let proc: ChildProcess;
     try {
-      proc = spawn(ffmpegPath, buildListDevicesArgs(), { stdio: ["ignore", "ignore", "pipe"] });
+      proc = spawn(ffmpegPath, buildListDevicesArgs(), { stdio: ["ignore", "ignore", "pipe"], windowsHide: true });
     } catch {
       resolve(undefined);
       return;
@@ -77,7 +77,7 @@ export class VoiceRecorder {
 
     const args = buildFfmpegArgs(process.platform, { device, outputPath: opts.outputPath });
     opts.log?.(`[voice] record: ${opts.ffmpegPath} ${args.join(" ")}`);
-    const proc = spawn(opts.ffmpegPath, args, { stdio: ["pipe", "ignore", "pipe"] });
+    const proc = spawn(opts.ffmpegPath, args, { stdio: ["pipe", "ignore", "pipe"], windowsHide: true });
     this.proc = proc;
     this.outputPath = opts.outputPath;
 

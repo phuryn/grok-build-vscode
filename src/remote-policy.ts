@@ -416,6 +416,9 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
   openUrl: "host-local",
   openText: "host-local",
   openDiff: "host-local",
+  // Writes/deletes an actual project file — the same destructive class as a
+  // permission approval, not a local-window action like openDiff/openFile.
+  revertToolEdit: "full",
   exportExpr: "host-local",
   // Opens a native directory picker on the machine running the host. A remote
   // could neither see nor answer that dialog, so it would hang a phone on a
@@ -590,6 +593,7 @@ export const REMOTE_REQUIRES_BOUND_SESSION: Record<WebviewMsg["type"], boolean> 
   openUrl: false,
   openText: false,
   openDiff: false,
+  revertToolEdit: true,
   exportExpr: false,
   addProjectFolder: false,
   removeProjectFolder: false,
@@ -929,6 +933,7 @@ export const OUTBOUND_DISPOSITION: Record<HostMsg["type"], OutboundDisposition> 
   permissionRequest: "mirror",
   permissionOptions: "mirror",
   permissionResolved: "mirror",
+  toolEditReverted: "mirror",
   exitPlanRequest: "mirror",
   planResolved: "mirror",
   questionRequest: "mirror",
@@ -1104,6 +1109,7 @@ export const OUTBOUND_PROJECT_AUTH: Record<HostMsg["type"], OutboundProjectAuth>
   permissionRequest: "scope",
   permissionOptions: "scope",
   permissionResolved: "scope",
+  toolEditReverted: "scope",
   exitPlanRequest: "scope",
   planResolved: "scope",
   questionRequest: "scope",

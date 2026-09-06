@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildPrompt, buildPromptWithImages, buildQueuedPromptWithImages, CONTEXT_TAG_OPEN, CONTEXT_TAG_CLOSE } from "../src/prompt-builder";
+import { buildPrompt, buildPromptWithImages, buildQueuedPromptWithImages, CONTEXT_TAG_OPEN, CONTEXT_TAG_CLOSE, MAX_SELECTION_LINES } from "../src/prompt-builder";
 import {
   makeImplicitChip,
   makeExplicitChip,
@@ -392,5 +392,37 @@ describe("buildQueuedPromptWithImages keeps per-contribution attachments", () =>
       deps,
     );
     expect(out.text).toBe(`edit [Image #2]\n\n${tag(2)}`);
+  });
+});
+
+describe("selection size cap", () => {
+  const big = Array.from({ length: MAX_SELECTION_LINES + 50 }, (_, i) => `line${i}`).join("\n");
+  const bigDeps = {
+    readFile: () => big,
+    extName: () => ".ts",
+  };
+
+  it("names an oversized editor selection instead of embedding it every turn", () => {
+    const chip = makeImplicitChip("/big.ts", "big.ts", 1, MAX_SELECTION_LINES + 50);
+    const out = buildPrompt("what does this do?", [chip], bigDeps);
+    expect(out).not.toContain("line42");
+    expect(out).toContain(`big.ts (lines 1-${MAX_SELECTION_LINES + 50})`);
+    // Still ambient, not "act on this".
+    expect(out).toContain("Currently open in the editor (for context)");
+  });
+
+  it("keeps an oversized explicit selection in the attached bucket", () => {
+    const chip = makeExplicitChip("/big.ts", "big.ts", 1, MAX_SELECTION_LINES + 50);
+    const out = buildPrompt("fix it", [chip], bigDeps);
+    expect(out).not.toContain("line42");
+    expect(out).toContain("Attached file:");
+    expect(out).toContain(`big.ts (lines 1-${MAX_SELECTION_LINES + 50})`);
+  });
+
+  it("still embeds a selection that is small enough to repeat", () => {
+    const chip = makeImplicitChip("/a.ts", "a.ts", 2, 3);
+    const out = buildPrompt("look", [chip], deps);
+    expect(out).toContain("line2");
+    expect(out).toContain("line3");
   });
 });

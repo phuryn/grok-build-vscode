@@ -4,6 +4,7 @@ import {
   ClaudeBackend,
   claudeModeId,
   configStateFromClaudeOptions,
+  contextWindowForClaudeModel,
   isClaudeCredentialError,
   listClaudeSessions,
   modelsFromClaudeConfigOptions,
@@ -78,7 +79,7 @@ describe("Claude session model mapping", () => {
     { id: "mode", currentValue: "plan" },
   ];
 
-  it("turns configOptions into the host picker envelope", () => {
+  it("turns configOptions into the host picker envelope with appropriate context windows", () => {
     const models = modelsFromClaudeConfigOptions(configOptions);
     expect(models.currentModelId).toBe("claude-opus-4-6");
     expect(models.availableModels).toHaveLength(3);
@@ -89,8 +90,19 @@ describe("Claude session model mapping", () => {
         supportsReasoningEffort: true,
         reasoningEffort: "high",
         reasoningEfforts: [{ value: "low" }, { value: "high" }],
+        totalContextTokens: 1000000,
       },
     });
+  });
+
+  it("resolves model context windows for current and legacy Claude models", () => {
+    expect(contextWindowForClaudeModel("claude-sonnet-5")).toBe(1000000);
+    expect(contextWindowForClaudeModel("claude-opus-5")).toBe(1000000);
+    expect(contextWindowForClaudeModel("claude-fable-5-1")).toBe(1000000);
+    expect(contextWindowForClaudeModel("sonnet", "Claude Sonnet 5")).toBe(1000000);
+    expect(contextWindowForClaudeModel("custom-model", "Model [1M]")).toBe(1000000);
+    expect(contextWindowForClaudeModel("claude-haiku-4-5")).toBe(200000);
+    expect(contextWindowForClaudeModel("claude-3-5-sonnet")).toBe(200000);
   });
 
   it("fills models on session/new so the picker is not empty", () => {
@@ -142,6 +154,112 @@ describe("Claude output and usage normalization", () => {
         reasoningTokens: 3,
       },
     });
+  });
+});
+
+describe("Claude diff synthesis", () => {
+  it("synthesizes a diff for an Edit tool_call from old_string/new_string", () => {
+    const result = normalizeClaudeUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "t1",
+      rawInput: { file_path: "/repo/a.ts", old_string: "old", new_string: "new" },
+    });
+    expect(result.update.content).toEqual([
+      { type: "diff", path: "/repo/a.ts", oldText: "old", newText: "new" },
+    ]);
+  });
+
+  it("synthesizes a create diff for a Write tool_call_update with oldText empty", () => {
+    const result = normalizeClaudeUpdate({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "t2",
+      rawInput: { file_path: "/repo/new.ts", content: "hello\n" },
+    });
+    expect(result.update.content).toEqual([
+      { type: "diff", path: "/repo/new.ts", oldText: "", newText: "hello\n" },
+    ]);
+  });
+
+  it("does not synthesize a second diff when a native diff block is already present", () => {
+    const native = { type: "diff", path: "/repo/a.ts", oldText: "native-old", newText: "native-new" };
+    const result = normalizeClaudeUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "t3",
+      content: [native],
+      rawInput: { file_path: "/repo/a.ts", old_string: "old", new_string: "new" },
+    });
+    expect(result.update.content).toEqual([native]);
+  });
+
+  it("does not mutate the incoming update object", () => {
+    const update = {
+      sessionUpdate: "tool_call",
+      toolCallId: "t4",
+      rawInput: { file_path: "/repo/a.ts", old_string: "old", new_string: "new" },
+    };
+    const before = JSON.stringify(update);
+    normalizeClaudeUpdate(update);
+    expect(JSON.stringify(update)).toBe(before);
+  });
+
+  it("leaves non-edit tool calls untouched", () => {
+    const update = { sessionUpdate: "tool_call", toolCallId: "t5", rawInput: { command: "npm test" } };
+    expect(normalizeClaudeUpdate(update)).toEqual({ update, meta: undefined });
+  });
+
+  it("overrides a degenerate native diff (oldText === newText) with one synthesized from rawInput", () => {
+    // Reproduces a live-observed bug: Claude's completed tool_call_update
+    // shipped its own content diff, but with oldText === newText (a "+0 −0"
+    // card even though the edit visibly changed the file). Claude's own
+    // diffs are documented as unreliable — a degenerate one must not block
+    // synthesizing a correct one from the same update's rawInput.
+    const degenerate = { type: "diff", path: "/repo/PLAN.md", oldText: "unchanged", newText: "unchanged" };
+    const result = normalizeClaudeUpdate({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "t6",
+      status: "completed",
+      content: [degenerate],
+      rawInput: { file_path: "/repo/PLAN.md", old_string: "Revision: 3.1", new_string: "Revision: 3.2" },
+    });
+    expect(result.update.content).toEqual([
+      { type: "diff", path: "/repo/PLAN.md", oldText: "Revision: 3.1", newText: "Revision: 3.2" },
+    ]);
+  });
+
+  it("injects the diff into permission params so the card gets open diff →", () => {
+    const params = normalizeClaudePermissionParams({
+      toolCall: { kind: "edit", rawInput: { file_path: "/repo/a.ts", old_string: "old", new_string: "new" } },
+      options: [],
+    });
+    expect(params.toolCall.content).toEqual([
+      { type: "diff", path: "/repo/a.ts", oldText: "old", newText: "new" },
+    ]);
+    expect(params.toolCall.title).toBe("permission: edit");
+  });
+
+  it("retains the synthesized diff on sparse completed tool_call_update via ClaudeBackend", () => {
+    const backend = new ClaudeBackend();
+    // 1. Initial tool_call: has rawInput, no status
+    const callRes = backend.normalizeUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "t_sparse",
+      rawInput: { file_path: "/repo/file.ts", old_string: "const a = 1;", new_string: "const a = 2;" },
+    }, undefined);
+    expect(callRes.update.content).toEqual([
+      { type: "diff", path: "/repo/file.ts", oldText: "const a = 1;", newText: "const a = 2;" },
+    ]);
+
+    // 2. Completed tool_call_update: claude-agent-acp omits rawInput and content
+    const updateRes = backend.normalizeUpdate({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "t_sparse",
+      status: "completed",
+      rawOutput: "File updated successfully",
+    }, undefined);
+    expect(updateRes.update.content).toEqual([
+      { type: "diff", path: "/repo/file.ts", oldText: "const a = 1;", newText: "const a = 2;" },
+    ]);
+    expect(updateRes.update.status).toBe("completed");
   });
 });
 

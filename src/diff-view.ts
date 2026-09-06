@@ -86,8 +86,20 @@ function expandAtSites(
     const needle = diskIsBefore ? site.oldText : site.newText;
     const replacement = diskIsBefore ? site.newText : site.oldText;
     const line = diskIsBefore ? site.oldLine : site.newLine;
-    const at = findAtLine(haystack, needle, line);
-    if (at === null) return null;
+    let at: number | null = null;
+    if (Number.isInteger(line) && line! >= 1) {
+      at = findAtLine(haystack, needle, line);
+      if (at === null) return null;
+    } else {
+      if (!needle) return null;
+      const first = haystack.indexOf(needle);
+      if (first < 0) return null;
+      if (sites.length > 1) {
+        const second = haystack.indexOf(needle, first + 1);
+        if (second >= 0) return null;
+      }
+      at = first;
+    }
     replacements.push({ at, needle, replacement });
   }
   replacements.sort((a, b) => b.at - a.at);
@@ -164,4 +176,53 @@ export function expandDiffToWholeFile(input: DiffExpandInput): DiffSides {
   const expanded = expandSides(input);
   const { oldText, newText } = expanded ?? { oldText: input.oldRegion, newText: input.newRegion };
   return { oldText, newText, firstChangedLine: firstChangedLine(oldText, newText), wholeFile: expanded !== null };
+}
+
+/**
+ * What reverting one completed edit should DO, given the file's current
+ * (post-edit) disk content (docs/UNIVERSAL_DIFF_SUPPORT_PLAN.md § 5). Pure —
+ * the caller performs the actual read/write/delete and any user-facing
+ * confirmation.
+ *
+ * A create (empty `oldRegion`, no multi-site `sites`) has no "before" text to
+ * restore, so it reverts by deleting the file — `delete` when the file still
+ * holds exactly what the edit wrote, `delete-confirm` when it has since
+ * diverged (a later edit or a manual save) and the caller should confirm
+ * before destroying that work. Every other edit reconstructs the pre-edit
+ * whole file by running {@link expandDiffToWholeFile} against the CURRENT
+ * disk content with `diskIsBefore: false` — the same machinery the "open
+ * diff →" view uses, run in reverse. `conflict` means the edited region/sites
+ * can no longer be found byte-for-byte: a reverse-patch would be a guess, so
+ * the caller refuses rather than risk clobbering unrelated later work.
+ */
+export type EditRevertPlan =
+  | { action: "delete" }
+  | { action: "delete-confirm" }
+  | { action: "write"; text: string }
+  | { action: "unreadable" }
+  | { action: "conflict" };
+
+export function planEditRevert(input: {
+  oldText: string;
+  newText: string;
+  replaceAll?: boolean;
+  sites?: readonly DiffSite[];
+  /** The file's content right now (post-edit), or undefined if unreadable. */
+  currentText: string | undefined;
+}): EditRevertPlan {
+  const isCreate = input.oldText === "" && !(input.sites && input.sites.length);
+  if (isCreate) {
+    if (input.currentText === undefined) return { action: "unreadable" };
+    return input.currentText === input.newText ? { action: "delete" } : { action: "delete-confirm" };
+  }
+  if (input.currentText === undefined) return { action: "unreadable" };
+  const sides = expandDiffToWholeFile({
+    diskText: input.currentText,
+    oldRegion: input.oldText,
+    newRegion: input.newText,
+    diskIsBefore: false,
+    replaceAll: input.replaceAll,
+    sites: input.sites,
+  });
+  return sides.wholeFile ? { action: "write", text: sides.oldText } : { action: "conflict" };
 }

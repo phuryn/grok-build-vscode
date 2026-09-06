@@ -329,6 +329,33 @@ describe("resolveChatOpenFilePath", () => {
     expect(got.startsWith(workspace)).toBe(false);
   });
 
+  it("normalizes file:// URIs to local filesystem paths", () => {
+    const ws = path.resolve("/workspace");
+    const gotWindows = resolveChatOpenFilePath({
+      rawPath: "file:///C:/work/project/file.ts",
+      workspaceRoots: [ws],
+      exists: () => false,
+      homeDir: "/home/user",
+    });
+    expect(gotWindows).toBe("C:/work/project/file.ts");
+
+    const gotEncoded = resolveChatOpenFilePath({
+      rawPath: "file:///C:/My%20Project/file%20name.ts",
+      workspaceRoots: [ws],
+      exists: () => false,
+      homeDir: "/home/user",
+    });
+    expect(gotEncoded).toBe("C:/My Project/file name.ts");
+
+    const gotPosix = resolveChatOpenFilePath({
+      rawPath: "file:///home/user/project/file.ts",
+      workspaceRoots: [ws],
+      exists: () => false,
+      homeDir: "/home/user",
+    });
+    expect(gotPosix).toBe("/home/user/project/file.ts");
+  });
+
   it("leaves ~otheruser and a mid-path ~ alone, and passes ~ through with no homeDir", () => {
     existing.clear();
     const home = path.join(path.resolve("."), "fake-home");
@@ -481,6 +508,24 @@ describe("resolveChatOpenFilePath", () => {
         realpath,
       }),
     ).toBe(absSession);
+  });
+
+  it("resolves a relative path via findInSubtree when direct candidate does not exist", () => {
+    existing.clear();
+    const subprojectFile = path.resolve(workspace, "subproject", "src", "file.ts");
+    existing.add(subprojectFile);
+
+    const got = resolveChatOpenFilePath({
+      rawPath: "src/file.ts",
+      workspaceRoots: [workspace],
+      exists,
+      realpath,
+      findInSubtree: (root, rel) => {
+        const candidate = path.resolve(root, "subproject", rel);
+        return existing.has(candidate) ? candidate : undefined;
+      },
+    });
+    expect(got).toBe(subprojectFile);
   });
 });
 

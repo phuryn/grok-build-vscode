@@ -4,11 +4,12 @@ import { isAdapterProvider } from "./acp-backend";
 import { normalizeWorkspaceFsPath } from "./host";
 import type { SessionListEntry, SessionMetaOverrides } from "./sessions";
 
-export const PROVIDER_ORDER: readonly AcpProvider[] = ["grok", "codex", "claude"];
+export const PROVIDER_ORDER: readonly AcpProvider[] = ["grok", "codex", "claude", "gemini"];
 
 export function providerDisplayName(provider: AcpProvider): string {
   if (provider === "codex") return "Codex";
   if (provider === "claude") return "Claude";
+  if (provider === "gemini") return "Gemini";
   return "Grok";
 }
 
@@ -16,6 +17,7 @@ export interface ProviderConnections {
   grok?: boolean;
   codex?: boolean;
   claude?: boolean;
+  gemini?: boolean;
 }
 
 export interface ProviderModelCacheEntry {
@@ -101,15 +103,17 @@ export function usableProviderIds(
   return connectedProviderIds(connections, located).filter((provider) => needsLogin[provider] !== true);
 }
 
-export function providerLoginState(provider: AcpProvider): "auth-required" | "codex-login" | "claude-login" {
+export function providerLoginState(provider: AcpProvider): "auth-required" | "codex-login" | "claude-login" | "gemini-login" {
   if (provider === "codex") return "codex-login";
   if (provider === "claude") return "claude-login";
+  if (provider === "gemini") return "gemini-login";
   return "auth-required";
 }
 
-export function missingProviderState(provider: AcpProvider): "missing-cli" | "missing-codex" | "missing-claude" {
+export function missingProviderState(provider: AcpProvider): "missing-cli" | "missing-codex" | "missing-claude" | "missing-gemini" {
   if (provider === "codex") return "missing-codex";
   if (provider === "claude") return "missing-claude";
+  if (provider === "gemini") return "missing-gemini";
   return "missing-cli";
 }
 
@@ -187,7 +191,7 @@ export function adapterActivityAt(
   activeAt?: number,
 ): number {
   if (typeof activeAt !== "number") return reportedAt;
-  if (provider === "codex" || provider === "claude") return activeAt;
+  if (provider === "codex" || provider === "claude" || provider === "gemini") return activeAt;
   return Math.max(reportedAt, activeAt);
 }
 

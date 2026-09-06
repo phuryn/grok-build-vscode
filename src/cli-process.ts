@@ -31,6 +31,7 @@ export function execGrokCli(
         ...options,
         encoding: "utf8",
         shell: grokCliNeedsShell(cliPath),
+        windowsHide: options.windowsHide ?? true,
       },
       (error, stdout, stderr) => {
         if (error) {

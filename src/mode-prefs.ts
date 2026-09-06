@@ -22,3 +22,38 @@ export function modeToRemember(modeId: ModeId): "agent" | "yolo" | null {
 export function startsInYolo(defaultMode: string | undefined, isResume: boolean): boolean {
   return !isResume && defaultMode === "yolo";
 }
+
+/** Remembered reasoning effort, per agent. */
+export type EffortPrefs = Record<string, string>;
+
+/**
+ * The effort to start a new session at.
+ *
+ * `grok.defaultEffort` is a single global value, and it only ever meant grok —
+ * its own description names `--reasoning-effort`. Applying it to Claude and
+ * Gemini too meant a level someone once picked for grok silently set how hard
+ * every Claude turn thought, and that is paid for per turn. It is now the
+ * fallback for grok alone; every agent remembers its own choice.
+ */
+export function rememberedEffort(
+  prefs: EffortPrefs | undefined,
+  provider: string,
+  legacy: string | undefined,
+): string {
+  const own = prefs?.[provider];
+  if (typeof own === "string" && own) return own;
+  return provider === "grok" && legacy ? legacy : "";
+}
+
+/** The map to persist after a switch. An empty level means "back to the model
+ *  default", which is an absence, not a value. */
+export function withRememberedEffort(
+  prefs: EffortPrefs | undefined,
+  provider: string,
+  level: string,
+): EffortPrefs {
+  const next: EffortPrefs = { ...(prefs ?? {}) };
+  if (level) next[provider] = level;
+  else delete next[provider];
+  return next;
+}

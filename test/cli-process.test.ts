@@ -20,9 +20,10 @@ describe("grok CLI process invocation", () => {
     // remote grok sign-out. A cloud environment has no one to watch the terminal
     // the desk path opens, so that path runs the CLI through the wrapper and
     // waits for it instead.
-    expect(sidebar.match(/execGrokCli\s*\(/g)).toHaveLength(9);
+    expect(sidebar.match(/execGrokCli\s*\(/g)).toHaveLength(10);
     expect(sidebar).toMatch(/execGrokCli\(cliPath, \["--version"\],[\s\S]*parseCodexVersionOutput/);
     expect(sidebar).toMatch(/execGrokCli\(cliPath, \["--version"\],[\s\S]*parseClaudeVersionOutput/);
+    expect(sidebar).toMatch(/execGrokCli\(cliPath, \["--version"\],[\s\S]*parseGeminiVersionOutput/);
   });
 
   it("shares the same shim predicate with the ACP spawn path", () => {

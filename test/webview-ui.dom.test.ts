@@ -1036,6 +1036,27 @@ describe("context donut (token usage)", () => {
     dispatch(window, { type: "contextUsage", window: 1000000 });
     expect($(doc, "donut-label").textContent).toBe("44K/1000K");
   });
+
+  it("switching from Grok to Claude resets the donut window without leaking Grok's 512k", () => {
+    const { window, doc } = boot();
+    dispatch(window, {
+      type: "session",
+      sessionId: "s-grok",
+      provider: "grok",
+      currentModelId: "grok-build",
+      models: [{ modelId: "grok-build", name: "Grok Build", totalContextTokens: 512000 }],
+    });
+    expect($(doc, "donut-label").textContent).toBe("0K/512K");
+
+    dispatch(window, {
+      type: "session",
+      sessionId: "s-claude",
+      provider: "claude",
+      currentModelId: "claude-sonnet-5",
+      models: [{ modelId: "claude-sonnet-5", name: "Claude Sonnet 5" }],
+    });
+    expect($(doc, "donut-label").textContent).toBe("0K/1000K");
+  });
 });
 
 describe("gear settings lock (model + effort disabled while busy / priming)", () => {
@@ -1292,17 +1313,20 @@ describe("provider onboarding", () => {
     dispatch(window, { type: "onboarding", state: "connect-agent" });
 
     const tiles = [...doc.querySelectorAll(".onb-agent-tile")] as HTMLButtonElement[];
-    expect(tiles).toHaveLength(3);
+    expect(tiles).toHaveLength(4);
     expect(tiles[0].textContent).toContain("Grok");
     expect(tiles[0].classList.contains("primary")).toBe(true);
     expect(tiles[1].textContent).toContain("Codex");
     expect(tiles[2].textContent).toContain("Claude");
+    expect(tiles[3].textContent).toContain("Gemini");
     expect(tiles.every((tile) => !!tile.querySelector("svg.provider-logo path"))).toBe(true);
 
     click(window, tiles[1]);
     expect(posted).toContainEqual({ type: "runGrokLogin", provider: "codex" });
     click(window, tiles[2]);
     expect(posted).toContainEqual({ type: "runGrokLogin", provider: "claude" });
+    click(window, tiles[3]);
+    expect(posted).toContainEqual({ type: "runGrokLogin", provider: "gemini" });
   });
 
   it("tells the user to install and sign in with Anthropic's own Claude CLI", () => {
