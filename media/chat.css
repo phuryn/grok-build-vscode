@@ -1509,17 +1509,44 @@ body.thinking-hidden .msg.thinking.find-reveal { display: block; }
 .welcome-tip b { font-weight: 600; }
 .welcome-tip [role="button"] { cursor: pointer; }
 .welcome-cli-update { max-width: 46ch; overflow-wrap: anywhere; }
+/* The offer state. Everything else in this slot is advice the reader may
+   ignore, so the whole box is deliberately quiet - but an out-of-date CLI is
+   the one thing here we are asking someone to act on, and at `muted` weight
+   under a `muted-link` it reads as disabled text. Full-strength copy over a
+   slightly firmer ground, and the action becomes the secondary button this
+   codebase uses everywhere else. The status states keep `muted`. */
+.welcome-cli-update-offer {
+  opacity: 1;
+  color: var(--vscode-foreground, CanvasText);
+  background: color-mix(in srgb, currentColor 10%, transparent);
+}
 .welcome-cli-update button {
-  display: block;
-  min-height: 36px;
-  padding: 4px 0;
-  border: 0;
-  background: none;
-  color: inherit;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  margin-top: 10px;
+  padding: 5px 14px;
+  border: 1px solid transparent;
+  border-radius: 5px;
   font: inherit;
+  font-size: 12.5px;
   cursor: pointer;
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground, CanvasText));
+  background: var(--vscode-button-secondaryBackground, rgba(128, 128, 128, 0.2));
+}
+.welcome-cli-update button:hover:not(:disabled) {
+  background: var(--vscode-button-secondaryHoverBackground, rgba(128, 128, 128, 0.3));
+}
+.welcome-cli-update button:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 2px;
 }
 .welcome-cli-update button:disabled { opacity: 0.5; cursor: default; }
+/* The 44px touch floor this file applies to every other control. */
+@media (hover: none), (pointer: coarse) {
+  .welcome-cli-update button { min-height: 44px; font-size: 13.5px; }
+}
 
 /* Empty-state advice shares the hint's box and measure, so the two tenants of
    this slot cannot look like different features. It differs only in being a

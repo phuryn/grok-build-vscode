@@ -1940,7 +1940,17 @@
       id: "connectors",
       copy: "Give your agent your tools. {Connect Notion, Linear or GitHub} and it can read and write them.",
       target: "settings:connectors",
-      deskOnly: true,
+      // Was deskOnly, on the rule that connecting an app needed the desk. It
+      // has not since 4.1.9 shipped connector sign-in from a phone, and on a
+      // cloud machine deskOnly means nobody ever sees this rather than
+      // "desk users see it" -- there is no desk user there. Exactly the
+      // correction the providers tip above records for itself.
+      deskOnly: false,
+      // Gated on the capability this tip's own destination is gated on: the
+      // Settings page hides its Connectors category unless the host advertises
+      // `mcpSettings`, so without this the link could land on a page that is
+      // not there.
+      remoteNeedsMcpSettings: true,
       eligible: (f) => f.connectorCount === 0,
     },
     {
@@ -2049,6 +2059,7 @@
       inWorktree: !!f.inWorktree,
       cloudHost: !!f.cloudHost,
       remoteCanConnectAgents: !!f.remoteCanConnectAgents,
+      mcpSettings: !!f.mcpSettings,
       remoteLinked: f.remoteLinked === true ? true : f.remoteLinked === false ? false : null,
     };
     return WELCOME_TIPS.filter((tip) => {
@@ -2059,6 +2070,7 @@
       // same dead end deskOnly was invented to prevent — just decided by what
       // the host advertises rather than by where the reader is standing.
       if (known.isRemote && tip.remoteNeedsSignIn && !known.remoteCanConnectAgents) return false;
+      if (known.isRemote && tip.remoteNeedsMcpSettings && !known.mcpSettings) return false;
       // -1 is "the host never told us" — see the doc comment.
       if (tip.id === "routines" && known.routineCount < 0) return false;
       if (tip.id === "connectors" && known.connectorCount < 0) return false;

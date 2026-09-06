@@ -7911,6 +7911,8 @@
       // it may be shown.
       cloudHost: !!(state.hostCaps && state.hostCaps.remoteAgentSignOut),
       remoteCanConnectAgents: !!(state.hostCaps && state.hostCaps.remoteAgentSignIn),
+      // The same capability Settings gates its Connectors category on.
+      mcpSettings: !!(state.hostCaps && state.hostCaps.mcpSettings),
       routineCount: host.routineCount,
       connectorCount: host.connectorCount,
       // A phone's read-aloud is its own client-side preference, not the desk's.
@@ -8180,19 +8182,25 @@
     // Retain progress/outcome after the version changes so an empty phone
     // conversation doesn't lose the answer to the update it just requested.
     if ((!codex.connected || !codex.updateAvailable) && update.status === "idle") return;
+    // An offer and a status share this box, and they are not the same thing.
+    // While an update runs, and after it finishes, this is a progress line:
+    // ambient, `muted`, nothing to do. When there IS something to take, it
+    // gets the foreground colour and a real button - as a grey sentence under
+    // a grey link it read as disabled text and went unnoticed on a phone.
+    const offer = !!(codex.connected && (codex.updateAvailable || update.status === "failed") &&
+      update.status !== "running");
     const el = document.createElement("div");
     el.id = "welcome-codex-update";
-    el.className = "welcome-tip welcome-cli-update muted";
+    el.className = offer ? "welcome-tip welcome-cli-update welcome-cli-update-offer" :
+      "welcome-tip welcome-cli-update muted";
     el.setAttribute("role", "status");
     const text = document.createElement("span");
     text.textContent = update.message ||
       `Codex CLI v${codex.cliVersion} is older than v${codex.latestCliVersion}, the version included with this app. Update to discover newer models. `;
     el.appendChild(text);
-    if (codex.connected && (codex.updateAvailable || update.status === "failed") && update.status !== "running") {
+    if (offer) {
       const button = document.createElement("button");
       button.type = "button";
-      button.className = "muted-link";
-      button.textContent = "Update Codex CLI";
       button.disabled = (state.providers || []).some((p) => p.cliUpdate && p.cliUpdate.status === "running");
       button.onclick = async () => {
         const ok = await uiConfirm({
@@ -8202,7 +8210,6 @@
         });
         if (ok) vscode.postMessage({ type: "updateCodex" });
       };
-      el.appendChild(document.createTextNode(" "));
       el.appendChild(button);
     }
     welcome.appendChild(el);

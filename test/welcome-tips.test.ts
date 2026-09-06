@@ -311,14 +311,34 @@ describe("eligibility", () => {
     expect(tip.target).toBe("worktree");
   });
 
-  it("hides desk-only advice from a phone", () => {
+  it("hides from a phone what a phone cannot do", () => {
     const remote = ids({ ...FRESH, isRemote: true });
-    // Signing an agent in, linking a connector and starting a worktree are all
-    // host-local; "continue on your phone" is being read ON the phone.
-    for (const deskOnly of ["providers", "connectors", "remote", "worktrees"]) {
-      expect(remote, deskOnly).not.toContain(deskOnly);
+    // Two different rules, and the distinction matters. Starting a worktree is
+    // host-local and "continue on your phone" is being read ON the phone, so
+    // both are deskOnly. Signing an agent in and linking a connector are NOT --
+    // a phone can do either -- they are withheld here only because this host
+    // advertises neither capability.
+    for (const withheld of ["providers", "connectors", "remote", "worktrees"]) {
+      expect(remote, withheld).not.toContain(withheld);
     }
     expect(remote).toEqual(["routines", "readAloud", "voice", "mentions"]);
+  });
+
+  it("offers a phone what its host says it can do", () => {
+    // The owner asked why the connectors tip never appeared on a cloud machine
+    // (2026-09-06). It was deskOnly, which on a cloud host means nobody sees it
+    // at all: there is no desk user there. The gate is the capability the tip's
+    // own destination uses -- Settings hides its Connectors category without
+    // `mcpSettings` -- so the link can never land on a page that is not there.
+    const capable = ids({ ...FRESH, isRemote: true, mcpSettings: true, remoteCanConnectAgents: true });
+    expect(capable).toContain("connectors");
+    expect(capable).toContain("providers");
+    // deskOnly is unaffected by any capability: these need the desk itself.
+    expect(capable).not.toContain("worktrees");
+    expect(capable).not.toContain("remote");
+    // Each capability gates only its own tip.
+    expect(ids({ ...FRESH, isRemote: true, mcpSettings: true })).not.toContain("providers");
+    expect(ids({ ...FRESH, isRemote: true, remoteCanConnectAgents: true })).not.toContain("connectors");
   });
 
   it("suppresses count-dependent tips when the host never sent the counts", () => {

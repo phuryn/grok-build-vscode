@@ -47,6 +47,25 @@ describe.each([false, true])("Codex welcome update nudge (remote=%s)", (remote) 
     expect(h.doc.getElementById("welcome-codex-update")?.closest("#welcome")).toBeTruthy();
   });
 
+  it("looks like an offer only while there is something to take", () => {
+    // The owner could not see the nudge on a phone (2026-09-06): grey sentence,
+    // grey underlined link, sitting in the box the quiet advice tips use. An
+    // offer carries the foreground weight; a progress or completion line is a
+    // status and stays ambient.
+    const h = seed(remote);
+    const classes = () => [...h.doc.getElementById("welcome-codex-update")!.classList];
+    expect(classes()).toContain("welcome-cli-update-offer");
+    expect(classes()).not.toContain("muted");
+    dispatch(h.window, { type: "providerState", providers: [{ ...h.provider, cliUpdate: { status: "running", message: "Updating Codex CLI…" } }] });
+    expect(classes()).toContain("muted");
+    expect(classes()).not.toContain("welcome-cli-update-offer");
+    dispatch(h.window, { type: "providerState", providers: [{ ...h.provider, updateAvailable: false, cliUpdate: { status: "succeeded", message: "Update completed · Codex CLI v0.153.4" } }] });
+    expect(classes()).toContain("muted");
+    // A retry is something to take, so it is an offer again.
+    dispatch(h.window, { type: "providerState", providers: [{ ...h.provider, cliUpdate: { status: "failed", message: "Update failed: offline" } }] });
+    expect(classes()).toContain("welcome-cli-update-offer");
+  });
+
   it("offers a retry after a failed update", () => {
     const h = seed(remote);
     dispatch(h.window, { type: "providerState", providers: [{ ...h.provider, cliUpdate: { status: "failed", message: "Update failed: offline" } }] });
