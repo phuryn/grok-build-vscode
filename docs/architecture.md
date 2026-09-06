@@ -76,7 +76,7 @@ cwd, stores the advertised models, deletes that throwaway session through ACP,
 and disposes; a failure is logged and does not fail the connection.
 
 If no Codex binary is found, onboarding can install the pinned official
-`rust-v0.147.0` standalone package into versioned global storage. The download is
+`rust-v0.153.4` standalone package into versioned global storage. The download is
 streamed to a sibling staging file, SHA-256 verified before decompression, unpacked
 with the dependency-free tar reader (preserving regular-file mode bits on POSIX),
 then renamed into place atomically. Discovery

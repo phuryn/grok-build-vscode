@@ -59,13 +59,16 @@ function tar(entries: Array<{ name: string; body?: Buffer; type?: string; mode?:
   return Buffer.concat(chunks);
 }
 
+// Transcribed from `codex-package_SHA256SUMS` at the pinned release. This table
+// exists to make a silent digest edit fail the suite, so it is deliberately a
+// second copy rather than an import of the one under test.
 const releases = [
-  ["win32", "x64", "x86_64-pc-windows-msvc", "c156c8feb8cb20197bf74d2c6daffed1fec0a8c21a03bc2ca90d7ff81927b0c5"],
-  ["win32", "arm64", "aarch64-pc-windows-msvc", "4533928d72ac4d7c19f16e8c4acdfd02dc255d2aeeb2f6d7dfd45493ec4c0806"],
-  ["darwin", "x64", "x86_64-apple-darwin", "d91e59133daf923bc45d76e3da4af8ae9ef62a0231da18488da0cd573b6e9d63"],
-  ["darwin", "arm64", "aarch64-apple-darwin", "17b2984eb22b607e3d0c25728252fc90f510e476bad39a6d9f45cdb1aa685432"],
-  ["linux", "x64", "x86_64-unknown-linux-musl", "bd758d53d56e41dc65e045f4589df79a038ed197a011adcb52a258e6ad64cfda"],
-  ["linux", "arm64", "aarch64-unknown-linux-musl", "89cbf79bd5ae6f9c58da47e8079f311c84219350c9c43c070d42f3e9b2a81401"],
+  ["win32", "x64", "x86_64-pc-windows-msvc", "a6ef3442cb12766a88b39311d79244289e4f9763e2c53ff4fbebc2cb653cc5f3"],
+  ["win32", "arm64", "aarch64-pc-windows-msvc", "ac51b1a5932e07dffcaa6e98f4801f13b25192094739b732fc8b40ddb41bbda2"],
+  ["darwin", "x64", "x86_64-apple-darwin", "3ee638d7155c856ef31f3f4a85cb2195de1939962d3924c935b24f0514564a3d"],
+  ["darwin", "arm64", "aarch64-apple-darwin", "35438da1fbf7a6db7ddb3bcec84448fa6015ba188461472a97d9d1da7d9c4353"],
+  ["linux", "x64", "x86_64-unknown-linux-musl", "a822187e1a2420c61c5926721bfbd878701ed95547c9bb0d4de4498a16ba1821"],
+  ["linux", "arm64", "aarch64-unknown-linux-musl", "fc395cb043a1093ab0db34f44aba3199bfaa9ce640cd9be7fd588f44b0da64a4"],
 ] as const;
 
 describe("managed Codex release selection", () => {
@@ -144,10 +147,15 @@ describe("managed Codex atomic install", () => {
     };
   }
 
-  it("verifies before unpacking and atomically publishes the canonical executable", async () => {
+  it("verifies before unpacking, publishes atomically, and drops the version it replaced", async () => {
     const root = await temporaryRoot();
+    // The install path carries the tag, so a bump lands BESIDE the previous
+    // package rather than over it. Nothing used to remove the old ~100 MB.
+    const stale = path.join(root, "codex-managed", "rust-v0.147.0", "bin");
+    await fs.promises.mkdir(stale, { recursive: true });
+    await fs.promises.writeFile(path.join(stale, "codex"), "previous");
     const packageBytes = gzipSync(tar([
-      { name: "codex-package/codex-package.json", body: Buffer.from('{"version":"0.147.0"}') },
+      { name: "codex-package/codex-package.json", body: Buffer.from('{"version":"0.153.4"}') },
       { name: "codex-package/bin/codex", body: Buffer.from("managed-codex") },
       { name: "codex-package/codex-resources/bwrap", body: Buffer.from("helper") },
     ]));

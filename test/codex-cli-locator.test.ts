@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import * as path from "node:path";
+import { CODEX_MANAGED_TAG } from "../src/codex-managed-installer";
 import { locateCodexCli, resolveCodexHome, type CodexLocatorFs } from "../src/codex-cli-locator";
 
 function fakeFs(files: string[], dirs: Record<string, string[]> = {}): CodexLocatorFs {
@@ -139,7 +140,7 @@ describe("locateCodexCli", () => {
   it("uses the managed copy only after PATH and every ChatGPT bundle", () => {
     const home = "C:\\Users\\Dev";
     const storage = "C:\\extension-storage";
-    const managed = path.join(storage, "codex-managed", "rust-v0.147.0", "bin", "codex.exe");
+    const managed = path.join(storage, "codex-managed", CODEX_MANAGED_TAG, "bin", "codex.exe");
     const extensions = path.join(home, ".vscode", "extensions");
     const bundleBin = path.join(extensions, "openai.chatgpt-3.0.0", "bin");
     const bundled = path.join(bundleBin, "windows-x86_64", "codex.exe");

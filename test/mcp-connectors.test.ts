@@ -596,12 +596,16 @@ describe("connect failure taxonomy", () => {
     expect(connectFailureMessage("npx-missing")).toMatch(/npx/i);
     expect(connectFailureMessage("cancelled")).toMatch(/browser/i);
     expect(connectFailureMessage("timeout")).toMatch(/timed out/i);
-    // A conflict is the GOOD case — the connector is already signed in and
+    // A conflict is USUALLY the good case — the same connector signed in and
     // running elsewhere on this machine — so the copy must not read as a
-    // failure the user has to repair.
-    expect(connectFailureMessage("port-conflict")).toMatch(/already signed in/i);
+    // failure to repair. But it is an observation about a port, not a reading
+    // of the token store, and asserting "already signed in, nothing to do"
+    // about a connector the owner had never connected left him at a red dot
+    // with nowhere to go. It must always end on something he can do.
+    expect(connectFailureMessage("port-conflict")).toMatch(/press connect again/i);
     expect(connectFailureMessage("port-conflict")).not.toMatch(/EADDRINUSE/i);
     expect(connectFailureMessage("port-conflict")).not.toMatch(/couldn.t|failed/i);
+    expect(connectFailureMessage("port-conflict")).not.toMatch(/nothing to do/i);
     expect(classifyConnectFailure({
       output: "InvalidClientMetadataError: Not supported: openid, email, profile",
     })).toBe("oauth-incompatible");

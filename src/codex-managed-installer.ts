@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { createGunzip } from "node:zlib";
 
-export const CODEX_MANAGED_TAG = "rust-v0.147.0";
+export const CODEX_MANAGED_TAG = "rust-v0.153.4";
 export const CODEX_MANAGED_VERSION = CODEX_MANAGED_TAG.replace(/^rust-v/, "");
 export const CODEX_MANAGED_BASE_URL =
   `https://github.com/openai/codex/releases/download/${CODEX_MANAGED_TAG}`;
@@ -17,12 +17,12 @@ export interface CodexManagedRelease {
 }
 
 const RELEASE_HASHES: Readonly<Record<string, string>> = Object.freeze({
-  "x86_64-pc-windows-msvc": "c156c8feb8cb20197bf74d2c6daffed1fec0a8c21a03bc2ca90d7ff81927b0c5",
-  "aarch64-pc-windows-msvc": "4533928d72ac4d7c19f16e8c4acdfd02dc255d2aeeb2f6d7dfd45493ec4c0806",
-  "x86_64-apple-darwin": "d91e59133daf923bc45d76e3da4af8ae9ef62a0231da18488da0cd573b6e9d63",
-  "aarch64-apple-darwin": "17b2984eb22b607e3d0c25728252fc90f510e476bad39a6d9f45cdb1aa685432",
-  "x86_64-unknown-linux-musl": "bd758d53d56e41dc65e045f4589df79a038ed197a011adcb52a258e6ad64cfda",
-  "aarch64-unknown-linux-musl": "89cbf79bd5ae6f9c58da47e8079f311c84219350c9c43c070d42f3e9b2a81401",
+  "x86_64-pc-windows-msvc": "a6ef3442cb12766a88b39311d79244289e4f9763e2c53ff4fbebc2cb653cc5f3",
+  "aarch64-pc-windows-msvc": "ac51b1a5932e07dffcaa6e98f4801f13b25192094739b732fc8b40ddb41bbda2",
+  "x86_64-apple-darwin": "3ee638d7155c856ef31f3f4a85cb2195de1939962d3924c935b24f0514564a3d",
+  "aarch64-apple-darwin": "35438da1fbf7a6db7ddb3bcec84448fa6015ba188461472a97d9d1da7d9c4353",
+  "x86_64-unknown-linux-musl": "a822187e1a2420c61c5926721bfbd878701ed95547c9bb0d4de4498a16ba1821",
+  "aarch64-unknown-linux-musl": "fc395cb043a1093ab0db34f44aba3199bfaa9ce640cd9be7fd588f44b0da64a4",
 });
 
 export function codexManagedTarget(
@@ -270,6 +270,23 @@ export interface ManagedCodexInstallOptions {
   onProgress?: (phase: "downloading" | "verifying" | "installing", value?: DownloadProgress) => void;
 }
 
+/**
+ * Remove version directories this build no longer uses.
+ *
+ * The install path carries the tag, so bumping the pin leaves the previous
+ * ~100 MB package sitting in global storage for ever. Best-effort on purpose:
+ * on Windows a running Codex holds its own executable open, and failing to
+ * tidy must never fail an install that already succeeded. The next bump tries
+ * again.
+ */
+async function pruneOtherManagedCodex(parent: string): Promise<void> {
+  let entries: string[];
+  try { entries = await fs.promises.readdir(parent); } catch { return; }
+  await Promise.all(entries
+    .filter((entry) => entry !== CODEX_MANAGED_TAG && !entry.startsWith("."))
+    .map((entry) => fs.promises.rm(path.join(parent, entry), { recursive: true, force: true }).catch(() => {})));
+}
+
 export async function installManagedCodex(options: ManagedCodexInstallOptions): Promise<string> {
   const platform = options.platform ?? process.platform;
   const release = options.release ?? codexManagedRelease(platform, options.arch ?? process.arch);
@@ -310,6 +327,7 @@ export async function installManagedCodex(options: ManagedCodexInstallOptions): 
     } catch (error) {
       if (!fs.existsSync(finalBinary)) throw error;
     }
+    await pruneOtherManagedCodex(parent);
     return finalBinary;
   } finally {
     await Promise.all([

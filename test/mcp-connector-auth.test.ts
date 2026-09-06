@@ -302,9 +302,8 @@ describe("authorizeMcpRemote", () => {
   // mcp-remote pins the callback port from its OAuth registration; handing it a
   // different one means "delete client_info.json and re-register", which forces
   // a fresh consent screen AND invalidates the registration every other host on
-  // this machine shares through ~/.mcp-auth. A conflict means the connector is
-  // already signed in and running elsewhere, so exactly one spawn happens and
-  // the result says so.
+  // this machine shares through ~/.mcp-auth. So exactly one spawn happens and
+  // the result reports the conflict rather than trying to route around it.
   it("never respawns on a port conflict — one spawn, and it reports it", async () => {
     const proc = new FakeProc();
     const spawns: string[][] = [];
