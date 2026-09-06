@@ -760,7 +760,7 @@ describe("allowFromRemote tier gating", () => {
     }
   });
 
-  it("allows connector changes at full and mirrors capability plus targeted OAuth frames without project scope", () => {
+  it("allows connector changes at full and mirrors workspace OAuth frames for every tab without project scope", () => {
     expect(INBOUND_DISPOSITION.connectMcpConnector).toBe("full");
     expect(INBOUND_DISPOSITION.disconnectMcpConnector).toBe("full");
     expect(INBOUND_DISPOSITION.completeMcpConnectorOAuth).toBe("full");

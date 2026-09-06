@@ -937,6 +937,36 @@ describe("settings overlay (chat.js)", () => {
     expect(overlay.querySelector(".settings-connector-action")).toBeNull();
   });
 
+  it.each([false, true])("a fresh remote restores consent without starting it and can replace it (connected=%s)", (connected) => {
+    const h = bootWebview({ remote: true });
+    seedChat(h, { capabilities: { mcpSettings: true } });
+    const row = { id: "notion", name: "Notion", description: "Pages.", auth: "oauth", status: "connecting", connected };
+    const consent = { type: "mcpConnectorAuthorization", id: "notion", attemptId: "live-attempt", status: "waiting", url: "https://vendor.example/authorize?state=live" };
+    dispatch(h.window, { type: "mcpConnectors", remoteConnect: true, connectors: [row] });
+    dispatch(h.window, consent);
+    openSettings(h);
+    clickSettingsNav(h, "Connectors");
+    const overlay = h.doc.getElementById("settings-overlay")!;
+    expect(h.posted).not.toContainEqual({ type: "connectMcpConnector", id: "notion" });
+    expect([...overlay.querySelectorAll(".settings-connector-oauth-step")].map((el) => el.textContent)).toEqual(["Step 1", "Step 2"]);
+    expect((overlay.querySelector(".settings-connector-oauth-link") as HTMLAnchorElement).href).toBe(consent.url);
+    const input = overlay.querySelector(".settings-connector-oauth-input") as HTMLInputElement;
+    input.value = "http://localhost:22227/oauth/callback?code=abc&state=live";
+    click(h.window, overlay.querySelector(".settings-connector-oauth-submit")!);
+    expect(h.posted).toContainEqual({ type: "completeMcpConnectorOAuth", id: "notion", attemptId: "live-attempt", redirectUrl: "http://localhost:22227/oauth/callback?code=abc&state=live" });
+    dispatch(h.window, consent);
+    const restart = overlay.querySelector(".settings-connector-action") as HTMLButtonElement;
+    expect(restart.textContent).toBe("Connect again");
+    expect(restart.disabled).toBe(false);
+    click(h.window, restart);
+    expect(h.posted).toContainEqual({ type: "connectMcpConnector", id: "notion" });
+    expect(h.posted).not.toContainEqual({ type: "disconnectMcpConnector", id: "notion" });
+    dispatch(h.window, { ...consent, attemptId: "new-attempt", url: "https://vendor.example/authorize?state=new" });
+    dispatch(h.window, { ...consent, status: "finished", error: "This sign-in expired or was replaced." });
+    expect((overlay.querySelector(".settings-connector-oauth-link") as HTMLAnchorElement).href).toContain("state=new");
+    expect(overlay.textContent).not.toContain("expired or was replaced");
+  });
+
   it("a remote sees a connected GitHub row without a desk key as connected, with no paste", () => {
     const h = bootWebview({ remote: true });
     seedChat(h, { capabilities: { mcpSettings: true } });

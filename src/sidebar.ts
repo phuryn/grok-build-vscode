@@ -869,6 +869,7 @@ export class GrokSidebar {
   private static readonly DEVICE_GLOBAL_REMOTE_TYPES = new Set<HostMsg["type"]>([
     "showThinking", "appPurpose", "fontScale", "grokUpdateStatus", "cliUpdating",
     "onboarding", "providerState", "mcpServers", "mcpConnectors", "expandCommandOutputs", "steerByDefault", "soundNotifications",
+    "mcpConnectorAuthorization",
     // Device-global, not session-scoped: a phone reading conversation B asked
     // for the routines page and must get it, even though the desk is focused on
     // conversation A. Without this, `post` routes the answer through the
@@ -1038,10 +1039,10 @@ export class GrokSidebar {
   private mcpConnectingId: ConnectorId | undefined;
   private mcpRemoteAuthorization: {
     id: ConnectorId;
-    clientId: string;
     attemptId: string;
-    url: string;
-    complete: (redirectUrl: string) => Promise<void>;
+    status: "waiting" | "submitted";
+    url?: string;
+    complete?: (redirectUrl: string) => Promise<void>;
   } | undefined;
   private mcpConnectError: { id: ConnectorId; message: string } | undefined;
   /** In-memory PAT cache for key-auth connectors. Never written to PersistedState. */
@@ -10789,7 +10790,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         await this.connectMcpConnector(msg.id, {
           key: typeof msg.key === "string" ? msg.key : undefined,
           readOnly: typeof msg.readOnly === "boolean" ? msg.readOnly : undefined,
-          clientId: origin === "remote" ? clientId : undefined,
+          remote: origin === "remote",
         });
         break;
       case "completeMcpConnectorOAuth":
@@ -11498,10 +11499,20 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     };
   }
 
+  private mcpConnectorAuthorizationMessage(): Extract<HostMsg, { type: "mcpConnectorAuthorization" }> | undefined {
+    const pending = this.mcpRemoteAuthorization;
+    return pending?.url ? {
+      type: "mcpConnectorAuthorization", id: pending.id, attemptId: pending.attemptId,
+      status: pending.status, url: pending.url,
+    } : undefined;
+  }
+
   private postMcpConnectors(): void {
     const message = this.mcpConnectorsMessage();
     this.post(message);
     void this.settingsEditor?.webview.postMessage(message);
+    const authorization = this.mcpConnectorAuthorizationMessage();
+    if (authorization) this.post(authorization);
     // Same reasoning as postRoutines: the connector count feeds the tip pool and
     // has just changed. This is also the initial-state call site, so a fresh
     // webview gets its first tip frame here without a separate trigger.
@@ -11628,14 +11639,16 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
 
   private async connectMcpConnector(
     id: string,
-    opts: { key?: string; readOnly?: boolean; clientId?: string } = {},
+    opts: { key?: string; readOnly?: boolean; remote?: boolean } = {},
   ): Promise<void> {
     if (!isConnectorId(id)) return;
     if (this.mcpConnectingId) {
       this.mcpConnectError = {
         id,
+        // Actionable now that the pending link rides the connectors snapshot:
+        // whichever tab is asking has just been re-sent the sign-in it wants.
         message: this.mcpConnectingId === id
-          ? "Sign-in is already in progress. Finish the browser prompt, or wait for it to time out."
+          ? "Sign-in is already in progress. Finish it with the link above, or wait for it to time out."
           : `Already connecting ${this.mcpConnectingId}. Wait for that to finish.`,
       };
       this.postMcpConnectors();
@@ -11651,9 +11664,13 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     }
     this.mcpConnectingId = id;
     this.mcpConnectError = undefined;
-    this.postMcpConnectors();
     const npx = npxSpawnPlan(process.platform);
     let metadata: { path: string; dispose: () => void } | undefined;
+    const pending: GrokSidebar["mcpRemoteAuthorization"] = opts.remote
+      ? { id, attemptId: randomUUID(), status: "waiting" }
+      : undefined;
+    this.mcpRemoteAuthorization = pending;
+    this.postMcpConnectors();
     try {
       if (connector.oauthScope?.trim()) {
         metadata = writeOAuthClientMetadataFile(connector.oauthScope.trim());
@@ -11664,15 +11681,14 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         args: mcpRemoteArgs(endpoint, undefined, metadata?.path),
         shell: npx.shell,
         env: npx.env,
-        onAuthorization: opts.clientId ? (url, complete) => {
-          const pending = { id, clientId: opts.clientId!, attemptId: randomUUID(), url, complete };
-          this.mcpRemoteAuthorization = pending;
-          this.deliverRemote([pending.clientId], {
-            type: "mcpConnectorAuthorization", id, attemptId: pending.attemptId, status: "waiting", url,
-          });
+        onAuthorization: pending ? (url, complete) => {
+          if (this.mcpRemoteAuthorization !== pending) return;
+          pending.url = url;
+          pending.complete = complete;
+          this.postMcpConnectors();
         } : undefined,
       });
-      if (this.mcpConnectingId !== id) return;
+      if (this.mcpConnectingId !== id || this.mcpRemoteAuthorization !== pending) return;
       if (!result.ok) {
         this.mcpConnectError = { id, message: result.message };
         return;
@@ -11688,18 +11704,20 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       );
       this.mcpConnectError = undefined;
     } catch (error) {
+      if (this.mcpRemoteAuthorization !== pending) return;
       this.mcpConnectError = { id, message: (error as Error).message || "Could not connect." };
     } finally {
       try { metadata?.dispose(); } catch { /* best-effort */ }
-      const pending = this.mcpRemoteAuthorization;
-      if (pending?.id === id) {
-        this.mcpRemoteAuthorization = undefined;
-        this.deliverRemote([pending.clientId], {
-          type: "mcpConnectorAuthorization", id, attemptId: pending.attemptId, status: "finished",
-        });
+      if (this.mcpRemoteAuthorization === pending) {
+        if (pending) {
+          this.mcpRemoteAuthorization = undefined;
+          this.post({
+            type: "mcpConnectorAuthorization", id, attemptId: pending.attemptId, status: "finished",
+          });
+        }
+        if (this.mcpConnectingId === id) this.mcpConnectingId = undefined;
+        this.postMcpConnectors();
       }
-      if (this.mcpConnectingId === id) this.mcpConnectingId = undefined;
-      this.postMcpConnectors();
     }
   }
 
@@ -11708,21 +11726,22 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     clientId: string,
   ): Promise<void> {
     const pending = this.mcpRemoteAuthorization;
-    if (!pending || pending.clientId !== clientId || pending.id !== msg.id || pending.attemptId !== msg.attemptId) {
+    if (!pending?.complete || pending.id !== msg.id || pending.attemptId !== msg.attemptId) {
       this.deliverRemote([clientId], {
         type: "mcpConnectorAuthorization", id: msg.id, attemptId: msg.attemptId, status: "finished",
-        error: "This sign-in is no longer active in this tab. Connect again to get a new link.",
+        error: "This sign-in expired or was replaced. Connect again to get a new link.",
       });
       return;
     }
     try {
       await pending.complete(msg.redirectUrl);
-      if (this.mcpRemoteAuthorization !== pending) return;
-      this.deliverRemote([clientId], {
+      if (this.mcpRemoteAuthorization !== pending || !pending.complete) return;
+      pending.status = "submitted";
+      this.post({
         type: "mcpConnectorAuthorization", id: pending.id, attemptId: pending.attemptId, status: "submitted",
       });
     } catch (error) {
-      if (this.mcpRemoteAuthorization !== pending) return;
+      if (this.mcpRemoteAuthorization !== pending || !pending.complete) return;
       this.deliverRemote([clientId], {
         type: "mcpConnectorAuthorization", id: pending.id, attemptId: pending.attemptId, status: "waiting",
         url: pending.url, error: (error as Error).message,
@@ -19126,6 +19145,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     snap.push(this.providerStateMessage());
     snap.push(this.githubStateMessage());
     snap.push(this.mcpConnectorsMessage());
+    const authorization = this.mcpConnectorAuthorizationMessage();
+    if (authorization) snap.push(authorization);
     snap.push(this.mcpServersMessage());
     // SIXTH hand-written registry, and it is not the same one as
     // DEVICE_GLOBAL_REMOTE_TYPES. That set decides how a frame is ROUTED once

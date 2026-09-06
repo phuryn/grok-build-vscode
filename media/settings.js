@@ -2017,6 +2017,9 @@
       const control = document.createElement("div");
       control.className = "settings-row-control";
       const connecting = connector.status === "connecting";
+      const authorization = snapshot.mcpConnectorAuthorization;
+      const restart = env.isRemote && connecting && authorization &&
+        authorization.id === connector.id && authorization.status === "waiting";
       const formOpen = !!(keyForm && keyForm.id === connector.id);
       if (canManage) {
         if (isKeyConnectorView(connector) && connector.connected && !formOpen) {
@@ -2042,7 +2045,12 @@
         } else {
           btn.textContent = connecting ? "Connecting…" : (connector.connected ? "Disconnect" : "Connect");
         }
-        btn.disabled = connecting;
+        if (restart) {
+          btn.textContent = "Connect again";
+          btn.dataset.action = "restart";
+          btn.title = "Abandon this sign-in and get a new link.";
+        }
+        btn.disabled = connecting && !restart;
         if (connecting) btn.setAttribute("aria-busy", "true");
         control.appendChild(btn);
       } else {
@@ -2069,7 +2077,6 @@
       if (canManage && isKeyConnectorView(connector) && formOpen && !connecting) {
         row.appendChild(renderConnectorKeyForm(connector, keyForm));
       }
-      const authorization = snapshot.mcpConnectorAuthorization;
       if (canManage && env.isRemote && authorization && authorization.id === connector.id) {
         const form = document.createElement("div");
         form.className = "settings-connector-key settings-connector-oauth";
@@ -3626,7 +3633,7 @@
             return;
           }
           post({
-            type: btn.dataset.connected === "true" ? "disconnectMcpConnector" : "connectMcpConnector",
+            type: btn.dataset.connected === "true" && btn.dataset.action !== "restart" ? "disconnectMcpConnector" : "connectMcpConnector",
             id,
           });
         });

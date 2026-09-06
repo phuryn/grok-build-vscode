@@ -83,21 +83,28 @@ Settings enables remote controls only when that field is present; an older
 host's frame leaves the catalog read-only.
 
 Remote OAuth uses `authorizeMcpRemote.onAuthorization`. The host captures
-the printed consent URL and the callback listener's actual port, then sends
-`mcpConnectorAuthorization` only through `deliverRemote([clientId])`.
-This outbound frame is `mirror` / project auth `none`, never a snapshot or
-broadcast. It carries `id`, `attemptId`, `status` (`waiting`, `submitted`, or
+the printed consent URL and the callback listener's actual port, then broadcasts
+`mcpConnectorAuthorization`. Pending consent belongs to the workspace, so
+`postMcpConnectors` and `buildRemoteSnapshot` replay it for reloaded tabs.
+This outbound frame is `mirror` / project auth `none` and routes device-wide.
+It carries `id`, `attemptId`, `status` (`waiting`, `submitted`, or
 `finished`), and optional `url` / `error`. The client opens the URL on its own
 device. After vendor consent the loopback page may fail to load; the person
 copies that full address and sends `{type: "completeMcpConnectorOAuth", id,
-attemptId, redirectUrl}`. The host checks the requesting client and attempt.
+attemptId, redirectUrl}`. The host checks the connector id and attempt, allowing
+another tab of the same authenticated user to complete it -- which is what makes
+a phone reload survivable: the new tab is re-sent the live link and finishes the
+attempt already running. A second Connect on the same connector is refused and
+says so, because there is nothing to restart; a different connector stays blocked
+until the current attempt ends.
 `parseMcpOAuthRedirect` requires the issued hostname (`localhost` or
 `127.0.0.1`), exact port, `/oauth/callback`, one nonempty code, and matching
 state. It rejects URL repairs and malformed encodings. Completion constructs
 a new numeric-loopback URL using only that known port, code, and state;
 redirects are refused and the pasted URL is never fetched. Errors are
 actionable and targeted; subprocess output containing consent URLs is not
-mirrored in failure messages. The attempt expires after 180 seconds.
+mirrored in failure messages. Startup uses `MCP_REMOTE_CONNECT_TIMEOUT_MS`;
+the consent link hands the deadline to `MCP_REMOTE_AUTHORIZATION_TIMEOUT_MS`.
 
 The pinned [mcp-remote OAuth provider](https://github.com/geelen/mcp-remote/blob/v0.1.37/src/lib/node-oauth-client-provider.ts)
 bundles `open` and has no headless flag. `writeMcpRemoteHeadlessPreload`

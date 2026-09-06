@@ -864,7 +864,8 @@ export const OUTBOUND_DISPOSITION: Record<HostMsg["type"], OutboundDisposition> 
   // the desk. Same machine-global observation as mcpConnectors.
   mcpServers: "allowlist",
   mcpConnectors: "mirror",
-  // Only deliverRemote([requestingClientId]) may send this, never post().
+  // Consent belongs to the workspace: broadcast and replay it on initial state
+  // so the same user's reloaded tab can complete the current id + attemptId.
   mcpConnectorAuthorization: "mirror",
   // Mirrored, but the project-auth pass above trims both cwd-bearing lists
   // first, so a tab sees only routines and projects it may already reach.
