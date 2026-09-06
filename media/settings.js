@@ -1777,14 +1777,6 @@
     }
   }
 
-  /** Small ordinal heading for the two-device OAuth handoff. */
-  function renderOauthStep(text) {
-    const el = document.createElement("div");
-    el.className = "settings-connector-oauth-step";
-    el.textContent = text;
-    return el;
-  }
-
   function renderMcpSectionState(text, error) {
     const el = document.createElement("div");
     el.className = "settings-mcp-state" + (error ? " is-error" : "");
@@ -1979,7 +1971,7 @@
     const canManage = canManageConnectors(snapshot, env);
     warning.textContent = (env && env.isRemote
       ? (canManage
-        ? "Connect apps on the machine running this workspace. Open the sign-in link on this device, then paste the failed callback address here. GitHub uses a token. Credentials stay on the host."
+        ? "Connect apps on the machine running this workspace. Approve access on this device and return here. GitHub uses a token. Credentials stay on the host."
         : CONNECTOR_BLURB_HERE_REMOTE)
       : CONNECTOR_BLURB_HERE) + " " + CONNECTOR_DISCONNECT_COPY;
     el.appendChild(warning);
@@ -2018,8 +2010,6 @@
       control.className = "settings-row-control";
       const connecting = connector.status === "connecting";
       const authorization = snapshot.mcpConnectorAuthorization;
-      const restart = env.isRemote && connecting && authorization &&
-        authorization.id === connector.id && authorization.status === "waiting";
       const formOpen = !!(keyForm && keyForm.id === connector.id);
       if (canManage) {
         if (isKeyConnectorView(connector) && connector.connected && !formOpen) {
@@ -2045,12 +2035,7 @@
         } else {
           btn.textContent = connecting ? "Connecting…" : (connector.connected ? "Disconnect" : "Connect");
         }
-        if (restart) {
-          btn.textContent = "Connect again";
-          btn.dataset.action = "restart";
-          btn.title = "Abandon this sign-in and get a new link.";
-        }
-        btn.disabled = connecting && !restart;
+        btn.disabled = connecting;
         if (connecting) btn.setAttribute("aria-busy", "true");
         control.appendChild(btn);
       } else {
@@ -2077,16 +2062,11 @@
       if (canManage && isKeyConnectorView(connector) && formOpen && !connecting) {
         row.appendChild(renderConnectorKeyForm(connector, keyForm));
       }
-      if (canManage && env.isRemote && authorization && authorization.id === connector.id) {
+      if (canManage && authorization && authorization.id === connector.id) {
         const form = document.createElement("div");
         form.className = "settings-connector-key settings-connector-oauth";
         if (authorization.error) form.appendChild(renderMcpSectionState(authorization.error, true));
         if (authorization.status === "waiting" && authorization.url) {
-          // Numbered, because the first step reads as a footnote otherwise. The
-          // owner's first run stalled here: the consent link looked like
-          // supporting prose next to a paste box, so the box appeared to be the
-          // thing to act on and the link went unclicked.
-          form.appendChild(renderOauthStep("Step 1"));
           const link = document.createElement("a");
           link.className = "settings-action is-primary settings-connector-oauth-link";
           link.href = authorization.url;
@@ -2094,37 +2074,7 @@
           link.rel = "noopener noreferrer";
           link.textContent = "Open sign-in";
           form.appendChild(link);
-          form.appendChild(renderMcpSectionState("Approve access on this device."));
-          form.appendChild(renderOauthStep("Step 2"));
-          // The instruction carries the weight, not the caveat: the page failing
-          // to load is what it looks like when this has WORKED, so leading with
-          // the failure reads as an error rather than the next step.
-          const copy = document.createElement("div");
-          copy.className = "settings-connector-key-hint";
-          const strong = document.createElement("strong");
-          strong.textContent = "Copy its full address";
-          copy.appendChild(strong);
-          copy.appendChild(document.createTextNode(
-            " from the address bar and paste it below. The page it returns to will"
-            + " probably fail to load — that is expected, and the address is still"
-            + " the one we need. Keep this tab open.",
-          ));
-          form.appendChild(copy);
-          const input = document.createElement("input");
-          input.type = "text";
-          input.className = "settings-text settings-connector-oauth-input";
-          input.autocomplete = "off";
-          input.spellcheck = false;
-          input.setAttribute("aria-label", "Callback address for " + connector.name);
-          input.placeholder = "Paste the full callback address";
-          form.appendChild(input);
-          const submit = document.createElement("button");
-          submit.type = "button";
-          submit.className = "settings-action settings-connector-oauth-submit";
-          submit.textContent = "Complete sign-in";
-          form.appendChild(submit);
-        } else if (authorization.status === "submitted") {
-          form.appendChild(renderMcpSectionState("Completing sign-in on the host…"));
+          form.appendChild(renderMcpSectionState("Approve access, then return here. Connection completes automatically."));
         }
         row.appendChild(form);
       }
@@ -3030,7 +2980,7 @@
     let categoryId = opts.category || "general";
     let query = "";
     let keyForm = { id: "", value: "", readOnly: false };
-    let oauthForm = { attemptId: "", value: "" };
+    let oauthWindow;
     let githubTokenForm = { open: false, value: "" };
     let githubCliStarted = false;
     let pendingRestore = null;
@@ -3120,6 +3070,44 @@
         return;
       }
       post({ type: "openUrl", url });
+    }
+
+    function openConnectorConsent(id) {
+      if (!env.isRemote) return;
+      const current = snapshot.mcpConnectorAuthorization;
+      if (current && current.id === id && current.status === "waiting" && current.url) {
+        openExternalHref(current.url);
+        return;
+      }
+      // Reserve the tab inside the user's tap, before asynchronous discovery.
+      // No opener reaches the provider; a blocked popup leaves the visible link.
+      try {
+        if (oauthWindow) oauthWindow.tab.close();
+        const tab = window.open("", "_blank");
+        if (tab) {
+          tab.opener = null;
+          tab.document.title = "Connecting…";
+          tab.document.body.textContent = "Opening sign-in…";
+          oauthWindow = { id, tab };
+        }
+      } catch { oauthWindow = undefined; }
+    }
+
+    function updateConnectorConsent() {
+      if (!oauthWindow) return;
+      const authorization = snapshot.mcpConnectorAuthorization;
+      const row = (snapshot.mcpConnectors || []).find((c) => c.id === oauthWindow.id);
+      try {
+        if (authorization && authorization.id === oauthWindow.id && authorization.status === "waiting" && authorization.url) {
+          const url = new URL(authorization.url);
+          if (url.protocol === "https:") oauthWindow.tab.location.replace(url.href);
+          else oauthWindow.tab.close();
+          oauthWindow = undefined;
+        } else if (row && row.status === "error") {
+          oauthWindow.tab.close();
+          oauthWindow = undefined;
+        }
+      } catch { oauthWindow = undefined; }
     }
 
     function maybeCheckAbout() {
@@ -3254,6 +3242,7 @@
     }
 
     function paint() {
+      updateConnectorConsent();
       reconcileProviderPending(snapshot);
       reconcileProviderTerminal(snapshot);
       const chrome = describeChrome(container);
@@ -3632,8 +3621,10 @@
             }
             return;
           }
+          const disconnect = btn.dataset.connected === "true";
+          if (!disconnect) openConnectorConsent(id);
           post({
-            type: btn.dataset.connected === "true" && btn.dataset.action !== "restart" ? "disconnectMcpConnector" : "connectMcpConnector",
+            type: disconnect ? "disconnectMcpConnector" : "connectMcpConnector",
             id,
           });
         });
@@ -3740,28 +3731,6 @@
           if (tokenSubmit) tokenSubmit.click();
         });
       }
-      const oauthInput = body.querySelector(".settings-connector-oauth-input");
-      const oauthSubmit = body.querySelector(".settings-connector-oauth-submit");
-      const authorization = snapshot.mcpConnectorAuthorization;
-      if (!authorization || oauthForm.attemptId !== authorization.attemptId) {
-        oauthForm = { attemptId: authorization ? authorization.attemptId : "", value: "" };
-      }
-      if (oauthInput) {
-        oauthInput.value = oauthForm.value;
-        oauthInput.addEventListener("input", () => { oauthForm.value = oauthInput.value; });
-        oauthInput.addEventListener("keydown", (e) => {
-          if (e.key === "Enter" && oauthSubmit) { e.preventDefault(); oauthSubmit.click(); }
-        });
-      }
-      if (oauthSubmit) oauthSubmit.addEventListener("click", () => {
-        if (!canManageConnectors(snapshot, env) || !authorization || !oauthInput || oauthSubmit.disabled) return;
-        const redirectUrl = oauthInput.value;
-        oauthInput.value = "";
-        oauthForm.value = "";
-        snapshot = { ...snapshot, mcpConnectorAuthorization: { ...authorization, status: "submitted", error: undefined } };
-        post({ type: "completeMcpConnectorOAuth", id: authorization.id, attemptId: authorization.attemptId, redirectUrl });
-        paint();
-      });
       body.querySelectorAll(".settings-connector-key-input").forEach((input) => {
         input.addEventListener("input", () => {
           if (keyForm.id === input.dataset.id) keyForm.value = input.value;
@@ -3914,6 +3883,12 @@
           e.stopPropagation();
           const url = link.dataset.href || link.href;
           if (url) openExternalHref(url);
+        });
+      });
+      body.querySelectorAll(".settings-connector-oauth-link").forEach((link) => {
+        link.addEventListener("click", (e) => {
+          e.preventDefault();
+          openExternalHref(link.href);
         });
       });
       body.querySelectorAll(".settings-mcp-web").forEach((btn) => {
@@ -4069,6 +4044,10 @@
         paint();
       },
       dispose() {
+        if (oauthWindow) {
+          try { oauthWindow.tab.close(); } catch { /* already closed */ }
+          oauthWindow = undefined;
+        }
         document.removeEventListener("keydown", onKey, true);
         if (phoneMq) {
           if (typeof phoneMq.removeEventListener === "function") phoneMq.removeEventListener("change", onPhoneNavChange);

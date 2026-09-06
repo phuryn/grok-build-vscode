@@ -75,47 +75,64 @@ read from (`mcpServersCwd` / `mcpSettingsServersForCwd` → `mcpNameCatalogFor`
 focused session's cwd or provider. The classified global-only view is
 stored (`mcpServersView`) and rendered anywhere; project-file rows
 never enter it.
-`connectMcpConnector`, `disconnectMcpConnector`, and
-`completeMcpConnectorOAuth` are inbound `full`, without a bound-session
-requirement. A remote can set or replace a HostSecrets key; no response
-returns it. The existing `mcpConnectors` frame advertises `remoteConnect: true`.
-Settings enables remote controls only when that field is present; an older
-host's frame leaves the catalog read-only.
+`connectMcpConnector` and `disconnectMcpConnector` are inbound `full`, without
+a bound-session requirement. Keys remain write-only. `remoteConnect: true`
+enables remote controls; older hosts leave the catalog read-only.
 
-Remote OAuth uses `authorizeMcpRemote.onAuthorization`. The host captures
-the printed consent URL and the callback listener's actual port, then broadcasts
-`mcpConnectorAuthorization`. Pending consent belongs to the workspace, so
-`postMcpConnectors` and `buildRemoteSnapshot` replay it for reloaded tabs.
-This outbound frame is `mirror` / project auth `none` and routes device-wide.
-It carries `id`, `attemptId`, `status` (`waiting`, `submitted`, or
-`finished`), and optional `url` / `error`. The client opens the URL on its own
-device. After vendor consent the loopback page may fail to load; the person
-copies that full address and sends `{type: "completeMcpConnectorOAuth", id,
-attemptId, redirectUrl}`. The host checks the connector id and attempt, allowing
-another tab of the same authenticated user to complete it -- which is what makes
-a phone reload survivable: the new tab is re-sent the live link and finishes the
-attempt already running. A second Connect on the same connector is refused and
-says so, because there is nothing to restart; a different connector stays blocked
-until the current attempt ends.
-`parseMcpOAuthRedirect` requires the issued hostname (`localhost` or
-`127.0.0.1`), exact port, `/oauth/callback`, one nonempty code, and matching
-state. It rejects URL repairs and malformed encodings. Completion constructs
-a new numeric-loopback URL using only that known port, code, and state;
-redirects are refused and the pasted URL is never fetched. Errors are
-actionable and targeted; subprocess output containing consent URLs is not
-mirrored in failure messages. Startup uses `MCP_REMOTE_CONNECT_TIMEOUT_MS`;
-the consent link hands the deadline to `MCP_REMOTE_AUTHORIZATION_TIMEOUT_MS`.
+## Relay OAuth
 
-The pinned [mcp-remote OAuth provider](https://github.com/geelen/mcp-remote/blob/v0.1.37/src/lib/node-oauth-client-provider.ts)
-bundles `open` and has no headless flag. `writeMcpRemoteHeadlessPreload`
-writes a temporary CommonJS preload and adds it to this spawn's
-`NODE_OPTIONS`. It suppresses child spawning only inside the resolved
-`mcp-remote/dist/proxy.js` entry (its browser launch), leaving npm's launcher
-alone. A real temporary file works outside Electron's `app.asar`; it is
-removed when the attempt finishes. Desktop OAuth and session proxies do not
-receive the preload. `MCP_REMOTE_PACKAGE` and `REMOTE_PROTO_VERSION` stay pinned.
-The relay must add `completeMcpConnectorOAuth` to its inbound type list;
-outbound HostMsg frames are opaque and require no relay change.
+`mcp-connector-oauth.ts` owns the one-time authorization-code flow. It discovers
+protected-resource metadata (the challenge URL, then well-known path/root) and
+OAuth/OIDC authorization-server metadata, registers a client with the host's
+resolved relay origin plus `/mcp/oauth/callback`, and generates independent
+32-byte base64url state and S256 PKCE material. Discovery/DCR use the startup
+budget; presenting consent starts `MCP_REMOTE_AUTHORIZATION_TIMEOUT_MS` (15 min).
+Scope comes from the challenge/resource metadata, with the catalog's explicit
+Stripe `mcp` override. Resource indicators accompany authorization and exchange
+([MCP authorization](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization)).
+
+The returned registration, including any client secret (Atlassian), lives in
+SecretStorage under a connector/origin-specific key. An inactive registration
+is reusable after cancelled consent, but cannot change a legacy proxy's client
+ID. Successful exchange seeds the measured `<hash>_tokens.json` with the complete
+token response plus `expires_at: Date.now() + expires_in * 1000`, then activates
+the registration. If activation fails, the previous token file is restored.
+
+The desk opens consent externally. A phone's Connect tap reserves a tab, then
+navigates it when `mcpConnectorAuthorization` arrives; the visible link handles
+blocked popups and reloads. The frame remains device-global (`mirror`, project
+auth `none`) and is replayed in snapshots. `attemptId` prevents an ended attempt
+from clearing a newer link. Status is `waiting` or `finished`. The host polls
+`/mcp/oauth/result?state=...`: 204 means wait, 200 delivers a code or provider
+error once, and 400 ends the attempt. Transport errors are not blindly retried
+because delivery may already have consumed the code. Authorization and token
+exchange use the identical callback URI; no browser callback is pasted.
+
+Owned registrations supply `--static-oauth-client-info @<private-temp-file>`
+on Connect and every session spawn. The file is 0600 inside a private temp
+directory, never inline JSON/argv. Connect disposes it after its probe; ACP keeps
+session files until the owning CLI exits because adapters can initialize or
+restart proxies after session/new returns. It also disposes files created during
+an overlapping shutdown. Legacy connectors receive their original argv until
+reconnected. mcp-remote owns refresh: no host refresh loop and no OAuth access
+token injected as a fixed header. Both measured version constants stay pinned.
+
+The fixed token filename is shared per endpoint, while SecretStorage registrations
+are specific to a host and relay origin. Concurrent dev/prod use or hosts with
+separate secret vaults can therefore replace each other's token without sharing
+its registration. This layout needs token-provenance coordination before those
+owners can safely alternate; this flow keeps the prescribed existing store layout.
+
+`mcp-remote-headless.ts` remains as a guard on the post-seeding probe. Its
+NODE_OPTIONS preload suppresses only mcp-remote's bundled browser launcher;
+seeded tokens should make that path unreachable. The temporary preload works
+outside Electron's app.asar and is removed when the probe ends.
+
+The removed paste RPC/`submitted` status/module first appeared in `ab19ebc`,
+after `v4.1.8`; `0303a30` added its numbered UI. Neither commit is contained in
+a release tag as checked for this change. No protocol-version bump is needed
+for removing an unreleased wire member. Relay routes are implemented separately;
+this host does not add policy or credentials to that relay.
 
 Disconnect removes our connected record and a key connector's HostSecrets
 entry. It does not revoke vendor access, clear `~/.mcp-auth`, or remove tools

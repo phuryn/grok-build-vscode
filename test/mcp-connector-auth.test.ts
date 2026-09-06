@@ -62,7 +62,7 @@ describe("sidebar connect wiring", () => {
     expect(body).toContain("env: npx.env");
     expect(body).not.toContain("env: process.env");
     expect(body).toContain("writeOAuthClientMetadataFile");
-    expect(body).toMatch(/mcpRemoteArgs\(endpoint,\s*undefined,\s*metadata\?\.path\)/);
+    expect(body).toContain("clientInfo.path");
     expect(body).not.toContain("quoteSpawnArgs");
     expect(body).toContain("withAuthHeaderEnv(npx.env, token)");
     expect(body).toContain('auth: "key"');
@@ -195,111 +195,32 @@ describe("quoteSpawnArgs", () => {
   });
 });
 
-describe("manual remote OAuth", () => {
-  const url = "https://vendor.example/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A22227%2Foauth%2Fcallback&state=attempt-1";
-  const pasted = "http://localhost:22227/oauth/callback?code=test-code&state=attempt-1";
-
-  // The human window defaults to the startup ceiling so the tests written
-  // before the two were split keep asserting exactly what they used to.
-  function begin(timeoutMs = 1000, authorizationTimeoutMs = timeoutMs) {
+describe("headless OAuth guard", () => {
+  function begin() {
     const proc = new FakeProc();
-    const onAuthorization = vi.fn();
-    const callbackFetch = vi.fn().mockImplementation(async () => new Response("ok"));
     const spawn = vi.fn(() => proc as never);
     const result = authorizeMcpRemote({ command: "npx", args: mcpRemoteArgs("https://vendor.example/mcp"),
-      spawn, timeoutMs, authorizationTimeoutMs, onAuthorization, callbackFetch,
+      spawn, timeoutMs: 1000, headless: true,
       env: { PATH: "npx-path", NODE_OPTIONS: "--no-warnings" } });
-    return { proc, onAuthorization, callbackFetch, spawn, result };
+    return { proc, spawn, result };
   }
 
-  function issue(proc: FakeProc) {
-    proc.stderr.write("[123] Please authorize this client by visiting:\n");
-    proc.stderr.write(url.slice(0, 30));
-    proc.stderr.write(url.slice(30) + "\n\n");
-    proc.stderr.write("[123] OAuth callback server running at http://127.0.0.1:22227\n");
-  }
-
-  it("delivers one complete URL after the listener starts and completes only after MCP success", async () => {
+  it("fails an unexpected authorization attempt without exposing the link", async () => {
     const h = begin();
-    issue(h.proc);
-    expect(h.onAuthorization).toHaveBeenCalledOnce();
-    const [link, complete] = h.onAuthorization.mock.calls[0];
-    expect(link).toBe(url);
-    expect(h.spawn.mock.calls[0][2].env).toMatchObject({ PATH: "npx-path", NODE_OPTIONS: expect.stringContaining('--no-warnings --require ') });
-    await expect(complete(pasted.replace("attempt-1", "wrong"))).rejects.toThrow(/state/);
-    expect(h.callbackFetch).not.toHaveBeenCalled();
-    await complete(pasted);
-    expect(h.callbackFetch.mock.calls[0][0].href).toBe(pasted.replace("localhost", "127.0.0.1"));
-    expect(h.proc.killed).toBe(false);
-    await expect(complete(pasted)).rejects.toThrow(/already/);
-    h.proc.stderr.write("Authentication successful! Caching credentials...\n");
-    await expect(h.result).resolves.toEqual({ ok: true });
-    await expect(complete(pasted)).rejects.toThrow(/ended/);
+    h.proc.stderr.write("Please authorize this client by visiting:\nhttps://vendor.example/?state=private\n");
+    const result = await h.result;
+    expect(result).toMatchObject({ ok: false });
+    expect(JSON.stringify(result)).not.toContain("private");
+    expect(h.proc.killed).toBe(true);
   });
 
-  it("lets the requester correct a failed callback request", async () => {
-    const h = begin();
-    issue(h.proc);
-    const complete = h.onAuthorization.mock.calls[0][1];
-    h.callbackFetch.mockRejectedValueOnce(new Error("network"));
-    await expect(complete(pasted)).rejects.toThrow(/host could not complete/);
-    await complete(pasted);
-    h.proc.stderr.write("Authentication successful! Caching credentials...\n");
-    await expect(h.result).resolves.toEqual({ ok: true });
-  });
-
-  it("hands the clock to the user once the link exists instead of spending the startup ceiling", async () => {
-    const h = begin(20, 5_000);
-    issue(h.proc);
-    // Well past the startup ceiling: a person reading a consent screen has not
-    // run out of time, and killing the proxy here would strip the listener the
-    // callback they are about to approve must come back to.
-    await new Promise((r) => setTimeout(r, 120));
-    expect(h.proc.killed).toBe(false);
-    const complete = h.onAuthorization.mock.calls[0][1];
-    await complete(pasted);
-    expect(h.callbackFetch).toHaveBeenCalledOnce();
-    h.proc.stderr.write("Authentication successful! Caching credentials...\n");
-    await expect(h.result).resolves.toEqual({ ok: true });
-  });
-
-  it("still expires while starting up, before any link has been offered", async () => {
-    const h = begin(20, 5_000);
-    await expect(h.result).resolves.toMatchObject({ ok: false, kind: "timeout" });
-    expect(h.onAuthorization).not.toHaveBeenCalled();
-  });
-
-  it("expires the callback and never includes another tab's consent URL in failure output", async () => {
-    const h = begin(20);
-    issue(h.proc);
-    const complete = h.onAuthorization.mock.calls[0][1];
-    await expect(h.result).resolves.toMatchObject({ ok: false, kind: "timeout" });
-    await expect(complete(pasted)).rejects.toThrow(/ended/);
-    expect(h.callbackFetch).not.toHaveBeenCalled();
-    const failed = begin();
-    issue(failed.proc);
-    failed.proc.emit("close", 1);
-    const result = await failed.result;
-    expect(JSON.stringify(result)).not.toContain(url);
-    expect(JSON.stringify(result)).not.toContain("attempt-1");
-  });
-
-  it("does not retry a remote port conflict or offer a link without its listener", async () => {
-    const h = begin();
-    h.proc.stderr.write(`[123] Please authorize this client by visiting:\n${url}\n`);
-    expect(h.onAuthorization).not.toHaveBeenCalled();
-    h.proc.stderr.write("Error: listen EADDRINUSE: address already in use 127.0.0.1:22227\n");
-    await expect(h.result).resolves.toMatchObject({ ok: false, kind: "port-conflict" });
-    expect(h.spawn).toHaveBeenCalledOnce();
-    expect(h.onAuthorization).not.toHaveBeenCalled();
-  });
-
-  it("cleans up the remote preload on asynchronous spawn failure", async () => {
+  it.each(["error", "close"])("cleans up the preload on asynchronous %s", async (event) => {
     const h = begin();
     const options = h.spawn.mock.calls[0][2].env.NODE_OPTIONS as string;
+    expect(options).toContain("--no-warnings --require ");
     const preload = JSON.parse(options.slice(options.indexOf("--require ") + 10));
     expect(existsSync(preload)).toBe(true);
-    h.proc.emit("error", new Error("spawn failed"));
+    h.proc.emit(event, event === "error" ? new Error("spawn failed") : 1);
     await expect(h.result).resolves.toMatchObject({ ok: false });
     expect(existsSync(preload)).toBe(false);
   });

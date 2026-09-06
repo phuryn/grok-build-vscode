@@ -1,14 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { spawn } from "node:child_process";
-import { EventEmitter } from "node:events";
+import { existsSync } from "node:fs";
 import { GrokSidebar } from "../src/sidebar";
 import { authorizeMcpRemote } from "../src/mcp-connector-auth";
+import { authorizeMcpConnectorOAuth } from "../src/mcp-connector-oauth";
 import { MCP_CONNECTORS_KEY, mcpConnectorSecretKey } from "../src/mcp-connectors";
 
 vi.mock("../src/mcp-connector-auth", async (original) => ({
   ...await original<typeof import("../src/mcp-connector-auth")>(),
   authorizeMcpRemote: vi.fn(),
   npxSpawnPlan: () => ({ command: "npx", env: {}, shell: false }),
+}));
+
+vi.mock("../src/mcp-connector-oauth", async (original) => ({
+  ...await original<typeof import("../src/mcp-connector-oauth")>(),
+  authorizeMcpConnectorOAuth: vi.fn(),
 }));
 
 vi.mock("node:child_process", async (original) => ({
@@ -31,7 +37,7 @@ function host() {
   h.postWelcomeTips = vi.fn();
   h.deliverRemote = vi.fn();
   h.post = vi.fn();
-  h.host = { appendLine: vi.fn() };
+  h.host = { appendLine: vi.fn(), openExternal: vi.fn() };
   h.remoteClients = { active: () => undefined, cwd: () => "" };
   h.captureRemoteRequester = () => ({});
   h.workspaceRoot = () => "";
@@ -39,71 +45,73 @@ function host() {
 }
 
 beforeEach(() => {
-  vi.mocked(authorizeMcpRemote).mockReset();
+  vi.mocked(authorizeMcpRemote).mockReset().mockResolvedValue({ ok: true });
+  vi.mocked(authorizeMcpConnectorOAuth).mockReset();
   vi.mocked(spawn).mockReset();
 });
 afterEach(() => { vi.restoreAllMocks(); });
 
+const client = { client_id: "host-client", redirect_uris: ["https://relay.example/mcp/oauth/callback"] };
+
 function begin(h: any, clientId = "phone-a") {
   const url = "https://vendor.example/authorize?state=private-attempt";
-  const complete = vi.fn().mockResolvedValue(undefined);
-  let finish!: (result: Awaited<ReturnType<typeof authorizeMcpRemote>>) => void;
+  let finish!: (result: typeof client) => void;
   let fail!: (error: Error) => void;
-  vi.mocked(authorizeMcpRemote).mockImplementationOnce(async (opts) => {
-    opts.onAuthorization!(url, complete);
+  vi.mocked(authorizeMcpConnectorOAuth).mockImplementationOnce(async (opts) => {
+    opts.onAuthorization(url);
     return new Promise((resolve, reject) => { finish = resolve; fail = reject; });
   });
   const connecting = h.onMessage({ type: "connectMcpConnector", id: "notion" }, "remote", clientId);
-  return { url, complete, finish: (result: Parameters<typeof finish>[0]) => finish(result),
-    fail: (error: Error) => fail(error), connecting };
+  return { url, finish: (_result: unknown) => finish(client), fail: (error: Error) => fail(error), connecting };
 }
 
 describe("remote connector host routing", () => {
-  it("broadcasts consent and accepts completion from a different client after reload", async () => {
+  it.each([true, false])("keeps the private client file through the probe and deletes it afterward (success=%s)", async (ok) => {
+    const { h } = host();
+    const editor = vi.fn();
+    h.settingsEditor = { webview: { postMessage: editor } };
+    let path = "";
+    vi.mocked(authorizeMcpRemote).mockImplementationOnce(async (opts) => {
+      path = opts.args[opts.args.indexOf("--static-oauth-client-info") + 1].slice(1);
+      expect(existsSync(path)).toBe(true);
+      return ok ? { ok: true } : { ok: false, kind: "failed", message: "Could not connect." };
+    });
+    const attempt = begin(h);
+    expect(editor).toHaveBeenCalledWith(expect.objectContaining({ status: "waiting", url: attempt.url }));
+    attempt.finish({ ok: true });
+    await attempt.connecting;
+    expect(existsSync(path)).toBe(false);
+    expect(editor).toHaveBeenCalledWith(expect.objectContaining({ status: "finished" }));
+    expect(h.connectedConnectorStore().notion !== undefined).toBe(ok);
+  });
+
+  it("clears failed authorization without launching the proxy", async () => {
+    const { h } = host();
+    const attempt = begin(h);
+    attempt.fail(new Error("Sign-in was cancelled."));
+    await attempt.connecting;
+    expect(h.mcpRemoteAuthorization).toBeUndefined();
+    expect(h.connectedConnectorStore()).toEqual({});
+    expect(authorizeMcpRemote).not.toHaveBeenCalled();
+  });
+
+  it("broadcasts consent and finishes automatically after host authorization", async () => {
     const { h } = host();
     const attempt = begin(h);
     const [frame] = h.post.mock.lastCall;
     expect(frame).toMatchObject({ type: "mcpConnectorAuthorization", id: "notion", status: "waiting", url: attempt.url });
     expect(h.mcpRemoteAuthorization).not.toHaveProperty("clientId");
-    expect(h.deliverRemote).not.toHaveBeenCalled();
-    const message = { type: "completeMcpConnectorOAuth", id: "notion", attemptId: frame.attemptId, redirectUrl: "pasted" };
-    await h.onMessage(message, "remote", "phone-b");
-    expect(attempt.complete).toHaveBeenCalledOnce();
-    expect(attempt.complete).toHaveBeenCalledWith("pasted");
-    expect(h.post).toHaveBeenLastCalledWith(expect.objectContaining({ status: "submitted", attemptId: frame.attemptId }));
-    h.postMcpConnectors();
-    expect(h.post).toHaveBeenLastCalledWith(expect.objectContaining({ status: "submitted", attemptId: frame.attemptId }));
+    expect(h.mcpRemoteAuthorization).not.toHaveProperty("complete");
+    expect(authorizeMcpRemote).not.toHaveBeenCalled();
+    expect(h.host.openExternal).not.toHaveBeenCalled();
     attempt.finish({ ok: true });
     await attempt.connecting;
     expect(h.mcpRemoteAuthorization).toBeUndefined();
     expect(h.post).toHaveBeenCalledWith(expect.objectContaining({ status: "finished", attemptId: frame.attemptId }));
     expect(h.connectedConnectorStore()).toHaveProperty("notion");
-  });
-
-  it("refuses an unknown, wrong-connector, or ended attempt and permits correcting a callback", async () => {
-    const { h } = host();
-    const attempt = begin(h);
-    const message = { type: "completeMcpConnectorOAuth", id: "notion", attemptId: h.mcpRemoteAuthorization.attemptId, redirectUrl: "pasted" };
-    for (const mismatch of [{ attemptId: "stale" }, { id: "airtable" }]) {
-      await h.onMessage({ ...message, ...mismatch }, "remote", "phone-b");
-      expect(attempt.complete).not.toHaveBeenCalled();
-      expect(h.deliverRemote).toHaveBeenLastCalledWith(["phone-b"], expect.objectContaining({
-        status: "finished", error: "This sign-in expired or was replaced. Connect again to get a new link.",
-      }));
-      expect(JSON.stringify(h.deliverRemote.mock.lastCall)).not.toContain(attempt.url);
-    }
-    attempt.complete.mockRejectedValueOnce(new Error("state does not match"));
-    await h.onMessage(message, "remote", "phone-b");
-    expect(h.deliverRemote).toHaveBeenLastCalledWith(["phone-b"], expect.objectContaining({
-      status: "waiting", error: "state does not match", url: attempt.url,
-    }));
-    await h.onMessage(message, "remote", "phone-b");
-    expect(attempt.complete).toHaveBeenCalledTimes(2);
-    attempt.finish({ ok: true });
-    await attempt.connecting;
-    await h.onMessage(message, "remote", "phone-a");
-    expect(attempt.complete).toHaveBeenCalledTimes(2);
-    expect(h.deliverRemote).toHaveBeenLastCalledWith(["phone-a"], expect.objectContaining({ status: "finished", error: expect.stringContaining("expired or was replaced") }));
+    const probe = vi.mocked(authorizeMcpRemote).mock.lastCall![0];
+    expect(probe.headless).toBe(true);
+    expect(probe.args).toContain("--static-oauth-client-info");
   });
 
   it("replays the current authorization with connector initial state", async () => {
@@ -175,7 +183,7 @@ describe("remote connector host routing", () => {
     const attempt = begin(h);
     const pending = h.mcpRemoteAuthorization;
     await h.onMessage({ type: "connectMcpConnector", id: "airtable" }, "remote", "phone-b");
-    expect(authorizeMcpRemote).toHaveBeenCalledOnce();
+    expect(authorizeMcpConnectorOAuth).toHaveBeenCalledOnce();
     expect(h.mcpRemoteAuthorization).toBe(pending);
     expect(h.mcpConnectError).toEqual({ id: "airtable", message: "Already connecting notion. Wait for that to finish." });
     attempt.finish({ ok: true });
@@ -189,7 +197,7 @@ describe("remote connector host routing", () => {
     await h.onMessage({ type: "connectMcpConnector", id: "notion" }, "remote", "phone-b");
     // No replacement, no second listener, no process to stop: the sign-in the
     // second tab wants is the one already running, and it was just re-sent it.
-    expect(authorizeMcpRemote).toHaveBeenCalledOnce();
+    expect(authorizeMcpConnectorOAuth).toHaveBeenCalledOnce();
     expect(h.mcpRemoteAuthorization).toBe(pending);
     expect(h.mcpConnectError.message).toContain("Finish it with the link above");
     expect(h.mcpConnectorAuthorizationMessage()).toMatchObject({ attemptId: pending.attemptId, status: "waiting" });
@@ -199,9 +207,13 @@ describe("remote connector host routing", () => {
 
   it("keeps desk OAuth automatic and advertises the additive capability", async () => {
     const { h } = host();
-    vi.mocked(authorizeMcpRemote).mockResolvedValue({ ok: true });
+    vi.mocked(authorizeMcpConnectorOAuth).mockImplementationOnce(async (opts) => {
+      await opts.onAuthorization("https://vendor.example/authorize");
+      return client;
+    });
     await h.onMessage({ type: "connectMcpConnector", id: "notion" }, "local");
-    expect(vi.mocked(authorizeMcpRemote).mock.calls[0][0].onAuthorization).toBeUndefined();
+    expect(h.host.openExternal).toHaveBeenCalledWith("https://vendor.example/authorize");
+    expect(vi.mocked(authorizeMcpRemote).mock.calls[0][0].headless).toBe(true);
     expect(h.deliverRemote).not.toHaveBeenCalled();
     expect(h.mcpConnectorsMessage().remoteConnect).toBe(true);
   });
@@ -217,7 +229,7 @@ describe("remote connector host routing", () => {
       expect(JSON.stringify(view)).not.toContain(key);
       expect(JSON.stringify(h.state.update.mock.calls)).not.toContain(key);
       const args = vi.mocked(authorizeMcpRemote).mock.lastCall![0];
-      expect(args.onAuthorization).toBeUndefined();
+      expect(args.headless).toBeUndefined();
       expect(args.env?.AUTH_HEADER).toBe(`Bearer ${key}`);
       expect(args.args.join(" ")).not.toContain(key);
     }

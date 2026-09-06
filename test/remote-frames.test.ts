@@ -21,13 +21,9 @@ import {
 } from "../src/remote-frames";
 
 describe("uplink frame builders", () => {
-  it("recognizes the additive manual MCP callback type and validates remote connector payloads", () => {
-    const msg = { type: "completeMcpConnectorOAuth", id: "notion", attemptId: "attempt-1", redirectUrl: "http://localhost:22227/oauth/callback?code=abc&state=test" };
+  it("rejects the unreleased paste RPC and validates remote connector payloads", () => {
     const wrap = (msg: unknown) => JSON.stringify({ t: "msg", clientId: "phone", msg });
-    expect(parseRelayFrame(wrap(msg))).toEqual({ t: "msg", clientId: "phone", msg });
-    for (const field of ["id", "attemptId", "redirectUrl"]) {
-      expect(parseRelayFrame(wrap({ ...msg, [field]: 1 }))).toBeNull();
-    }
+    expect(parseRelayFrame(wrap({ type: "completeMcpConnectorOAuth", id: "notion", attemptId: "old", redirectUrl: "pasted" }))).toBeNull();
     expect(parseRelayFrame(wrap({ type: "connectMcpConnector", id: "github", key: 12 }))).toBeNull();
     expect(parseRelayFrame(wrap({ type: "disconnectMcpConnector", id: 12 }))).toBeNull();
   });

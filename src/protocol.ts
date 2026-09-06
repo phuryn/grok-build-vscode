@@ -451,10 +451,10 @@ export type HostMsg =
    *  Config-file editing stays desk-only. */
   | { type: "mcpServers"; servers: McpServerView[]; loading?: boolean; error?: string; warning: string }
   /** Machine-global, secret-free inventory. Presence of remoteConnect enables
-   *  remote key writes and manual OAuth; older hosts omit it. */
+   *  remote key writes and OAuth; older hosts omit it. */
   | { type: "mcpConnectors"; connectors: ConnectorView[]; remoteConnect?: true }
-  /** Targeted to the requesting client only; never part of a broadcast/snapshot. */
-  | { type: "mcpConnectorAuthorization"; id: string; attemptId: string; status: "waiting" | "submitted" | "finished"; url?: string; error?: string }
+  /** Device-global consent link, replayed on reconnect. attemptId guards stale completion frames. */
+  | { type: "mcpConnectorAuthorization"; id: string; attemptId: string; status: "waiting" | "finished"; url?: string; error?: string }
   /**
    * The Routines page, whole. Carries its own pickers rather than leaning on
    * the chat state, because the VS Code settings TAB loads settings.js and
@@ -933,9 +933,8 @@ export type WebviewMsg =
   /** Fire once, now. Deliberately takes no window key — a manual run must not
    *  consume the scheduled one. */
   | { type: "runRoutineNow"; id: string }
-  /** Key is write-only. Remote OAuth returns a targeted sign-in link. */
+  /** Key is write-only. OAuth publishes a device-global sign-in link. */
   | { type: "connectMcpConnector"; id: string; key?: string; readOnly?: boolean }
-  | { type: "completeMcpConnectorOAuth"; id: string; attemptId: string; redirectUrl: string }
   /** Drop the id from our list and any HostSecrets key. Does not revoke OAuth,
    * clear ~/.mcp-auth, or remove tools from already running sessions. */
   | { type: "disconnectMcpConnector"; id: string }
@@ -1268,7 +1267,7 @@ const WEBVIEW_MESSAGE_TYPE_MAP: Record<WebviewMsg["type"], true> = {
   setMode: true, removeChip: true, toggleChip: true, openFile: true, showInFolder: true, openUrl: true,
   openText: true, openDiff: true, exportExpr: true, setEffort: true, openGlobalConfig: true,
   addProjectFolder: true, removeProjectFolder: true, createProject: true, cloneProject: true, setupGithubCli: true, listGithubRepos: true, githubSignOut: true, githubLoginWithToken: true,
-  openProjectConfig: true, listMcpServers: true, connectMcpConnector: true, disconnectMcpConnector: true, completeMcpConnectorOAuth: true,
+  openProjectConfig: true, listMcpServers: true, connectMcpConnector: true, disconnectMcpConnector: true,
   listRoutines: true, saveRoutine: true, deleteRoutine: true, setRoutinePaused: true, runRoutineNow: true, showLogs: true, toggleDevTools: true, openSettings: true, openSettingsSurface: true, closeSettingsSurface: true, dismissWelcomeTip: true, welcomeTipShown: true, moveView: true,
   setShowThinking: true, setAppPurpose: true, setExpandCommandOutputs: true, setSteerByDefault: true,
   setSoundNotifications: true, setProcessingSound: true, setReadRepliesAloud: true, setSummarizeRepliesAloud: true, setVoiceSendPhrase: true, setVoiceKeyterms: true, setTelemetryEnabled: true, setThumbsFeedback: true, summarizeSpeech: true, requestImageFull: true, composerFocus: true,

@@ -541,8 +541,7 @@ body.settings-page .settings-surface {
   padding-top: 4px;
 }
 
-.settings-connector-key-input,
-.settings-connector-oauth-input {
+.settings-connector-key-input {
   width: 100%;
   max-width: none;
   min-width: 0;
@@ -558,7 +557,7 @@ body.settings-page .settings-surface {
   color: var(--vscode-textLink-foreground, #3794ff);
 }
 
-/* The consent link is the first action of a two-device handoff, so it is a
+/* The consent link opens the provider authorization page, so it is a
    button rather than link-coloured prose. `.settings-action.is-primary` carries
    the colours; an anchor still needs the parts a <button> gets for free. */
 .settings-connector-oauth-link {
@@ -570,14 +569,6 @@ body.settings-page .settings-surface {
   justify-self: start;
   text-decoration: none;
   padding: 6px 14px;
-}
-
-.settings-connector-oauth-step {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--vscode-descriptionForeground, #969696);
 }
 
 .settings-connector-key-actions {

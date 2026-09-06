@@ -1,30 +1,10 @@
-/**
- * One-shot `mcp-remote` spawn that drives the vendor OAuth flow. Credentials
- * land in `~/.mcp-auth`. We used to say "we never read that directory", and
- * {@link connectorsLackingOAuthToken} at the bottom of this file deliberately
- * reverses that: it is the only way to know a connector will open a browser
- * before the CLI spawns one. It reads presence, never contents. Injected spawn keeps
- * this testable without npx or a browser. A connector with `oauthScope`
- * writes that JSON to a temp `@file` (`writeOAuthClientMetadataFile`) because
- * Windows Connect uses `shell: true` and inline `{...}` is mangled; dispose
- * after the child exits. `session/new` gets the same flag from
- * `persistConnectorOAuthClientMetadata` so grok's later spawn agrees.
- *
- * A live Grok session already running the same endpoint holds the OAuth
- * callback port pinned in mcp-remote's client registration, and Windows skips
- * mcp-remote's lockfile so a second instance cannot learn the first exists.
- * That collision is REPORTED, never worked around — see
- * {@link authorizeMcpRemote} for why retrying on another port re-authorised
- * every host on the machine. `quoteSpawnArgs` wraps whitespace-bearing argv
- * entries only for this shell spawn — never in `mcpRemoteArgs`.
- */
+/** One-shot MCP initialization probe, legacy authorization, and measured token-store paths. */
 import { createInterface } from "node:readline";
 import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
-import { completeMcpOAuthCallback, mcpOAuthChallenge } from "./mcp-oauth-redirect";
 import { writeMcpRemoteHeadlessPreload } from "./mcp-remote-headless";
 import {
   MCP_INITIALIZE_REQUEST,
@@ -75,10 +55,8 @@ export interface AuthorizeMcpRemoteOpts {
    * token was rejected, not that the app can never work.
    */
   auth?: ConnectorAuth;
-  /** Remote OAuth only: send the link to the requester and accept its callback. */
-  onAuthorization?: (url: string, complete: (redirectUrl: string) => Promise<void>) => void;
-  /** Callback transport seam for fault-injection tests. */
-  callbackFetch?: typeof fetch;
+  /** Guard against unexpected browser launches after host-owned authorization. */
+  headless?: boolean;
 }
 
 export type AuthorizeMcpRemoteResult =
@@ -185,10 +163,6 @@ function runAuthorizeMcpRemote(
   let timedOut = false;
   let spawnError: { code?: string; message?: string } | undefined;
   let proc: ReturnType<McpRemoteSpawn> | undefined;
-  let authorizationUrl: string | undefined;
-  let callbackPort: number | undefined;
-  let awaitingAuthorizationUrl = false;
-  let authorizationSent = false;
   let headless: ReturnType<typeof writeMcpRemoteHeadlessPreload> | undefined;
 
   const finish = (result: AuthorizeMcpRemoteResult): AuthorizeMcpRemoteResult => {
@@ -237,7 +211,7 @@ function runAuthorizeMcpRemote(
           kind,
           kind === "port-conflict" || kind === "oauth-incompatible" || kind === "key-rejected"
             ? undefined
-            : opts.onAuthorization || opts.auth === "key" ? undefined : detail,
+            : opts.headless || opts.auth === "key" ? undefined : detail,
         ),
       }));
     };
@@ -260,10 +234,10 @@ function runAuthorizeMcpRemote(
     };
 
     try {
-      if (opts.onAuthorization) headless = writeMcpRemoteHeadlessPreload();
+      if (opts.headless) headless = writeMcpRemoteHeadlessPreload();
       proc = opts.spawn(opts.command, quoteSpawnArgs(opts.args, opts.shell), {
         stdio: ["pipe", "pipe", "pipe"],
-        env: opts.onAuthorization ? {
+        env: opts.headless ? {
           ...(opts.env ?? process.env),
           NODE_OPTIONS: [
             (opts.env ?? process.env).NODE_OPTIONS,
@@ -319,36 +293,10 @@ function runAuthorizeMcpRemote(
     const onLine = (line: string) => {
       considerOutput(line);
       if (settled) return;
-      // Both flows hand the clock over here: the desk user is in a browser too.
-      if (line.includes("Please authorize this client by visiting:")) handOverToHuman();
-      if (opts.onAuthorization) {
-        if (line.includes("Please authorize this client by visiting:")) awaitingAuthorizationUrl = true;
-        else if (awaitingAuthorizationUrl && line.trim()) {
-          authorizationUrl = line.trim();
-          awaitingAuthorizationUrl = false;
-        }
-        const listener = /OAuth callback server running at http:\/\/127\.0\.0\.1:(\d+)\s*$/.exec(line);
-        if (listener) callbackPort = Number(listener[1]);
-        if (authorizationUrl && callbackPort && !authorizationSent) {
-          try {
-            const challenge = mcpOAuthChallenge(authorizationUrl, callbackPort);
-            authorizationSent = true;
-            let completing = false;
-            let submitted = false;
-            opts.onAuthorization(challenge.url, async (redirectUrl) => {
-              if (settled) throw new Error("This sign-in has ended. Connect again to get a new link.");
-              if (completing || submitted) throw new Error("The callback is already being completed. Wait for sign-in to finish.");
-              completing = true;
-              try {
-                await completeMcpOAuthCallback(challenge, redirectUrl, opts.callbackFetch);
-                submitted = true;
-              } finally { completing = false; }
-            });
-          } catch {
-            fail("failed");
-            return;
-          }
-        }
+      // Legacy authorization retains its human budget; a seeded probe must not authorize.
+      if (line.includes("Please authorize this client by visiting:")) {
+        if (opts.headless) { fail("failed"); return; }
+        handOverToHuman();
       }
       const initialized = parseInitializeResult(line);
       if (initialized === true) succeed();

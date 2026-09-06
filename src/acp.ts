@@ -147,10 +147,12 @@ export interface AcpClientOptions {
    * Host-owned MCP servers for `session/new` and `session/load`. A getter is
    * read at request time so a Connect that lands after construct still applies.
    * The getter may be async so a host can re-read its own secrets first.
+   * Register cleanup for private spawn files; the CLI lifetime includes proxies
+   * initialized asynchronously after session/new and any adapter restarts.
    * Omitted / empty is the historical `[]` — the field is still sent because
    * grok rejects session/new without it.
    */
-  mcpServers?: AcpMcpStdioServer[] | (() => AcpMcpStdioServer[] | Promise<AcpMcpStdioServer[]>);
+  mcpServers?: AcpMcpStdioServer[] | ((onDispose: (dispose: () => void) => void) => AcpMcpStdioServer[] | Promise<AcpMcpStdioServer[]>);
 }
 
 export interface ModelInfo {
@@ -436,6 +438,7 @@ export class AcpClient extends EventEmitter {
     // a final successful interject response must be parsed before exit recovery
     // decides whether its user text still needs to be reclaimed.
     this.proc.on("close", (code) => {
+      this.disposeMcpFiles();
       for (const [id, p] of this.pending) {
         this.pending.delete(id);
         if (p.timer) clearTimeout(p.timer);
@@ -461,8 +464,22 @@ export class AcpClient extends EventEmitter {
 
   private async mcpServersForSession(): Promise<AcpMcpStdioServer[]> {
     const value = this.opts.mcpServers;
-    if (typeof value === "function") return await value();
+    if (typeof value === "function") return await value((dispose) => {
+      if (this.mcpFilesDisposed) dispose();
+      else this.mcpFileDisposers.add(dispose);
+    });
     return Array.isArray(value) ? value : [];
+  }
+
+  private readonly mcpFileDisposers = new Set<() => void>();
+  private mcpFilesDisposed = false;
+
+  private disposeMcpFiles(): void {
+    this.mcpFilesDisposed = true;
+    for (const dispose of this.mcpFileDisposers) {
+      try { dispose(); } catch { /* best-effort */ }
+    }
+    this.mcpFileDisposers.clear();
   }
 
   async newSession(modelId?: string): Promise<{ sessionId: string }> {
@@ -1054,6 +1071,7 @@ export class AcpClient extends EventEmitter {
     const proc = this.proc;
     if (!proc || proc.exitCode !== null || proc.signalCode !== null) {
       try { proc?.kill(); } catch { /* already gone */ }
+      this.disposeMcpFiles();
       return Promise.resolve();
     }
     if (this.provider !== "grok") {
@@ -1063,6 +1081,7 @@ export class AcpClient extends EventEmitter {
           if (done) return;
           done = true;
           clearTimeout(timer);
+          this.disposeMcpFiles();
           resolve();
         };
         const abruptKill = () => {
@@ -1086,6 +1105,7 @@ export class AcpClient extends EventEmitter {
         if (done) return;
         done = true;
         clearTimeout(timer);
+        this.disposeMcpFiles();
         resolve();
       };
       const timer = setTimeout(finish, timeoutMs);

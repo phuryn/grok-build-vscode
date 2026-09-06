@@ -763,7 +763,6 @@ describe("allowFromRemote tier gating", () => {
   it("allows connector changes at full and mirrors workspace OAuth frames for every tab without project scope", () => {
     expect(INBOUND_DISPOSITION.connectMcpConnector).toBe("full");
     expect(INBOUND_DISPOSITION.disconnectMcpConnector).toBe("full");
-    expect(INBOUND_DISPOSITION.completeMcpConnectorOAuth).toBe("full");
     expect(OUTBOUND_DISPOSITION.mcpConnectorAuthorization).toBe("mirror");
     expect(OUTBOUND_PROJECT_AUTH.mcpConnectorAuthorization).toBe("none");
     const frame: HostMsg = { type: "mcpConnectorAuthorization", id: "notion", attemptId: "attempt-1", status: "waiting", url: "https://vendor.example/authorize" };
@@ -778,7 +777,7 @@ describe("allowFromRemote tier gating", () => {
     expect(allowFromRemote("listMcpServers", "read-only")).toBe(true);
     expect(allowFromRemote("listMcpServers", "propose")).toBe(true);
     expect(allowFromRemote("listMcpServers", "full")).toBe(true);
-    for (const type of ["connectMcpConnector", "disconnectMcpConnector", "completeMcpConnectorOAuth"] as const) {
+    for (const type of ["connectMcpConnector", "disconnectMcpConnector"] as const) {
       for (const tier of ["read-only", "propose", "full"] as const) {
         expect(allowFromRemote(type, tier)).toBe(tier === "full");
       }

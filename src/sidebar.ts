@@ -454,6 +454,7 @@ import {
   mcpConfigPaths,
   mcpConnectorSecretKey,
   mcpRemoteArgs,
+  STATIC_OAUTH_CLIENT_INFO_FLAG,
   mergeReserved,
   parseConnectedConnectorStore,
   reservedFromMcpInventory,
@@ -470,6 +471,7 @@ import {
   persistConnectorOAuthClientMetadata,
   writeOAuthClientMetadataFile,
 } from "./mcp-connector-auth";
+import { authorizeMcpConnectorOAuth, ownedMcpOAuthClient, writeOAuthClientInfoFile } from "./mcp-connector-oauth";
 
 // HostMsg (host -> webview) and WebviewMsg (webview -> host) both live in
 // src/protocol.ts now — the single source of truth for the message contract,
@@ -1040,9 +1042,8 @@ export class GrokSidebar {
   private mcpRemoteAuthorization: {
     id: ConnectorId;
     attemptId: string;
-    status: "waiting" | "submitted";
+    status: "waiting";
     url?: string;
-    complete?: (redirectUrl: string) => Promise<void>;
   } | undefined;
   private mcpConnectError: { id: ConnectorId; message: string } | undefined;
   /** In-memory PAT cache for key-auth connectors. Never written to PersistedState. */
@@ -9185,7 +9186,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       effort,
       log: (msg) => this.host.appendLine(msg),
       timeouts: this.acpClientTimeouts(),
-      mcpServers: () => this.hostMcpServersFor(session),
+      mcpServers: (onDispose) => this.hostMcpServersFor(session, onDispose),
       ...(session.provider === "grok"
         ? { grokVersion: grokHandshakeVersion, grokVersionVerified }
         : { backend: this.createProviderBackend(session.provider) }),
@@ -10793,9 +10794,6 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           remote: origin === "remote",
         });
         break;
-      case "completeMcpConnectorOAuth":
-        if (origin === "remote" && clientId) await this.completeMcpConnectorOAuth(msg, clientId);
-        break;
       case "disconnectMcpConnector":
         await this.disconnectMcpConnector(msg.id);
         break;
@@ -11512,7 +11510,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     this.post(message);
     void this.settingsEditor?.webview.postMessage(message);
     const authorization = this.mcpConnectorAuthorizationMessage();
-    if (authorization) this.post(authorization);
+    if (authorization) {
+      this.post(authorization);
+      void this.settingsEditor?.webview.postMessage(authorization);
+    }
     // Same reasoning as postRoutines: the connector count feeds the tip pool and
     // has just changed. This is also the initial-state call site, so a fresh
     // webview gets its first tip frame here without a separate trigger.
@@ -11583,7 +11584,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     return mergeReserved(...parts);
   }
 
-  private async hostMcpServersFor(session: Session) {
+  private async hostMcpServersFor(session: Session, onDispose: (dispose: () => void) => void) {
     // Shared record is refreshSync'd from disk; the PAT cache is not. Re-read
     // this host's own HostSecrets, then take the disk-fresh record. The
     // secret does not travel.
@@ -11593,13 +11594,32 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     for (const [id, token] of this.mcpConnectorKeys ?? []) {
       if (store[id]) keyAuth[id] = token;
     }
-    return hostMcpServers(
+    const servers = hostMcpServers(
       store,
       this.reservedMcpIdentityFor(session),
       persistConnectorOAuthClientMetadata(store),
       keyAuth,
       this.lapsedOAuthConnectors(store),
     );
+    const files: { dispose: () => void }[] = [];
+    try {
+      for (const server of servers) {
+        const connector = connectorById(server.name);
+        if (!connector || isKeyConnector(connector)) continue;
+        const client = await ownedMcpOAuthClient(this.context.secrets, connector.id, store[connector.id].endpoint, this.relayUrl());
+        if (!client) continue;
+        const file = writeOAuthClientInfoFile(client);
+        files.push(file);
+        server.args.push(STATIC_OAUTH_CLIENT_INFO_FLAG, `@${file.path}`);
+      }
+      // Adapters may start/restart proxies after session/new has returned. Keep
+      // private files until their owning CLI exits, then remove every one.
+      if (files.length) onDispose(() => files.forEach((file) => file.dispose()));
+      return servers;
+    } catch (error) {
+      files.forEach((file) => file.dispose());
+      throw error;
+    }
   }
 
   /**
@@ -11666,27 +11686,32 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     this.mcpConnectError = undefined;
     const npx = npxSpawnPlan(process.platform);
     let metadata: { path: string; dispose: () => void } | undefined;
-    const pending: GrokSidebar["mcpRemoteAuthorization"] = opts.remote
-      ? { id, attemptId: randomUUID(), status: "waiting" }
-      : undefined;
+    let clientInfo: { path: string; dispose: () => void } | undefined;
+    const pending: NonNullable<GrokSidebar["mcpRemoteAuthorization"]> = { id, attemptId: randomUUID(), status: "waiting" };
     this.mcpRemoteAuthorization = pending;
     this.postMcpConnectors();
     try {
+      const client = await authorizeMcpConnectorOAuth({
+        connector, endpoint, relayUrl: this.relayUrl(), secrets: this.context.secrets,
+        env: npx.env,
+        onAuthorization: async (url) => {
+          if (this.mcpRemoteAuthorization !== pending) return;
+          pending.url = url;
+          this.postMcpConnectors();
+          if (!opts.remote) await this.host.openExternal(url);
+        },
+      });
+      clientInfo = writeOAuthClientInfoFile(client);
       if (connector.oauthScope?.trim()) {
         metadata = writeOAuthClientMetadataFile(connector.oauthScope.trim());
       }
       const result = await authorizeMcpRemote({
         spawn,
         command: npx.command,
-        args: mcpRemoteArgs(endpoint, undefined, metadata?.path),
+        args: mcpRemoteArgs(endpoint, undefined, metadata?.path, undefined, clientInfo.path),
         shell: npx.shell,
         env: npx.env,
-        onAuthorization: pending ? (url, complete) => {
-          if (this.mcpRemoteAuthorization !== pending) return;
-          pending.url = url;
-          pending.complete = complete;
-          this.postMcpConnectors();
-        } : undefined,
+        headless: true,
       });
       if (this.mcpConnectingId !== id || this.mcpRemoteAuthorization !== pending) return;
       if (!result.ok) {
@@ -11708,44 +11733,17 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       this.mcpConnectError = { id, message: (error as Error).message || "Could not connect." };
     } finally {
       try { metadata?.dispose(); } catch { /* best-effort */ }
+      clientInfo?.dispose();
       if (this.mcpRemoteAuthorization === pending) {
-        if (pending) {
-          this.mcpRemoteAuthorization = undefined;
-          this.post({
-            type: "mcpConnectorAuthorization", id, attemptId: pending.attemptId, status: "finished",
-          });
-        }
+        this.mcpRemoteAuthorization = undefined;
+        const finished = {
+          type: "mcpConnectorAuthorization", id, attemptId: pending.attemptId, status: "finished",
+        } as const;
+        this.post(finished);
+        void this.settingsEditor?.webview.postMessage(finished);
         if (this.mcpConnectingId === id) this.mcpConnectingId = undefined;
         this.postMcpConnectors();
       }
-    }
-  }
-
-  private async completeMcpConnectorOAuth(
-    msg: Extract<WebviewMsg, { type: "completeMcpConnectorOAuth" }>,
-    clientId: string,
-  ): Promise<void> {
-    const pending = this.mcpRemoteAuthorization;
-    if (!pending?.complete || pending.id !== msg.id || pending.attemptId !== msg.attemptId) {
-      this.deliverRemote([clientId], {
-        type: "mcpConnectorAuthorization", id: msg.id, attemptId: msg.attemptId, status: "finished",
-        error: "This sign-in expired or was replaced. Connect again to get a new link.",
-      });
-      return;
-    }
-    try {
-      await pending.complete(msg.redirectUrl);
-      if (this.mcpRemoteAuthorization !== pending || !pending.complete) return;
-      pending.status = "submitted";
-      this.post({
-        type: "mcpConnectorAuthorization", id: pending.id, attemptId: pending.attemptId, status: "submitted",
-      });
-    } catch (error) {
-      if (this.mcpRemoteAuthorization !== pending || !pending.complete) return;
-      this.deliverRemote([clientId], {
-        type: "mcpConnectorAuthorization", id: pending.id, attemptId: pending.attemptId, status: "waiting",
-        url: pending.url, error: (error as Error).message,
-      });
     }
   }
 
@@ -15492,18 +15490,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         toggleDevTools: this.host.canToggleDevTools,
         // OPT-IN: absent/false hides Settings → Connectors.
         //
-        // A cloud environment used to withhold this, because connecting is a
-        // browser OAuth flow at the VENDOR and a hosted machine has no browser
-        // — nor, unlike a desk, any computer to walk over to. That comment named
-        // its own expiry: "until a connector offers a device-code flow". The
-        // remote-connect path is that, near enough. The consent link is
-        // delivered to the requesting client, the person approves it in the
-        // browser they are already holding, and the callback address is pasted
-        // back for the host to replay against its own loopback listener.
-        //
-        // So the capability now follows the host, not the estate. On a cloud
-        // machine the remote is the ONLY surface, which makes this the one place
-        // the feature is load-bearing rather than a convenience.
+        // OAuth consent happens in the requesting device's browser; the relay
+        // callback delivers its code to this host, including cloud machines.
         ...(this.host.canShowMcpSettings ? { mcpSettings: true } : {}),
         // Sign OUT from a remote, cloud only. See HostUiCapabilities and the
         // CLOUD_DISPOSITION override in remote-policy.ts, which is the half that

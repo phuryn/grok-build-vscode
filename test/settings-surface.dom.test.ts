@@ -1,5 +1,5 @@
 // Shared settings surface: overlay in chat.js + the catalog in media/settings.js.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { Window } from "happy-dom";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
@@ -887,7 +887,7 @@ describe("settings overlay (chat.js)", () => {
     expect(overlay.innerHTML).not.toContain("ghp_remote_write_only");
   });
 
-  it("a capable remote opens its consent link and posts the failed address for manual completion", () => {
+  it.each([false, true])("a remote Connect tap opens consent automatically with a link fallback (popup blocked=%s)", (blocked) => {
     const h = bootWebview({ remote: true });
     seedChat(h, { capabilities: { mcpSettings: true } });
     const row = { id: "notion", name: "Notion", description: "Pages.", auth: "oauth", status: "idle", connected: false };
@@ -895,41 +895,31 @@ describe("settings overlay (chat.js)", () => {
     openSettings(h);
     clickSettingsNav(h, "Connectors");
     const overlay = h.doc.getElementById("settings-overlay")!;
+    const tab = { opener: {}, document: { title: "", body: { textContent: "" } }, location: { replace: vi.fn() }, close: vi.fn() };
+    const open = vi.fn().mockReturnValue(blocked ? null : tab);
+    h.window.open = open;
     click(h.window, overlay.querySelector(".settings-connector-action")!);
     expect(h.posted).toContainEqual({ type: "connectMcpConnector", id: "notion" });
+    expect(open).toHaveBeenCalledOnce();
+    expect(open).toHaveBeenCalledWith("", "_blank");
     const consent = { type: "mcpConnectorAuthorization", id: "notion", attemptId: "attempt-1", status: "waiting", url: "https://vendor.example/authorize?state=test" };
     dispatch(h.window, consent);
+    if (!blocked) {
+      expect(tab.opener).toBeNull();
+      expect(tab.location.replace).toHaveBeenCalledOnce();
+      expect(tab.location.replace).toHaveBeenCalledWith(consent.url);
+    }
+    dispatch(h.window, consent);
+    expect(open).toHaveBeenCalledOnce();
     const link = overlay.querySelector(".settings-connector-oauth-link") as HTMLAnchorElement;
     expect(link.href).toBe(consent.url);
     expect(link.target).toBe("_blank");
     expect(link.rel).toContain("noopener");
-    expect(overlay.textContent).toMatch(/probably fail to load/);
-    // The consent link is the FIRST thing to act on, and it did not read that
-    // way when it was link-coloured prose sitting beside a paste box — the box
-    // looked like the control and the link went unclicked. Pin both halves of
-    // the remedy: it is a primary button, and the steps are numbered in order.
     expect(link.className).toContain("is-primary");
-    const steps = [...overlay.querySelectorAll(".settings-connector-oauth-step")]
-      .map((el) => el.textContent);
-    expect(steps).toEqual(["Step 1", "Step 2"]);
-    const form = link.closest(".settings-connector-oauth")!;
-    const order = [...form.querySelectorAll(".settings-connector-oauth-step, .settings-connector-oauth-link, .settings-connector-oauth-input")]
-      .map((el) => el.className.split(" ").pop());
-    expect(order).toEqual([
-      "settings-connector-oauth-step",
-      "settings-connector-oauth-link",
-      "settings-connector-oauth-step",
-      "settings-connector-oauth-input",
-    ]);
-    const input = overlay.querySelector(".settings-connector-oauth-input") as HTMLInputElement;
-    input.value = "http://localhost:22227/oauth/callback?code=abc&state=test";
-    click(h.window, overlay.querySelector(".settings-connector-oauth-submit")!);
-    expect(h.posted).toContainEqual({ type: "completeMcpConnectorOAuth", id: "notion", attemptId: "attempt-1", redirectUrl: "http://localhost:22227/oauth/callback?code=abc&state=test" });
-    expect(input.value).toBe("");
-    expect(overlay.textContent).toMatch(/Completing sign-in/);
-    dispatch(h.window, { ...consent, error: "Use the current sign-in link (state does not match)." });
-    expect(overlay.textContent).toMatch(/state does not match/);
-    expect(overlay.querySelector(".settings-connector-oauth-input")).toBeTruthy();
+    expect(overlay.textContent).toContain("Connection completes automatically");
+    expect(overlay.querySelector(".settings-connector-oauth-input")).toBeNull();
+    expect(overlay.querySelector(".settings-connector-oauth-submit")).toBeNull();
+    expect(overlay.querySelector(".settings-connector-oauth-step")).toBeNull();
     dispatch(h.window, { ...consent, status: "finished", url: undefined });
     expect(overlay.querySelector(".settings-connector-oauth")).toBeNull();
     // Switching back to a host that lacks the field must drop the capability.
@@ -948,18 +938,13 @@ describe("settings overlay (chat.js)", () => {
     clickSettingsNav(h, "Connectors");
     const overlay = h.doc.getElementById("settings-overlay")!;
     expect(h.posted).not.toContainEqual({ type: "connectMcpConnector", id: "notion" });
-    expect([...overlay.querySelectorAll(".settings-connector-oauth-step")].map((el) => el.textContent)).toEqual(["Step 1", "Step 2"]);
+    expect(overlay.querySelector(".settings-connector-oauth-step")).toBeNull();
     expect((overlay.querySelector(".settings-connector-oauth-link") as HTMLAnchorElement).href).toBe(consent.url);
-    const input = overlay.querySelector(".settings-connector-oauth-input") as HTMLInputElement;
-    input.value = "http://localhost:22227/oauth/callback?code=abc&state=live";
-    click(h.window, overlay.querySelector(".settings-connector-oauth-submit")!);
-    expect(h.posted).toContainEqual({ type: "completeMcpConnectorOAuth", id: "notion", attemptId: "live-attempt", redirectUrl: "http://localhost:22227/oauth/callback?code=abc&state=live" });
-    dispatch(h.window, consent);
     const restart = overlay.querySelector(".settings-connector-action") as HTMLButtonElement;
-    expect(restart.textContent).toBe("Connect again");
-    expect(restart.disabled).toBe(false);
+    expect(restart.textContent).toBe("Connecting…");
+    expect(restart.disabled).toBe(true);
     click(h.window, restart);
-    expect(h.posted).toContainEqual({ type: "connectMcpConnector", id: "notion" });
+    expect(h.posted).not.toContainEqual({ type: "connectMcpConnector", id: "notion" });
     expect(h.posted).not.toContainEqual({ type: "disconnectMcpConnector", id: "notion" });
     dispatch(h.window, { ...consent, attemptId: "new-attempt", url: "https://vendor.example/authorize?state=new" });
     dispatch(h.window, { ...consent, status: "finished", error: "This sign-in expired or was replaced." });

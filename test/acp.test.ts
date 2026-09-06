@@ -257,6 +257,35 @@ describe("AcpClient session/info", () => {
 });
 
 describe("AcpClient session mcpServers", () => {
+  it.each([undefined, new CodexBackend(), new ClaudeBackend()])("retains private MCP files through session startup and disposes them with the CLI (%s)", async (backend) => {
+    const { client, written } = clientWithFakeProc({ backend });
+    const cleanup = vi.fn();
+    (client as any).opts.mcpServers = (onDispose) => { onDispose(cleanup); return []; };
+    replyToWrites(client, written, () => ({ sessionId: "s1" }));
+    await client.newSession();
+    await client.loadSession("s1");
+    expect(cleanup).not.toHaveBeenCalled();
+    await client.dispose();
+    await client.dispose();
+    expect(cleanup).toHaveBeenCalledOnce();
+  });
+
+  it("cleans files supplied by an async secret read that finishes after CLI disposal", async () => {
+    const { client } = clientWithFakeProc();
+    let finish!: () => void;
+    const cleanup = vi.fn();
+    (client as any).opts.mcpServers = async (onDispose) => {
+      await new Promise<void>((resolve) => { finish = resolve; });
+      onDispose(cleanup);
+      return [];
+    };
+    const servers = (client as any).mcpServersForSession();
+    await client.dispose();
+    finish();
+    await servers;
+    expect(cleanup).toHaveBeenCalledOnce();
+  });
+
   it("sends the host-owned list on session/new and session/load", async () => {
     const servers = [{ name: "linear", command: "npx", args: ["-y", MCP_REMOTE_PACKAGE, "https://mcp.linear.app/mcp"] }];
     const { client, written } = clientWithFakeProc();

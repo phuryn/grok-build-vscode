@@ -79,6 +79,7 @@ export const MCP_REMOTE_NAME = "mcp-remote";
 
 /** mcp-remote flag. Value is `@<absolute path>` to a JSON file we write (not inline JSON — Windows Connect uses `shell: true`). */
 export const STATIC_OAUTH_CLIENT_METADATA_FLAG = "--static-oauth-client-metadata";
+export const STATIC_OAUTH_CLIENT_INFO_FLAG = "--static-oauth-client-info";
 
 /** mcp-remote `--header`. Value is `Name:${ENV}` (no spaces) so the secret stays in env. */
 export const MCP_REMOTE_HEADER_FLAG = "--header";
@@ -428,11 +429,13 @@ export function mcpRemoteArgs(
   callbackPort?: number,
   oauthClientMetadataPath?: string,
   headers?: McpRemoteHeaderOpts,
+  oauthClientInfoPath?: string,
 ): string[] {
   const args = ["-y", MCP_REMOTE_PACKAGE, endpoint];
   if (callbackPort != null && isUsableListenPort(callbackPort)) args.push(String(callbackPort));
   args.push(...mcpRemoteHeaderArgs(headers));
   if (oauthClientMetadataPath) args.push(...mcpRemoteOAuthClientMetadataArgs(oauthClientMetadataPath));
+  if (oauthClientInfoPath) args.push(STATIC_OAUTH_CLIENT_INFO_FLAG, `@${oauthClientInfoPath}`);
   return args;
 }
 

@@ -450,7 +450,6 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
   // OAuth is completed manually against the host's own callback listener.
   connectMcpConnector: "full",
   disconnectMcpConnector: "full",
-  completeMcpConnectorOAuth: "full",
   showLogs: "host-local",
   toggleDevTools: "host-local",
   openSettings: "host-local",
@@ -603,7 +602,6 @@ export const REMOTE_REQUIRES_BOUND_SESSION: Record<WebviewMsg["type"], boolean> 
   runRoutineNow: false,
   connectMcpConnector: false,
   disconnectMcpConnector: false,
-  completeMcpConnectorOAuth: false,
   showLogs: false,
   toggleDevTools: false,
   openSettings: false,

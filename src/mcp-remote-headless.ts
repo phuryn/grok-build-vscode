@@ -1,7 +1,8 @@
-/** NODE_OPTIONS preload for the remote-only, one-shot mcp-remote process.
+/** NODE_OPTIONS guard for the one-shot probe after host-owned OAuth.
  * The pinned package bundles `open` and has no headless flag. Its only spawn
  * is the browser launcher. Leave npx (which inherits this preload) untouched.
- * Do not apply this to session proxies or local Connect.
+ * Seeded tokens should make browser launch unreachable. Keep this guard so an
+ * unexpected auth failure cannot open a loopback flow behind the user's back.
  */
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

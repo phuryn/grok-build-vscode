@@ -193,10 +193,6 @@ function parseRemoteWebviewMsg(msg: unknown): WebviewMsg | null {
   const value = msg as Record<string, unknown>;
   if (typeof value.type !== "string" || !WEBVIEW_TYPE_SET.has(value.type)) return null;
   switch (value.type) {
-    case "completeMcpConnectorOAuth":
-      if (typeof value.id !== "string" || typeof value.attemptId !== "string"
-        || typeof value.redirectUrl !== "string") return null;
-      return { type: "completeMcpConnectorOAuth", id: value.id, attemptId: value.attemptId, redirectUrl: value.redirectUrl };
     case "connectMcpConnector":
       if (typeof value.id !== "string" || (value.key !== undefined && typeof value.key !== "string")
         || (value.readOnly !== undefined && typeof value.readOnly !== "boolean")) return null;
