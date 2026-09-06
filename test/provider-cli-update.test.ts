@@ -56,7 +56,10 @@ function harness(provider: "codex" | "claude") {
       isActiveValueVisible: (s: Session) => s === phone },
     post: vi.fn(), emit: vi.fn(), setStatus: vi.fn(),
     settingsEditor: { webview: { postMessage: vi.fn() } },
-    startSession: vi.fn(async () => undefined),
+    // A resolved client means the conversation reopened. Returning undefined
+    // unconditionally (as this fake used to) models a FAILED resume, which is
+    // the state the update path must not report as success.
+    startSession: vi.fn(async () => ({}) as unknown),
   });
   exec.mockImplementation(async (_path, args) => ({
     stdout: args[0] === "--version" ? `${provider} ${CODEX_MANAGED_VERSION}` : "arbitrary updater output",
@@ -111,6 +114,20 @@ describe.each(["codex", "claude"] as const)("%s explicit CLI update", (provider)
     expect(host.providerCliUpdates[provider]).toMatchObject({ status: "failed", message: expect.stringContaining("code 7") });
     expect(exec.mock.calls.map((c) => c[1])).toEqual([["update"], ["--version"]]);
     expect(host.startSession).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not claim success when the conversation it reopened failed to start", async () => {
+    // startSessionBody reports its own failure into the conversation and returns
+    // undefined rather than throwing. The owner saw the result of trusting that:
+    // "Update completed - Codex CLI v0.153.4" on the row, and a red "Failed to
+    // start Codex: Internal error" in the conversation underneath it.
+    const { host } = harness(provider);
+    host.startSession = vi.fn(async () => undefined);
+    await host.updateProviderCliOnDemand(provider);
+    expect(host.startSession).toHaveBeenCalled();
+    expect(host.providerCliUpdates[provider]).toMatchObject({
+      status: "failed", message: expect.stringContaining("could not be reopened"),
+    });
   });
 
   it("reports an unverifiable version instead of repeating the old observed version", async () => {

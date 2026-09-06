@@ -8875,7 +8875,17 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         // sessions keep their ids and load on their next send/focus.
         if (session === this.focused || this.remoteClients.isActiveValueVisible(session)) {
           try {
-            await this.startSession(session.activeSessionId, session, "ensure");
+            // startSessionBody reports its OWN failure into the conversation and
+            // returns undefined rather than throwing, so this catch never sees
+            // the ordinary case and undefined is the only signal there is.
+            // Without checking it the row said "Update completed - Codex CLI
+            // v0.153.4" while the conversation it had just reopened showed a red
+            // "Failed to start Codex", which is the update telling the person
+            // the opposite of what they are looking at (owner, 2026-09-06).
+            const resumed = await this.startSession(session.activeSessionId, session, "ensure");
+            if (!resumed) {
+              status("failed", `${name} updated, but this conversation could not be reopened. Start a new conversation.`);
+            }
           } catch (error) {
             status("failed", `${name} update finished, but the conversation could not resume: ${errorDetail(error)}`);
           }
