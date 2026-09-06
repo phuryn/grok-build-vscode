@@ -481,8 +481,28 @@
           + "Runs its updater on the connected machine. This stops this provider’s "
           + "running sessions, then resumes visible conversations.";
       },
-      // Presence advertises support: older remote hosts cannot handle these.
-      visible: (s) => !!(entry(s) && entry(s).cliUpdate),
+      // Only when there is something to take. Offering to update software that
+      // is already current is noise, and this particular offer costs minutes
+      // and stops your running sessions -- so for Codex, whose current version
+      // this app pins and can compare against, a CLI that is up to date shows
+      // no row at all. Claude publishes no version to check, so its row stays:
+      // running the updater unprompted is the only path there, and the row
+      // claims an update exists no more than the button's label does.
+      //
+      // A running update keeps its row so it cannot vanish mid-operation, and
+      // a failed one keeps it so the retry is where the failure is. A SUCCEEDED
+      // one does not: the version is current now, so the offer goes and the
+      // separate status row carries "Update completed" until the next
+      // conversation clears it.
+      //
+      // The `cliUpdate` test underneath all of this also advertises support:
+      // older remote hosts cannot do any of it.
+      visible: (s) => {
+        const p = entry(s) || {};
+        if (!p.cliUpdate) return false;
+        if (p.cliUpdate.status === "running" || p.cliUpdate.status === "failed") return true;
+        return provider === "claude" || !!p.updateAvailable;
+      },
       enabled: (s) => !(s.providers || []).some((p) => p.cliUpdate && p.cliUpdate.status === "running"),
       message: () => ({ type: "update" + suffix }),
     }, {

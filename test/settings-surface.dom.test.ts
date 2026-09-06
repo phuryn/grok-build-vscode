@@ -1846,7 +1846,8 @@ function mountAt(category: string, opts: {
 
 describe("CLI update actions", () => {
   const providers = [
-    { id: "codex", connected: true, cliVersion: "0.149.0", cliUpdate: { status: "idle" } },
+    { id: "codex", connected: true, cliVersion: "0.149.0", latestCliVersion: "0.153.4",
+      updateAvailable: true, cliUpdate: { status: "idle" } },
     { id: "claude", connected: true, cliVersion: "2.1.0", cliUpdate: { status: "idle" } },
   ];
 
@@ -1885,6 +1886,41 @@ describe("CLI update actions", () => {
     const claude = h.root.querySelector('[data-id="aboutUpdateClaude"]')?.textContent || "";
     expect(claude).toContain("v2.1.0");
     expect(claude).not.toContain("is available");
+  });
+
+  it("does not offer to update a Codex that is already current", () => {
+    // Reported from a phone: the page offered "Update Codex CLI" next to a
+    // Codex that had just been updated to the pinned version. The operation
+    // it offers stops your sessions for minutes, so an offer with nothing
+    // behind it is worse than silence.
+    const current = { id: "codex", connected: true, cliVersion: "0.153.4",
+      latestCliVersion: "0.153.4", updateAvailable: false, cliUpdate: { status: "idle" } };
+    const h = mountAt("providers", { snapshot: { providers: [current] } });
+    expect(h.root.querySelector('[data-id="aboutUpdateCodex"]')).toBeNull();
+
+    // The outcome of the update that made it current still shows, on its own
+    // row -- what goes away is the offer, not the answer.
+    h.surface.update({ providers: [{ ...current,
+      cliUpdate: { status: "succeeded", message: "Update completed · Codex CLI v0.153.4" } }] });
+    expect(h.root.querySelector('[data-id="aboutUpdateCodex"]')).toBeNull();
+    expect(h.root.textContent).toContain("Update completed · Codex CLI v0.153.4");
+
+    // A failure keeps the retry where the failure is.
+    h.surface.update({ providers: [{ ...current,
+      cliUpdate: { status: "failed", message: "Update failed: permission denied" } }] });
+    expect(h.root.querySelector('[data-id="aboutUpdateCodex"] button')).toBeTruthy();
+  });
+
+  it("keeps Claude's row, because there is no published version to check it against", () => {
+    // The host sends latestCliVersion for Codex only. Hiding Claude's row on
+    // the same rule would hide it always, and running the updater unprompted
+    // is the only way to update Claude from here.
+    const h = mountAt("providers", { snapshot: { providers: [
+      { id: "claude", connected: true, cliVersion: "2.1.263", cliUpdate: { status: "idle" } },
+    ] } });
+    const claude = h.root.querySelector('[data-id="aboutUpdateClaude"]');
+    expect(claude?.textContent).toContain("v2.1.263");
+    expect(claude?.textContent).not.toContain("is available");
   });
 
   it.each([false, true])("hides absent providers and unsupported old hosts (remote=%s)", (isRemote) => {
