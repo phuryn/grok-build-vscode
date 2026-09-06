@@ -22,6 +22,15 @@ export interface ProviderModelCacheEntry {
   models: ModelInfo[];
   currentModelId?: string;
   seenAt: number;
+  /**
+   * The CLI version this catalog was read from, when it was known.
+   *
+   * The catalog is whatever the agent's CLI advertises, so a CLI update can
+   * add or remove models — and this cache is persisted, so without a stamp to
+   * compare against, nothing ever re-read it. Absent on entries written before
+   * this existed, which is treated as "unknown" and re-read once.
+   */
+  cliVersion?: string;
 }
 
 export type ProviderModelCache = Partial<Record<AcpProvider, ProviderModelCacheEntry>>;

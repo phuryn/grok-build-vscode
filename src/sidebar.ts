@@ -2391,7 +2391,15 @@ export class GrokSidebar {
     const clean = models.map(({ provider: _provider, defaultImplied: _default, ...model }: any) => model);
     const stored = this.state.update(PROVIDER_MODEL_CACHE_KEY, {
       ...current,
-      [provider]: { models: clean, currentModelId, seenAt: Date.now() },
+      [provider]: {
+        models: clean,
+        currentModelId,
+        seenAt: Date.now(),
+        // Stamp the CLI this catalog came from, so a later version change can
+        // be seen. Undefined when the probe has not answered yet, which reads
+        // as "unknown" and costs one re-read later — never a stale catalog.
+        cliVersion: this.providerCliVersions[provider],
+      },
     } satisfies ProviderModelCache);
     // The picker reads this cache, and an adapter's models arrive
     // ASYNCHRONOUSLY — the warm-up runs after the connect returns. Re-posting
@@ -8335,6 +8343,43 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     return this.grokVersionProbe;
   }
 
+  /**
+   * Re-read a provider's model catalog when its CLI changed under us.
+   *
+   * The catalog is the CLI's own answer (`model/list` for Codex), and this
+   * cache is persisted, so updating the CLI left the picker showing the old
+   * models indefinitely. The owner hit exactly that: Codex was updated on a
+   * cloud machine, a new model still did not appear, and the only remedy was
+   * disconnect → connect — which nobody would guess, because nothing about the
+   * picker suggests it is a cache.
+   *
+   * Keyed on the OBSERVED version rather than on an update we performed, so a
+   * CLI that updated itself, or one an agent or `npm` moved underneath us,
+   * counts the same. That matters here: the CLIs all self-update.
+   *
+   * ONE attempt per observed version, whatever the outcome — the stamp is
+   * written BEFORE the probe. A CLI that cannot answer must not re-probe on
+   * every activation for ever, which is the same trap the grok updater already
+   * documents.
+   */
+  private async refreshModelsIfCliChanged(provider: AcpProvider, version: string): Promise<void> {
+    if (!version) return;
+    const cache = this.state.get<ProviderModelCache>(PROVIDER_MODEL_CACHE_KEY, {});
+    const cached = cache[provider];
+    // Nothing cached yet: the ordinary warm-up owns that case and a re-probe
+    // here would only race it.
+    if (!cached) return;
+    if (cached.cliVersion === version) return;
+    await this.state.update(PROVIDER_MODEL_CACHE_KEY, {
+      ...cache,
+      [provider]: { ...cached, cliVersion: version },
+    } satisfies ProviderModelCache);
+    this.host.appendLine(
+      `[${provider}] CLI ${cached.cliVersion ?? "unknown"} -> ${version}; re-reading the model catalog`,
+    );
+    await this.reprobeProviderCredentials(provider);
+  }
+
   /** Read `codex --version` once per activation. The adapter handshake reports
    * its own package version, not the binary it launches. */
   private probeCodexVersion(): Promise<string> {
@@ -8351,6 +8396,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         if (!version) throw new Error("unrecognized version output");
         this.providerCliVersions.codex = version;
         this.postProviderState();
+        await this.refreshModelsIfCliChanged("codex", version);
         return version;
       } catch (error) {
         this.host.appendLine(`codex --version failed: ${(error as Error).message}`);
@@ -8377,6 +8423,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         if (!version) throw new Error("unrecognized version output");
         this.providerCliVersions.claude = version;
         this.postProviderState();
+        await this.refreshModelsIfCliChanged("claude", version);
         return version;
       } catch (error) {
         this.host.appendLine(`claude --version failed: ${(error as Error).message}`);
