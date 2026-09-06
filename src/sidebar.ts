@@ -15473,17 +15473,19 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         toggleDevTools: this.host.canToggleDevTools,
         // OPT-IN: absent/false hides Settings → Connectors.
         //
-        // A cloud environment withholds it. Connecting an MCP connector is a
-        // browser OAuth flow at the VENDOR, and there is no browser in a hosted
-        // machine — nor, unlike a desk, any computer to walk over to. Every
-        // other host-local capability re-homes to the remote client, which knows
-        // how to present a file or open a URL itself; this one genuinely cannot,
-        // until a connector offers a device-code flow.
+        // A cloud environment used to withhold this, because connecting is a
+        // browser OAuth flow at the VENDOR and a hosted machine has no browser
+        // — nor, unlike a desk, any computer to walk over to. That comment named
+        // its own expiry: "until a connector offers a device-code flow". The
+        // remote-connect path is that, near enough. The consent link is
+        // delivered to the requesting client, the person approves it in the
+        // browser they are already holding, and the callback address is pasted
+        // back for the host to replay against its own loopback listener.
         //
-        // Withheld rather than shown-and-disabled: a control that explains why
-        // it will not work is still a control that does not work, and the page
-        // behind it would list servers nobody can connect.
-        ...(this.host.canShowMcpSettings && !isCloudEnvironment() ? { mcpSettings: true } : {}),
+        // So the capability now follows the host, not the estate. On a cloud
+        // machine the remote is the ONLY surface, which makes this the one place
+        // the feature is load-bearing rather than a convenience.
+        ...(this.host.canShowMcpSettings ? { mcpSettings: true } : {}),
         // Sign OUT from a remote, cloud only. See HostUiCapabilities and the
         // CLOUD_DISPOSITION override in remote-policy.ts, which is the half that
         // actually admits the message — this flag only decides whether the page
