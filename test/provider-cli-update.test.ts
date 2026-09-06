@@ -96,7 +96,12 @@ describe.each(["codex", "claude"] as const)("%s explicit CLI update", (provider)
     expect(provider === "codex" ? warmCodexModelCache : warmClaudeModelCache).toHaveBeenCalledOnce();
     expect(other.client).toBe(untouched);
     expect(untouched!.disposeForUpdate).not.toHaveBeenCalled();
-    expect(host.startSession.mock.calls).toEqual([["local-thread", local, "ensure"], ["phone-thread", phone, "ensure"]]);
+    // silent: this resume is ours, not the person's -- its failure must reach
+    // the update row, never a red banner in a conversation they were reading.
+    expect(host.startSession.mock.calls).toEqual([
+      ["local-thread", local, "ensure", undefined, { silent: true }],
+      ["phone-thread", phone, "ensure", undefined, { silent: true }],
+    ]);
     expect(background.activeSessionId).toBe("background-thread");
     expect(host.pool.has(phone)).toBe(true);
     const frame = host.providerStateMessage();

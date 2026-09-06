@@ -8882,7 +8882,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
             // v0.153.4" while the conversation it had just reopened showed a red
             // "Failed to start Codex", which is the update telling the person
             // the opposite of what they are looking at (owner, 2026-09-06).
-            const resumed = await this.startSession(session.activeSessionId, session, "ensure");
+            const resumed = await this.startSession(session.activeSessionId, session, "ensure", undefined, { silent: true });
             if (!resumed) {
               status("failed", `${name} updated, but this conversation could not be reopened. Start a new conversation.`);
             }
@@ -9056,9 +9056,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     target: Session = this.focused,
     intent: SessionStartIntent = "replace",
     clock?: OpenClock,
+    opts: { silent?: boolean } = {},
   ): Promise<AcpClient | undefined> {
     if (this.providerCliUpdate?.provider === target.provider) await this.providerCliUpdate.done;
-    return this.runExclusiveSessionStart(target, () => this.startSessionBody(resumeId, target, intent, clock));
+    return this.runExclusiveSessionStart(target, () => this.startSessionBody(resumeId, target, intent, clock, opts));
   }
 
   private async startSessionBody(
@@ -9066,6 +9067,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     target: Session,
     intent: SessionStartIntent,
     startedClock?: OpenClock,
+    /** A start the PERSON did not ask for. Its failure belongs wherever the
+     *  caller is reporting, never as a red banner in a conversation they were
+     *  only looking at. The caller reads the undefined return instead. */
+    opts: { silent?: boolean } = {},
   ): Promise<AcpClient | undefined> {
     // Read the caller's clock BEFORE this function can add to it: the load
     // reservation, the workspace-switch queue, the cwd resolution, the
@@ -10153,6 +10158,14 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       this.pool.delete(session);
       session.priming = false;
       this.emit(session, { type: "setBusy", value: false });
+      // The owner pressed Update, and a red "Failed to start Codex" appeared in
+      // the conversation he was reading -- for a start he never made, about a
+      // resume we performed on his behalf (2026-09-06). Onboarding and busy
+      // state still flow; only the error TEXT is withheld, and the caller
+      // reports it where the action actually happened.
+      const emitError = (text: string) => {
+        if (!opts.silent) this.emit(session, { type: "error", text });
+      };
       // No `403`/`forbidden` here: the CLI deliberately does NOT map 403 to an
       // auth failure (entitlement/policy, which sign-in can't fix — #58); a
       // startup error carrying that wording surfaces as a plain error below.
@@ -10198,13 +10211,11 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         }
         // Pin unavailable, already attempted, or it didn't help — point the user at
         // the manual workaround instead of a bare timeout.
-        this.emit(session, {
-          type: "error",
-          text:
-            `Failed to start Grok: ${msg}. This matches the Grok CLI 0.2.61–0.2.70 stdio ` +
-            `regression (issue #22, fixed after 0.2.70). Workaround: run ` +
-            `\`grok update --version ${GROK_STDIO_DOWNGRADE_TARGET}\` in a terminal, then start a new session.`,
-        });
+        emitError(
+          `Failed to start Grok: ${msg}. This matches the Grok CLI 0.2.61–0.2.70 stdio ` +
+          `regression (issue #22, fixed after 0.2.70). Workaround: run ` +
+          `\`grok update --version ${GROK_STDIO_DOWNGRADE_TARGET}\` in a terminal, then start a new session.`,
+        );
       } else if (isResumeNotFound(err)) {
         // The person asked for a conversation and got the adapter's own words
         // plus a uuid: “Failed to start Claude: Resource not found:
@@ -10215,16 +10226,14 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         // anything AND a query that died mid-resume, so it names both
         // possibilities and offers the action that settles it, rather than
         // picking one and being wrong half the time.
-        this.emit(session, {
-          type: "error",
-          text:
-            `This conversation could not be opened. It may never have recorded `
-            + `anything, or ${providerDisplayName(session.provider)} may not have `
-            + `finished starting — try opening it again, and start a new `
-            + `conversation if it stays this way.`,
-        });
+        emitError(
+          `This conversation could not be opened. It may never have recorded `
+          + `anything, or ${providerDisplayName(session.provider)} may not have `
+          + `finished starting — try opening it again, and start a new `
+          + `conversation if it stays this way.`,
+        );
       } else {
-        this.emit(session, { type: "error", text: `Failed to start ${providerDisplayName(session.provider)}: ${msg}` });
+        emitError(`Failed to start ${providerDisplayName(session.provider)}: ${msg}`);
       }
       return undefined;
     }
