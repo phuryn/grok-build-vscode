@@ -1,6 +1,6 @@
 # Changelog
 
-## 4.2.0 — 2026-09-06
+## 4.2.0 — 2026-09-07
 
 **Keep an agent's CLI current without leaving the app, and connect an app from your phone.** Two things that used to need a terminal — updating the CLI an agent runs on, and finishing a connector's sign-in — now work from wherever you are, including a cloud machine where there is no terminal to reach.
 
