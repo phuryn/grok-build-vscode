@@ -9622,6 +9622,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       if (!payload) return;
       if (payload.event === "toolCall" || payload.event === "toolCallUpdate") {
         const prepared = prepareMcpToolCall(payload.call, mcpState);
+        if (prepared.action === "drop") {
+          if (prepared.logLine) this.host.appendLine(prepared.logLine);
+          return;
+        }
         this.emit(session, { type: "childStream", ...payload, call: prepared.call });
         return;
       }
@@ -9672,6 +9676,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     };
     const emitToolCallEvent = (type: "toolCall" | "toolCallUpdate", u: unknown) => {
       const prepared = prepareMcpToolCall(u, mcpState);
+      if (prepared.action === "drop") {
+        if (prepared.logLine) this.host.appendLine(prepared.logLine);
+        return;
+      }
       session.inUserMessage = false;
       session.historyEventCount += 1;
       this.emit(session, { type, call: prepared.call });

@@ -83,9 +83,9 @@ dropping OUT so a failed call looks like a call that returned nothing).
 Also observed: a `mcp__everything__startup` row with `status:"failed"` and
 `"[codex-acp forwarded startup error] MCP server \`everything\` startup was
 cancelled."` — emitted even though the subsequent call succeeded. The host
-emits every `mcp__<server>__startup` row (including this cancelled one) so a
-genuine misconfigured/unreachable server cannot vanish; the failed status and
-error text stay on the row.
+drops every `mcp__<server>__startup` row for its whole lifecycle, remembering
+the id for updates without the title. Failed startups write the server name
+and forwarded text to the host log; successful and running startups stay silent.
 
 ## claude
 

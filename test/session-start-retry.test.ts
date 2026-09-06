@@ -22,7 +22,7 @@ vi.mock("../src/acp", async (importOriginal) => {
   const { EventEmitter } = await import("node:events");
   const actual = await importOriginal<typeof import("../src/acp")>();
   class FakeAcpClient extends EventEmitter {
-    provider = "grok" as const;
+    provider: "grok" | "codex";
     usesClientPlanGate = false;
     sessionId: string | undefined;
     availableModels: { modelId: string; name: string }[] = [];
@@ -30,8 +30,9 @@ vi.mock("../src/acp", async (importOriginal) => {
     fsRead?: unknown;
     fsWrite?: unknown;
     terminal?: unknown;
-    constructor(_opts: { log: (msg: string) => void }) {
+    constructor(opts: { log: (msg: string) => void; backend?: { provider: "grok" | "codex" } }) {
       super();
+      this.provider = opts.backend?.provider ?? "grok";
     }
     async start(): Promise<void> {
       startControl.starts += 1;
@@ -305,6 +306,54 @@ describe("startSession bounded spawn retry", () => {
     expect(sidebar.rememberProjectProvider).toHaveBeenCalled();
     expect(client).toBeUndefined();
     expect(startControl.starts).toBe(0);
+  });
+
+  it.each([false, true])("drops Codex startup events without transcript side effects (child: %s)", async (child) => {
+    const sidebar = makeSidebar("/repo");
+    const session = sidebar.focused as Session;
+    session.provider = "codex";
+    sidebar.providerConnectionState = { grok: false, codex: true };
+    sidebar.connectedProviders = vi.fn(() => ["codex"]);
+    const client = await sidebar.startSession(undefined, session);
+    expect(client).toBeDefined();
+    expect(startErrors(sidebar)).toEqual([]);
+    session.replaying = true;
+    session.inUserMessage = true;
+    const countBefore = session.historyEventCount;
+    const bufferBefore = [...session.buffer];
+    const postedBefore = [...sidebar.posted];
+    sidebar.host.appendLine.mockClear();
+    const compactSignal = vi.spyOn(sidebar, "noteAdapterCompactSignal");
+    const send = (event: "toolCall" | "toolCallUpdate", call: unknown) => {
+      if (child) client.emit("childStream", { childSessionId: "child-1", route: { event, payload: call } });
+      else client.emit(event, call);
+    };
+    send("toolCall", {
+      toolCallId: "startup-1", title: "mcp__canva__startup", status: "in_progress",
+      rawInput: { command: "connect canva" },
+    });
+    expect(sidebar.host.appendLine).not.toHaveBeenCalled();
+    const forwarded = "[codex-acp forwarded startup error] MCP server `canva` startup was cancelled.";
+    send("toolCallUpdate", {
+      toolCallId: "startup-1", status: "failed",
+      rawOutput: forwarded,
+      content: [{ type: "content", content: { type: "text", text: forwarded } }],
+    });
+    expect(sidebar.host.appendLine).toHaveBeenCalledTimes(1);
+    expect(sidebar.host.appendLine).toHaveBeenCalledWith(`[mcp] canva startup failed: ${forwarded}`);
+    expect(session.historyEventCount).toBe(countBefore);
+    expect(session.inUserMessage).toBe(true);
+    expect(session.buffer).toEqual(bufferBefore);
+    expect(sidebar.posted).toEqual(postedBefore);
+    expect(compactSignal).not.toHaveBeenCalled();
+
+    send("toolCall", {
+      toolCallId: "real-1", title: "mcp__canva__list_designs", status: "in_progress", rawInput: {},
+    });
+    expect(session.historyEventCount).toBe(countBefore + (child ? 0 : 1));
+    expect(sidebar.posted.at(-1)).toMatchObject({
+      type: child ? "childStream" : "toolCall", call: { toolCallId: "real-1" },
+    });
   });
 
   it("emits onboarding on the first credential failure and does not retry", async () => {

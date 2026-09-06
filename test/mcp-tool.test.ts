@@ -518,6 +518,7 @@ describe("prepareMcpToolCall", () => {
     const state = createMcpPrepareState();
     const first = prepareMcpToolCall(grokSearch, state);
     expect(first.action).toBe("emit");
+    if (first.action !== "emit") return;
     expect(first.call).toMatchObject({
       toolCallId: "call-search-0",
       title: "search_tool",
@@ -525,23 +526,26 @@ describe("prepareMcpToolCall", () => {
     });
     expect(first.call).not.toHaveProperty("detailInput");
     expect(first.commandOutput).toBeNull();
-    expect(prepareMcpToolCall(grokSearchUpdate, state).call.kind).toBe(MCP_MACHINERY_KIND);
     const nameless = { sessionUpdate: "tool_call_update", toolCallId: "call-search-0", status: "completed" };
-    expect(prepareMcpToolCall(nameless, state).call.kind).toBe(MCP_MACHINERY_KIND);
-    expect(prepareMcpToolCall(grokSearchDone, state).call.kind).toBe(MCP_MACHINERY_KIND);
+    for (const update of [grokSearchUpdate, nameless, grokSearchDone]) {
+      expect(prepareMcpToolCall(update, state)).toMatchObject({
+        action: "emit", call: { kind: MCP_MACHINERY_KIND }, commandOutput: null,
+      });
+    }
   });
 
-  it("emits a cancelled Codex startup as a folded row and still emits the real call", () => {
+  it.each(["pending", "in_progress", "completed"])("drops a Codex startup tool_call with status %s", (status) => {
+    expect(prepareMcpToolCall({ ...codexStartup, status, content: [] }, createMcpPrepareState()))
+      .toEqual({ action: "drop" });
+  });
+
+  it("drops a cancelled Codex startup and still emits the real call", () => {
     const state = createMcpPrepareState();
     const startup = prepareMcpToolCall(codexStartup, state);
-    expect(startup.action).toBe("emit");
-    expect(startup.call).toMatchObject({
-      toolCallId: "mcp_startup.everything",
-      title: "mcp__everything__startup",
-      kind: "other",
-      status: "failed",
+    expect(startup).toEqual({
+      action: "drop",
+      logLine: `[mcp] everything startup failed: ${codexStartup.content[0].content.text}`,
     });
-    expect(startup.call.content).toEqual(codexStartup.content);
     const first = prepareMcpToolCall(codexCall, state);
     expect(first.action).toBe("emit");
     if (first.action !== "emit") return;
@@ -561,21 +565,62 @@ describe("prepareMcpToolCall", () => {
     });
   });
 
-  it("emits a genuine Codex MCP startup failure so the user can still reach it", () => {
+  it.each([undefined, "Connecting to Canva"])("drops later updates with title %s and remembers the server for the host log", (title) => {
+    const state = createMcpPrepareState();
+    expect(prepareMcpToolCall({
+      ...codexStartupBroken, toolCallId: "startup-1", status: "in_progress", content: [],
+    }, state)).toEqual({ action: "drop" });
+    for (const status of ["in_progress", "completed"]) {
+      expect(prepareMcpToolCall({
+        sessionUpdate: "tool_call_update", toolCallId: "startup-1", title, status,
+      }, state)).toEqual({ action: "drop" });
+    }
+    expect(prepareMcpToolCall({
+      sessionUpdate: "tool_call_update", toolCallId: "startup-1", title, status: "failed",
+      content: codexStartupBroken.content,
+    }, state)).toEqual({
+      action: "drop",
+      logLine: `[mcp] canva startup failed: ${codexStartupBroken.content[0].content.text}`,
+    });
+  });
+
+  it("drops a genuine Codex MCP startup failure and returns its diagnostic for the host log", () => {
     const state = createMcpPrepareState();
     const prepared = prepareMcpToolCall(codexStartupBroken, state);
-    expect(prepared.action).toBe("emit");
-    expect(prepared.call.status).toBe("failed");
-    expect(prepared.call.title).toBe("mcp__canva__startup");
-    expect(prepared.call.kind).toBe("other");
-    expect(JSON.stringify(prepared.call.content)).toContain("ECONNREFUSED");
-    expect(prepared.commandOutput).toBeNull();
+    expect(prepared).toEqual({
+      action: "drop",
+      logLine: `[mcp] canva startup failed: ${codexStartupBroken.content[0].content.text}`,
+    });
+  });
+
+  it("keeps forwarded failure text on one host-log line", () => {
+    expect(prepareMcpToolCall({
+      ...codexStartupBroken,
+      content: [
+        { type: "content", content: { type: "text", text: "Failed to connect.\r\nECONNREFUSED" } },
+        { type: "content", content: { type: "text", text: "Retry cancelled." } },
+      ],
+    }, createMcpPrepareState())).toEqual({
+      action: "drop", logLine: "[mcp] canva startup failed: Failed to connect. ECONNREFUSED Retry cancelled.",
+    });
+  });
+
+  it("still emits an mcp__server__tool invocation and respects explicit invocation metadata", () => {
+    for (const call of [
+      { toolCallId: "real-1", title: "mcp__canva__list_designs", rawInput: {} },
+      { ...claudePending, title: "mcp__everything__startup", _meta: { claudeCode: { toolName: "mcp__everything__startup" } } },
+      { ...grokUse, title: "mcp__everything__startup" },
+    ]) {
+      expect(prepareMcpToolCall(call, createMcpPrepareState())).toMatchObject({
+        action: "emit", call: { title: call.title },
+      });
+    }
   });
 
   it("emits Claude string rawOutput once from the completed update, not from toolResponse", () => {
     const state = createMcpPrepareState();
-    expect(prepareMcpToolCall(claudePending, state).commandOutput).toBeNull();
-    expect(prepareMcpToolCall(claudeArgs, state).commandOutput).toBeNull();
+    expect(prepareMcpToolCall(claudePending, state)).toMatchObject({ action: "emit", commandOutput: null });
+    expect(prepareMcpToolCall(claudeArgs, state)).toMatchObject({ action: "emit", commandOutput: null });
     const preview = prepareMcpToolCall({
       ...claudeArgs,
       _meta: {
@@ -745,7 +790,7 @@ describe("zero-argument MCP keeps IN and OUT", () => {
 
     const codexState = createMcpPrepareState();
     expect(extractMcpInput(emptyCodex)).toBe(EMPTY_MCP_ARGS);
-    expect(prepareMcpToolCall(emptyCodex, codexState).commandOutput).toBeNull();
+    expect(prepareMcpToolCall(emptyCodex, codexState)).toMatchObject({ action: "emit", commandOutput: null });
     const codexDonePrep = prepareMcpToolCall(emptyCodexDone, codexState);
     expect(codexDonePrep.action).toBe("emit");
     if (codexDonePrep.action !== "emit") return;
@@ -779,8 +824,8 @@ describe("same-argument MCP calls stay correlated by toolCallId", () => {
     const state = createMcpPrepareState();
     const a = { ...codexCall, toolCallId: "exec-mcp-a" };
     const b = { ...codexCall, toolCallId: "exec-mcp-b" };
-    expect(prepareMcpToolCall(a, state).call).toMatchObject({ detailInput: IN });
-    expect(prepareMcpToolCall(b, state).call).toMatchObject({ detailInput: IN });
+    expect(prepareMcpToolCall(a, state)).toMatchObject({ action: "emit", call: { detailInput: IN } });
+    expect(prepareMcpToolCall(b, state)).toMatchObject({ action: "emit", call: { detailInput: IN } });
     const bDone = prepareMcpToolCall({
       ...codexDone,
       toolCallId: "exec-mcp-b",

@@ -6,9 +6,9 @@
  * `content` on the completed update — so the shell IN/OUT path cannot
  * reuse `content` unchanged. This module is the host-side normalizer:
  * fold grok `search_tool` into the explore group (stamp `kind:"search"`),
- * emit Codex startup rows instead of dropping them, stamp `detailInput`
- * (always, on recognized MCP rows), and emit `commandOutput` joined by
- * `toolCallId`.
+ * drop Codex startup rows (failed startups go to the host log), stamp
+ * `detailInput` (always, on recognized MCP rows), and emit `commandOutput`
+ * joined by `toolCallId`.
  */
 
 import { capCommandOutput, MAX_COMMAND_OUTPUT_CHARS, type CommandOutputPayload } from "./acp-dispatch";
@@ -22,6 +22,7 @@ export const MCP_MACHINERY_KIND = "search";
 export type McpPrepareState = {
   machineryIds: Set<string>;
   searchIds: Set<string>;
+  startupServerById: Map<string, string>;
   mcpIds: Set<string>;
   inputById: Map<string, string>;
   emittedOutputIds: Set<string>;
@@ -31,6 +32,7 @@ export function createMcpPrepareState(): McpPrepareState {
   return {
     machineryIds: new Set(),
     searchIds: new Set(),
+    startupServerById: new Map(),
     mcpIds: new Set(),
     inputById: new Map(),
     emittedOutputIds: new Set(),
@@ -38,7 +40,8 @@ export function createMcpPrepareState(): McpPrepareState {
 }
 
 export type PreparedMcpToolCall =
-  { action: "emit"; call: Record<string, unknown>; commandOutput: CommandOutputPayload | null };
+  | { action: "drop"; logLine?: string }
+  | { action: "emit"; call: Record<string, unknown>; commandOutput: CommandOutputPayload | null };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -106,8 +109,8 @@ function isGrokSearchToolRow(call: unknown): boolean {
 
 /**
  * grok `search_tool` wrappers and Codex `mcp__<server>__startup` rows.
- * These stay in the transcript, folded into the explore tool-group —
- * they are not real MCP invocations and must not be dropped.
+ * Neither is a real MCP invocation. Search folds into the explore group;
+ * startup rows are dropped from the transcript for their whole lifecycle.
  */
 export function isMcpMachineryRow(call: unknown): boolean {
   if (!asRecord(call)) return false;
@@ -571,13 +574,12 @@ export function mcpCommandOutput(
 /**
  * Host emit decision for one tool_call / tool_call_update.
  *
- * Machinery (grok `search_tool`, Codex `mcp__<server>__startup`) is
- * emitted, not dropped. grok `search_tool` is stamped `kind:"search"`
- * so the existing explore group folds it; a later update without the
- * marker stays folded by id. Codex startup keeps its title and failed
- * status so a broken server stays reachable. Recognized MCP rows always
- * state `detailInput` (`string` or `null`). OUT becomes a
- * `commandOutput` joined by `toolCallId`, never by argument text.
+ * grok `search_tool` is stamped `kind:"search"` so the existing explore
+ * group folds it; a later update without the marker stays folded by id.
+ * Codex `mcp__<server>__startup` rows drop for their whole lifecycle,
+ * with failed status returning a diagnostic for the host log only.
+ * Recognized MCP rows always state `detailInput` (`string` or `null`).
+ * OUT becomes a `commandOutput` joined by `toolCallId`, never by argument text.
  */
 export function prepareMcpToolCall(call: unknown, state: McpPrepareState): PreparedMcpToolCall {
   const rec = asRecord(call);
@@ -587,6 +589,20 @@ export function prepareMcpToolCall(call: unknown, state: McpPrepareState): Prepa
   const machinery = !!(id && state.machineryIds.has(id)) || isMcpMachineryRow(call);
   if (machinery) {
     if (id) state.machineryIds.add(id);
+    const startupServer = (id ? state.startupServerById.get(id) : undefined)
+      ?? /^mcp__(.+)__startup$/i.exec(titleOf(call))?.[1];
+    if (startupServer) {
+      if (id) state.startupServerById.set(id, startupServer);
+      if (statusOf(call) !== "failed") return { action: "drop" };
+      const text = (Array.isArray(rec.content) ? rec.content : []).map((block: unknown) => {
+        const content = asRecord(asRecord(block)?.content);
+        return typeof content?.text === "string" ? content.text : "";
+      }).filter(Boolean).join(" ");
+      return {
+        action: "drop",
+        logLine: `[mcp] ${startupServer} startup failed${text ? `: ${text}` : ""}`.replace(/[\r\n]+/g, " "),
+      };
+    }
     const asSearch = isGrokSearchToolRow(call) || !!(id && state.searchIds.has(id));
     if (asSearch && id) state.searchIds.add(id);
     return {

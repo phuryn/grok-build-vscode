@@ -259,7 +259,7 @@ describe("MCP tool names (#115)", () => {
   });
 });
 
-describe("folded MCP machinery stays in the transcript", () => {
+describe("MCP machinery transcript filtering", () => {
   it("a grok search_tool run is still present in the explore group", () => {
     const { window, doc } = bootWebview();
     const state = createMcpPrepareState();
@@ -281,9 +281,10 @@ describe("folded MCP machinery stays in the transcript", () => {
       rawInput: { tool_name: "canva__search-designs", tool_input: { query: "logo" } },
       _meta: { "x.ai/tool": { name: "use_tool", kind: "use_tool" } },
     }, state);
-    dispatch(window, tc(searchA.call));
-    dispatch(window, tc(searchB.call));
-    dispatch(window, tc(use.call));
+    for (const prepared of [searchA, searchB, use]) {
+      expect(prepared.action).toBe("emit");
+      if (prepared.action === "emit") dispatch(window, tc(prepared.call));
+    }
     close(window);
     expect(groupLabel(doc)).toBe("Explored 2 items, ran 1 command");
     expect(itemLabels(doc)).toEqual([
@@ -293,28 +294,39 @@ describe("folded MCP machinery stays in the transcript", () => {
     ]);
   });
 
-  it("a genuine Codex MCP startup failure stays reachable", () => {
+  it.each(["completed", "failed"])("a Codex MCP startup stays out of the transcript through %s", (status) => {
     const { window, doc } = bootWebview();
-    const prepared = prepareMcpToolCall({
+    const state = createMcpPrepareState();
+    const start = {
       toolCallId: "mcp_startup.canva",
       kind: "other",
       title: "mcp__canva__startup",
-      status: "failed",
+      status: "in_progress",
+    };
+    const done = {
+      toolCallId: start.toolCallId,
+      status,
       content: [{
         type: "content",
         content: {
           type: "text",
-          text: "MCP server `canva` failed to start: connect ECONNREFUSED 127.0.0.1:3001",
+          text: status === "failed"
+            ? "MCP server `canva` failed to start: connect ECONNREFUSED 127.0.0.1:3001"
+            : "Connected to Canva",
         },
       }],
-    }, createMcpPrepareState());
-    dispatch(window, tc(prepared.call));
+    };
+    for (const [type, call] of [["toolCall", start], ["toolCallUpdate", done]] as const) {
+      const prepared = prepareMcpToolCall(call, state);
+      expect(prepared.action).toBe("drop");
+      if (prepared.action === "emit") dispatch(window, { type, call: prepared.call });
+      expect(doc.querySelector(".tool-group, .tool-flat, .tool-error, .tool-failed, .has-error")).toBeNull();
+      expect(doc.body.textContent).not.toContain("mcp__canva__startup");
+      expect(doc.body.textContent).not.toContain("ECONNREFUSED");
+    }
+    dispatch(window, tc(codexMcpCall("real-1", "canva", "list-brand-kits")));
     close(window);
-    const err = doc.querySelector(".tool-error");
-    expect(err).not.toBeNull();
-    expect(err!.textContent).toContain("ECONNREFUSED");
-    expect(doc.querySelector(".tool-failed, .has-error")).not.toBeNull();
-    expect(doc.body.textContent).toContain("mcp__canva__startup");
+    expect(flatLabel(doc)).toBe("mcp.canva.list-brand-kits");
   });
 });
 
