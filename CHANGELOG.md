@@ -1,5 +1,41 @@
 # Changelog
 
+## 4.2.0 — 2026-09-06
+
+**Keep an agent's CLI current without leaving the app, and connect an app from your phone.** Two things that used to need a terminal — updating the CLI an agent runs on, and finishing a connector's sign-in — now work from wherever you are, including a cloud machine where there is no terminal to reach.
+
+### Added
+
+- **Update Codex's and Claude Code's CLI from Settings → Providers.** When the CLI on your machine is older than the version this release is built against, its row offers to update it — installed the way *you* installed it (npm, Homebrew, or the vendor's own installer), never quietly switching you to a different one. Running sessions stop while it happens and the conversations you had open reopen when it finishes. Codex also says so on an empty conversation, because an old CLI there costs you the newer models.
+
+- **Connect an app from a phone, and from a cloud machine.** A connector's sign-in used to end with a failed `http://127.0.0.1:…` address you had to copy out of your phone's browser and paste back into the app. It now lands on a real page that tells you to return to AFK Pilot, so the flow finishes where it started, and the remaining paste step is numbered rather than left to guess. Connectors are offered on cloud machines too, which previously had no way to reach them at all.
+
+- **Archive a project.** Projects you are done with fold away on every surface — desk, browser and phone — including the one you are currently standing in. Archived is a property of the project rather than of the window you happen to be looking at, so it no longer differs between surfaces.
+
+### Fixed
+
+- **Plumbing that lost a race is not an error in your conversation.** A connector whose server was slow to answer left a red `mcp__…__startup` row sitting in the transcript, with nothing you could do about it. Those rows never enter the conversation now; a genuine failure is written to the host log where it belongs.
+
+- **An empty conversation is no longer "could not be reopened" after a CLI update.** Reopening a conversation you never typed in asked the CLI for a session it had never saved, so the update finished by reporting a failure that had not happened. An untouched conversation simply starts fresh.
+
+- **"Update completed" stops greeting every new conversation.** The result of an update stayed on screen indefinitely and reappeared on each new conversation. It is cleared when you start one.
+
+- **An update is not reported as completed over a red conversation**, and a session start you did not ask for no longer announces itself in your transcript.
+
+- **A connector keeps the registration that owns its tokens.** A refresh could pair a connector's tokens with a different registration, after which the connector could not be used until it was signed in again.
+
+- **A provider's models are re-read when its CLI changes underneath the app**, instead of offering the list the old CLI had.
+
+- **A connector sign-in belongs to the workspace, not to the tab that opened it** — so closing that tab, or switching to another, no longer strands a sign-in half-finished.
+
+- **Archiving every project no longer takes the controls with it**, leaving a page with nothing on it and no way back.
+
+- **A connector waiting for your consent no longer spends the session's startup budget**, which could make the whole conversation fail to start rather than just that connector.
+
+### Changed
+
+- **Anonymous usage telemetry can now tell remote and cloud use apart.** Cloud machines reported as the desktop app, and a conversation started at a desk and continued from a phone counted as a desk conversation, so remote use was undercounted by an unknown amount. Two small events — opening the remote portal, and the first remote message of a conversation — and a third value for the host kind fix both. No content is involved, the opt-out is unchanged, and every field is listed in [docs/privacy.md](docs/privacy.md).
+
 ## 4.1.8 — 2026-09-05
 
 **Opening a conversation no longer freezes the app when you have a lot of them.** One shortcut on the way *out* of an untouched conversation was doing two expensive things nobody asked for, and both got worse the more conversations you had on disk.
