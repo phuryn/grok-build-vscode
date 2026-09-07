@@ -1,6 +1,5 @@
-// Pure helpers for the remembered-mode preference (#25). Kept out of sidebar.ts
-// so the policy — "remember the last Agent/Auto-accept switch, never Plan; apply
-// it to new sessions only" — is unit-testable without vscode/spawn.
+// Pure policies for remembered mode (#25) and provider-scoped effort (#151),
+// kept out of sidebar.ts so they can be tested without vscode/spawn.
 
 export type ModeId = "agent" | "plan" | "yolo";
 
@@ -21,4 +20,18 @@ export function modeToRemember(modeId: ModeId): "agent" | "yolo" | null {
  */
 export function startsInYolo(defaultMode: string | undefined, isResume: boolean): boolean {
   return !isResume && defaultMode === "yolo";
+}
+
+export const EFFORT_PREFS_KEY = "grok.defaultEffortByProvider";
+export type EffortPrefs = Record<string, string>;
+
+/** Adapter picker choices belong to that provider; existing Grok config stays its fallback. */
+export function rememberedEffort(
+  prefs: EffortPrefs | undefined,
+  provider: string,
+  legacy: string | undefined,
+): string {
+  const own = prefs?.[provider];
+  if (typeof own === "string") return own;
+  return provider === "grok" ? legacy || "" : "";
 }

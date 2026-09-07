@@ -37,11 +37,16 @@ export const CONTEXT_TAG_OPEN =
   '<vscode-context note="added by the editor, not typed by the user">';
 export const CONTEXT_TAG_CLOSE = "</vscode-context>";
 
+// Ambient selections survive sends; repeating a large snippet on every turn
+// crowds out conversation history. The agent can read larger ranges on demand.
+export const MAX_SELECTION_LINES = 400;
+export const MAX_SELECTION_CHARS = 20_000;
+
 /**
  * Build the final prompt text from a typed message + active chips.
  *
  * - Hidden chips are skipped.
- * - A chip with a selection range becomes a fenced code block of those lines.
+ * - A selection becomes fenced code within the inline limits, else a path + range.
  * - A chip without a range becomes a bare path — NOT an `@`-reference. `@` is grok's
  *   "read this whole file" convention, which slurps a large file into context (a big
  *   CSV/log) and fails outright on binaries. Handing grok the plain path lets it
@@ -78,6 +83,14 @@ export function buildPrompt(
   for (const chip of chips) {
     if (chip.hidden) continue;
     if (chip.selectionStart && chip.selectionEnd) {
+      // Existing restore parsers consume each path line verbatim. Keep the
+      // range on a separate line so older clients can still open the file.
+      const reference = `${chip.relPath}\n  Selected lines: ${chip.selectionStart}-${chip.selectionEnd}`;
+      const references = isImplicitChip(chip) ? openInEditor : attached;
+      if (chip.selectionEnd - chip.selectionStart + 1 > MAX_SELECTION_LINES) {
+        references.push(reference);
+        continue;
+      }
       let content: string;
       try {
         content = deps.readFile(chip.path);
@@ -88,9 +101,14 @@ export function buildPrompt(
       const lines = content
         .split("\n")
         .slice(chip.selectionStart - 1, chip.selectionEnd);
+      const snippet = lines.join("\n");
+      if (snippet.length > MAX_SELECTION_CHARS) {
+        references.push(reference);
+        continue;
+      }
       const ext = deps.extName(chip.path).replace(/^\./, "");
       blocks.push(
-        `\`${chip.relPath}\` (lines ${chip.selectionStart}-${chip.selectionEnd}):\n\`\`\`${ext}\n${lines.join("\n")}\n\`\`\``,
+        `\`${chip.relPath}\` (lines ${chip.selectionStart}-${chip.selectionEnd}):\n\`\`\`${ext}\n${snippet}\n\`\`\``,
       );
     } else if (isImplicitChip(chip)) {
       openInEditor.push(chip.relPath);

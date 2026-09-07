@@ -90,7 +90,7 @@ import { summarizeForSpeech } from "./speech-summary";
 import type { PromptResultMeta, PromptUsage, SessionInfoContext } from "./acp-dispatch";
 import { MediaRef, adapterCompactSignal, adapterContextOccupancy, agentTimestampMsFromMeta, autoCompactStartedNote, childStreamFromRoute, commandOutputForToolCall, commandOutputFromLiveTerminal, contextUsedFromCompactNotification, enforceCompleteSessionCost, errorDetail, gateZeroTokenMeta, isAuthErrorText, isCredentialError, isIncompatibleAgentError, isResumeNotFound, isRateLimitError, isSubagentLifecycleUpdate, occupancyFromAdapterTurn, parseSessionInfoContext, permissionOutcomeFor, promptErrorText, rateLimitNoticeText, sessionInfoCacheFresh, sumUsage, summarizeBackgroundCommand, usageIsRealMeasurement, type UpdateRoute } from "./acp-dispatch";
 import { createMcpPrepareState, prepareMcpToolCall } from "./mcp-tool";
-import { modeToRemember, startsInYolo } from "./mode-prefs";
+import { EFFORT_PREFS_KEY, modeToRemember, rememberedEffort, startsInYolo, type EffortPrefs } from "./mode-prefs";
 import { beginAuthRecovery, oauthShadowsXaiApiKey } from "./auth-recovery";
 import {
   WELCOME_TIPS_KEY,
@@ -2424,6 +2424,27 @@ export class GrokSidebar {
     } satisfies ProjectProviderDefaults);
   }
 
+  private defaultEffortForProvider(provider: AcpProvider): string {
+    return rememberedEffort(
+      this.state.get<EffortPrefs>(EFFORT_PREFS_KEY),
+      provider,
+      this.host.getConfiguration("grok").get<string>("defaultEffort", ""),
+    );
+  }
+
+  private async rememberProviderEffort(provider: AcpProvider, level: string): Promise<void> {
+    if (provider === "grok") {
+      await this.host.getConfiguration("grok").update("defaultEffort", level, "global");
+      return;
+    }
+    // Picker memory follows the host's globalState, like project/provider
+    // defaults; adapter choices must never overwrite the Grok setting.
+    await this.state.update(EFFORT_PREFS_KEY, {
+      ...this.state.get<EffortPrefs>(EFFORT_PREFS_KEY, {}),
+      [provider]: level,
+    });
+  }
+
   private cacheProviderModels(
     provider: AcpProvider,
     models: readonly ProviderModelInfo[] | readonly any[],
@@ -4029,7 +4050,8 @@ Only continue if you trust this code.`,
       return;
     }
 
-    const implicitChips = session.chips.filter((chip) => isImplicitChip(chip));
+    // A steer should carry only its authored contribution: the editor may have
+    // moved since this turn started, and ambient snippets would be repeated.
     const slashCommand = matchSlashCommand(
       queuedSendsText(contributions) || authored,
       client.availableCommands.map((c) => c.name),
@@ -4037,12 +4059,12 @@ Only continue if you trust this code.`,
     const built = builtContributions.length === 1
       ? buildPromptWithImages(
         builtContributions[0].text,
-        [...builtContributions[0].chips, ...implicitChips],
+        builtContributions[0].chips,
         builtContributions[0].images,
         promptDeps,
         slashCommand != null,
       )
-      : buildQueuedPromptWithImages(builtContributions, implicitChips, promptDeps, slashCommand != null);
+      : buildQueuedPromptWithImages(builtContributions, [], promptDeps, slashCommand != null);
 
     await this.retainUploadedFilesForSession(
       session,
@@ -9481,7 +9503,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     if (this.mcpConnectorKeysReady) await this.mcpConnectorKeysReady;
     if (gen !== session.gen) return undefined;
     const env = session.provider === "grok" ? this.buildEnv(cwd) : { ...process.env };
-    const effortStr = cfg.get<string>("defaultEffort", "");
+    const effortStr = this.defaultEffortForProvider(session.provider);
     const effort = effortStr ? (effortStr as EffortLevel) : undefined;
     // Transient spawn/init after an update can throw once; retry the plain
     // failure only (auth and the Windows stdio pin keep their own paths).
@@ -11001,7 +11023,6 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       case "setEffort": {
         if (session.priming) break; // ignore changes fired mid-session-start (see switchModel)
         const newLevel = msg.level;
-        const cfg2 = this.host.getConfiguration("grok");
 
         if (!session.hasHistory || !session.client) {
           // As with a model switch on an empty session: restart without the summarize-vs-restart
@@ -11009,7 +11030,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           // history (a dead client on a session WITH history must keep that history).
           const wasEmpty = !session.hasHistory;
           const discardId = session.activeSessionId;
-          await cfg2.update("defaultEffort", newLevel, "global");
+          await this.rememberProviderEffort(session.provider, newLevel);
           if (wasEmpty && isAdapterProvider(session.provider)) {
             await this.discardAdapterEmptySession(session.provider, discardId, this.sessionCwd(session), session.client);
           }
@@ -11022,14 +11043,14 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         // effort (grok ≥ the build advertising models[]._meta.supportsReasoningEffort
         // + accepting set_model _meta.reasoningEffort; confirmed 0.2.101). Only a
         // real, non-empty effort qualifies — "unset" (back to default) still needs
-        // a fresh spawn without --reasoning-effort. Persist `defaultEffort` ONLY
+        // a fresh spawn without --reasoning-effort. Persist the preference ONLY
         // after the switch actually lands (live-applied, or restart accepted) — a
         // persist-before that fails + dismissed restart would leave the saved
         // default changed while the session ran at the old effort.
         if (newLevel && session.client.currentModelSupportsEffort()) {
           const applied = await session.client.setReasoningEffort(newLevel).catch(() => false);
           if (applied) {
-            await cfg2.update("defaultEffort", newLevel, "global");
+            await this.rememberProviderEffort(session.provider, newLevel);
             break;
           }
         }
@@ -11043,8 +11064,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           break;
         }
         const mode = await this.pickRestartMode("Changing reasoning effort requires restarting the session.");
-        if (!mode) break; // dismissed — leave defaultEffort untouched
-        await cfg2.update("defaultEffort", newLevel, "global");
+        if (!mode) break; // dismissed — leave the remembered effort untouched
+        await this.rememberProviderEffort(session.provider, newLevel);
         await this.restartSession(mode, session);
         break;
       }
@@ -13895,7 +13916,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           installId: existingInstallId ?? this.installId(),
           mode: this.displayMode(session),
           model: session.client?.currentModelId || cfg.get<string>("defaultModel", "") || "",
-          effort: session.client?.currentReasoningEffort || cfg.get<string>("defaultEffort", "") || "",
+          effort: session.client?.currentReasoningEffort || this.defaultEffortForProvider(session.provider),
           // Feature flags + host kind + connection snapshot. Config/enum values
           // only — the same class of anonymous property as mode/model/effort,
           // never content, paths, or free text. The builder allowlists every key.
@@ -15664,15 +15685,11 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
    * disk token — exactly what re-login does, minus the sign-out — so we
    * transparently restart the owning session (`startSession` respawns +
    * `session/load`s to preserve history) and RE-SEND the failed prompt once.
-   * Guarded by `authRecoveryTried` (reset on any clean turn) so a genuine
-   * dead-auth / entitlement error can't loop. The resend's failure is the
-   * decision point (#58): only a CREDENTIAL failure (`isCredentialError` — the
-   * CLI's -32000 auth_required, or unambiguous credential wording) earns the
-   * sign-in overlay; billing/entitlement wording that a fresh process couldn't
-   * clear is NOT fixable by login (the CLI maps 403 to a plain error precisely
-   * because the credential was accepted) and shows the in-chat entitlement
-   * notice instead. Returns true when it handled the error (caller must not
-   * also show it).
+   * Guarded by `authRecoveryTried` (reset on any clean turn). Other access
+   * failures rebuild the process for the next turn but surface the original
+   * error without replay: a fresh token cannot fix an accepted credential's
+   * 403. Only a second credential failure earns the sign-in overlay (#58).
+   * Returns true when it handled the error (caller must not also show it).
    */
   private async recoverAuthAndResend(
     session: Session,
@@ -15682,9 +15699,15 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     promptBlocks: Parameters<AcpClient["prompt"]>[0],
   ): Promise<boolean> {
     const errorText = errorDetail(err);
-    if (!isAuthErrorText(errorText) && !session.client?.isCredentialError(err) && !isCredentialError(err)) return false;
+    const credential = session.client?.isCredentialError(err) === true || isCredentialError(err);
+    if (!credential && !isAuthErrorText(errorText)) return false;
     const resumeId = beginAuthRecovery(session);
     if (!resumeId) return false;
+    if (!credential) {
+      this.host.appendLine(`[auth] reloading session without resending: ${errorText}`);
+      await this.startSession(resumeId, session);
+      return false;
+    }
     this.host.appendLine(`[auth] recoverable token error — reloading session + resending: ${errorText}`);
 
     // Fresh process, current disk token. Rebuild this same pool member and replay
@@ -15824,7 +15847,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     return parseAppPurpose(this.state.get<string>(APP_PURPOSE_KEY));
   }
 
-  private buildInitialStateMsg(): Extract<HostMsg, { type: "initialState" }> {
+  private buildInitialStateMsg(session: Session = this.focused): Extract<HostMsg, { type: "initialState" }> {
     const cfg = this.host.getConfiguration("grok");
     const cwd = this.workspaceRoot();
     // Additive: older webviews ignore an unknown field; older hosts omit it
@@ -15832,7 +15855,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     const commandLanguage = commandLanguageForDialect(resolvedTerminalShellDialect());
     return {
       type: "initialState",
-      effort: cfg.get("defaultEffort", ""),
+      effort: session.client?.currentReasoningEffort || this.defaultEffortForProvider(session.provider),
       cwd,
       useCtrlEnter: cfg.get("useCtrlEnterToSend", false),
       extVersion: this.context.extensionVersion,
@@ -19515,7 +19538,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // Catalog is already open-folder-filtered on desktop; still the sole source.
     const entries = this.localRepoCatalogEntries();
     // Never put a closed cwd on the wire (choke point rejects it); empty = unbound.
-    const initial = this.messageForRemote({ ...this.buildInitialStateMsg(), cwd: listCwd ?? "" });
+    const initial = this.messageForRemote({ ...this.buildInitialStateMsg(session), cwd: listCwd ?? "" });
     const sessionCwd = session ? this.sessionCwd(session) : "";
     const sessionCwdOk = !!session && !!authorizedListCwd(sessionCwd, authorized, pathsEqual);
     const snap: HostMsg[] = [];

@@ -1,7 +1,7 @@
-import { existsSync, statSync } from "node:fs";
-import { execSync } from "node:child_process";
+import { statSync } from "node:fs";
 import { homedir } from "node:os";
 import * as path from "node:path";
+import { findCliOnPath, isCliFile } from "./cli-path";
 
 const IS_WIN = process.platform === "win32";
 
@@ -17,22 +17,14 @@ function effectiveHome(): string {
 
 export function locateGrokCli(configuredPath: string): string | undefined {
   if (configuredPath) {
-    return existsSync(configuredPath) ? configuredPath : undefined;
+    return isCliFile(configuredPath) ? configuredPath : undefined;
   }
   const homeBin = path.join(effectiveHome(), ".grok", "bin");
   for (const name of candidateNames()) {
     const candidate = path.join(homeBin, name);
-    if (existsSync(candidate)) return candidate;
+    if (isCliFile(candidate)) return candidate;
   }
-  try {
-    const cmd = IS_WIN ? "where grok" : "command -v grok";
-    const out = execSync(cmd, { encoding: "utf8" }).trim();
-    const first = out.split(/\r?\n/)[0]?.trim();
-    if (first && existsSync(first)) return first;
-  } catch {
-    // ignore — not on PATH
-  }
-  return undefined;
+  return findCliOnPath("grok", process.env, process.platform);
 }
 
 /** Whether this activation follows a previously-recorded extension version. */

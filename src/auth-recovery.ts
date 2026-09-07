@@ -4,7 +4,7 @@ export interface AuthRecoveryState {
 }
 
 /**
- * Claim the one transparent auth retry for one session's current failure
+ * Claim the one process recovery for one session's current failure
  * streak. The returned id is the history that the owning process must reload.
  */
 export function beginAuthRecovery(state: AuthRecoveryState): string | undefined {

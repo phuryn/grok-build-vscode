@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { execSync } from "node:child_process";
 import { homedir } from "node:os";
 import * as path from "node:path";
+import { findCliOnPath } from "./cli-path";
 
 export interface ClaudeLocatorFs {
   exists(path: string): boolean;
@@ -30,15 +30,6 @@ const defaultFs: ClaudeLocatorFs = {
     try { return readFileSync(file, "utf8"); } catch { return undefined; }
   },
 };
-
-function defaultWhich(name: string, platform: NodeJS.Platform): string | undefined {
-  try {
-    const command = platform === "win32" ? `where ${name}` : `command -v ${name}`;
-    return execSync(command, { encoding: "utf8" }).trim().split(/\r?\n/)[0]?.trim() || undefined;
-  } catch {
-    return undefined;
-  }
-}
 
 /** Official Claude Code user-bin locations that are often missing from PATH. */
 function wellKnownClaudeBins(
@@ -150,7 +141,7 @@ export function locateClaudeCli(options: ClaudeLocatorOptions = {}): string | un
 
   // Native exe first: the SDK cannot spawn an npm `.cmd` (`shell: false`).
   const names = platform === "win32" ? ["claude.exe", "claude.cmd", "claude"] : ["claude"];
-  const which = options.which ?? ((candidate) => defaultWhich(candidate, platform));
+  const which = options.which ?? ((candidate) => findCliOnPath(candidate, env, platform, options.fs?.isFile));
   for (const name of names) {
     const found = which(name);
     if (!found || !fs.isFile(found)) continue;

@@ -16,13 +16,14 @@ const startControl = {
   loadFailuresRemaining: 0,
   loadFailWith: "Internal error",
   exitDuringNewSessionRemaining: 0,
+  efforts: [] as Array<string | undefined>,
 };
 
 vi.mock("../src/acp", async (importOriginal) => {
   const { EventEmitter } = await import("node:events");
   const actual = await importOriginal<typeof import("../src/acp")>();
   class FakeAcpClient extends EventEmitter {
-    provider: "grok" | "codex";
+    provider: "grok" | "codex" | "claude";
     usesClientPlanGate = false;
     sessionId: string | undefined;
     availableModels: { modelId: string; name: string }[] = [];
@@ -30,9 +31,10 @@ vi.mock("../src/acp", async (importOriginal) => {
     fsRead?: unknown;
     fsWrite?: unknown;
     terminal?: unknown;
-    constructor(opts: { log: (msg: string) => void; backend?: { provider: "grok" | "codex" } }) {
+    constructor(opts: { log: (msg: string) => void; effort?: string; backend?: { provider: "grok" | "codex" | "claude" } }) {
       super();
       this.provider = opts.backend?.provider ?? "grok";
+      startControl.efforts.push(opts.effort);
     }
     async start(): Promise<void> {
       startControl.starts += 1;
@@ -173,6 +175,28 @@ function onboardings(sidebar: any): HostMsg[] {
 }
 
 describe("startSession bounded spawn retry", () => {
+  it.each([
+    ["grok", undefined, "high"],
+    ["claude", "low", "low"],
+    ["codex", "medium", "medium"],
+    ["claude", undefined, undefined],
+    ["codex", undefined, undefined],
+  ] as const)("starts %s with its own remembered effort (%s)", async (provider, remembered, expected) => {
+    const sidebar = makeSidebar(process.cwd());
+    sidebar.focused.provider = provider;
+    sidebar.connectedProviders = () => [provider];
+    sidebar.usableProviders = () => [provider];
+    sidebar.createProviderBackend = () => ({ provider });
+    await sidebar.state.update("grok.defaultEffortByProvider", { [provider]: remembered });
+    sidebar.host.getConfiguration.mockReturnValue({
+      get: (key: string, fallback: unknown) => key === "defaultEffort" ? "high" : fallback,
+    });
+    startControl.efforts = [];
+    await sidebar.startSession(undefined, sidebar.focused);
+    expect(sidebar.focused.provider).toBe(provider);
+    expect(startControl.efforts).toEqual([expected]);
+  });
+
   beforeEach(() => {
     startControl.failuresRemaining = 0;
     startControl.failWith = "Internal error";

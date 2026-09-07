@@ -7,7 +7,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { makeImageChip } from "../src/chips";
+import { makeExplicitChip, makeImageChip, makeImplicitChip } from "../src/chips";
 import type { HostMsg } from "../src/protocol";
 import { enqueueQueuedSend } from "../src/queued-send";
 import { Session } from "../src/session";
@@ -107,6 +107,27 @@ describe("steerSend carries attachments", () => {
     await sidebar.steerSend("just text", session, undefined, undefined, true);
 
     expect(calls).toEqual([{ text: "just text", content: undefined }]);
+  });
+
+  it.each([false, true])("omits ambient selections but keeps explicit steer attachments (queued=%s)", async (queued) => {
+    const sidebar = makeSidebar();
+    const { session, calls } = attachClient(sidebar);
+    const ambient = makeImplicitChip("/ambient.ts", "ambient.ts", 1, 3000);
+    const explicit = makeExplicitChip("/attached.ts", "attached.ts");
+    session.chips = [ambient, explicit];
+    if (queued) {
+      session.queuedSends = enqueueQueuedSend([], "first", [explicit]);
+      session.queuedSends = enqueueQueuedSend(session.queuedSends, "second", []);
+    }
+
+    await sidebar.steerSend("first", session, undefined, [explicit], queued);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].text).toContain("Attached file: attached.ts");
+    expect(calls[0].text).not.toContain("ambient.ts");
+    expect(calls[0].text).toContain("first");
+    if (queued) expect(calls[0].text).toContain("second");
+    expect(session.chips).toContainEqual(ambient);
   });
 
   it("queues the whole item when the CLI would ignore content (0.2.x / unverified)", async () => {

@@ -6,6 +6,8 @@ import {
   makeImageChip,
 } from "../src/chips";
 import { STAGED_IMAGE_TAG_HINT, WORKSPACE_IMAGE_TAG_HINT } from "../src/image-history";
+// @ts-expect-error — plain JS module, no types
+import { parseAttachmentContext } from "../media/webview-helpers.js";
 
 const deps = {
   readFile: (p: string) => {
@@ -87,6 +89,51 @@ describe("buildPrompt", () => {
     const visible = makeExplicitChip("/a.ts", "a.ts");
     const hidden = { ...makeExplicitChip("/b.ts", "b.ts"), hidden: true };
     expect(buildPrompt("q", [visible, hidden], deps)).toBe(ctx("Attached file: a.ts") + "\n\nq");
+  });
+
+  for (const [origin, makeChip, label] of [
+    ["explicit", makeExplicitChip, "Attached file"],
+    ["implicit", makeImplicitChip, "Currently open in the editor (for context)"],
+  ] as const) {
+    it.each([399, 400, 401])(`bounds ${origin} selections at 400 lines (%i)`, (count) => {
+      const snippet = Array.from({ length: count }, () => "selected").join("\n");
+      const chip = makeChip("/a.ts", "src/a.ts", 2, count + 1);
+      const out = buildPrompt("explain", [chip], {
+        ...deps, readFile: () => `outside\n${snippet}\noutside`,
+      });
+      if (count > 400) {
+        expect(out).toBe(ctx(`${label}: src/a.ts\n  Selected lines: 2-${count + 1}`) + "\n\nexplain");
+      } else {
+        expect(out).toBe(`\`src/a.ts\` (lines 2-${count + 1}):\n\`\`\`ts\n${snippet}\n\`\`\`\n\nexplain`);
+      }
+    });
+
+    it.each([19_999, 20_000, 20_001])(`bounds ${origin} selections at 20,000 characters (%i)`, (count) => {
+      const snippet = "x".repeat(count);
+      const chip = makeChip("/a.ts", "src/a.ts", 2, 2);
+      const out = buildPrompt("explain", [chip], {
+        ...deps, readFile: () => `outside\n${snippet}\noutside`,
+      });
+      if (count > 20_000) {
+        expect(out).toBe(ctx(`${label}: src/a.ts\n  Selected lines: 2-2`) + "\n\nexplain");
+      } else {
+        expect(out).toBe(`\`src/a.ts\` (lines 2-2):\n\`\`\`ts\n${snippet}\n\`\`\`\n\nexplain`);
+      }
+    });
+  }
+
+  it("keeps reference paths readable by the existing restore parser, including lists", () => {
+    const out = buildPrompt("explain", [
+      makeExplicitChip("/a.ts", "src/a.ts", 3, 404),
+      makeExplicitChip("/b.ts", "src/b.ts"),
+      makeImplicitChip("/c.ts", "src/c.ts", 1, 900),
+    ], deps);
+    expect(parseAttachmentContext(out)).toEqual({
+      files: ["src/a.ts", "src/b.ts", "src/c.ts"], body: "explain",
+    });
+    expect(out).toContain("Selected lines: 3-404");
+    expect(out).toContain("Selected lines: 1-900");
+    expect(out).not.toContain("```");
   });
 
   it("falls back to a plain attached path when readFile throws", () => {
