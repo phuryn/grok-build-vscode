@@ -264,6 +264,11 @@ function parseRemoteWebviewMsg(msg: unknown): WebviewMsg | null {
       return typeof value.fullId === "string" && REMOTE_TAB_TOKEN_RE.test(value.fullId)
         ? { type: "requestImageFull", fullId: value.fullId }
         : null;
+    case "requestImageOriginal":
+      return typeof value.fullId === "string" && REMOTE_TAB_TOKEN_RE.test(value.fullId)
+        && Number.isSafeInteger(value.requestId)
+        ? { type: "requestImageOriginal", fullId: value.fullId, requestId: value.requestId as number }
+        : null;
     case "selectRepo":
     case "clearAllSessions":
       return isRemoteCwd(value.cwd) ? msg as WebviewMsg : null;

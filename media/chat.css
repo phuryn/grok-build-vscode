@@ -3146,11 +3146,11 @@ body.vscode-light {
   border-color: var(--vscode-focusBorder);
 }
 
-/* Floating "Scroll to bottom" (#28). Anchored to the composer (the chat input
+/* Floating prompt navigation (#150). Anchored to the composer (the chat input
    area), so it sits inside the `--chat-zoom` scaled coordinate space and stays
    correctly placed above the input at any font scale. Hidden (opacity + no
    pointer events) until the user scrolls away from the bottom. */
-.scroll-bottom-btn {
+.prompt-nav {
   position: absolute;
   /* Sit above the composer's top edge by the same gap the card sits inside the
      composer (its top padding, --pad) ÔÇö symmetric spacing. */
@@ -3160,9 +3160,9 @@ body.vscode-light {
   z-index: 6;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 4px 11px 4px 9px;
-  border-radius: 13px;
+  gap: 0;
+  padding: 2px;
+  border-radius: 18px;
   border: 1px solid var(--vscode-editorWidget-border);
   background: var(--vscode-editorWidget-background, var(--vscode-input-background));
   color: var(--vscode-foreground);
@@ -3175,7 +3175,7 @@ body.vscode-light {
   pointer-events: none;
   transition: opacity 0.14s ease, transform 0.14s ease, background 0.12s ease;
 }
-.scroll-bottom-btn.visible {
+.prompt-nav.visible {
   opacity: 1;
   transform: translate(-50%, 0);
   pointer-events: auto;
@@ -3186,13 +3186,37 @@ body.vscode-light {
    background it left this button see-through, with the conversation reading
    through the label. The browser client happens to define the same token as
    opaque hex, which is why it only ever looked wrong on the desk. */
-.scroll-bottom-btn:hover {
+.prompt-nav button:hover:not(:disabled) {
   background:
     linear-gradient(var(--vscode-toolbar-hoverBackground), var(--vscode-toolbar-hoverBackground)),
     var(--vscode-editorWidget-background, var(--vscode-input-background));
 }
-.scroll-bottom-btn svg { display: block; }
-.scroll-bottom-label { white-space: nowrap; }
+.prompt-nav button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 28px;
+  height: 26px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 14px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.prompt-nav button:disabled { opacity: 0.35; cursor: default; }
+.prompt-nav button:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -2px; }
+.prompt-nav svg { display: block; width: 13px; height: 13px; stroke-width: 2.5; }
+#prompt-nav-count { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.prompt-nav .prompt-latest {
+  border-left: 1px solid var(--vscode-editorWidget-border);
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  margin-left: 2px;
+  padding: 0 9px;
+}
 
 /* The input is a textarea layered over a "backdrop" that highlights recognized
    voice commands (e.g. "grok send"). Textareas can't style their own text, so
@@ -3756,7 +3780,7 @@ textarea#input {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 32px;
+  padding: 48px 32px 90px;
   background: rgba(0, 0, 0, 0.72);
 }
 .image-preview-overlay[hidden] { display: none; }
@@ -3813,6 +3837,33 @@ textarea#input {
   line-height: 1;
   cursor: pointer;
 }
+.image-preview-actions {
+  position: absolute;
+  bottom: 16px;
+  left: 16px;
+  right: 16px;
+  display: flex;
+  align-items: center;
+  flex-direction: column;
+  gap: 8px;
+  color: #fff;
+}
+.image-preview-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 40px;
+  padding: 8px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 20px;
+  background: rgba(0, 0, 0, 0.75);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.image-preview-copy:disabled { opacity: 0.5; cursor: default; }
+.image-preview-copy svg { width: 16px; height: 16px; }
+.image-preview-status { font-size: 12px; text-align: center; }
 .attachment-remove {
   display: inline-flex;
   align-items: center;
@@ -5123,10 +5174,11 @@ body.vscode-light .preview-overlay {
   #donut-label { display: none; }
 }
 
-/* Touch devices: the scroll-to-bottom pill matches the 36px control row. */
+/* Touch devices: each prompt control gets its own stable tap target. */
 @media (hover: none), (pointer: coarse) {
-  .scroll-bottom-btn { padding: 8px 16px 8px 13px; border-radius: 19px; font-size: 13px; }
-  .scroll-bottom-btn svg { width: 18px; height: 18px; }
+  .prompt-nav { border-radius: 24px; font-size: 13px; }
+  .prompt-nav button { min-width: 40px; height: 40px; border-radius: 20px; }
+  .prompt-nav svg { width: 18px; height: 18px; }
 }
 
 /* Touch devices: question/permission cards are tap surfaces ÔÇö roomier option

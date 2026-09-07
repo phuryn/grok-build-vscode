@@ -254,6 +254,9 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
     case "requestImageFull":
       if (!isString(raw.fullId)) return null;
       break;
+    case "requestImageOriginal":
+      if (!isString(raw.fullId) || !/^[A-Za-z0-9_-]{20,128}$/.test(raw.fullId) || !Number.isSafeInteger(raw.requestId)) return null;
+      break;
     case "permissionAnswer":
       if (!isStringOrNumber(raw.requestId) || !isString(raw.optionId)) return null;
       break;

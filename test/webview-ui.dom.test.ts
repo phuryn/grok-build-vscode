@@ -2620,9 +2620,9 @@ describe("scroll-to-bottom button (#28)", () => {
     const btn = $(doc, "scroll-bottom-btn");
     const list = $(doc, "messages");
     userScrollTo(window, list, 0, 1000, 300); // 700px from bottom → visible
-    expect(btn.classList.contains("visible")).toBe(true);
+    expect(btn.parentElement!.classList.contains("visible")).toBe(true);
     userScrollTo(window, list, 680, 1000, 300); // 20px from bottom (≤40) → hidden
-    expect(btn.classList.contains("visible")).toBe(false);
+    expect(btn.parentElement!.classList.contains("visible")).toBe(false);
   });
 
   it("re-pins to the bottom and hides on click", () => {
@@ -2631,9 +2631,9 @@ describe("scroll-to-bottom button (#28)", () => {
     const list = $(doc, "messages") as any;
     list.scrollTo = () => {}; // happy-dom has no smooth-scroll impl
     userScrollTo(window, list, 0, 1000, 300);
-    expect(btn.classList.contains("visible")).toBe(true);
+    expect(btn.parentElement!.classList.contains("visible")).toBe(true);
     click(window, btn);
-    expect(btn.classList.contains("visible")).toBe(false);
+    expect(btn.parentElement!.classList.contains("visible")).toBe(false);
   });
 });
 
@@ -3224,7 +3224,7 @@ describe("context popover (donut click, #39)", () => {
     expect(text).toContain("Skills");
     expect(text).toContain("MCP (2 servers)");
     // 16,017 used − 1,039 system − 12,166 messages = 2,812 overhead.
-    expect(text).toMatch(/Reasoning\/overhead\s*2,812/);
+    expect(text).toContain(`Reasoning/overhead${(2812).toLocaleString()}`);
     const windowAt = text.indexOf("In this window");
     const countedAt = text.indexOf("Already counted above");
     expect(text.indexOf("System")).toBeGreaterThan(windowAt);
@@ -3261,7 +3261,7 @@ describe("context popover (donut click, #39)", () => {
     expect(first).toMatch(/System\s*10/);
     expect(first).toMatch(/Messages\s*80/);
     expect(first).toMatch(/Reasoning\/overhead\s*10/);
-    expect(first).toMatch(/Free\s*199,890/);
+    expect(first).toContain(`Free${(199890).toLocaleString()}`);
     expect(first).toContain("Already counted above");
     expect(first).toContain("Tool definitions");
     expect(first).toContain("Skills");
@@ -3299,7 +3299,7 @@ describe("context popover (donut click, #39)", () => {
     const text = $(doc, "context-popover").textContent!;
     expect(text).toContain("In this window");
     expect(text).toMatch(/Reasoning\/overhead\s*10/);
-    expect(text).toMatch(/Free\s*199,890/);
+    expect(text).toContain(`Free${(199890).toLocaleString()}`);
   });
 
   it("keeps the snapshot after promptComplete moves used and re-fetches session/info", () => {
@@ -3347,7 +3347,7 @@ describe("context popover (donut click, #39)", () => {
     });
     click(window, $(doc, "donut"));
     const text = $(doc, "context-popover").textContent!;
-    expect(text).toMatch(/Reasoning\/overhead\s*3,000/);
+    expect(text).toContain(`Reasoning/overhead${(3000).toLocaleString()}`);
     const windowAt = text.indexOf("In this window");
     const countedAt = text.indexOf("Already counted above");
     expect(text.indexOf("Reasoning/overhead")).toBeGreaterThan(windowAt);

@@ -21,6 +21,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { buildQaFixture } from "./qa-fixture.mjs";
 import { assertPinnedAfterZoomedExpandedTurn, hostMsg } from "./desk-stick-to-bottom.mjs";
+import { assertPromptNavigation, assertOriginalImageCopy } from "./desk-prompt-navigation.mjs";
 
 const root = process.cwd();
 const OUT = process.env.SCREENS_DIR || ".screens";
@@ -1045,6 +1046,9 @@ try {
       log(`captured ${name}.png`);
     },
   });
+
+  await assertPromptNavigation(page, shot);
+  await assertOriginalImageCopy(app, page, shot);
 
   // The desktop app must have written a log somebody can actually retrieve.
   //

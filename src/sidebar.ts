@@ -10500,22 +10500,31 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         else this.postLocal(response);
         break;
       }
-      case "requestImageFull": {
-        // Local webviews open the real file directly, so this exists for remotes,
-        // which otherwise can only enlarge the 320px thumbnail.
-        if (origin !== "remote" || !requester) break;
+      case "requestImageFull":
+      case "requestImageOriginal": {
+        // Local previews can display vscode-resource URLs, but cannot read their
+        // cross-origin pixels. Both surfaces use the same authorized handles.
+        if (origin === "remote" && !requester) break;
         const source = this.fullImagePaths.get(msg.fullId);
         // Unknown handle: say nothing. The overlay keeps showing the thumbnail,
         // and a probe learns nothing about what does or does not exist on disk.
         if (!source) break;
         // Revalidate against the current open set — a handle minted while a
         // folder was open must not survive closing that folder.
-        if (!this.isImagePathAuthorizedNow(source)) {
-          this.host.appendLine(`[remote] refused imageFull (path no longer authorized)`);
+        if (!this.isImagePathAuthorizedNow(source, session)) {
+          this.host.appendLine(`[image] refused image request (path no longer authorized)`);
           break;
         }
-        const src = await this.renderFullImage(source);
-        this.sendRemoteRequester(requester, { type: "imageFull", fullId: msg.fullId, src });
+        const src = msg.type === "requestImageOriginal"
+          ? await this.readOriginalImage(source)
+          : await this.renderFullImage(source);
+        // A folder may close while the file is being read.
+        if (!this.isImagePathAuthorizedNow(source, session)) break;
+        const response: HostMsg = msg.type === "requestImageOriginal"
+          ? { type: "imageOriginal", fullId: msg.fullId, requestId: msg.requestId, src }
+          : { type: "imageFull", fullId: msg.fullId, src };
+        if (requester) this.sendRemoteRequester(requester, response);
+        else this.postLocal(response);
         break;
       }
       case "send":
@@ -16070,7 +16079,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   private localPreviewChips(session: Session, webview: HostWebview): FileChip[] {
     return session.chips.map((chip) => isImageChip(chip)
       // Staging paths are genuine local disk (Uri.file roots).
-      ? { ...chip, previewSrc: webview.asWebviewUri(Uri.file(chip.path)) }
+      ? { ...chip, previewSrc: webview.asWebviewUri(Uri.file(chip.path)), fullId: this.registerFullImage(chip.path) }
       : chip);
   }
 
@@ -16078,7 +16087,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     if (message.type === "userMessage" && message.chips) {
       return { ...message, chips: message.chips.map((chip) => isImageChip(chip)
         ? { ...chip, ...(fs.existsSync(chip.path)
-          ? { previewSrc: webview.asWebviewUri(Uri.file(chip.path)) }
+          ? { previewSrc: webview.asWebviewUri(Uri.file(chip.path)), fullId: this.registerFullImage(chip.path) }
           : {}) }
         : chip) };
     }
@@ -16089,7 +16098,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           ...item,
           ...(item.chips ? { chips: item.chips.map((chip) => isImageChip(chip)
             ? { ...chip, ...(fs.existsSync(chip.path)
-              ? { previewSrc: webview.asWebviewUri(Uri.file(chip.path)) }
+              ? { previewSrc: webview.asWebviewUri(Uri.file(chip.path)), fullId: this.registerFullImage(chip.path) }
               : {}) }
             : chip) } : {}),
         })),
@@ -16099,7 +16108,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       return {
         ...message,
         images: message.images.map((image) => image.path && fs.existsSync(image.path)
-          ? { ...image, previewSrc: webview.asWebviewUri(Uri.file(image.path)) }
+          ? { ...image, previewSrc: webview.asWebviewUri(Uri.file(image.path)), fullId: this.registerFullImage(image.path) }
           : image),
       };
     }
@@ -18976,7 +18985,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   private readonly fullImagePaths = new Map<string, string>();
   private readonly fullImageHandles = new Map<string, string>();
 
-  /** Mint (or reuse) the handle for a path we are about to show a remote. */
+  /** Mint (or reuse) the handle for a path we are about to show a reader. */
   private registerFullImage(imagePath: string): string {
     const existing = this.fullImageHandles.get(imagePath);
     if (existing) return existing;
@@ -18995,8 +19004,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     return handle;
   }
 
-  /** Fetch-time revalidation for remote image handles (open-set + session media). */
-  private isImagePathAuthorizedNow(imagePath: string): boolean {
+  /** Fetch-time revalidation for image handles (open-set + session media). */
+  private isImagePathAuthorizedNow(imagePath: string, session?: Session): boolean {
     const authorized = this.authorizedSessionCwds();
     let home: string | undefined;
     try {
@@ -19004,7 +19013,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     } catch {
       home = undefined;
     }
-    return imagePathStillAuthorized(imagePath, authorized, {
+    if (imagePathStillAuthorized(imagePath, authorized, {
       grokHome: home,
       sameCwd: pathsEqual,
       isTrustedGeneratedMedia: (p) => {
@@ -19014,7 +19023,20 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           return false;
         }
       },
-    });
+    })) return true;
+    // Pasted attachments live in global storage, outside the project. Require
+    // both canonical staging containment and a reference in the asking session;
+    // trusting the whole staging directory would expose other sessions' images.
+    if (!session || !this.isAuthorizedCwd(this.sessionCwd(session))) return false;
+    try {
+      if (!pathBoundToClosedFolder(fs.realpathSync(imagePath), fs.realpathSync(this.imageStagingDir()), pathsEqual)) return false;
+    } catch { return false; }
+    const owns = (images: readonly { path?: string }[]) => images.some((image) => image.path === imagePath);
+    return owns(session.chips)
+      || session.queuedSends.some((item) => owns(item.chips))
+      || session.buffer.some((m) =>
+        m.type === "userMessage" ? owns(m.chips ?? [])
+          : m.type === "userMessageChunk" ? owns(m.images ?? []) : false);
   }
 
   /** Render a bigger version for a remote's tap. Undefined when the source is
@@ -19028,6 +19050,22 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         return undefined;
       }
       return `data:${thumbnailMime(thumb)};base64,${Buffer.from(thumb).toString("base64")}`;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async readOriginalImage(imagePath: string): Promise<string | undefined> {
+    try {
+      const mime = guessMediaMime(imagePath);
+      if (!/^image\/(png|jpeg|gif|webp|bmp)$/.test(mime)) return undefined;
+      // Match the remote media budget; never resize to meet it because that
+      // would silently break the clipboard's full-resolution promise.
+      const limit = 25 * 1024 * 1024;
+      if ((await fs.promises.stat(imagePath)).size > limit) return undefined;
+      const bytes = await fs.promises.readFile(imagePath);
+      if (!bytes.length || bytes.length > limit) return undefined;
+      return `data:${mime};base64,${bytes.toString("base64")}`;
     } catch {
       return undefined;
     }
