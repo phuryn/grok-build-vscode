@@ -2015,7 +2015,10 @@
       // do not read it as ours (#136). An OS file-manager drag fires no
       // dragstart, is never blocked, and there Shift IS ours ("inline the file's
       // text"), so this advice would be actively wrong outside the Explorer.
-      copy: "Dragging from the Explorer? {Hold Shift} — the editor blocks the drop otherwise.",
+      // Order matters and the first draft had it backwards: Shift+click in the
+      // Explorer is a range-select, so the modifier cannot be held BEFORE the
+      // drag starts — it goes down once the drag is already moving.
+      copy: "Dragging from the Explorer? {Start the drag, then hold Shift} — the editor blocks the drop otherwise.",
       target: null,
       // `dropFile` is "host-local", so a remote's drop is refused outright and
       // the advice would be a dead end there.

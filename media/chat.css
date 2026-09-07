@@ -3210,7 +3210,24 @@ body.vscode-light {
 .prompt-nav button:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -2px; }
 .prompt-nav svg { display: block; width: 13px; height: 13px; stroke-width: 2.5; }
 #prompt-nav-count { white-space: nowrap; font-variant-numeric: tabular-nums; }
-.prompt-nav .prompt-latest {
+
+/* The prompt the counter is naming. It has to be visible for the last prompts
+   especially, which cannot be scrolled to the top of the viewport at all — the
+   mark is the only thing that says which one "7/7" means. Same blue as find,
+   so a jump target reads like a search hit rather than a new vocabulary. */
+.msg.user.prompt-nav-target .msg-bubble {
+  /* The BUBBLE, not `.msg.user` - that outer element is transparent with zero
+     padding and no radius, so a tint there sits behind an opaque bubble and is
+     invisible. Blend into the surface rather than layering a transparent wash
+     over it, so the bubble stays opaque, and ring it with box-shadow, which
+     follows the border-radius that an outline would square off. */
+  background: color-mix(in srgb, var(--vscode-charts-blue, #3794ff) 18%, var(--chat-surface-user));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--vscode-charts-blue, #3794ff) 55%, transparent);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .msg.user.prompt-nav-target .msg-bubble { transition: background 120ms ease-out; }
+}
+.prompt-nav .prompt-bottom {
   border-left: 1px solid var(--vscode-editorWidget-border);
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;

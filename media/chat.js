@@ -1174,12 +1174,12 @@
     + `<button id="prompt-next-btn" type="button" title="Next prompt" aria-label="Next prompt" disabled>${ICON.chevronDown}</button>`;
   scrollBottomBtn.before(promptNav);
   promptNav.appendChild(scrollBottomBtn);
-  scrollBottomBtn.className = "prompt-latest";
+  scrollBottomBtn.className = "prompt-bottom";
   scrollBottomBtn.disabled = true;
   // The visible word IS the accessible name, so voice control can act on what
   // it reads. "Scroll to bottom" survives as the hover tooltip.
   scrollBottomBtn.setAttribute("title", "Scroll to bottom");
-  scrollBottomBtn.innerHTML = `${ICON.arrowDown}<span>Latest</span>`;
+  scrollBottomBtn.innerHTML = `${ICON.arrowDown}<span>Bottom</span>`;
   const promptPrevBtn = $("prompt-prev-btn");
   const promptNextBtn = $("prompt-next-btn");
   const promptNavCount = $("prompt-nav-count");
@@ -12931,6 +12931,22 @@
     updatePromptNav();
   }
 
+  // The readout cannot come from scroll position alone. The last screenful of
+  // prompts all share the terminal scrollTop, so nothing can bring them to the
+  // top of the viewport and geometry can never name them — the owner hit this
+  // as "I click the chevron, the screen moves, and it still says 6/7". A jump
+  // therefore PINS its target and marks it, so the number always has something
+  // visible it refers to; any real scroll gesture drops the pin and hands the
+  // readout back to geometry. The pin holds the ELEMENT, not an index, so
+  // loading earlier history — which shifts every index — cannot mis-point it.
+  let promptNavPin = null;
+  function setPromptNavPin(el) {
+    if (promptNavPin === el) return;
+    if (promptNavPin) promptNavPin.classList.remove("prompt-nav-target");
+    promptNavPin = el || null;
+    if (promptNavPin) promptNavPin.classList.add("prompt-nav-target");
+  }
+
   function promptPosition() {
     // Count the DOM, not history ordinals: a remote snapshot has only its tail.
     const prompts = liveTranscriptQueryAll(".msg.user:not(.queued)");
@@ -12950,18 +12966,34 @@
 
   function updatePromptNav() {
     const { prompts, current, previous } = promptPosition();
-    promptNavCount.textContent = `Prompts ${prompts.length ? current + 1 : 0}/${prompts.length}`;
+    // A pinned element that has left the DOM (cleared transcript, replay) is
+    // stale rather than authoritative: drop it and fall back to geometry.
+    const pinned = promptNavPin ? prompts.indexOf(promptNavPin) : -1;
+    if (promptNavPin && pinned < 0) setPromptNavPin(null);
+    const shown = pinned >= 0 ? pinned : current;
+    promptNavCount.textContent = `Prompts ${prompts.length ? shown + 1 : 0}/${prompts.length}`;
     promptNavCount.style.minWidth = `${9 + String(prompts.length).length * 2}ch`;
-    promptPrevBtn.disabled = previous < 0;
-    promptNextBtn.disabled = state.stickToBottom || current >= prompts.length - 1;
+    // While pinned the neighbour IS the previous prompt. Geometry's `previous`
+    // means something subtler - inside a long answer it is that answer's own
+    // prompt - and it is right only when the readout is geometry's too.
+    promptPrevBtn.disabled = (pinned >= 0 ? shown - 1 : previous) < 0;
+    promptNextBtn.disabled = state.stickToBottom || shown >= prompts.length - 1;
     scrollBottomBtn.disabled = state.stickToBottom;
   }
 
   function jumpPrompt(direction) {
     const { prompts, tops, current, previous } = promptPosition();
-    const target = direction < 0 ? previous : current + 1;
+    const pinned = promptNavPin ? prompts.indexOf(promptNavPin) : -1;
+    const from = pinned >= 0 ? pinned : current;
+    const target = direction < 0 ? (pinned >= 0 ? from - 1 : previous) : from + 1;
     if (target < 0 || target >= prompts.length) return;
+    // Scrolling clamps at the end of the range; the pin is what carries the
+    // move when it does. Deliberate navigation also supersedes a wheel flick
+    // still inside its 750ms latch, which would otherwise clear the pin from
+    // the inertial scroll events that arrive after this click.
+    userScrollIntentUntil = 0;
     messagesEl.scrollTo({ top: messagesEl.scrollTop + tops[target], behavior: "instant" });
+    setPromptNavPin(prompts[target]);
     updatePromptNav();
   }
   promptPrevBtn.onclick = () => jumpPrompt(-1);
@@ -12973,6 +13005,7 @@
   // historyReplay frame follows the pin instead of re-pinning.
   function forceScrollToBottom() {
     if (state.replaying) return;
+    setPromptNavPin(null);
     setStickToBottom(true);
     messagesEl.scrollTop = messagesEl.scrollHeight;
     updateScrollBtn();
@@ -13081,6 +13114,7 @@
         messagesEl.scrollTop, messagesEl.scrollHeight, messagesEl.clientHeight,
         currentStickThreshold(),
       ));
+      setPromptNavPin(null);
       updateScrollBtn();
     }
     updatePromptNav();
@@ -13089,6 +13123,7 @@
 
   scrollBottomBtn.onclick = () => {
     autoScrolling = true;
+    setPromptNavPin(null);
     setStickToBottom(true);
     updateScrollBtn();
     messagesEl.scrollTo({ top: messagesEl.scrollHeight, behavior: "smooth" });
