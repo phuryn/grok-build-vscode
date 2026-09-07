@@ -78,7 +78,7 @@ It works out of the box once you're signed in (your `grok login` token is reused
 <details>
 <summary><strong>File chips</strong> — your editor and selection as <code>@file</code> context</summary>
 
-The active editor rides along automatically; add more by **typing `@` in the composer** (a workspace file picker opens — arrow keys + Enter, fuzzy-matched), dragging from the Explorer, right-click → **Grok: Send File**, **Alt+G**, or the **+** button. Chips send as `@/path` references, so content stays current and history stays small. **Shift-drag** embeds the file inline instead.
+The active editor rides along automatically; add more by **typing `@` in the composer** (a workspace file picker opens — arrow keys + Enter, fuzzy-matched), dragging from the Explorer, right-click → **Add to Grok chat** (one file or a whole selection), **Alt+G**, or the **+** button. Chips send as `@/path` references, so content stays current and history stays small. **Shift-drag from outside the editor** embeds the file inline instead; dragging out of VS Code's own Explorer needs Shift held just to reach the panel at all, so those always attach as chips.
 
 ![Composer with an image, a file, and a selection chip attached](docs/screenshots/file_chips.png)
 
@@ -334,7 +334,7 @@ VS Code commands (not Grok slash commands):
 | `Grok: Compact Conversation` | Compact the current session to reclaim context |
 | `Grok: Pick Model` | Open the model picker |
 | `Grok: Toggle Plan / Agent Mode` | Open the mode picker (Agent / Plan / Auto accept) |
-| `Grok: Send File` | Add a file to the composer (right-clicked file, active editor, or a file picker) |
+| `Add to Grok chat` | Add files to the composer (the Explorer selection, the active editor, or a file picker) |
 | `Add Selection to Grok` | Attach the selected lines as a snippet chip in the composer |
 | `Grok: Insert @-Mention` | Insert an `@`-mention for the active file into the composer |
 | `Grok: Expand All Tool Details (This Session)` | Open every tool group, command IN/OUT box, and edit inline diff, and keep new ones open — this session only |

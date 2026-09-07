@@ -136,7 +136,7 @@
       },
       {
         "command": "grok.sendFile",
-        "title": "Grok: Send File"
+        "title": "Add to Grok chat"
       },
       {
         "command": "grok.insertAtMention",
