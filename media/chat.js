@@ -2055,26 +2055,53 @@
     const sess = state.sessionUsage;
     const row = (u, label, key, fmt, parent) => (u && u[key] != null ? info(label, (fmt || tok)(u[key]), parent) : null);
 
-    // Session total leads: it's the number you act on (what this conversation has
-    // cost). Last turn is diagnostics, so it's a collapsed disclosure below it —
-    // present when you want it, out of the way when you don't.
-    if (sess) {
-      section("Session total");
-      row(sess, "Input", "inputTokens");
-      row(sess, "↳ cache read", "cachedReadTokens");
-      row(sess, "↳ cache write", "cachedWriteTokens");
-      row(sess, "Output", "outputTokens");
-      row(sess, "Cost", "costUsdTicks", usdTicks);
-    }
-    if (turn) {
-      const open = !!uiState().lastTurnOpen;
+    /** A collapsible ledger section.
+     *
+     *  The marker sits immediately AFTER the label, the way the rail's PROJECTS
+     *  header does it, instead of a glyph pushed to the far right with no
+     *  visible relationship to the word it opens. `fold` names the section
+     *  because the first `.popover-section-toggle` stopped meaning "Last turn"
+     *  the moment there were two of them — CSS and tests address it by name. */
+    const foldSection = (title, fold, stateKey) => {
+      const open = !!uiState()[stateKey];
       const hdr = document.createElement("div");
       hdr.className = "popover-section popover-section-toggle" + (open ? " expanded" : "");
-      hdr.innerHTML = `<span>Last turn</span><span class="popover-chevron">›</span>`;
+      hdr.dataset.fold = fold;
+      const label = document.createElement("span");
+      label.textContent = title;
+      const twisty = document.createElement("span");
+      twisty.className = "popover-twisty";
+      twisty.innerHTML = open ? ICON.chevronDown : ICON.chevronRight;
+      hdr.append(label, twisty);
       contextPopover.appendChild(hdr);
       const body = document.createElement("div");
       body.hidden = !open;
       contextPopover.appendChild(body);
+      hdr.onclick = (e) => {
+        e.stopPropagation();
+        const next = body.hidden;
+        body.hidden = !next;
+        hdr.classList.toggle("expanded", next);
+        twisty.innerHTML = next ? ICON.chevronDown : ICON.chevronRight;
+        setUiState({ [stateKey]: next }); // remembered across opens + reloads
+      };
+      return body;
+    };
+
+    // Both ledgers fold. Session total is still the number you act on and Last
+    // turn is still diagnostics, but the donut is opened to read a CONTEXT
+    // figure, and a popover that unrolls two ledgers every time buries it.
+    // Each remembers its own state, so opening one costs one click, once.
+    if (sess) {
+      const body = foldSection("Session total", "session", "sessionTotalOpen");
+      row(sess, "Input", "inputTokens", null, body);
+      row(sess, "↳ cache read", "cachedReadTokens", null, body);
+      row(sess, "↳ cache write", "cachedWriteTokens", null, body);
+      row(sess, "Output", "outputTokens", null, body);
+      row(sess, "Cost", "costUsdTicks", usdTicks, body);
+    }
+    if (turn) {
+      const body = foldSection("Last turn", "lastTurn", "lastTurnOpen");
       row(turn, "Input", "inputTokens", null, body);
       row(turn, "↳ cache read", "cachedReadTokens", null, body);
       row(turn, "↳ cache write", "cachedWriteTokens", null, body);
@@ -2086,13 +2113,6 @@
       // routinely dwarfs "Context used". Without this the two numbers look like
       // a bug (they aren't — they're different quantities).
       row(turn, "Model calls", "modelCalls", String, body);
-      hdr.onclick = (e) => {
-        e.stopPropagation();
-        const next = body.hidden;
-        body.hidden = !next;
-        hdr.classList.toggle("expanded", next);
-        setUiState({ lastTurnOpen: next }); // remembered across opens + reloads
-      };
     }
 
     const fine = document.createElement("div");

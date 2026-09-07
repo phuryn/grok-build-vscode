@@ -3556,19 +3556,32 @@ textarea#input {
 .popover-section-toggle {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  /* The marker belongs NEXT TO the label, not at the far right of the box.
+     Floated right it read as a separate control that happened to share a row —
+     you could not tell which word it opened. Same arrangement as the rail's
+     PROJECTS header, down to the 2px. */
+  justify-content: flex-start;
+  gap: 0;
   padding-bottom: 5px;
   cursor: pointer;
   user-select: none;
 }
 .popover-section-toggle:hover { color: var(--vscode-foreground); }
-.popover-section-toggle .popover-chevron { transition: transform 0.12s ease; }
-.popover-section-toggle.expanded .popover-chevron { transform: rotate(90deg); }
 .popover-value { color: var(--vscode-descriptionForeground); font-size: 10px; }
 .popover-external { color: var(--vscode-descriptionForeground); font-size: 12px; }
 .popover-back { color: var(--vscode-textLink-foreground); }
-.popover-chevron { color: var(--vscode-descriptionForeground); flex-shrink: 0; }
+/* Mirrors .rail-head-twisty: the open/closed chevron is SWAPPED, not rotated,
+   so the closed state is a real "›" and the open state a real "⌄" rather than
+   the same glyph on its side. */
+.popover-twisty {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 16px;
+  margin-left: 2px;
+  color: var(--vscode-descriptionForeground);
+}
+.popover-twisty svg { width: 12px; height: 12px; display: block; }
 
 /* Non-clickable info rows (About panel: versions, update status). */
 .popover-info {
@@ -5141,8 +5154,12 @@ body.vscode-light .preview-overlay {
 /* Phones: "Last turn" is billing diagnostics ÔÇö hide it in the donut's context
    popover (the Session total above it is the number that matters). */
 @media (hover: none), (pointer: coarse) {
-  #context-popover .popover-section-toggle,
-  #context-popover .popover-section-toggle + div { display: none; }
+  /* Addressed BY NAME. This used to say `.popover-section-toggle`, which meant
+     "Last turn" only while Last turn was the sole fold — the moment Session
+     total became one too, the same rule would have deleted the number this
+     comment calls the one that matters, on the surface it matters most. */
+  #context-popover [data-fold="lastTurn"],
+  #context-popover [data-fold="lastTurn"] + div { display: none; }
 }
 
 /* The "continue in a new chat" destination question. Reached from the

@@ -3497,7 +3497,7 @@ describe("context popover — usage breakdown (#53)", () => {
       session: { inputTokens: 32722, outputTokens: 202 },
     });
     click(window, $(doc, "donut"));
-    const hdr = $(doc, "context-popover").querySelector(".popover-section-toggle") as HTMLElement;
+    const hdr = $(doc, "context-popover").querySelector('[data-fold="lastTurn"]') as HTMLElement;
     expect(hdr).not.toBeNull();
     const body = hdr.nextElementSibling as HTMLElement;
     expect(body.hidden).toBe(true); // diagnostics stay out of the way by default
@@ -3507,6 +3507,36 @@ describe("context popover — usage breakdown (#53)", () => {
     // "Model calls" is what makes billed input (which dwarfs context) make sense.
     expect(body.textContent).toContain("Model calls");
     expect(body.textContent).toContain("3");
+  });
+
+  it("folds Session total too, closed by default and remembered independently", () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, { type: "initialState", appPurpose: "coding", capabilities: {} } as never);
+    dispatch(window, {
+      type: "usage",
+      turn: { inputTokens: 16394, outputTokens: 160, modelCalls: 3 },
+      session: { inputTokens: 32722, outputTokens: 202 },
+    });
+    click(window, $(doc, "donut"));
+    const pop = $(doc, "context-popover");
+    const sess = pop.querySelector('[data-fold="session"]') as HTMLElement;
+    const turn = pop.querySelector('[data-fold="lastTurn"]') as HTMLElement;
+    expect(sess).not.toBeNull();
+    // The donut is opened to read a CONTEXT figure. Neither ledger unrolls over
+    // it uninvited.
+    expect((sess.nextElementSibling as HTMLElement).hidden).toBe(true);
+    expect((turn.nextElementSibling as HTMLElement).hidden).toBe(true);
+
+    // Opening one leaves the other alone — separate keys, separate memory.
+    click(window, sess);
+    expect((sess.nextElementSibling as HTMLElement).hidden).toBe(false);
+    expect((turn.nextElementSibling as HTMLElement).hidden).toBe(true);
+    expect((sess.nextElementSibling as HTMLElement).textContent).toContain("Input");
+
+    // The marker is SWAPPED, not rotated, so a closed section is a real "›" and
+    // an open one a real "⌄" rather than the same glyph on its side.
+    expect(sess.querySelector(".popover-twisty")!.innerHTML)
+      .not.toBe(turn.querySelector(".popover-twisty")!.innerHTML);
   });
 
   it("a restore-only session total (no turn yet) shows the session section alone", () => {
@@ -3540,7 +3570,7 @@ describe("context popover — usage breakdown (#53)", () => {
     const pop = $(doc, "context-popover");
     expect(pop.textContent).toContain("$0.018038");
 
-    const hdr = pop.querySelector(".popover-section-toggle") as HTMLElement;
+    const hdr = pop.querySelector('[data-fold="lastTurn"]') as HTMLElement;
     click(window, hdr);
     expect((hdr.nextElementSibling as HTMLElement).textContent).toContain("$0.008");
   });
@@ -3563,7 +3593,7 @@ describe("context popover — usage breakdown (#53)", () => {
     expect(sessionSection.textContent).toBe("Session total");
     expect(sessionSection.nextElementSibling?.textContent).toContain("Input");
 
-    const hdr = pop.querySelector(".popover-section-toggle") as HTMLElement;
+    const hdr = pop.querySelector('[data-fold="lastTurn"]') as HTMLElement;
     const sessionText: string[] = [];
     for (let el = sessionSection.nextElementSibling; el && el !== hdr; el = el.nextElementSibling) {
       sessionText.push(el.textContent ?? "");
