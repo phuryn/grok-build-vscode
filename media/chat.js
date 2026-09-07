@@ -1945,6 +1945,39 @@
       (parent || contextPopover).appendChild(el);
     };
     const tok = (n) => Number(n).toLocaleString();
+
+    /** A collapsible ledger section.
+     *
+     *  The marker sits immediately AFTER the label, the way the rail's PROJECTS
+     *  header does it, instead of a glyph pushed to the far right with no
+     *  visible relationship to the word it opens. `fold` names the section
+     *  because the first `.popover-section-toggle` stopped meaning "Last turn"
+     *  the moment there were two of them — CSS and tests address it by name. */
+    const foldSection = (title, fold, stateKey) => {
+      const open = !!uiState()[stateKey];
+      const hdr = document.createElement("div");
+      hdr.className = "popover-section popover-section-toggle" + (open ? " expanded" : "");
+      hdr.dataset.fold = fold;
+      const label = document.createElement("span");
+      label.textContent = title;
+      const twisty = document.createElement("span");
+      twisty.className = "popover-twisty";
+      twisty.innerHTML = open ? ICON.chevronDown : ICON.chevronRight;
+      hdr.append(label, twisty);
+      contextPopover.appendChild(hdr);
+      const body = document.createElement("div");
+      body.hidden = !open;
+      contextPopover.appendChild(body);
+      hdr.onclick = (e) => {
+        e.stopPropagation();
+        const next = body.hidden;
+        body.hidden = !next;
+        hdr.classList.toggle("expanded", next);
+        twisty.innerHTML = next ? ICON.chevronDown : ICON.chevronRight;
+        setUiState({ [stateKey]: next }); // remembered across opens + reloads
+      };
+      return body;
+    };
     // Grok's fixed-point billing unit is 10^10 ticks per USD (xAI's published
     // UsageTotals contract). Keep the divisor explicit; it is not cents/micros.
     const usdTicks = (ticks) => {
@@ -2031,17 +2064,20 @@
         breakdown.toolDefinitionsTokens != null ||
         (breakdown.categories && breakdown.categories.length);
       if (hasCounted) {
-        section("Already counted above");
+        // Collapsed by default, like the two ledgers below. Every row here is a
+        // breakdown of a number ALREADY shown above, so it is the least likely
+        // reason the donut was opened and the worst thing to unroll by default.
+        const counted = foldSection("Already counted above", "counted", "countedOpen");
         if (breakdown.toolDefinitionsTokens != null) {
           const n = breakdown.toolDefinitionsCount;
           const toolsLabel = typeof n === "number"
             ? `Tool definitions (${n} ${n === 1 ? "tool" : "tools"})`
             : "Tool definitions";
-          info(toolsLabel, tok(breakdown.toolDefinitionsTokens));
+          info(toolsLabel, tok(breakdown.toolDefinitionsTokens), counted);
         }
         if (breakdown.categories) {
           for (const category of breakdown.categories) {
-            info(category.detail ? `${category.label} (${category.detail})` : category.label, tok(category.tokens));
+            info(category.detail ? `${category.label} (${category.detail})` : category.label, tok(category.tokens), counted);
           }
         }
       }
@@ -2054,39 +2090,6 @@
     const turn = state.lastTurnUsage;
     const sess = state.sessionUsage;
     const row = (u, label, key, fmt, parent) => (u && u[key] != null ? info(label, (fmt || tok)(u[key]), parent) : null);
-
-    /** A collapsible ledger section.
-     *
-     *  The marker sits immediately AFTER the label, the way the rail's PROJECTS
-     *  header does it, instead of a glyph pushed to the far right with no
-     *  visible relationship to the word it opens. `fold` names the section
-     *  because the first `.popover-section-toggle` stopped meaning "Last turn"
-     *  the moment there were two of them — CSS and tests address it by name. */
-    const foldSection = (title, fold, stateKey) => {
-      const open = !!uiState()[stateKey];
-      const hdr = document.createElement("div");
-      hdr.className = "popover-section popover-section-toggle" + (open ? " expanded" : "");
-      hdr.dataset.fold = fold;
-      const label = document.createElement("span");
-      label.textContent = title;
-      const twisty = document.createElement("span");
-      twisty.className = "popover-twisty";
-      twisty.innerHTML = open ? ICON.chevronDown : ICON.chevronRight;
-      hdr.append(label, twisty);
-      contextPopover.appendChild(hdr);
-      const body = document.createElement("div");
-      body.hidden = !open;
-      contextPopover.appendChild(body);
-      hdr.onclick = (e) => {
-        e.stopPropagation();
-        const next = body.hidden;
-        body.hidden = !next;
-        hdr.classList.toggle("expanded", next);
-        twisty.innerHTML = next ? ICON.chevronDown : ICON.chevronRight;
-        setUiState({ [stateKey]: next }); // remembered across opens + reloads
-      };
-      return body;
-    };
 
     // Both ledgers fold. Session total is still the number you act on and Last
     // turn is still diagnostics, but the donut is opened to read a CONTEXT

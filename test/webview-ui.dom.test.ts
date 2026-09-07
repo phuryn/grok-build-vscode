@@ -3539,6 +3539,39 @@ describe("context popover — usage breakdown (#53)", () => {
       .not.toBe(turn.querySelector(".popover-twisty")!.innerHTML);
   });
 
+  it("folds Already counted above, closed by default and independent of the ledgers", () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, { type: "initialState", appPurpose: "coding", capabilities: {} } as never);
+    dispatch(window, {
+      type: "contextUsage",
+      used: 16017,
+      window: 512000,
+      systemPromptTokens: 1039,
+      toolDefinitionsTokens: 812,
+      messageTokens: 12166,
+      categories: [{ label: "Skills", tokens: 1200 }],
+    });
+    dispatch(window, { type: "usage", session: { inputTokens: 32722, outputTokens: 202 } });
+    click(window, $(doc, "donut"));
+    const pop = $(doc, "context-popover");
+    const counted = pop.querySelector('[data-fold="counted"]') as HTMLElement;
+    expect(counted).not.toBeNull();
+    const body = counted.nextElementSibling as HTMLElement;
+    // Every row under it restates a number already shown in "In this window",
+    // so it is the last thing worth unrolling uninvited.
+    expect(body.hidden).toBe(true);
+    expect(body.textContent).toContain("Tool definitions");
+
+    // "In this window" is NOT a fold. The figures the donut is opened to read
+    // stay on screen; only the restatements and the ledgers collapse.
+    expect(pop.querySelector('[data-fold="window"]')).toBeNull();
+
+    click(window, counted);
+    expect(body.hidden).toBe(false);
+    const sess = pop.querySelector('[data-fold="session"]') as HTMLElement;
+    expect((sess.nextElementSibling as HTMLElement).hidden).toBe(true);
+  });
+
   it("a restore-only session total (no turn yet) shows the session section alone", () => {
     const { window, doc } = bootWebview();
     // The breakdown is a CODING-mode surface: knowledge work shows the number
