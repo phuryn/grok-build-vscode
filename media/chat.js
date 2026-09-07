@@ -7944,6 +7944,18 @@
     return {
       appPurpose: state.appPurpose === "coding" ? "coding" : "knowledge",
       isRemote: IS_REMOTE,
+      // The Explorer drag tip is about a workbench behaviour the desktop shell
+      // does not have.
+      desktopShell: IS_DESKTOP_CLIENT,
+      // Asked of the DEVICE, not the surface: the relay's own browser client on
+      // a laptop pastes images fine, and a phone cannot regardless of where it
+      // is pointed. matchMedia is absent in some test DOMs, so absence reads as
+      // "not touch" rather than throwing.
+      coarsePointer: (() => {
+        try {
+          return !!(window.matchMedia && window.matchMedia("(hover: none), (pointer: coarse)").matches);
+        } catch { return false; }
+      })(),
       // Mirrors continueChatDestinations(), so the tip is never offered where
       // the action it links to would be refused.
       worktreeSupported: state.worktreeSupported !== false,

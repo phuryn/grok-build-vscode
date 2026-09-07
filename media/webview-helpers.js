@@ -2006,6 +2006,33 @@
       // supports worktrees, and not already inside one (they do not nest).
       eligible: (f) => f.appPurpose === "coding" && f.worktreeSupported && !f.inWorktree,
     },
+    {
+      id: "dragShift",
+      // Scoped to a VS Code-internal drag deliberately. A `dragstart` in the
+      // workbench makes the editor set pointer-events:none on every webview and
+      // re-check it on each dragover, so an Explorer drop cannot reach us at all
+      // without Shift held — the workbench demands the modifier, which is why we
+      // do not read it as ours (#136). An OS file-manager drag fires no
+      // dragstart, is never blocked, and there Shift IS ours ("inline the file's
+      // text"), so this advice would be actively wrong outside the Explorer.
+      copy: "Dragging from the Explorer? {Hold Shift} — the editor blocks the drop otherwise.",
+      target: null,
+      // `dropFile` is "host-local", so a remote's drop is refused outright and
+      // the advice would be a dead end there.
+      deskOnly: true,
+      // No Explorer in the desktop app, where `mentions` already covers dropping.
+      eligible: (f) => !f.desktopShell,
+    },
+    {
+      id: "pasteScreenshot",
+      // Pointer, not surface. A laptop browser on the relay pastes screenshots
+      // exactly like the desk does; a phone cannot get an image onto a textarea
+      // at all, so there the advice is simply untrue.
+      copy: "Copied a screenshot? {Paste it straight into the message box.}",
+      target: null,
+      deskOnly: false,
+      eligible: (f) => !f.coarsePointer,
+    },
   ];
 
   /** Catalogue entry by id, or undefined for an id this client doesn't know. */
@@ -2061,6 +2088,8 @@
       remoteCanConnectAgents: !!f.remoteCanConnectAgents,
       mcpSettings: !!f.mcpSettings,
       remoteLinked: f.remoteLinked === true ? true : f.remoteLinked === false ? false : null,
+      coarsePointer: !!f.coarsePointer,
+      desktopShell: !!f.desktopShell,
     };
     return WELCOME_TIPS.filter((tip) => {
       if (dismissed.has(tip.id)) return false;

@@ -265,13 +265,16 @@ describe("eligibility", () => {
   it("offers the full desk pool to a first-run user", () => {
     expect(ids(FRESH)).toEqual([
       "providers", "routines", "connectors", "remote", "readAloud", "voice", "mentions",
+      "dragShift", "pasteScreenshot",
     ]);
   });
 
   it("keeps only the tips nothing can retire once everything is set up", () => {
     // Mentions is a habit, not a setting — it has no state to flip, so being
     // shown for the day and then dismissed are the only things that retire it.
-    expect(ids(SETTLED)).toEqual(["mentions"]);
+    // The Explorer-drag and paste lines are the same shape: pure advice about
+    // an input gesture, with nothing to complete.
+    expect(ids(SETTLED)).toEqual(["mentions", "dragShift", "pasteScreenshot"]);
   });
 
   it("drops the agents tip as soon as ONE of Codex or Claude is connected", () => {
@@ -321,7 +324,10 @@ describe("eligibility", () => {
     for (const withheld of ["providers", "connectors", "remote", "worktrees"]) {
       expect(remote, withheld).not.toContain(withheld);
     }
-    expect(remote).toEqual(["routines", "readAloud", "voice", "mentions"]);
+    // pasteScreenshot survives: it is gated on the POINTER, not the surface, and
+    // these facts describe a laptop browser on the relay, which pastes exactly
+    // as the desk does.
+    expect(remote).toEqual(["routines", "readAloud", "voice", "mentions", "pasteScreenshot"]);
   });
 
   it("offers a phone what its host says it can do", () => {
@@ -339,6 +345,41 @@ describe("eligibility", () => {
     // Each capability gates only its own tip.
     expect(ids({ ...FRESH, isRemote: true, mcpSettings: true })).not.toContain("providers");
     expect(ids({ ...FRESH, isRemote: true, remoteCanConnectAgents: true })).not.toContain("connectors");
+  });
+
+  it("asks the paste tip about the pointer, not about the surface", () => {
+    // The owner's correction, twice over. First: the relay's policy table
+    // permits an image send, but a phone cannot get one onto a textarea, so
+    // "the policy allows it" was never the same as "a person can do this".
+    // Then: gating it deskOnly over-corrected — a laptop browser on the relay
+    // pastes screenshots exactly like the desk. The honest fact is the pointer.
+    expect(ids({ ...FRESH, coarsePointer: true })).not.toContain("pasteScreenshot");
+    expect(ids({ ...FRESH, isRemote: true, coarsePointer: false })).toContain("pasteScreenshot");
+    // A host too old to report it, or a DOM with no matchMedia, must not lose
+    // the tip on the desk where it has always been true.
+    expect(ids({ ...FRESH, coarsePointer: undefined })).toContain("pasteScreenshot");
+  });
+
+  it("offers the Explorer-drag tip only where an Explorer drag exists", () => {
+    // It is not "drag and drop is broken". Only a VS Code-INTERNAL drag is
+    // blocked: a dragstart in the workbench blanks pointer events on every
+    // webview and Shift is the only thing that lifts it. An OS file-manager
+    // drag fires no dragstart, is never blocked, and there Shift is OUR
+    // modifier for inlining the file's text (#136) — so the advice is wrong
+    // anywhere but the Explorer.
+    expect(ids(FRESH)).toContain("dragShift");
+    expect(ids({ ...FRESH, desktopShell: true })).not.toContain("dragShift");
+    expect(ids({ ...FRESH, isRemote: true })).not.toContain("dragShift");
+  });
+
+  it("gives the two gesture tips no target, so neither renders a dead link", () => {
+    for (const id of ["dragShift", "pasteScreenshot"]) {
+      const tip = (WELCOME_TIPS as { id: string; target: string | null }[]).find((t) => t.id === id)!;
+      expect(tip.target, id).toBeNull();
+      // The braced span still has to be there — it renders bold rather than as
+      // a link, which is the advice-only path splitWelcomeTipCopy supports.
+      expect(splitWelcomeTipCopy((tip as unknown as { copy: string }).copy).action.length).toBeGreaterThan(0);
+    }
   });
 
   it("suppresses count-dependent tips when the host never sent the counts", () => {
@@ -369,7 +410,7 @@ describe("eligibility", () => {
     // again every time a conversation ends, which is how advice becomes
     // wallpaper.
     expect(ids({ ...FRESH, shownToday: ["providers", "routines"] })).toEqual([
-      "connectors", "remote", "readAloud", "voice", "mentions",
+      "connectors", "remote", "readAloud", "voice", "mentions", "dragShift", "pasteScreenshot",
     ]);
   });
 
@@ -385,7 +426,10 @@ describe("eligibility", () => {
   });
 
   it("empties for the day once every tip has had its turn", () => {
-    const all = ["providers", "routines", "connectors", "remote", "readAloud", "voice", "mentions"];
+    const all = [
+      "providers", "routines", "connectors", "remote", "readAloud", "voice", "mentions",
+      "dragShift", "pasteScreenshot",
+    ];
     expect(ids({ ...FRESH, shownToday: all })).toEqual([]);
   });
 
@@ -394,7 +438,7 @@ describe("eligibility", () => {
   });
 
   it("can empty completely, which is what puts the screen back as it is today", () => {
-    const done = { ...SETTLED, dismissed: ["mentions"] };
+    const done = { ...SETTLED, dismissed: ["mentions", "dragShift", "pasteScreenshot"] };
     expect(ids(done)).toEqual([]);
   });
 

@@ -214,7 +214,7 @@ describe("empty-state advice", () => {
       routineCount: 4,
       connectorCount: 2,
       linked: true,
-      dismissed: ["providers", "readAloud", "voice", "mentions"],
+      dismissed: ["providers", "readAloud", "voice", "mentions", "dragShift", "pasteScreenshot"],
     });
     expect(tipEl(h)).toBeNull();
   });
@@ -247,7 +247,11 @@ describe("empty-state advice", () => {
     }
     // `voiceConfigured` starts optimistically true and only the host says
     // otherwise, so a phone whose desk has a voice key is not told to set one up.
-    expect(offered).toEqual(["routines", "readAloud", "mentions"]);
+    // pasteScreenshot is NOT desk-only and correctly survives: it is gated on the
+    // pointer, and this harness is a browser with no coarse pointer — which is
+    // a laptop on the relay, where pasting a screenshot works exactly as it
+    // does on the desk. A real phone loses it on the same fact.
+    expect(offered).toEqual(["routines", "readAloud", "mentions", "pasteScreenshot"]);
   });
 
   it("offers voice setup only once the host says voice is unconfigured", () => {
@@ -353,7 +357,10 @@ describe("empty-state advice", () => {
   it("goes quiet once every tip has had its turn today", () => {
     const h = bootWebview({ ready: false });
     settle(h, {
-      shownToday: ["providers", "routines", "connectors", "remote", "readAloud", "voice", "mentions"],
+      shownToday: [
+        "providers", "routines", "connectors", "remote", "readAloud", "voice", "mentions",
+        "dragShift", "pasteScreenshot",
+      ],
     });
     expect(tipEl(h)).toBeNull();
   });
@@ -362,6 +369,7 @@ describe("empty-state advice", () => {
     const h = bootWebview({ ready: false });
     const allButWorktrees = [
       "providers", "routines", "connectors", "remote", "readAloud", "voice", "mentions",
+      "dragShift", "pasteScreenshot",
     ];
     settle(h, { dismissed: allButWorktrees });
     // Knowledge work is the default — nothing left to say.
@@ -375,6 +383,33 @@ describe("empty-state advice", () => {
     expect(action(h)?.textContent).toBe("Start it in a worktree");
     click(h.window, action(h)!);
     expect(h.posted).toContainEqual({ type: "newWorktreeSession" });
+  });
+
+  it("renders advice with no destination as bold text, not a dead link", () => {
+    // dragShift and pasteScreenshot are the first tips with `target: null`, so this
+    // branch of the renderer had no coverage. An <a href="#"> here would make
+    // the webview attempt a navigation and the editor answer by opening a file
+    // that does not exist — the reason targeted tips are a span rather than an
+    // anchor in the first place.
+    const h = bootWebview({ ready: false });
+    settle(h, {
+      dismissed: [
+        "providers", "routines", "connectors", "remote", "readAloud", "voice", "mentions",
+        "dragShift",
+      ],
+    });
+    expect(tipId(h)).toBe("pasteScreenshot");
+    // No .muted-link, so nothing looks clickable.
+    expect(action(h)).toBeNull();
+    const bold = h.doc.querySelector("#welcome-tip b") as HTMLElement;
+    expect(bold.textContent).toBe("Paste it straight into the message box.");
+    expect(bold.getAttribute("role")).toBeNull();
+    expect(bold.getAttribute("tabindex")).toBeNull();
+    // Clicking it must not post anything, and must not retire the tip.
+    const before = h.posted.length;
+    click(h.window, bold);
+    expect(h.posted.length).toBe(before);
+    expect(tipId(h)).toBe("pasteScreenshot");
   });
 
   it("rotates on a new empty screen, not on a repaint", () => {
