@@ -1,12 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { bootWebview, click, dispatch } from "./webview-harness";
 
-function seed(remote: boolean, updateAvailable = true) {
+function seed(remote: boolean, updateAvailable = true, activeProvider = "codex") {
   const h = bootWebview({ remote, ready: false });
   const provider = { id: "codex", connected: true, cliVersion: updateAvailable ? "0.149.0" : "0.153.4",
     latestCliVersion: "0.153.4", updateAvailable, cliUpdate: { status: "idle" } };
   dispatch(h.window, { type: "providerState", providers: [provider] });
   dispatch(h.window, { type: "initialized", info: { provider: "codex", version: provider.cliVersion } });
+  // Which tab you are standing on, which the offer is now gated on. `session`
+  // is the ONLY frame that sets it — the same one that drives the composer
+  // placeholder and the activity verb — so a fixture without it is a webview
+  // sitting on the Grok tab, whatever `initialized` said.
+  dispatch(h.window, { type: "session", provider: activeProvider, models: [] });
   dispatch(h.window, { type: "setBusy", value: false });
   return { ...h, provider };
 }
@@ -38,6 +43,25 @@ describe.each([false, true])("Codex welcome update nudge (remote=%s)", (remote) 
     expect(h.doc.getElementById("welcome-codex-update")).toBeNull();
     dispatch(h.window, { type: "providerState", providers: [{ ...h.provider, updateAvailable: true, cliUpdate: undefined }] });
     expect(h.doc.getElementById("welcome-codex-update")).toBeNull();
+  });
+
+  it("stays off the tabs it is not about, and follows a tab switch", () => {
+    // Codex's CLI version is Codex's business. On the Grok or Claude welcome
+    // screen this was an offer to update a tool the reader had not selected,
+    // sitting on another agent's empty state — noise, and ambiguous about which
+    // agent it was even talking about (Paweł, 2026-09-07).
+    const grok = seed(remote, true, "grok");
+    expect(grok.doc.getElementById("welcome-codex-update")).toBeNull();
+    const claude = seed(remote, true, "claude");
+    expect(claude.doc.getElementById("welcome-codex-update")).toBeNull();
+
+    // `session` is the only frame that moves the active provider, so it is also
+    // the only place that can repaint this. Without that repaint the offer
+    // lingers on the tab you switched TO until something unrelated re-renders.
+    dispatch(grok.window, { type: "session", provider: "codex", models: [] });
+    expect(grok.doc.getElementById("welcome-codex-update")).toBeTruthy();
+    dispatch(grok.window, { type: "session", provider: "grok", models: [] });
+    expect(grok.doc.getElementById("welcome-codex-update")).toBeNull();
   });
 
   it("keeps progress and outcome visible after an update, and hides with the welcome", () => {

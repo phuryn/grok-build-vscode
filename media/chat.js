@@ -8178,6 +8178,11 @@
     const welcome = $("welcome");
     const codex = (state.providers || []).find((p) => p.id === "codex");
     if (!welcome || !codex || !codex.cliUpdate) return;
+    // Codex's CLI version is Codex's business. On the Grok or Claude tab this
+    // was an offer to update a tool the user had not selected, sitting on
+    // another provider's welcome screen — noise at best, and confusing about
+    // which agent it was even talking about.
+    if (state.activeProvider !== "codex") return;
     const update = codex.cliUpdate;
     // Retain progress/outcome after the version changes so an empty phone
     // conversation doesn't lose the answer to the update it just requested.
@@ -16391,6 +16396,10 @@
         state.activeProvider = msg.provider === "codex" || msg.provider === "claude" ? msg.provider : "grok";
         syncFeedbackButtons();
         syncProviderVoice();
+        // The nudge is gated on the active provider, and this is the only place
+        // that changes — without a repaint here it would linger on the tab the
+        // user switched TO until some unrelated render happened to run.
+        renderCodexUpdateNudge();
         if (state.railTransition?.kind === "new") renderRail();
         state.isWorktree = !!msg.worktree; // gates the gear Apply/Remove worktree items
         state.availableModels = msg.models || [];
@@ -18501,22 +18510,131 @@
     }
   });
 
-  document.addEventListener("dragenter", (e) => { e.preventDefault(); document.body.classList.add("dragging"); });
+  // `dragleave` bubbles from every child the pointer crosses, and the spec fires
+  // `dragenter` on the NEW element BEFORE `dragleave` on the old one — so an
+  // add-on-enter / remove-on-leave pair spends most of a drag switched OFF. The
+  // dashed outline was therefore unreliable exactly when it was being relied on
+  // as a diagnostic ("if you see the outline, the drop is reaching us", #136).
+  // Count depth instead: only the leave that unwinds the last enter ends it.
+  let dragDepth = 0;
+  const endDrag = () => { dragDepth = 0; document.body.classList.remove("dragging"); };
+  document.addEventListener("dragenter", (e) => {
+    e.preventDefault();
+    dragDepth += 1;
+    document.body.classList.add("dragging");
+  });
   document.addEventListener("dragover", (e) => e.preventDefault());
-  document.addEventListener("dragleave", () => document.body.classList.remove("dragging"));
+  document.addEventListener("dragleave", () => {
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0) document.body.classList.remove("dragging");
+  });
+  document.addEventListener("dragend", endDrag);
+
+  function parseUriList(data) {
+    return data.split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !line.startsWith("#"));
+  }
+
+  function parseJsonList(data) {
+    try {
+      const parsed = JSON.parse(data);
+      return Array.isArray(parsed) ? parsed.filter((entry) => typeof entry === "string" && entry) : [];
+    } catch { return []; }
+  }
+
+  /** Every transfer type we know how to turn into a path, best first.
+   *
+   *  `text/uri-list` is the standard one and all an OS file manager sets. VS
+   *  Code's Explorer is an INTERNAL drag and fills several more (verified
+   *  against the shipped workbench bundle, 1.135): it writes the standard list
+   *  TRUNCATED TO THE FIRST resource, and puts every dragged resource in
+   *  `application/vnd.code.uri-list`; `CodeFiles` is a JSON array of plain fs
+   *  paths and `ResourceURLs` a JSON array of URI strings. Reading only the
+   *  standard type is why a multi-file Explorer drag can land as one file — or,
+   *  where the standard type is absent, as nothing at all. */
+  // ORDER MATTERS: we take the first type that yields anything, so the complete
+  // lists must come before the truncated one. VS Code sets `text/uri-list` to
+  // the FIRST dragged resource only and puts the full set in its own
+  // `application/vnd.code.uri-list` — reading the standard type first would
+  // silently attach one file out of five. The standard type stays last because
+  // it is the only one an OS file-manager drag sets at all.
+  const DROP_SOURCES = [
+    { type: "application/vnd.code.uri-list", parse: parseUriList },
+    { type: "CodeFiles", parse: parseJsonList },
+    { type: "ResourceURLs", parse: parseJsonList },
+    { type: "text/uri-list", parse: parseUriList },
+  ];
+
+  /** The transfer types only VS Code's own workbench writes. Their presence is
+   *  proof the drag STARTED inside this window rather than in the OS file
+   *  manager — which is the whole reason Shift cannot be read as a modifier on
+   *  this path (see the drop handler). Lowercase, because that is how the DnD
+   *  spec hands every format back. */
+  const VSCODE_INTERNAL_TYPES = [
+    "application/vnd.code.uri-list",
+    "codefiles",
+    "resourceurls",
+    "codeeditors",
+  ];
+
+  /** A raw entry we are willing to hand the host, which accepts a `file://` URI
+   *  OR a plain absolute path. Anything else — `http:`, `vscode-remote:`, a bare
+   *  relative label — is refused here rather than turned into a bad path. */
+  function droppableEntry(entry) {
+    if (/^file:\/\//i.test(entry)) return entry;
+    if (/^[A-Za-z]:[\\/]/.test(entry)) return entry;
+    if (entry.startsWith("/") || entry.startsWith("\\\\")) return entry;
+    return undefined;
+  }
+
   document.addEventListener("drop", (e) => {
     e.preventDefault();
-    document.body.classList.remove("dragging");
-    const data = e.dataTransfer?.getData("text/uri-list");
-    if (!data) return;
-    const uris = data.split(/\r?\n/).filter((l) => l && !l.startsWith("#"));
-    for (const uri of uris) {
-      if (!/^file:\/\//i.test(uri)) continue;
-      // Post the RAW URI — the host converts it with fileUriToPath, which
+    endDrag();
+    const dt = e.dataTransfer;
+    // The DnD spec lowercases every format on both set and get, so match
+    // case-insensitively — `CodeFiles` arrives as `codefiles`.
+    const types = dt ? Array.from(dt.types || []) : [];
+    const byLower = new Map(types.map((type) => [String(type).toLowerCase(), type]));
+    const entries = [];
+    let via;
+    for (const source of DROP_SOURCES) {
+      const actual = byLower.get(source.type.toLowerCase());
+      if (actual === undefined) continue;
+      let raw = "";
+      try { raw = dt.getData(actual) || ""; } catch { raw = ""; }
+      if (!raw) continue;
+      const accepted = source.parse(raw).map(droppableEntry).filter(Boolean);
+      if (!accepted.length) continue;
+      via = source.type;
+      entries.push(...accepted);
+      break;
+    }
+    // SHIFT IS OURS ON AN OS DRAG AND NOT OURS ON A VS CODE ONE.
+    //
+    // A `dragstart` anywhere in the workbench window makes VS Code set
+    // `pointer-events: none` on every webview iframe, and it re-evaluates that
+    // on each `drag`/`dragover`: holding Shift is the ONLY thing that lifts it.
+    // So a drag out of the Explorer can reach this webview at all only with
+    // Shift held — the user is not choosing the modifier, the workbench is
+    // demanding it. Reading it as our own turned every Explorer drop into a
+    // whole-file inline attachment, and every dragged image into a binary file
+    // read as utf-8 to count lines instead of a vision attachment (#136).
+    //
+    // An OS file-manager drag fires no `dragstart` in this renderer, so nothing
+    // is blocked, none of these types are set, and Shift means what it always
+    // meant there.
+    const internal = VSCODE_INTERNAL_TYPES.some((type) => byLower.has(type));
+    const shift = e.shiftKey && !internal;
+    // Report the SHAPE of every drop, handled or not: a drop that yielded
+    // nothing is otherwise indistinguishable from one that never arrived, which
+    // is what made #136 unfalsifiable from outside the machine it happens on.
+    // Type names only — never their values, which are the user's file paths.
+    vscode.postMessage({ type: "dropFile", shift, types, via });
+    for (const entry of entries) {
+      // Post the RAW entry — the host converts a URI with fileUriToPath, which
       // handles the Windows drive-letter (`file:///C:/x` → `C:/x`) and UNC
       // (`file://server/share`) forms that a naive `file://` strip broke
       // (the leading-slash path failed existsSync, so drops died silently).
-      vscode.postMessage({ type: "dropFile", path: uri, shift: e.shiftKey });
+      vscode.postMessage({ type: "dropFile", path: entry, shift });
     }
   });
 

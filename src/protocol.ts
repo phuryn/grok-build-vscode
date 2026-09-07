@@ -1048,7 +1048,10 @@ export type WebviewMsg =
    * from the webview drag-drop surface. Desktop posts only a host-minted
    * `handle` (see file-selection-registry) — a renderer-invented path is refused.
    */
-  | { type: "dropFile"; path?: string; handle?: string; shift: boolean }
+  // `types`/`via` are diagnostics: the transfer types the drop actually carried
+  // and the one we read a path out of. Sent once per drop, with no path, so a
+  // drop that yields nothing still says so in the Output channel (#136).
+  | { type: "dropFile"; path?: string; handle?: string; shift: boolean; types?: string[]; via?: string }
   | { type: "permissionAnswer"; requestId: number | string; optionId: string }
   | { type: "exitPlanAnswer"; requestId: number | string; verdict: "approved" | "abandoned" | "rejected"; comment?: string }
   | { type: "questionAnswer"; requestId: number | string; answers?: Record<string, string>; annotations?: Record<string, { notes?: string; preview?: string }> }

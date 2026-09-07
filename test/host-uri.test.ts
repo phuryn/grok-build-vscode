@@ -369,8 +369,18 @@ describe("URI identity at the Host boundary (remote-safe class fix)", () => {
   it("grok.sendFile passes a portable Uri (fromVsCodeUri), not uri.fsPath", () => {
     const src = extension();
     expect(src).toMatch(/fromVsCodeUri/);
-    expect(src).toMatch(/insertActiveMention\(\s*\{[\s\S]*?uri:\s*uri\s*\?\s*fromVsCodeUri\(\s*uri\s*\)/);
+    expect(src).toMatch(/insertActiveMention\(\s*\{\s*uri:\s*fromVsCodeUri\(/);
     expect(src).not.toMatch(/insertActiveMention\(\s*\{[^}]*path:\s*uri\?\.fsPath/);
+  });
+
+  it("grok.sendFile attaches the Explorer's whole selection, not just the clicked file", () => {
+    // VS Code passes the clicked resource first and the multi-selection second.
+    // Taking only the first is why highlighting five files attached one — and
+    // this menu route is what has to work when a drag cannot reach the webview
+    // at all (#136), so it is the one that must not silently drop files.
+    const src = extension();
+    expect(src).toMatch(/"grok\.sendFile"[\s\S]{0,900}uris\?:\s*vscode\.Uri\[\]/);
+    expect(src).toMatch(/uris\?\.length\s*\?\s*uris\s*:/);
   });
 
   it("toVsCodeUri / fromVsCodeUri carry query and fragment (not path-only)", () => {

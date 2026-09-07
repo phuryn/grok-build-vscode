@@ -2803,7 +2803,16 @@ export class GrokSidebar {
     setTerminalShellPreference(pref === "cmd" ? "cmd" : "auto");
   }
 
-  insertActiveMention(opts?: { selection?: boolean; uri?: Uri; pickIfMissing?: boolean }): void {
+  /** Attaches one file as an explicit chip. Returns whether a chip was added,
+   *  so a caller looping over an Explorer multi-selection can let only the
+   *  FIRST rejection speak (`quiet`) instead of stacking one warning toast per
+   *  selected file — they are nearly always rejected for the same reason. */
+  insertActiveMention(opts?: {
+    selection?: boolean;
+    uri?: Uri;
+    pickIfMissing?: boolean;
+    quiet?: boolean;
+  }): boolean {
     const editor = this.host.getActiveTextEditor();
     // Prefer a full Uri end-to-end (scheme + authority) so asRelativePath matches
     // remote workspace folders. Explorer Send File passes the explorer Uri via
@@ -2823,7 +2832,7 @@ export class GrokSidebar {
           "Grok: open a file in the editor first, then run this command.",
         );
       }
-      return;
+      return false;
     }
     // Same fence as the implicit chip, and for the same reason: the attachment
     // has to belong to the CONVERSATION, not to the window. Once the rail could
@@ -2839,11 +2848,13 @@ export class GrokSidebar {
     const sessionRoot = this.sessionCwd(this.focused);
     const relPath = this.conversationRelPath(absPath);
     if (relPath === undefined) {
-      void this.host.showWarningMessage(
-        `That file is outside ${path.basename(sessionRoot) || "this project"}, which is where ` +
-          "this conversation is running. Open a conversation in its project first.",
-      );
-      return;
+      if (!opts?.quiet) {
+        void this.host.showWarningMessage(
+          `That file is outside ${path.basename(sessionRoot) || "this project"}, which is where ` +
+            "this conversation is running. Open a conversation in its project first.",
+        );
+      }
+      return false;
     }
     let selStart: number | undefined;
     let selEnd: number | undefined;
@@ -2855,6 +2866,7 @@ export class GrokSidebar {
     this.chips.push(makeExplicitChip(absPath, relPath, selStart, selEnd));
     this.postChips();
     this.revealAndFocusComposer();
+    return true;
   }
 
   newSession(): void {
@@ -10798,6 +10810,15 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         await this.exportExpr(msg, session);
         break;
       case "dropFile":
+        // Which transfer types a drop carried and which one yielded a path.
+        // Silence here means the drag never reached the webview at all — the
+        // distinction #136 needed, and one no drop-side logging could make
+        // afterwards. Type NAMES only: their values are the user's file paths.
+        if (Array.isArray(msg.types)) {
+          this.host.appendLine(
+            `[drop] types=[${msg.types.join(", ")}] via=${msg.via ?? "none"} shift=${msg.shift}`,
+          );
+        }
         // Desktop rewrites a host-minted handle to path before this runs; VS Code
         // still posts a path from drag-drop. Missing path is a no-op (forged
         // handle already refused at the Electron gate).

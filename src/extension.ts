@@ -248,11 +248,30 @@ export function activate(context: vscode.ExtensionContext): GrokExtensionApi {
     vscode.commands.registerCommand(
       "grok.sendFile",
       // Pass the explorer Uri intact — flattening to fsPath drops remote authority.
-      (uri?: vscode.Uri) =>
-        sidebar.insertActiveMention({
-          uri: uri ? fromVsCodeUri(uri) : undefined,
-          pickIfMissing: true,
-        }),
+      //
+      // THE SECOND ARGUMENT IS THE EXPLORER'S WHOLE SELECTION, and ignoring it
+      // is why highlighting five files and running this attached one. VS Code
+      // passes the clicked resource first and the full selection second; the
+      // editor-tab menu and the Command Palette pass no second argument at all,
+      // so fall back to the single uri there. This is also the route that works
+      // when drag-and-drop does not: a drag out of the Explorer reaches the
+      // webview only with Shift held (#136), and a menu item needs no modifier.
+      (uri?: vscode.Uri, uris?: vscode.Uri[]) => {
+        const selected = uris?.length ? uris : uri ? [uri] : [];
+        if (!selected.length) {
+          sidebar.insertActiveMention({ pickIfMissing: true });
+          return;
+        }
+        // Only the first rejection speaks — a multi-selection is nearly always
+        // rejected wholesale (one folder, outside the conversation's project),
+        // and one warning per file would bury the composer in toasts.
+        let refused = false;
+        for (const one of selected) {
+          if (!sidebar.insertActiveMention({ uri: fromVsCodeUri(one), quiet: refused })) {
+            refused = true;
+          }
+        }
+      },
     ),
     vscode.commands.registerCommand("grok.insertAtMention", () =>
       sidebar.insertActiveMention(),
