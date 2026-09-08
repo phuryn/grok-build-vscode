@@ -2528,3 +2528,24 @@ describe("the connectors header speaks to the surface it is standing on", () => 
     expect(header({}).disconnectTitle).toMatch(/already running sessions remain available/);
   });
 });
+
+describe("the experimental Previous-prompt row (#150)", () => {
+  it("carries a host message off-remote, because the VS Code settings tab has no apply", () => {
+    const api = loadSettings() as any;
+    const row = api.ROWS.find((r: { id: string }) => r.id === "promptNav");
+    expect(row).toBeTruthy();
+    // On a remote the chat page IS the settings page, so `commit` calls
+    // chat.js's apply directly and the change never needs to become a message.
+    expect(row.localOnly(undefined, api.defaultEnv({ isRemote: true }))).toBe(true);
+    // On a desk it must NOT be local-only. VS Code opens Settings as its own
+    // webview, where `commit` has no `apply` to call - so a local-only row with
+    // no message dispatches to nothing at all, and the switch flips On while
+    // the button never appears and the value is forgotten on reopen.
+    expect(row.localOnly(undefined, api.defaultEnv({ isRemote: false }))).toBe(false);
+    expect(row.message(true)).toEqual({ type: "setPromptNav", value: true });
+    // And it stays reachable everywhere. Hiding it off-remote is the other way
+    // to make this consistent, and the wrong one: the IDEs are where it is
+    // actually tested.
+    expect(row.visible).toBeUndefined();
+  });
+});

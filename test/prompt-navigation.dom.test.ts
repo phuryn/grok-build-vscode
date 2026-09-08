@@ -5,9 +5,10 @@ const opened: Harness[] = [];
 afterEach(() => { for (const h of opened.splice(0)) h.window.happyDOM.abort(); });
 
 /**
- * `on` seeds the client-local preference the way a previous session would have
- * left it, because that is the only way in: the toggle is `localOnly`, so it
- * never becomes a host message and there is nothing to dispatch.
+ * The preference reaches the two surfaces by different routes, and `on` has to
+ * use whichever one is real: a remote holds it in its own storage, while a desk
+ * is TOLD by the host, because VS Code renders Settings in a separate webview
+ * from the chat and nothing client-local there can reach this page.
  */
 function transcript(opts: { remote?: boolean; count?: number; height?: number; on?: boolean } = {}) {
   const { remote = false, count = 3, on = true } = opts;
@@ -15,12 +16,11 @@ function transcript(opts: { remote?: boolean; count?: number; height?: number; o
   const h = bootWebview({
     remote,
     beforeScripts: (w) => {
-      if (!on) return;
-      const key = remote ? "grok.remote.promptNav" : "grok.promptNav";
-      (w as any).localStorage.setItem(key, "true");
+      if (on && remote) (w as any).localStorage.setItem("grok.remote.promptNav", "true");
     },
   });
   opened.push(h);
+  if (on && !remote) dispatch(h.window, { type: "promptNav", value: true });
   const { doc, window } = h;
   const messages = doc.getElementById("messages")!;
   for (let i = 0; i < count; i++) {

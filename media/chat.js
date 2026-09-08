@@ -790,8 +790,11 @@
     appPurpose: "knowledge",
     // CLI worktree RPCs assumed supported until create returns unsupported.
     worktreeSupported: true,
-    // Experimental prompt navigation (#150) - see PROMPT_NAV_KEY.
-    promptNav: storedBool(PROMPT_NAV_KEY, false),
+    // Experimental prompt navigation (#150). On a remote this is the
+    // client's own preference; on a desk it comes from the host, because VS
+    // Code renders Settings in a SEPARATE webview from the chat and a
+    // client-local toggle there can reach nothing at all.
+    promptNav: IS_REMOTE ? storedBool(PROMPT_NAV_KEY, false) : false,
     // grok.steerByDefault (persisted, global): when true a message sent while
     // grok is working SKIPS the queue and is interjected into the running turn.
     // False = today's behavior (queue, with an on-demand Steer button).
@@ -2878,6 +2881,10 @@
         if (CLIENT_OWNS_FONT_SCALE) setClientFontScale(Number(value) / 100);
         return;
       case "promptNav":
+        // Remote only. A desk lets the message through to the host and gets
+        // the value back as a `promptNav` frame, which is the one route the
+        // VS Code settings tab - a different webview - can travel.
+        if (!IS_REMOTE) break;
         state.promptNav = !!value;
         storeRemotePref(PROMPT_NAV_KEY, state.promptNav);
         if (!state.promptNav) setPromptNavPin(null);
@@ -16127,7 +16134,7 @@
 
   const SETTINGS_LIVE_MSGS = new Set([
     "initialState", "showThinking", "appPurpose", "expandCommandOutputs",
-    "steerByDefault", "steerUnavailable", "soundNotifications", "processingSound",
+    "steerByDefault", "promptNav", "steerUnavailable", "soundNotifications", "processingSound",
     "readRepliesAloud", "summarizeRepliesAloud", "fontScale", "voiceConfigured",
     "providerState", "githubState", "mcpServers", "mcpConnectors", "remoteStatus", "telemetryEnabled", "thumbsFeedback", "grokUpdateStatus", "initialized",
   ]);
@@ -16167,6 +16174,9 @@
         if (typeof msg.showThinking === "boolean") state.showThinking = msg.showThinking;
         if (typeof msg.expandCommandOutputs === "boolean") state.expandCommandOutputs = msg.expandCommandOutputs;
         if (typeof msg.steerByDefault === "boolean") state.steerByDefault = msg.steerByDefault;
+        // A remote ignores the desk's value and keeps its own: the frame is
+        // suppressed on the way out, but initialState is mirrored wholesale.
+        if (!IS_REMOTE && typeof msg.promptNav === "boolean") state.promptNav = msg.promptNav;
         if (typeof msg.soundNotifications === "boolean") state.soundNotifications = msg.soundNotifications;
         if (typeof msg.processingSound === "boolean") state.processingSound = msg.processingSound;
         releaseAudioIfSilent();
@@ -16377,6 +16387,13 @@
         // Live toggle (grok.steerByDefault). Pure policy for the next send —
         // the queued block's Steer button is unaffected.
         state.steerByDefault = !!msg.value;
+        break;
+      case "promptNav":
+        // Arrives after the host writes grok.promptNav, which is how a
+        // toggle flipped in the VS Code settings TAB reaches this webview.
+        state.promptNav = !!msg.value;
+        if (!state.promptNav) setPromptNavPin(null);
+        updateScrollBtn();
         break;
       case "soundNotifications":
         // Live toggle (grok.soundNotifications). Only affects future turn-end/

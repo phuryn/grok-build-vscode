@@ -472,6 +472,7 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
   setShowThinking: "host-local",
   setExpandCommandOutputs: "host-local",
   setSteerByDefault: "host-local",
+  setPromptNav: "host-local",
   setSoundNotifications: "host-local",
   setProcessingSound: "host-local",
   setReadRepliesAloud: "host-local",
@@ -631,6 +632,7 @@ export const REMOTE_REQUIRES_BOUND_SESSION: Record<WebviewMsg["type"], boolean> 
   setShowThinking: false,
   setExpandCommandOutputs: false,
   setSteerByDefault: false,
+  setPromptNav: false,
   setSoundNotifications: false,
   setProcessingSound: false,
   setReadRepliesAloud: false,
@@ -962,6 +964,9 @@ export const OUTBOUND_DISPOSITION: Record<HostMsg["type"], OutboundDisposition> 
   commandOutput: "mirror",
   expandCommandOutputs: "mirror",
   steerByDefault: "mirror",
+  // Not mirrored: a remote holds its OWN Previous-prompt preference in its
+  // own storage, so the desk's value would silently overwrite the phone's.
+  promptNav: "host-local",
   soundNotifications: "mirror",
   processingSound: "host-local",
   readRepliesAloud: "host-local",
@@ -1045,6 +1050,7 @@ export const OUTBOUND_PROJECT_AUTH: Record<HostMsg["type"], OutboundProjectAuth>
   codexInstallProgress: "none",
   expandCommandOutputs: "none",
   steerByDefault: "none",
+  promptNav: "none",
   soundNotifications: "none",
   processingSound: "none",
   readRepliesAloud: "none",

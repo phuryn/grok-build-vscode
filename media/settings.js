@@ -1086,7 +1086,12 @@
       kind: "toggle",
       defaultValue: false,
       get: (s) => !!(s && s.promptNav),
-      localOnly: true,
+      // Client-local on a remote, host-backed on a desk. Not a nicety: VS
+      // Code opens Settings as its own webview, so a localOnly row there
+      // has no `apply` to call and no message to post, and the switch would
+      // flip while nothing happened.
+      localOnly: (s, env) => !!(env && env.isRemote),
+      message: (value) => ({ type: "setPromptNav", value }),
     },
     {
       id: "openGlobalConfig",

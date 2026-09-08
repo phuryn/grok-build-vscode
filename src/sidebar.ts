@@ -948,6 +948,7 @@ export class GrokSidebar {
     "setAppPurpose",
     "setExpandCommandOutputs",
     "setSteerByDefault",
+    "setPromptNav",
     "setSoundNotifications",
     "setProcessingSound",
     "setReadRepliesAloud",
@@ -2668,6 +2669,15 @@ export class GrokSidebar {
         this.post({
           type: "steerByDefault",
           value: this.host.getConfiguration("grok").get<boolean>("steerByDefault", false),
+        });
+      }
+      // The only path by which the VS Code settings TAB reaches the chat
+      // webview: it posts setPromptNav, the config changes, and this
+      // re-broadcasts to the panel that actually owns the button.
+      if (e.affectsConfiguration("grok.promptNav")) {
+        this.post({
+          type: "promptNav",
+          value: this.host.getConfiguration("grok").get<boolean>("promptNav", false),
         });
       }
       if (e.affectsConfiguration("grok.soundNotifications")) {
@@ -11209,6 +11219,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         await this.host.getConfiguration("grok")
           .update("steerByDefault", !!msg.value, "global");
         break;
+      case "setPromptNav":
+        await this.host.getConfiguration("grok")
+          .update("promptNav", !!msg.value, "global");
+        break;
       case "setSoundNotifications":
         await this.host.getConfiguration("grok")
           .update("soundNotifications", !!msg.value, "global");
@@ -15871,6 +15885,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       showThinking: cfg.get("showThinking", false),
       expandCommandOutputs: cfg.get("expandCommandOutputs", false),
       steerByDefault: cfg.get("steerByDefault", false),
+      promptNav: cfg.get("promptNav", false),
       soundNotifications: cfg.get("soundNotifications", false),
       processingSound: cfg.get("processingSound", false),
       readRepliesAloud: cfg.get("readRepliesAloud", false),
@@ -19768,6 +19783,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         showThinking: cfg.get("showThinking", false),
         expandCommandOutputs: cfg.get("expandCommandOutputs", false),
         steerByDefault: cfg.get("steerByDefault", false),
+        promptNav: cfg.get("promptNav", false),
         fontScale: this.chatFontScale(),
         soundNotifications: cfg.get("soundNotifications", false),
         processingSound: cfg.get("processingSound", false),
