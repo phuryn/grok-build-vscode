@@ -1,5 +1,37 @@
 # Changelog
 
+## 4.3.0 - 2026-09-08
+
+**A long conversation stops paying twice for the context it already sent.** An outside contributor benchmarked multi-turn conversations and found prompt caching never engaging at all — input climbing turn after turn while nothing was ever read back from cache. Five separate causes, each fixed where it started. Alongside that: copying a picture out of a conversation, an experimental button that walks back through your own prompts, and dragging files in from the Explorer finally doing what it looks like it does.
+
+### Added
+
+- **Copy a picture out of a conversation** ([#150](https://github.com/phuryn/grok-build-vscode/issues/150)). Click an image in the transcript to enlarge it, and **Copy image** puts it on your clipboard at its original resolution — not the preview you are looking at, which is scaled to fit. It works from a phone or a browser as well as at the desk. A host older than this release cannot supply the original, and there the button is simply absent rather than quietly handing you a smaller picture than you asked for. Requested by @Emma-Walker.
+
+- **A button that jumps back to your previous prompt** ([#150](https://github.com/phuryn/grok-build-vscode/issues/150)). Off by default, under **Settings → Advanced → "Experimental: Previous prompt button"**. A circle sits above the message box and walks backwards through your own prompts, marking the one it lands on so you can see which it means — including while an answer is still streaming, which is exactly when "what did I ask?" comes up. Pressed from inside an answer it takes you to the prompt that answer started from, and it stops at the first prompt rather than wrapping. The setting is per device, so a phone and a desk can disagree. Experimental because the shape of it is still an open question with the person who asked for it. Requested by @Emma-Walker.
+
+- **The Explorer's context menu attaches everything you selected.** **Add to Grok chat** attached only the file you right-clicked, so highlighting five files and choosing it attached one. It now attaches the whole selection, and a file outside the conversation's project is refused once rather than once per file.
+
+- **Two more tips on an empty conversation**, both about gestures that already worked and that nothing told you about: how to drag files in from the Explorer, and pasting a screenshot straight into the message box. The paste tip is withheld on a phone, which cannot do it.
+
+### Fixed
+
+- **A conversation stops re-sending context it has already sent** ([#151](https://github.com/phuryn/grok-build-vscode/issues/151)). Prompt caching never engaged, so every turn re-paid for the whole conversation: input grew 6.6k → 21.5k → 28.5k tokens over three turns with nothing read from cache. Reported with measurements and tested diffs by @zfzfg.
+
+- **A large editor selection is sent as a reference instead of a copy of the file.** A big selection re-injected around 102,000 characters into every single turn. Over 400 lines or 20,000 characters it now becomes the file's path and the line range. Older conversations still restore correctly.
+
+- **Steering an agent no longer re-sends whatever files happen to be open.** An interjection was quietly appending the ambient editor chips, so each one re-sent the current editor on top of what you typed.
+
+- **Each agent remembers its own effort level.** A single Grok-scoped setting was being used as the default for Codex and Claude Code too, so choosing an effort for one agent leaked to the others.
+
+- **An exhausted quota costs one turn instead of two.** A 403 that was not a credential problem re-sent the whole prompt against the same ceiling before giving up, and reported the second failure rather than the real one.
+
+- **No more command windows flashing on Windows.** Finding an agent's CLI shelled out to `where`; it now reads `PATH` directly, and falls back to a shell only when it has to — with the window suppressed.
+
+- **Dragging files out of the Explorer works** ([#136](https://github.com/phuryn/grok-build-vscode/issues/136)). It read as doing nothing, and was two bugs stacked. VS Code blocks its own drags from reaching any panel unless Shift is held, so the Explorer — the drag everyone tries first — never arrived. Shift was also *our* modifier for pasting a file's text inline, so the drops that did land silently became whole-file inline attachments and dragged images skipped image import entirely. Shift now means "inline" only for a drag that came from outside the editor. Reported by @rj-au.
+
+- **The context popover opens on the figure you clicked it for.** Reading one number unrolled two full ledgers and a list of restatements over it. Those fold now, each remembering whether you left it open, and the marker sits next to the word it opens instead of adrift at the far edge of the row.
+
 ## 4.2.0 — 2026-09-07
 
 **Keep an agent's CLI current without leaving the app, and connect an app from your phone.** Two things that used to need a terminal — updating the CLI an agent runs on, and finishing a connector's sign-in — now work from wherever you are, including a cloud machine where there is no terminal to reach.

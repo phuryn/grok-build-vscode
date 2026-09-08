@@ -9,22 +9,31 @@ function candidateNames(): string[] {
   return IS_WIN ? ["grok.cmd", "grok.exe", "grok.bat", "grok"] : ["grok"];
 }
 
-function effectiveHome(): string {
+function effectiveHome(env: NodeJS.ProcessEnv): string {
   // Respect env overrides first so tests + users can redirect the home lookup.
-  const fromEnv = IS_WIN ? process.env.USERPROFILE : process.env.HOME;
+  const fromEnv = IS_WIN ? env.USERPROFILE : env.HOME;
   return fromEnv || homedir();
 }
 
-export function locateGrokCli(configuredPath: string): string | undefined {
+/** `env` is injectable for the same reason locateCodexCli and locateClaudeCli
+ *  take one. A test that redirects the home or PATH lookup by assigning
+ *  `process.env` is mutating state shared with every other test FILE in the
+ *  process, because vitest runs those as threads - and the shell fallback below
+ *  then runs a real `where grok`, which on any machine with the CLI installed
+ *  returns the very binary the test asserts is absent. */
+export function locateGrokCli(
+  configuredPath: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
   if (configuredPath) {
     return isCliFile(configuredPath) ? configuredPath : undefined;
   }
-  const homeBin = path.join(effectiveHome(), ".grok", "bin");
+  const homeBin = path.join(effectiveHome(env), ".grok", "bin");
   for (const name of candidateNames()) {
     const candidate = path.join(homeBin, name);
     if (isCliFile(candidate)) return candidate;
   }
-  return findCliOnPath("grok", process.env, process.platform);
+  return findCliOnPath("grok", env, process.platform);
 }
 
 /** Whether this activation follows a previously-recorded extension version. */

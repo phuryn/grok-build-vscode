@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -27,8 +27,15 @@ import {
   type CliVersionCache,
 } from "../src/cli-locator";
 
+// cli-path's shell fallback runs a REAL `where grok` when the PATH scan finds
+// nothing, and on a machine with the CLI installed that returns the very binary
+// these tests assert is absent. Mock it, as cli-path-discovery.test.ts does.
+vi.mock("node:child_process", async (importOriginal) => ({
+  ...await importOriginal<typeof import("node:child_process")>(),
+  execSync: vi.fn(() => { throw new Error("not on PATH"); }),
+}));
+
 const IS_WIN = process.platform === "win32";
-const PATH_SEP = IS_WIN ? ";" : ":";
 const FAKE_BIN_NAME = IS_WIN ? "grok.cmd" : "grok";
 
 describe("locateGrokCli", () => {
@@ -59,32 +66,14 @@ describe("locateGrokCli", () => {
   });
 
   it("falls back to PATH when no config and no ~/.grok/bin/grok", () => {
-    const originalPath = process.env.PATH;
-    process.env.PATH = tmpDir + PATH_SEP + (originalPath ?? "");
-    try {
-      const result = locateGrokCli("");
-      // Either ~/.grok/bin/grok wins (if installed) or PATH lookup finds the fake.
-      const found = result?.toLowerCase();
-      expect(found === fakeBin.toLowerCase() || !!found?.includes("grok")).toBe(true);
-    } finally {
-      process.env.PATH = originalPath;
-    }
+    // An empty home points the ~/.grok/bin probe at a directory with nothing in
+    // it, so the PATH scan is what answers and the fake is what it must find.
+    const found = locateGrokCli("", { PATH: tmpDir, HOME: tmpDir, USERPROFILE: tmpDir });
+    expect(found?.toLowerCase()).toBe(fakeBin.toLowerCase());
   });
 
   it("returns undefined when nothing found", () => {
-    const originalPath = process.env.PATH;
-    const originalHome = process.env.HOME;
-    const originalUserProfile = process.env.USERPROFILE;
-    process.env.PATH = "";
-    process.env.HOME = tmpDir;
-    process.env.USERPROFILE = tmpDir;
-    try {
-      expect(locateGrokCli("")).toBeUndefined();
-    } finally {
-      process.env.PATH = originalPath;
-      if (originalHome) process.env.HOME = originalHome;
-      if (originalUserProfile) process.env.USERPROFILE = originalUserProfile;
-    }
+    expect(locateGrokCli("", { PATH: "", HOME: tmpDir, USERPROFILE: tmpDir })).toBeUndefined();
   });
 });
 

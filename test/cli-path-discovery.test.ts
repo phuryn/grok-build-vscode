@@ -3,10 +3,9 @@ import { execSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
-import { locateGrokCli } from "../src/cli-locator";
 import { locateClaudeCli } from "../src/claude-cli-locator";
 import { locateCodexCli } from "../src/codex-cli-locator";
-import { findCliOnPath } from "../src/cli-path";
+import { findCliOnPath, isCliFile } from "../src/cli-path";
 
 vi.mock("node:child_process", async (importOriginal) => ({
   ...await importOriginal<typeof import("node:child_process")>(),
@@ -15,7 +14,6 @@ vi.mock("node:child_process", async (importOriginal) => ({
 
 const dirs: string[] = [];
 afterEach(() => {
-  vi.unstubAllEnvs();
   vi.mocked(execSync).mockReset().mockImplementation(() => { throw new Error("not on PATH"); });
   for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
   dirs.length = 0;
@@ -85,18 +83,24 @@ describe("CLI PATH discovery without a shell (#151)", () => {
     mkdirSync(second);
     const binary = path.join(second, name);
     writeFileSync(binary, "", { mode: 0o755 });
-    vi.stubEnv("HOME", dir);
-    vi.stubEnv("USERPROFILE", dir);
-    vi.stubEnv("PATH", [first, second].join(path.delimiter));
-    vi.stubEnv("PATHEXT", ".COM;.EXE;.CMD;.BAT");
+    // Inject the environment rather than stubbing process.env, the way every
+    // other test in this file already does. Vitest runs test FILES as threads in
+    // ONE process, so process.env is shared: a stub here - and the
+    // unstubAllEnvs that cleans it up - reaches into whatever else is mid-test.
+    // cli-locator.test.ts assigns HOME/USERPROFILE around its own assertions and
+    // restores them in a finally, and the two clobbered each other. The flake is
+    // invisible exactly where it is checked: with the stub lost, the lookup
+    // falls through to the real ~/.grok/bin, which every dev box has and no CI
+    // box does, so the suite is green in CI and red on the machine releasing it.
+    const env = { PATH: [first, second].join(path.delimiter), PATHEXT: ".COM;.EXE;.CMD;.BAT" };
 
-    expect(locateGrokCli("")?.toLowerCase()).toBe(binary.toLowerCase());
+    expect(findCliOnPath("grok", env, process.platform)?.toLowerCase()).toBe(binary.toLowerCase());
     expect(execSync).not.toHaveBeenCalled();
-    expect(locateGrokCli(path.join(first, name))).toBeUndefined();
+    // A directory named exactly like the binary is not a hit.
+    expect(isCliFile(path.join(first, name))).toBe(false);
 
-    vi.stubEnv("PATH", "");
-    vi.mocked(execSync).mockReturnValue(`${binary}\n`);
-    expect(locateGrokCli("")).toBe(binary);
+    vi.mocked(execSync).mockReturnValue(binary + "\n");
+    expect(findCliOnPath("grok", { PATH: "" }, process.platform)).toBe(binary);
     expect(execSync).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ windowsHide: true }));
   });
 });
