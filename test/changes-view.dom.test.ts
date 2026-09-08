@@ -397,6 +397,34 @@ describe("the panel", () => {
     expect(h.runs).toEqual([{ op: "revertFile", path: "src/a.ts" }]);
   });
 
+  it("offers no discard where checkout HEAD could not keep the promise", async () => {
+    // The webview carries its own copy of the host's `canRevertFile`, because
+    // a webview cannot import `src/git-status.ts`. This is the test that pins
+    // the two together: the four statuses refused here are exactly the four
+    // that module refuses, and `test/git-status.test.ts` asserts the other
+    // half.
+    //
+    // What the divergence cost: the panel used to offer discard for every
+    // tracked row, so a staged file got a confirmed, irreversible-sounding
+    // button that ran `git checkout -- <path>`, exited 0, changed nothing a
+    // person could see, and reported "Restored … to the last commit."
+    for (const status of ["?", "U", "A", "R"] as const) {
+      const h = harness({ snapshot: snap({ files: [file("src/a.ts", status)] }) });
+      await h.open();
+      h.q(".gfp-change-row")!.click();
+      await settle();
+      await settle();
+      expect(h.q(".gfp-changes-discard")).toBeNull();
+    }
+    // And a deletion — the discard that matters most — still offers it.
+    const restorable = harness({ snapshot: snap({ files: [file("src/a.ts", "D")] }) });
+    await restorable.open();
+    restorable.q(".gfp-change-row")!.click();
+    await settle();
+    await settle();
+    expect(restorable.q(".gfp-changes-discard")).toBeTruthy();
+  });
+
   it("draws the diff in the product's own diff markup", async () => {
     // Not a second diff design: `.tool-diff-region` and `.tdl*` are chat.css's,
     // so a diff here is the same object as a diff under a tool call, on the

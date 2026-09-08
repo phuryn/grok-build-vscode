@@ -480,14 +480,37 @@ export function isKnownChangedPath(snapshot: GitStatusSnapshot, path: unknown): 
   return snapshot.files.some((file) => file.path === path);
 }
 
-/** Whether a row offers "Revert to last commit". Untracked files never do. */
+/**
+ * Whether a row offers "Discard these changes".
+ *
+ * The offer is only made where {@link planRevertFile}'s single
+ * `git checkout HEAD -- <path>` can actually keep the promise the button and
+ * its confirmation make — *this restores the file to the last commit*. That
+ * rules out every status whose path is not in HEAD under that name:
+ *
+ * - `?` untracked and `A` staged-new — git has never recorded them, so there
+ *   is nothing to restore them TO. The command that would remove them
+ *   (`git clean`, `git rm`) destroys work with no undo, which this view does
+ *   not do.
+ * - `R` renamed — the new path is not in HEAD either. Undoing a rename is a
+ *   multi-step plan that deletes a file on its way, so it is refused rather
+ *   than half-performed.
+ * - `U` unmerged — a conflicted file has no single "last commit" state.
+ *
+ * Refusing is the honest answer, and {@link planRevertFile}'s refusal sentence
+ * already says it. The alternative shipped once and was worse:
+ * `git checkout -- <path>` restores from the INDEX, so on a file the agent had
+ * staged it exits 0, changes nothing a person can see, and the view reports
+ * success. On a rename it also threw away every edit made after the rename.
+ *
+ * `media/file-panel.js` carries the same predicate as `canDiscard` — a webview
+ * cannot import this module — and `test/changes-view.dom.test.ts` pins the two
+ * together.
+ */
 export function canRevertFile(snapshot: GitStatusSnapshot, path: string): boolean {
   const file = snapshot.files.find((entry) => entry.path === path);
   if (!file) return false;
-  // `git checkout --` cannot restore something git has never recorded, and the
-  // command that would remove it (`git clean`) destroys work with no undo.
-  // Untracked files are offered "leave out of this commit" instead.
-  return file.status !== "?" && file.status !== "U";
+  return file.status === "M" || file.status === "D";
 }
 
 /**
@@ -611,7 +634,11 @@ function planRevertFile(request: GitOpRequest, snapshot: GitStatusSnapshot): Git
   if (!canRevertFile(snapshot, path)) {
     return { ok: false, reason: "This file is not in the last commit, so there is nothing to restore it to." };
   }
-  const step: GitStep = { args: ["checkout", "--", path], required: true };
+  // HEAD, not the index. `git checkout -- <path>` restores the STAGED copy,
+  // which is neither what the button says nor what the diff above it shows
+  // (that diff is `git diff HEAD -- <path>`). On a file the agent had staged
+  // the two differ, and the difference is the person's work.
+  const step: GitStep = { args: ["checkout", "HEAD", "--", path], required: true };
   return {
     ok: true,
     op: "revertFile",

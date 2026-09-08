@@ -359,13 +359,32 @@ describe("path fences", () => {
     expect(isKnownChangedPath(snapshot, undefined)).toBe(false);
   });
 
-  it("refuses to revert an untracked or conflicted file", () => {
-    // `git checkout --` cannot restore a file git has never recorded, and the
-    // command that would remove it destroys work with no undo.
+  it("offers discard only where the path is in HEAD under that name", () => {
+    // The button and its confirmation promise "the last commit", and the only
+    // command planned is `git checkout HEAD -- <path>`. Every status this
+    // refuses is one that command cannot restore: git has never recorded the
+    // path (untracked, staged-new), it is recorded under a DIFFERENT name
+    // (renamed), or there is no single last-commit state (unmerged). The
+    // alternative is worse than refusing — see the rename case below.
     expect(canRevertFile(snapshot, "src/a.ts")).toBe(true);
     expect(canRevertFile(snapshot, "new.txt")).toBe(false);
     expect(canRevertFile(snapshot, "src/c.ts")).toBe(false);
     expect(canRevertFile(snapshot, "missing.ts")).toBe(false);
+  });
+
+  it("refuses a staged-new file and a rename, which checkout cannot restore", () => {
+    const staged = snapshotOf({
+      branch: "main",
+      files: [
+        { path: "src/added.ts", status: "A", added: 9, deleted: 0 },
+        { path: "src/new-name.ts", status: "R", added: 2, deleted: 2, origPath: "src/old-name.ts" },
+        { path: "src/gone.ts", status: "D", added: 0, deleted: 40 },
+      ],
+    });
+    expect(canRevertFile(staged, "src/added.ts")).toBe(false);
+    expect(canRevertFile(staged, "src/new-name.ts")).toBe(false);
+    // A deletion is the discard that matters most, and HEAD has the file.
+    expect(canRevertFile(staged, "src/gone.ts")).toBe(true);
   });
 });
 
@@ -520,8 +539,25 @@ describe("planGitOp — revertFile", () => {
 
   it("restores a tracked file from the last commit", () => {
     const plan = planOrThrow(planGitOp({ op: "revertFile", path: "src/a.ts" }, snapshot));
-    expect(plan.steps[0].args).toEqual(["checkout", "--", "src/a.ts"]);
+    // HEAD, not the index. Without the tree-ish, `git checkout -- <path>`
+    // restores the STAGED copy: on a file the agent had staged it exits 0,
+    // leaves the working tree as it was, and the view reports success.
+    expect(plan.steps[0].args).toEqual(["checkout", "HEAD", "--", "src/a.ts"]);
     expect(plan.title).toBe("Discard changes to src/a.ts");
+  });
+
+  it("refuses a rename rather than half-undoing it", () => {
+    // `git checkout HEAD -- <new path>` cannot bring the old name back, and
+    // running it anyway threw away every edit made after the rename while
+    // reporting "Restored … to the last commit."
+    const renamed = snapshotOf({
+      branch: "main",
+      files: [{ path: "src/new.ts", status: "R", added: 3, deleted: 1, origPath: "src/old.ts" }],
+    });
+    expect(planGitOp({ op: "revertFile", path: "src/new.ts" }, renamed)).toEqual({
+      ok: false,
+      reason: "This file is not in the last commit, so there is nothing to restore it to.",
+    });
   });
 
   it("refuses an untracked file", () => {

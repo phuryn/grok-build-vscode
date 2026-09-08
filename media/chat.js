@@ -18149,6 +18149,23 @@
     return kind + "\0" + String(cwd || "") + "\0" + String(relPath || "");
   }
 
+  /*
+   * A read is quick or it is broken; a WRITE can legitimately take minutes.
+   *
+   * The host allows a git write 180s (`GIT_WRITE_TIMEOUT_MS`) precisely so a
+   * commit hook or a push over a slow line can finish. One 30s timer for every
+   * file request turned that into "File request timed out" on the phone while
+   * the machine was still working — and the eventual success was thrown away,
+   * so the one screen whose job is to answer "is my work saved" answered
+   * wrongly. The desktop mount has no such timer and always waited.
+   */
+  const REMOTE_FILE_TIMEOUT_MS = 30000;
+  const REMOTE_GIT_WRITE_TIMEOUT_MS = 195000; // the host's 180s, plus the relay round trip
+
+  function remoteFileTimeoutMs(kind) {
+    return kind === "gitRun" ? REMOTE_GIT_WRITE_TIMEOUT_MS : REMOTE_FILE_TIMEOUT_MS;
+  }
+
   function postRemoteFileRequest(kind, payload, keyPath) {
     const pathKey = typeof keyPath === "string" ? keyPath : (payload.relPath || "");
     const key = remoteFileRequestKey(kind, payload.cwd, pathKey);
@@ -18161,7 +18178,7 @@
         remoteFilePending.delete(requestId);
         if (remoteFileRequestIdsSupported !== true) remoteFilePoisoned.add(key);
         resolve({ ok: false, reason: "File request timed out. Refresh this page and try again." });
-      }, 30000);
+      }, remoteFileTimeoutMs(kind));
       remoteFilePending.set(requestId, {
         requestId,
         kind,

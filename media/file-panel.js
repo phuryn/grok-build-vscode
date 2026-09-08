@@ -430,6 +430,20 @@
   }
 
   /**
+   * Whether this file's diff offers "Discard these changes".
+   *
+   * The host's `canRevertFile` in `src/git-status.ts` is the authority and
+   * refuses the same set; a webview cannot import it, so the predicate is
+   * carried twice and `test/changes-view.dom.test.ts` pins them together. Only
+   * `M` and `D` are in HEAD under this path, and only for those can
+   * `git checkout HEAD -- <path>` keep the promise the confirmation makes.
+   */
+  function canDiscard(file) {
+    if (!file) return false;
+    return file.status === "M" || file.status === "D";
+  }
+
+  /**
    * What the primary button does and says.
    *
    * One button, and its label is the whole promise — which is why there is no
@@ -2371,7 +2385,7 @@
       // Revert lives HERE and nowhere else: after the person has seen exactly
       // what they would be throwing away. A discard button in the file list
       // would be one mis-tap from losing work with no undo.
-      if (file && file.status !== "?" && file.status !== "U" && typeof access.gitRun === "function") {
+      if (canDiscard(file) && typeof access.gitRun === "function") {
         const foot = doc.createElement("div");
         foot.className = "gfp-changes-diff-foot";
         const discard = doc.createElement("button");

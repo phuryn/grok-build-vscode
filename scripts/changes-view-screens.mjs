@@ -19,9 +19,15 @@
 import { chromium } from "playwright";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const root = process.cwd();
-const OUT = path.join(process.env.SCREENS_DIR || ".screens", "changes");
+// Relative to THIS FILE, never to the caller's directory: the relay repo runs
+// extension scripts by absolute path, and cwd there is a different checkout
+// that happens to have no media/ at all.
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const OUT = path.isAbsolute(process.env.SCREENS_DIR || "")
+  ? path.join(process.env.SCREENS_DIR, "changes")
+  : path.join(root, process.env.SCREENS_DIR || ".screens", "changes");
 fs.mkdirSync(OUT, { recursive: true });
 const log = (m) => console.log(`[changes-screens] ${m}`);
 const read = (...p) => fs.readFileSync(path.join(root, ...p), "utf8");

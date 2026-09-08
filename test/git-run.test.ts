@@ -18,6 +18,7 @@ import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { planGitOp } from "../src/git-status";
 import {
+  GIT_WRITE_TIMEOUT_MS,
   GitRunGate,
   readGitFileDiff,
   readGitStatus,
@@ -25,6 +26,28 @@ import {
   runGitPlan,
   type GitIo,
 } from "../src/git-run";
+
+/**
+ * The remote client's own timer has to outlast this one, and nothing else in
+ * the build says so.
+ *
+ * A phone reaches these operations through `postRemoteFileRequest` in
+ * `media/chat.js`, which gives up on its own schedule. It gave up at 30s for
+ * every request, including a write the host is allowed 180s for — so a commit
+ * hook or a push over a slow line reported *File request timed out* while the
+ * machine was still working, and the eventual success was discarded. Nothing
+ * failed; the one screen whose job is to answer "is my work saved" answered
+ * wrongly.
+ *
+ * The pairing is invisible from either file alone, which is why it is asserted
+ * against the shipped source rather than trusted to a comment.
+ */
+function remoteGitWriteTimeoutMs(): number {
+  const source = fs.readFileSync(path.join(__dirname, "..", "media", "chat.js"), "utf8");
+  const match = source.match(/const REMOTE_GIT_WRITE_TIMEOUT_MS = (\d+);/);
+  if (!match) throw new Error("media/chat.js no longer declares REMOTE_GIT_WRITE_TIMEOUT_MS");
+  return Number(match[1]);
+}
 
 /* ------------------------------------------------------------------ *
  * Fake process — classification
@@ -588,6 +611,12 @@ describe.runIf(gitAvailable !== false)("readGitStatus against real git", () => {
     // The uncommitted work must come along — that is the entire point of the
     // "move this off main" affordance.
     expect(after.snapshot.files.map((f) => f.path)).toEqual(["wip.txt"]);
+  });
+
+  it("lets the remote client outwait the host's own write timeout", () => {
+    // Order matters, not the numbers: whoever gives up first decides what the
+    // person is told, and only the host knows whether the command succeeded.
+    expect(remoteGitWriteTimeoutMs()).toBeGreaterThan(GIT_WRITE_TIMEOUT_MS);
   });
 
   it("reports a push to a missing remote as a failure with a readable reason", async () => {
