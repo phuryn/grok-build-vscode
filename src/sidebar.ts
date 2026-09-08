@@ -285,6 +285,8 @@ import {
   resolveRemoteFileRoot,
   writeRemoteProjectFile,
 } from "./remote-files";
+import { GitRunGate, readGitFileDiff, readGitStatus, runGitPlan } from "./git-run";
+import { describeGitFailure, isKnownChangedPath, planGitOp } from "./git-status";
 import {
   isCloudEnvironment,
   CLOUD_ENVIRONMENT_ENV, buildLinkStartBody, deviceDisplayName, httpBaseFromRelayUrl, parseRelayFrame, RELAY_DEVICE_TOKEN_SECRET, resolveRelayUrl } from "./remote-frames";
@@ -837,6 +839,16 @@ export class GrokSidebar {
   // shipping path is unaffected.
   private uplink?: RemoteUplink;
   private readonly remoteClients: RemoteClientState<Session, RemoteBrowserPreferences>;
+  /**
+   * One git write at a time per repository.
+   *
+   * Not a general concurrency mechanism — the phone and the desk can both be
+   * looking at the same project, and two commits interleaving would stage each
+   * other's files. A second run is refused with a sentence rather than queued,
+   * because by the time a queued commit ran, the message on screen would
+   * describe a tree that no longer exists.
+   */
+  private readonly gitRunGate = new GitRunGate();
   /** Cold session/load claims the persisted id before ACP has emitted `session`. */
   private readonly sessionLoadReservations = new Map<string, SessionLoadReservation>();
   /** Sessions being spawned on a remote tab's behalf — a reconnect burst must
@@ -11806,6 +11818,149 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         }
         break;
       }
+      case "gitStatus": {
+        // The Changes view's read. Same fence as the file browse above: the
+        // root comes from resolveRemoteFileRoot, never from the message.
+        const correlation = typeof msg.requestId === "string" ? { requestId: msg.requestId } : {};
+        const reply = (body: Extract<HostMsg, { type: "gitStatusResult" }>) => {
+          if (requester) this.sendRemoteRequester(requester, body);
+          else this.post(body);
+        };
+        const rootResult = this.resolveGitRoot(msg.cwd, origin, clientId);
+        if (!rootResult.ok) {
+          reply({ type: "gitStatusResult", ...correlation, cwd: msg.cwd, ok: false, kind: "failed", reason: rootResult.reason });
+          break;
+        }
+        const read = await readGitStatus(rootResult.root);
+        if (!read.ok) {
+          reply({ type: "gitStatusResult", ...correlation, cwd: msg.cwd, ok: false, kind: read.kind, reason: read.reason });
+          break;
+        }
+        reply({
+          type: "gitStatusResult",
+          ...correlation,
+          cwd: msg.cwd,
+          ok: true,
+          snapshot: read.snapshot,
+          busy: this.gitRunGate.isBusy(rootResult.root),
+        });
+        break;
+      }
+      case "gitFileDiff": {
+        const correlation = typeof msg.requestId === "string" ? { requestId: msg.requestId } : {};
+        const reply = (body: Extract<HostMsg, { type: "gitFileDiffResult" }>) => {
+          if (requester) this.sendRemoteRequester(requester, body);
+          else this.post(body);
+        };
+        const rootResult = this.resolveGitRoot(msg.cwd, origin, clientId);
+        if (!rootResult.ok) {
+          reply({ type: "gitFileDiffResult", ...correlation, cwd: msg.cwd, path: String(msg.path || ""), ok: false, reason: rootResult.reason });
+          break;
+        }
+        // The path fence, and it is the one that matters: a path is acceptable
+        // only if the repository is reporting it as changed RIGHT NOW. That
+        // cannot name a file outside the repository, cannot name an unchanged
+        // one, and goes stale in the safe direction.
+        const status = await readGitStatus(rootResult.root);
+        if (!status.ok) {
+          reply({ type: "gitFileDiffResult", ...correlation, cwd: msg.cwd, path: String(msg.path || ""), ok: false, reason: status.reason });
+          break;
+        }
+        if (!isKnownChangedPath(status.snapshot, msg.path)) {
+          this.host.appendLine(`[git] diff refused for a path the repository is not reporting as changed`);
+          reply({
+            type: "gitFileDiffResult",
+            ...correlation,
+            cwd: msg.cwd,
+            path: String(msg.path || ""),
+            ok: false,
+            reason: "That file is no longer changed. Refresh and try again.",
+          });
+          break;
+        }
+        const entry = status.snapshot.files.find((file) => file.path === msg.path);
+        const diff = await readGitFileDiff(rootResult.root, msg.path, { untracked: entry?.status === "?" });
+        if (!diff.ok) {
+          reply({ type: "gitFileDiffResult", ...correlation, cwd: msg.cwd, path: msg.path, ok: false, reason: diff.reason });
+          break;
+        }
+        reply({
+          type: "gitFileDiffResult",
+          ...correlation,
+          cwd: msg.cwd,
+          path: msg.path,
+          ok: true,
+          patch: diff.patch,
+          truncated: diff.truncated,
+          untracked: diff.untracked,
+        });
+        break;
+      }
+      case "gitRun": {
+        const correlation = typeof msg.requestId === "string" ? { requestId: msg.requestId } : {};
+        const op = msg.op;
+        const reply = (body: Extract<HostMsg, { type: "gitRunResult" }>) => {
+          if (requester) this.sendRemoteRequester(requester, body);
+          else this.post(body);
+        };
+        const fail = (reason: string, detail?: string, snapshot?: Extract<HostMsg, { type: "gitRunResult"; ok: true }>["snapshot"]) =>
+          reply({ type: "gitRunResult", ...correlation, cwd: msg.cwd, op, ok: false, reason, ...(detail ? { detail } : {}), ...(snapshot ? { snapshot } : {}) });
+
+        const rootResult = this.resolveGitRoot(msg.cwd, origin, clientId);
+        if (!rootResult.ok) {
+          fail(rootResult.reason);
+          break;
+        }
+        const root = rootResult.root;
+        if (!this.gitRunGate.tryAcquire(root)) {
+          fail("Another git command is still running in this project.");
+          break;
+        }
+        try {
+          // Re-read before planning. Nothing in the message is trusted beyond
+          // the operation and its inputs: the plan is built from the host's own
+          // fresh snapshot, so a client that has been showing a stale list
+          // cannot commit a file that stopped being changed.
+          const status = await readGitStatus(root);
+          if (!status.ok) {
+            fail(status.reason);
+            break;
+          }
+          const plan = planGitOp(
+            {
+              op,
+              message: typeof msg.message === "string" ? msg.message : undefined,
+              push: !!msg.push,
+              paths: Array.isArray(msg.paths) ? msg.paths.filter((entry): entry is string => typeof entry === "string") : undefined,
+              branch: typeof msg.branch === "string" ? msg.branch : undefined,
+              path: typeof msg.path === "string" ? msg.path : undefined,
+            },
+            status.snapshot,
+          );
+          if (!plan.ok) {
+            fail(plan.reason, undefined, status.snapshot);
+            break;
+          }
+          this.host.appendLine(`[git] ${plan.display.split("\n").join(" ; ")}`);
+          const outcome = await runGitPlan(root, plan);
+          const after = await readGitStatus(root);
+          const snapshot = after.ok ? after.snapshot : undefined;
+          if (!outcome.ok) {
+            fail(describeGitFailure(op, outcome.stderr) || "That git command failed.", outcome.stderr, snapshot);
+            break;
+          }
+          if (!snapshot) {
+            // The command succeeded and the follow-up read did not. Saying so
+            // beats reporting a failure that did not happen.
+            fail("The command ran, but the status could not be read afterwards. Refresh to see where things stand.");
+            break;
+          }
+          reply({ type: "gitRunResult", ...correlation, cwd: msg.cwd, op, ok: true, snapshot });
+        } finally {
+          this.gitRunGate.release(root);
+        }
+        break;
+      }
       case "voiceStart":
         await this.handleVoiceStart(session);
         break;
@@ -11824,6 +11979,36 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         break;
     }
 
+  }
+
+  /**
+   * Which repository a Changes request is allowed to touch.
+   *
+   * Deliberately the SAME fence as the file browse rather than a second root
+   * concept: one place decides what a remote may reach, and a git read is not
+   * a weaker claim than a file read. A local webview resolves to the workspace
+   * root; a remote resolves to its own tab's selected repository, checked
+   * against the live catalog.
+   */
+  private resolveGitRoot(
+    claimedCwd: string,
+    origin: MsgOrigin,
+    clientId?: string,
+  ): { ok: true; root: string } | { ok: false; reason: string } {
+    const selectedCwd = origin === "remote" && clientId ? this.remoteClients.cwd(clientId) : this.workspaceRoot();
+    const resolved = resolveRemoteFileRoot({
+      origin,
+      claimedCwd,
+      selectedCwd,
+      workspaceRoot: this.workspaceRoot(),
+      isKnownCwd: (cwd) => (origin === "remote" ? this.remoteTargetableCwd(cwd) : pathsEqual(cwd, this.workspaceRoot())),
+      sameCwd: pathsEqual,
+    });
+    if (!resolved.ok) {
+      this.host.appendLine(`[git] request rejected: ${resolved.reason}`);
+      return { ok: false, reason: resolved.reason };
+    }
+    return { ok: true, root: resolved.root };
   }
 
   /**

@@ -1041,3 +1041,408 @@ body.vscode-light {
   }
   .gfp-action { min-width: 36px; }
 }
+
+/* ------------------------------------------------------------------ *
+ * The Changes view
+ *
+ * Deliberately small. The DIFF itself reuses `.tool-diff-region` / `.tdl*`
+ * from chat.css — one diff design for the whole product, and one `--tdiff-*`
+ * palette already tuned for both themes — so what is left here is the list,
+ * the headline and the commit box.
+ *
+ * Every colour below resolves through a VS Code theme token with a literal
+ * fallback, which is what lets the same stylesheet serve the desktop shell,
+ * the IDE webview and a phone browser that has no VS Code palette at all.
+ * ------------------------------------------------------------------ */
+
+/* The button sits with the project title because it names a mode for the whole
+   project, not an action on the open file. It carries `.gfp-icon-button`, so
+   the box, the 16px glyph, the hover and the focus ring all come from the bar
+   primitive above rather than being restated here. */
+.gfp-changes-btn {
+  position: relative;
+  align-self: center;
+  margin-right: 2px;
+}
+.gfp-changes-btn[hidden] { display: none !important; }
+.gfp-changes-btn.gfp-changes-selected { color: var(--vscode-foreground, inherit); }
+.gfp-changes-btn.gfp-changes-selected::after {
+  content: "";
+  position: absolute;
+  right: 6px;
+  bottom: 2px;
+  left: 6px;
+  height: 2px;
+  border-radius: 1px;
+  background: currentColor;
+}
+/* The badge counts UNCOMMITTED FILES only. It is the one number visible while
+   the view is closed, so it has to mean exactly one thing. */
+.gfp-changes-count {
+  position: absolute;
+  top: 1px;
+  right: 0;
+  min-width: 14px;
+  padding: 0 3px;
+  border-radius: 7px;
+  background: var(--vscode-activityBarBadge-background, var(--vscode-button-background, #0e639c));
+  color: var(--vscode-activityBarBadge-foreground, var(--vscode-button-foreground, #fff));
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 14px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+.gfp-changes-count[hidden] { display: none !important; }
+
+.gfp-changes {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  overflow: auto;
+  padding: 10px 12px 16px;
+}
+.gfp-changes[hidden] { display: none !important; }
+/* The tree's filter box belongs to the tree. Hidden the same way `.gfp-viewing`
+   hides it, rather than by toggling `hidden` from script, so there is one
+   mechanism for "this body mode does not use the filter". */
+.gfp-panel.gfp-changes-mode .gfp-filter { display: none; }
+
+/* Where the work is. Quiet, because the branch is context and not news. */
+.gfp-changes-branch {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--vscode-descriptionForeground, #999);
+  font-size: 0.92em;
+}
+.gfp-changes-branch-icon { display: inline-flex; flex: 0 0 14px; }
+.gfp-changes-branch-icon svg { width: 14px; height: 14px; }
+.gfp-changes-branch-name {
+  flex: 0 1 auto;
+  overflow: hidden;
+  color: var(--vscode-foreground, inherit);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gfp-changes-branch-note {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gfp-changes-branch-note::before { content: "· "; }
+
+/* The answer to "is it safe to walk away", said once. */
+.gfp-changes-headline {
+  margin: 0;
+  font-size: 1.02em;
+  font-weight: 600;
+}
+/* Spent on conflicts and nothing else. A colour that fires on every edit is a
+   colour nobody reads, and it would make the state that blocks committing look
+   the same as the state that does not. */
+.gfp-changes-warn { color: var(--vscode-editorWarning-foreground, var(--tdiff-del-line, #fa423e)); }
+.gfp-changes-note { color: var(--vscode-foreground, inherit); }
+.gfp-changes-ok { color: var(--vscode-descriptionForeground, #999); font-weight: 500; }
+
+.gfp-changes-empty {
+  margin: 0;
+  color: var(--vscode-descriptionForeground, #999);
+}
+
+.gfp-changes-notice {
+  border-radius: 6px;
+  border-left: 2px solid currentColor;
+  padding: 6px 10px;
+  background: var(--gfp-hover);
+}
+.gfp-changes-notice-text { margin: 0; }
+.gfp-changes-notice-detail {
+  margin: 6px 0 0;
+  max-height: 120px;
+  overflow: auto;
+  color: var(--vscode-descriptionForeground, #999);
+  font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
+  font-size: 0.86em;
+  white-space: pre-wrap;
+}
+
+/* One row per changed file. The row is a link to its own diff and nothing
+   else: the destructive action lives one level in, behind having looked at
+   what it would throw away. */
+.gfp-changes-list { display: flex; flex-direction: column; }
+.gfp-change-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 26px;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+.gfp-change-row:hover { background: var(--gfp-hover); }
+.gfp-change-row:focus-visible {
+  outline: 2px solid var(--vscode-focusBorder);
+  outline-offset: -2px;
+}
+/* A single letter carrying colour AND shape, so the status survives both a
+   greyscale screenshot and a red/green colour-blindness. */
+.gfp-change-badge {
+  flex: 0 0 14px;
+  color: var(--vscode-descriptionForeground, #999);
+  font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
+  font-size: 0.88em;
+  font-weight: 700;
+  text-align: center;
+}
+.gfp-change-m .gfp-change-badge { color: var(--vscode-gitDecoration-modifiedResourceForeground, #e2c08d); }
+.gfp-change-a .gfp-change-badge,
+.gfp-change-new .gfp-change-badge { color: var(--vscode-gitDecoration-untrackedResourceForeground, var(--tdiff-add-line, #40c977)); }
+.gfp-change-d .gfp-change-badge { color: var(--vscode-gitDecoration-deletedResourceForeground, var(--tdiff-del-line, #fa423e)); }
+.gfp-change-r .gfp-change-badge { color: var(--vscode-gitDecoration-renamedResourceForeground, #4ea1d9); }
+.gfp-change-u .gfp-change-badge { color: var(--vscode-gitDecoration-conflictingResourceForeground, #e4676b); }
+
+.gfp-change-name {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+.gfp-change-base {
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The directory is context for the name beside it, so it takes the same
+   treatment the rail gives a repo's path: smaller, quieter, and the first
+   thing to be truncated. */
+.gfp-change-dir {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--vscode-descriptionForeground, #999);
+  font-size: 0.86em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+.gfp-change-stat {
+  flex: 0 0 auto;
+  color: var(--vscode-descriptionForeground, #999);
+  font-size: 0.86em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.gfp-change-stat-word { font-style: italic; }
+
+.gfp-changes-commits { display: flex; flex-direction: column; gap: 2px; }
+.gfp-changes-commit {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  padding: 1px 6px;
+}
+.gfp-changes-sha {
+  flex: 0 0 auto;
+  color: var(--vscode-descriptionForeground, #999);
+  font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
+  font-size: 0.86em;
+}
+.gfp-changes-subject {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gfp-changes-more {
+  margin: 2px 0 0 6px;
+  color: var(--vscode-descriptionForeground, #999);
+  font-size: 0.9em;
+}
+
+/* One commit box and one button. Every extra control here is a decision
+   somebody has to make before their work is safe. */
+.gfp-changes-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: auto;
+  padding-top: 6px;
+}
+.gfp-changes-message {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 48px;
+  padding: 6px 8px;
+  border: 1px solid var(--vscode-input-border, var(--gfp-border));
+  border-radius: 5px;
+  outline: none;
+  background: var(--vscode-input-background, rgba(0, 0, 0, 0.12));
+  color: var(--vscode-input-foreground, inherit);
+  font: inherit;
+  resize: vertical;
+}
+.gfp-changes-message:focus { border-color: var(--vscode-focusBorder, #007acc); }
+.gfp-changes-primary {
+  min-height: 30px;
+  padding: 5px 12px;
+  border: 1px solid var(--vscode-button-border, transparent);
+  border-radius: 5px;
+  background: var(--vscode-button-background, #0e639c);
+  color: var(--vscode-button-foreground, #fff);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.gfp-changes-primary:hover:not(:disabled) { background: var(--vscode-button-hoverBackground, #1177bb); }
+.gfp-changes-primary:disabled { opacity: 0.5; cursor: default; }
+.gfp-changes-primary:focus-visible {
+  outline: 2px solid var(--vscode-focusBorder);
+  outline-offset: 1px;
+}
+.gfp-changes-secondary {
+  min-height: 28px;
+  padding: 4px 10px;
+  border: 1px solid var(--vscode-button-border, var(--gfp-border));
+  border-radius: 5px;
+  background: var(--vscode-button-secondaryBackground, transparent);
+  color: var(--vscode-button-secondaryForeground, inherit);
+  font: inherit;
+  cursor: pointer;
+}
+.gfp-changes-secondary:hover:not(:disabled) { background: var(--gfp-hover); }
+.gfp-changes-secondary:disabled { opacity: 0.5; cursor: default; }
+.gfp-changes-hint {
+  margin: 0;
+  color: var(--vscode-descriptionForeground, #999);
+  font-size: 0.88em;
+}
+.gfp-changes-hint:empty { display: none; }
+
+/* One file's diff. The header is the way back and the file's name; the diff
+   below it is the product's own `.tool-diff-region`. */
+.gfp-changes-diff-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.gfp-changes-back {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  min-height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--vscode-descriptionForeground, #999);
+  cursor: pointer;
+}
+.gfp-changes-back svg { width: 16px; height: 16px; }
+.gfp-changes-back:hover { color: var(--vscode-foreground, inherit); }
+.gfp-changes-back:focus-visible {
+  outline: 2px solid var(--vscode-focusBorder);
+  outline-offset: -2px;
+}
+.gfp-changes-diff-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+.gfp-changes-diff-word {
+  flex: 0 0 auto;
+  color: var(--vscode-descriptionForeground, #999);
+  font-size: 0.86em;
+}
+.gfp-diff-region { flex: 0 0 auto; }
+.gfp-changes-diff-foot { display: flex; }
+.gfp-changes-discard {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 4px 10px;
+  border: 1px solid var(--vscode-button-border, var(--gfp-border));
+  border-radius: 5px;
+  background: transparent;
+  color: var(--vscode-errorForeground, var(--tdiff-del-line, #fa423e));
+  font: inherit;
+  cursor: pointer;
+}
+.gfp-changes-discard svg { width: 14px; height: 14px; }
+.gfp-changes-discard:hover:not(:disabled) { background: var(--gfp-hover); }
+.gfp-changes-discard:disabled { opacity: 0.5; cursor: default; }
+.gfp-changes-discard:focus-visible {
+  outline: 2px solid var(--vscode-focusBorder);
+  outline-offset: 1px;
+}
+
+/* Touch. Same 36px floor and the same coarse-pointer gate as every other
+   control in this file — the relay's own tap-floor sweep asserts it. */
+@media (hover: none) and (pointer: coarse) {
+  .gfp-change-row { min-height: 36px; }
+  .gfp-changes-primary,
+  .gfp-changes-secondary,
+  .gfp-changes-discard { min-height: 36px; }
+  .gfp-changes-back { width: 36px; height: 36px; min-width: 36px; min-height: 36px; }
+  /* iOS Safari force-zooms the page when a focused input is under 16px. */
+  .gfp-changes-message { font-size: 16px; }
+  .gfp-changes-count { top: 3px; right: 2px; }
+}
+
+.gfp-changes-branch-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.gfp-changes-branch-input {
+  grid-column: 1 / -1;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--vscode-input-border, var(--vscode-widget-border, #3c3c3c));
+  background: var(--vscode-input-background, #313131);
+  color: var(--vscode-input-foreground, inherit);
+  font: inherit;
+}
+.gfp-changes-branch-input:focus {
+  outline: 1px solid var(--vscode-focusBorder, #0078d4);
+  outline-offset: -1px;
+}
+.gfp-changes-branch-row .gfp-changes-primary,
+.gfp-changes-branch-row .gfp-changes-secondary {
+  margin: 0;
+}
+
+@media (hover: none) and (pointer: coarse) {
+  /* iOS Safari force-zooms the page when a focused input is under 16px. */
+  .gfp-changes-branch-input { font-size: 16px; min-height: 36px; }
+}

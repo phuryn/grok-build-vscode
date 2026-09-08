@@ -487,6 +487,7 @@
     "e2e:screens": "npm run compile && node scripts/desk-screens-check.mjs",
     "e2e:open-timing": "npm run compile && node scripts/open-timing-check.mjs",
     "e2e:hc-colour": "node scripts/hc-colour-screens.mjs",
+    "e2e:changes": "node scripts/changes-view-screens.mjs",
     "e2e:welcome-tip": "node scripts/ide-welcome-tip-screens.mjs",
     "e2e:gh-unauth": "npm run compile && node scripts/gh-unauth-check.mjs",
     "marketplace:login": "node scripts/marketplace-session.mjs",

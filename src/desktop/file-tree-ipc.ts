@@ -17,6 +17,8 @@ import {
   type TreeFileStamp,
 } from "./file-tree";
 import { fileTreePanelBootSource } from "./file-tree-panel";
+import { GitRunGate, readGitFileDiff, readGitStatus, runGitPlan } from "../git-run";
+import { describeGitFailure, isKnownChangedPath, planGitOp } from "../git-status";
 import { isTrustedMainFrameIpc } from "./window-security";
 
 const CH_LIST = "desk-ft:list";
@@ -25,6 +27,12 @@ const CH_REVEAL = "desk-ft:reveal";
 const CH_READ = "desk-ft:read";
 const CH_SAVE = "desk-ft:save";
 const CH_ROOT = "desk-ft:root";
+const CH_GIT_STATUS = "desk-ft:git-status";
+const CH_GIT_DIFF = "desk-ft:git-diff";
+const CH_GIT_RUN = "desk-ft:git-run";
+
+/** One git write at a time per repository — see GitRunGate. */
+const gitRunGate = new GitRunGate();
 
 export interface FileTreeIpcOptions {
   getWorkspaceRoot: () => string | undefined;
@@ -259,6 +267,108 @@ export function registerFileTreeIpc(opts: FileTreeIpcOptions): void {
     return readTreeFile(root, relPath);
   });
 
+  /**
+   * The Changes view's read. The renderer names no path at all here — the root
+   * is the desktop's own workspace root, exactly as for list and read above.
+   */
+  ipcMain.handle(CH_GIT_STATUS, async (e) => {
+    if (!isIpcFromMainWindow(e, opts.getMainWindow)) return deny(CH_GIT_STATUS);
+    const root = opts.getWorkspaceRoot();
+    if (!root) return { ok: false as const, kind: "failed" as const, reason: "no workspace root" };
+    const read = await readGitStatus(root);
+    if (!read.ok) return { ok: false as const, kind: read.kind, reason: read.reason };
+    return { ok: true as const, snapshot: read.snapshot, busy: gitRunGate.isBusy(root) };
+  });
+
+  /**
+   * One file's patch. The path fence is the snapshot, not a string test: only
+   * a path the repository is reporting as changed right now is diffable, which
+   * cannot name a file outside the repository and goes stale safely.
+   */
+  ipcMain.handle(CH_GIT_DIFF, async (e, relPath: unknown) => {
+    if (!isIpcFromMainWindow(e, opts.getMainWindow)) return deny(CH_GIT_DIFF);
+    const root = opts.getWorkspaceRoot();
+    if (!root) return { ok: false as const, reason: "no workspace root" };
+    if (typeof relPath !== "string" || !relPath) return { ok: false as const, reason: "invalid path" };
+    const status = await readGitStatus(root);
+    if (!status.ok) return { ok: false as const, reason: status.reason };
+    if (!isKnownChangedPath(status.snapshot, relPath)) {
+      return { ok: false as const, reason: "That file is no longer changed. Refresh and try again." };
+    }
+    const entry = status.snapshot.files.find((file) => file.path === relPath);
+    const diff = await readGitFileDiff(root, relPath, { untracked: entry?.status === "?" });
+    if (!diff.ok) return { ok: false as const, reason: diff.reason };
+    return { ok: true as const, patch: diff.patch, truncated: diff.truncated, untracked: diff.untracked };
+  });
+
+  /**
+   * Run one of the four operations. Nothing in the payload is trusted beyond
+   * the operation and its inputs: the plan is rebuilt here from a fresh
+   * snapshot, so a renderer showing a stale list cannot commit a file that
+   * stopped being changed, and the argv that runs is produced by the same
+   * function that produced the text the person confirmed.
+   */
+  ipcMain.handle(CH_GIT_RUN, async (e, payload: unknown) => {
+    if (!isIpcFromMainWindow(e, opts.getMainWindow)) return deny(CH_GIT_RUN);
+    const root = opts.getWorkspaceRoot();
+    if (!root) return { ok: false as const, reason: "no workspace root" };
+    if (!payload || typeof payload !== "object") return { ok: false as const, reason: "invalid request" };
+    const request = payload as {
+      op?: unknown;
+      message?: unknown;
+      push?: unknown;
+      paths?: unknown;
+      branch?: unknown;
+      path?: unknown;
+    };
+    const op = request.op;
+    if (op !== "commit" && op !== "push" && op !== "newBranch" && op !== "revertFile") {
+      return { ok: false as const, reason: "invalid request" };
+    }
+    if (!gitRunGate.tryAcquire(root)) {
+      return { ok: false as const, reason: "Another git command is still running in this project." };
+    }
+    try {
+      const status = await readGitStatus(root);
+      if (!status.ok) return { ok: false as const, reason: status.reason };
+      const plan = planGitOp(
+        {
+          op,
+          message: typeof request.message === "string" ? request.message : undefined,
+          push: !!request.push,
+          paths: Array.isArray(request.paths)
+            ? request.paths.filter((entry): entry is string => typeof entry === "string")
+            : undefined,
+          branch: typeof request.branch === "string" ? request.branch : undefined,
+          path: typeof request.path === "string" ? request.path : undefined,
+        },
+        status.snapshot,
+      );
+      if (!plan.ok) return { ok: false as const, reason: plan.reason, snapshot: status.snapshot };
+      opts.log(`[desk-ft] git: ${plan.display.split("\n").join(" ; ")}`);
+      const outcome = await runGitPlan(root, plan);
+      const after = await readGitStatus(root);
+      const snapshot = after.ok ? after.snapshot : undefined;
+      if (!outcome.ok) {
+        return {
+          ok: false as const,
+          reason: describeGitFailure(op, outcome.stderr) || "That git command failed.",
+          detail: outcome.stderr,
+          snapshot,
+        };
+      }
+      if (!snapshot) {
+        return {
+          ok: false as const,
+          reason: "The command ran, but the status could not be read afterwards. Refresh to see where things stand.",
+        };
+      }
+      return { ok: true as const, snapshot };
+    } finally {
+      gitRunGate.release(root);
+    }
+  });
+
   ipcMain.handle(CH_SAVE, (e, payload: unknown) => {
     if (!isIpcFromMainWindow(e, opts.getMainWindow)) return deny(CH_SAVE);
     const root = opts.getWorkspaceRoot();
@@ -343,7 +453,7 @@ export function registerFileTreeIpc(opts: FileTreeIpcOptions): void {
 
 export function unregisterFileTreeIpc(): void {
   if (!handlersRegistered) return;
-  for (const ch of [CH_LIST, CH_OPEN, CH_REVEAL, CH_READ, CH_SAVE, CH_ROOT]) {
+  for (const ch of [CH_LIST, CH_OPEN, CH_REVEAL, CH_READ, CH_SAVE, CH_ROOT, CH_GIT_STATUS, CH_GIT_DIFF, CH_GIT_RUN]) {
     ipcMain.removeHandler(ch);
   }
   if (closeBoundWindow && closeBoundHandler) {

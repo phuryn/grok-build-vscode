@@ -134,6 +134,18 @@ export function fileTreePanelBootSource(_iconsDir?: string): string {
       reveal: async (scopeId, relPath) => (await requireScope(scopeId))
         ? api.reveal(relPath)
         : { ok: false, reason: "workspace changed" },
+      // The Changes view. Present on the desktop shell and absent on a remote
+      // built against an older host, which is exactly how the panel decides
+      // whether to draw the button: the affordance exists if the call does.
+      gitStatus: async (scopeId) => (await requireScope(scopeId))
+        ? api.gitStatus()
+        : { ok: false, kind: "failed", reason: "workspace changed" },
+      gitDiff: async (scopeId, relPath) => (await requireScope(scopeId))
+        ? api.gitDiff(relPath)
+        : { ok: false, reason: "workspace changed" },
+      gitRun: async (scopeId, request) => (await requireScope(scopeId))
+        ? api.gitRun(request)
+        : { ok: false, reason: "workspace changed" },
     };
 
     const componentScript = document.querySelector('script[src*="file-panel.js"]');
@@ -173,6 +185,14 @@ export function fileTreePanelBootSource(_iconsDir?: string): string {
           : undefined,
         revealLabel: ${JSON.stringify(revealLabel)},
         fileIcons: { baseUrl: iconBase },
+      },
+      // Same progressive disclosure as the remote client: the Changes button
+      // belongs to Coding, not to somebody writing prose. chat.js owns the
+      // setting and publishes it on the window, because this bootstrap runs as
+      // a separate script and cannot see into that module.
+      gitEnabled: () => {
+        const read = window.__grokCodingPurpose;
+        return typeof read === "function" ? !!read() : true;
       },
       preferences: {
         getWidth: () => {

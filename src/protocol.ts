@@ -29,6 +29,17 @@ import type { RunProgressUpdate } from "./run-progress";
 import type { McpServerView } from "./mcp";
 import type { ConnectorView } from "./mcp-connectors";
 import type { RoutineDraft, RoutineModelOption, RoutineProjectOption, RoutineView } from "./routines";
+import type { GitStatusSnapshot } from "./git-status";
+
+/**
+ * The Changes snapshot as it crosses the wire.
+ *
+ * An alias rather than a second copy of the shape: this is one of the few
+ * types where a divergence would be silent, because a missing field reads as
+ * "no unpushed commits" rather than as a parse error. The relay mirrors
+ * `frames.ts`, not this, and every field here is plain JSON.
+ */
+export type GitStatusSnapshotWire = GitStatusSnapshot;
 
 /** grok's tool-call payload as it comes off the wire (acp emits it untyped). The
  *  webview reads a handful of fields; the index signature keeps assignment from
@@ -82,6 +93,12 @@ export const HOST_CAPABILITIES = {
   // Edit+save existing project files from a remote. Separate from browse so a
   // host can offer list/read without a write path. OPT-IN field presence.
   editProjectFiles: true,
+  // The Changes view: read git status and per-file diffs, and run the four
+  // operations in `git-status.ts`'s closed set. OPT-IN field presence, never a
+  // version check — an older host classifies `gitStatus` as unknown and DROPS
+  // it, so a client that drew the button unconditionally would draw one that
+  // never fills in.
+  gitChanges: true,
   // Whether this host can run an agent's headless sign-in for a remote and
   // report back the URL and code.
   //
@@ -183,6 +200,18 @@ export type HostUiCapabilities = {
    * No create/delete/rename in this pass.
    */
   editProjectFiles?: boolean;
+  /**
+   * Whether this host can answer the Changes view: `gitStatus`, `gitFileDiff`
+   * and the closed set of `gitRun` operations.
+   *
+   * OPT-IN and independent of the two above, because it asks a different
+   * question of the machine — not "can I read this project" but "is there a
+   * git here at all". A host in a directory that is not a repository still
+   * advertises the capability and answers with `ok:false`; the client hides
+   * the view on that answer rather than on a missing flag, so a person who
+   * runs `git init` sees the view appear on the next refresh.
+   */
+  gitChanges?: boolean;
   /**
    * Whether this host can run an agent's headless sign-in on a remote's behalf.
    * OPT-IN: absent/false = the remote empty state falls back to "connect it at
@@ -600,6 +629,75 @@ export type HostMsg =
       relPath: string;
       ok: false;
       reason: string;
+    }
+  /**
+   * Answer to `gitStatus` — everything the Changes view needs to say whether
+   * the work is safe. `cwd` echoes the scoped root so a client with two tabs
+   * can drop an answer meant for the other one.
+   *
+   * `ok:false` is an ORDINARY answer, not an error: a directory with no git in
+   * it, or no repository, is a perfectly normal project. `kind` says which, so
+   * the client can hide the view rather than paint a failure.
+   */
+  | {
+      type: "gitStatusResult";
+      requestId?: string;
+      cwd: string;
+      ok: true;
+      snapshot: GitStatusSnapshotWire;
+      /** A run is in flight for this repository; controls stay disabled. */
+      busy?: boolean;
+    }
+  | {
+      type: "gitStatusResult";
+      requestId?: string;
+      cwd: string;
+      ok: false;
+      kind: "no-git" | "not-a-repo" | "failed";
+      reason: string;
+    }
+  /**
+   * Answer to `gitFileDiff` — one file's unified patch, rendered by the client.
+   * `truncated` means the patch was cut at the host's cap and the view says so
+   * rather than showing a silently short diff.
+   */
+  | {
+      type: "gitFileDiffResult";
+      requestId?: string;
+      cwd: string;
+      path: string;
+      ok: true;
+      patch: string;
+      truncated: boolean;
+      untracked: boolean;
+    }
+  | { type: "gitFileDiffResult"; requestId?: string; cwd: string; path: string; ok: false; reason: string }
+  /**
+   * Answer to `gitRun`. On success the fresh snapshot comes back in the same
+   * message, so the list cannot briefly show the state that was just committed.
+   *
+   * On failure `reason` is a sentence with a next move in it and `detail` is
+   * git's own stderr, shown underneath. Both, never one: the sentence alone
+   * hides what happened, and stderr alone tells a person nothing to do.
+   */
+  | {
+      type: "gitRunResult";
+      requestId?: string;
+      cwd: string;
+      op: "commit" | "push" | "newBranch" | "revertFile";
+      ok: true;
+      snapshot: GitStatusSnapshotWire;
+    }
+  | {
+      type: "gitRunResult";
+      requestId?: string;
+      cwd: string;
+      op: "commit" | "push" | "newBranch" | "revertFile";
+      ok: false;
+      reason: string;
+      detail?: string;
+      /** The snapshot after the failure, when it could still be read. */
+      snapshot?: GitStatusSnapshotWire;
     }
   /** `steer` marks a mid-turn interjection (#52). It paints a user bubble but is
    *  NOT a prompt and gets no rewind point, so the bubble must not consume a
@@ -1173,6 +1271,38 @@ export type WebviewMsg =
       stamp: { mtimeMs: number; size: number };
       expectedAbsPath: string;
     }
+  /**
+   * Changes view: read `git status` for the tab's selected repo. Same fence as
+   * the file browse — `cwd` must be the scope `resolveRemoteFileRoot` allows.
+   * Answered by `gitStatusResult`. Capability: `gitChanges`.
+   */
+  | { type: "gitStatus"; requestId?: string; cwd: string }
+  /**
+   * Changes view: read one changed file's patch. `path` is repository-relative
+   * and is checked against the snapshot the host computes fresh — a path the
+   * repository is not reporting as changed is refused, which is a stronger
+   * fence than any string test could be.
+   */
+  | { type: "gitFileDiff"; requestId?: string; cwd: string; path: string }
+  /**
+   * Changes view: run one of the four operations in the closed set.
+   *
+   * The host re-plans from its OWN fresh snapshot rather than trusting anything
+   * in this message beyond the operation and its inputs, so a stale client
+   * cannot commit a file that stopped being changed, and the argv that runs is
+   * built by the same function that produced the text on the confirmation card.
+   */
+  | {
+      type: "gitRun";
+      requestId?: string;
+      cwd: string;
+      op: "commit" | "push" | "newBranch" | "revertFile";
+      message?: string;
+      push?: boolean;
+      paths?: string[];
+      branch?: string;
+      path?: string;
+    }
   | { type: "pasteImage"; mimeType: string; data: string; previewId?: string }
   // Remote browser upload: an untrusted basename plus base64 bytes. The host
   // allowlists/sanitizes/stages it, then routes it through addDroppedFile.
@@ -1263,7 +1393,7 @@ const HOST_MESSAGE_TYPE_MAP: Record<HostMsg["type"], true> = {
   initialized: true, cliUpdating: true, session: true, sessionName: true, modelChanged: true,
   modeChanged: true, openModePopover: true, voiceState: true, voiceConfigured: true,
   voicePartial: true, voiceSubmit: true, voiceTranscript: true, voiceError: true,
-  chips: true, commandsUpdate: true, mentionResults: true, projectDirListing: true, projectFileContent: true, projectFileWriteResult: true, userMessage: true, agentStart: true,
+  chips: true, commandsUpdate: true, mentionResults: true, projectDirListing: true, projectFileContent: true, projectFileWriteResult: true, gitStatusResult: true, gitFileDiffResult: true, gitRunResult: true, userMessage: true, agentStart: true,
   thoughtChunk: true, messageChunk: true, media: true, userMessageChunk: true,
   historyReplay: true, historyBatch: true, permissionHistoryQueue: true, planHistoryQueue: true,
   toolCall: true, toolCallUpdate: true, permissionRequest: true, permissionOptions: true,
@@ -1296,6 +1426,7 @@ const WEBVIEW_MESSAGE_TYPE_MAP: Record<WebviewMsg["type"], true> = {
   resumeSession: true, renameSession: true, deleteSession: true,
   clearAllSessions: true, pickFile: true, mentionQuery: true, addMentionFile: true,
   listProjectDir: true, readProjectFile: true, writeProjectFile: true,
+  gitStatus: true, gitFileDiff: true, gitRun: true,
   pasteImage: true, uploadFile: true, voiceStart: true,
   voiceStop: true, remoteVoiceStart: true, remoteVoiceChunk: true,
   remoteVoiceStop: true, queueSend: true, dequeueSend: true, clearQueuedSends: true,

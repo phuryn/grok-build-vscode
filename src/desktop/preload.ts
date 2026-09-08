@@ -73,6 +73,21 @@ contextBridge.exposeInMainWorld("grokDesktopFileTree", {
   save: (request: { relPath: string; text: string; stamp: { mtimeMs: number; size: number }; absPath: string }) =>
     ipcRenderer.invoke("desk-ft:save", request),
   root: () => ipcRenderer.invoke("desk-ft:root"),
+  /**
+   * The Changes view. `gitRun` names an operation, never an argv — the main
+   * process rebuilds the command from its own fresh snapshot, so nothing the
+   * renderer sends becomes a git argument without passing a validator there.
+   */
+  gitStatus: () => ipcRenderer.invoke("desk-ft:git-status"),
+  gitDiff: (relPath: string) => ipcRenderer.invoke("desk-ft:git-diff", relPath),
+  gitRun: (request: {
+    op: "commit" | "push" | "newBranch" | "revertFile";
+    message?: string;
+    push?: boolean;
+    paths?: string[];
+    branch?: string;
+    path?: string;
+  }) => ipcRenderer.invoke("desk-ft:git-run", request),
   /** Subscribe to active-project changes so the panel can rebind its tree. */
   onRootChanged: (cb: () => void) => {
     const handler = () => {

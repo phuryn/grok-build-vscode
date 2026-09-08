@@ -144,6 +144,28 @@
       // switched to.
       refreshing: false,
       filter: "",
+      // The Changes view, per scope for the same reason the tree is: the panel
+      // element is shared, and a commit message typed against one project must
+      // not appear over another.
+      changes: {
+        snapshot: null,
+        loading: false,
+        error: "",
+        /** "no-git" and "not-a-repo" hide the view; "failed" shows the reason. */
+        errorKind: "",
+        message: "",
+        /** null when not naming a branch; a string while the field is open. */
+        branchDraft: null,
+        /** The path whose diff is open, or null for the list. */
+        diffPath: null,
+        diffPatch: "",
+        diffTruncated: false,
+        diffLoading: false,
+        diffError: "",
+        /** Outcome of the last run, shown until the next one starts. */
+        notice: null,
+        running: false,
+      },
     };
   }
 
@@ -339,6 +361,173 @@
     return result("c", "icon", visible, overflow, cModes);
   }
 
+  /* ------------------------------------------------------------------ *
+   * The Changes view — pure helpers
+   *
+   * Everything here answers ONE question: is it safe to walk away? The
+   * wording rules follow from that. Say the answer, not the inputs to it;
+   * say each fact once; and never make somebody add two numbers together to
+   * find out whether their work is somewhere safe.
+   * ------------------------------------------------------------------ */
+
+  /** How one row reads. Short, because the row also carries the path. */
+  const CHANGE_WORD = { M: "Modified", A: "Added", D: "Deleted", R: "Renamed", U: "Conflict", "?": "New" };
+
+  function changeWord(status) {
+    return CHANGE_WORD[status] || "Changed";
+  }
+
+  /**
+   * The one line at the top of the view.
+   *
+   * Ordered by what would hurt: a conflict blocks everything, uncommitted work
+   * is the thing that gets lost, unpushed work is safe on this machine but not
+   * anywhere else, and only when none of those apply is there good news.
+   *
+   * "on this machine" is deliberate on the unpushed line. On a cloud machine
+   * the person may never see that disk again, and "committed" alone reads as
+   * finished when it is not.
+   */
+  function changesHeadline(snapshot) {
+    const snap = snapshot || {};
+    const files = Array.isArray(snap.files) ? snap.files : [];
+    const conflicts = files.filter((file) => file && file.status === "U").length;
+    if (conflicts) {
+      return { tone: "warn", text: conflicts === 1 ? "1 file has conflicts" : conflicts + " files have conflicts" };
+    }
+    if (files.length) {
+      // Deliberately NOT the warning tone — see the note on .gfp-changes-warn.
+      return { tone: "note", text: files.length === 1 ? "1 file not committed" : files.length + " files not committed" };
+    }
+    const ahead = Number(snap.ahead) || 0;
+    if (ahead > 0) {
+      const noun = ahead === 1 ? "1 commit" : ahead + " commits";
+      return { tone: "note", text: noun + " saved here but not pushed" };
+    }
+    if (snap.unborn) return { tone: "ok", text: "Nothing committed yet" };
+    return { tone: "ok", text: "Everything is committed and pushed" };
+  }
+
+  /**
+   * The branch chip's text, and whether to say anything about the remote.
+   *
+   * `behind` is only ever as fresh as the last fetch, and the view does not
+   * fetch — so it is phrased as a fact about what was last seen rather than as
+   * a live count, and it is dropped entirely when it is zero.
+   */
+  function changesBranchLine(snapshot) {
+    const snap = snapshot || {};
+    if (snap.detached) return { branch: "Detached HEAD", note: "Not on a branch" };
+    const branch = snap.branch || "";
+    if (!branch) return { branch: "No branch", note: "" };
+    if (!snap.hasRemote) return { branch: branch, note: "No remote" };
+    if (!snap.hasUpstream) return { branch: branch, note: "Not on the remote yet" };
+    const behind = Number(snap.behind) || 0;
+    if (behind > 0) {
+      return { branch: branch, note: (behind === 1 ? "1 commit" : behind + " commits") + " on the remote you do not have" };
+    }
+    return { branch: branch, note: "" };
+  }
+
+  /**
+   * What the primary button does and says.
+   *
+   * One button, and its label is the whole promise — which is why there is no
+   * confirmation dialog repeating it back. The cases that DO get a dialog are
+   * the ones the label cannot make safe: discarding a file, and pushing the
+   * branch everyone else builds on.
+   */
+  function changesPrimaryAction(snapshot, opts) {
+    const snap = snapshot || {};
+    const message = String((opts && opts.message) || "").trim();
+    const files = Array.isArray(snap.files) ? snap.files : [];
+    const conflicted = files.some((file) => file && file.status === "U");
+    const canPush = !!snap.hasRemote && !snap.detached && !!snap.branch;
+    if (files.length) {
+      if (conflicted) {
+        return { op: null, label: "Commit", disabled: true, hint: "Resolve the conflicts first." };
+      }
+      return {
+        op: "commit",
+        push: canPush,
+        label: canPush ? "Commit and push" : "Commit",
+        disabled: !message,
+        hint: message ? "" : "Describe what changed, then commit.",
+      };
+    }
+    const ahead = Number(snap.ahead) || 0;
+    if (ahead > 0 && canPush) {
+      return { op: "push", label: ahead === 1 ? "Push 1 commit" : "Push " + ahead + " commits", disabled: false, hint: "" };
+    }
+    if (ahead > 0) {
+      const hint = !snap.hasRemote
+        ? "This project has no remote to push to."
+        : "You are not on a branch, so there is nothing to push to.";
+      return { op: null, label: "Push", disabled: true, hint: hint };
+    }
+    return { op: null, label: "Commit", disabled: true, hint: "" };
+  }
+
+  /**
+   * Split a unified patch into rows to paint.
+   *
+   * Only the parts a reader uses: the hunk headers as separators, and the
+   * added/removed/context lines with their real line numbers. `diff --git`,
+   * index lines and mode bits are dropped — they are true and nobody reads
+   * them, which is the definition of the noise this view is trying not to be.
+   */
+  function parseUnifiedDiff(patch) {
+    const rows = [];
+    const text = typeof patch === "string" ? patch : "";
+    if (!text) return rows;
+    let oldNo = 0;
+    let newNo = 0;
+    let inHunk = false;
+    const lines = text.split(/\r?\n/);
+    if (lines.length && lines[lines.length - 1] === "") lines.pop();
+    for (const raw of lines) {
+      if (raw.slice(0, 2) === "@@") {
+        const match = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)$/.exec(raw);
+        if (match) {
+          oldNo = Number(match[1]) || 0;
+          newNo = Number(match[2]) || 0;
+          inHunk = true;
+          rows.push({ kind: "hunk", text: String(match[3] || "").trim(), oldNo: null, newNo: null });
+          continue;
+        }
+      }
+      if (!inHunk) continue;
+      const marker = raw.charAt(0);
+      if (marker === "+") {
+        rows.push({ kind: "add", text: raw.slice(1), oldNo: null, newNo: newNo });
+        newNo += 1;
+      } else if (marker === "-") {
+        rows.push({ kind: "del", text: raw.slice(1), oldNo: oldNo, newNo: null });
+        oldNo += 1;
+      } else if (marker === "\\") {
+        // "\ No newline at end of file" — real, and not a line of anybody's file.
+        rows.push({ kind: "meta", text: raw.slice(2), oldNo: null, newNo: null });
+      } else if (marker === " " || raw === "") {
+        rows.push({ kind: "ctx", text: raw.slice(1), oldNo: oldNo, newNo: newNo });
+        oldNo += 1;
+        newNo += 1;
+      }
+    }
+    return rows;
+  }
+
+  /** "+12 −3", or "" when there is nothing knowable to say. */
+  function changeCountLabel(file) {
+    const entry = file || {};
+    const added = typeof entry.added === "number" ? entry.added : null;
+    const deleted = typeof entry.deleted === "number" ? entry.deleted : null;
+    if (added === null && deleted === null) return "";
+    const parts = [];
+    if (added) parts.push("+" + added);
+    if (deleted) parts.push("\u2212" + deleted);
+    return parts.join(" ");
+  }
+
   const ICON = {
     close: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>',
     chevronRight: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>',
@@ -362,6 +551,14 @@
     // file gets.
     preview: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 7v14"/><path d="M16 12h2"/><path d="M16 8h2"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/><path d="M6 12h2"/><path d="M6 8h2"/></svg>',
     code: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/></svg>',
+    // lucide `git-branch` — the Changes view. A branch, not a diff glyph:
+    // the question the view answers is "where is my work", and a branch is the
+    // shape people already read that way.
+    branch: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>',
+    // lucide `undo-2` — restore a file to the last commit.
+    undo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11"/></svg>',
+    // lucide `arrow-up-from-line` — push. Up and away from here.
+    push: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m18 9-6-6-6 6"/><path d="M12 3v14"/><path d="M5 21h14"/></svg>',
     pencil: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/></svg>',
   };
 
@@ -386,6 +583,15 @@
     let destroyed = false;
     let open = false;
     let treeMode = true;
+    /**
+     * The Changes view is a third body mode alongside tree and viewer.
+     *
+     * Kept as its own flag rather than folded into `treeMode` because
+     * `treeMode` already means something specific to the tab strip — "no file
+     * is open" — and overloading it would have quietly changed which tab looks
+     * active while the Changes list is on screen.
+     */
+    let changesMode = false;
     /** Which tab the live textarea belongs to, so a repaint only restores a
      *  caret into the same file it came from. */
     let editingTabKey = null;
@@ -421,6 +627,28 @@
     title.type = "button";
     title.className = "gfp-title desk-ft-title";
     title.title = "Show file tree";
+    /**
+     * The Changes button.
+     *
+     * Beside the project title because it is the same KIND of thing — a mode
+     * for the whole project, not an action on the open file. It is hidden
+     * unless three things are true at once: the mount can answer git at all,
+     * the person is in Coding mode, and the directory really is a repository.
+     * A button that opens an empty explanation is worse than no button.
+     */
+    const canGit = typeof access.gitStatus === "function";
+    const changesBtn = doc.createElement("button");
+    changesBtn.type = "button";
+    changesBtn.className = "gfp-icon-button gfp-changes-btn";
+    changesBtn.title = "Changes";
+    changesBtn.setAttribute("aria-label", "Changes");
+    changesBtn.hidden = true;
+    const changesCount = doc.createElement("span");
+    changesCount.className = "gfp-changes-count";
+    changesCount.hidden = true;
+    changesBtn.innerHTML = ICON.branch;
+    changesBtn.appendChild(changesCount);
+
     const tabsEl = doc.createElement("div");
     tabsEl.className = "gfp-tabs desk-ft-tabs";
     tabsEl.setAttribute("role", "tablist");
@@ -442,7 +670,10 @@
     refreshBtn.innerHTML = ICON.refresh;
     refreshBtn.title = "Refresh";
     refreshBtn.setAttribute("aria-label", "Refresh file tree");
-    refreshBtn.addEventListener("click", () => void refreshTree());
+    refreshBtn.addEventListener("click", () => {
+      if (changesMode) void loadChanges({ force: true });
+      else void refreshTree();
+    });
 
     // Content-area maximize. The mount opts in (desktop and the wide browser);
     // the phone overlay already goes full-viewport at the 899 dock breakpoint,
@@ -456,9 +687,9 @@
       maximizeBtn.type = "button";
       maximizeBtn.className = "gfp-icon-button gfp-maximize desk-ft-maximize";
       maximizeBtn.setAttribute("aria-pressed", "false");
-      header.append(title, tabsEl, refreshBtn, maximizeBtn, closePanel);
+      header.append(title, changesBtn, tabsEl, refreshBtn, maximizeBtn, closePanel);
     } else {
-      header.append(title, tabsEl, refreshBtn, closePanel);
+      header.append(title, changesBtn, tabsEl, refreshBtn, closePanel);
     }
 
     const filter = doc.createElement("input");
@@ -473,6 +704,9 @@
     const viewer = doc.createElement("div");
     viewer.className = "gfp-viewer desk-ft-viewer files-browse-viewer";
     viewer.hidden = true;
+    const changesEl = doc.createElement("div");
+    changesEl.className = "gfp-changes";
+    changesEl.hidden = true;
 
     if (elementIds.resizer) resizer.id = elementIds.resizer;
     if (elementIds.title) title.id = elementIds.title;
@@ -481,7 +715,7 @@
     if (elementIds.viewer) viewer.id = elementIds.viewer;
     if (maximizeBtn && elementIds.maximize) maximizeBtn.id = elementIds.maximize;
 
-    rootEl.append(header, filter, tree, viewer);
+    rootEl.append(header, filter, tree, changesEl, viewer);
     panelHost.appendChild(resizer);
     panelHost.appendChild(rootEl);
 
@@ -493,6 +727,10 @@
     toggle.addEventListener("click", () => setOpen(!open));
     closePanel.addEventListener("click", () => setOpen(false));
     title.addEventListener("click", showTree);
+    changesBtn.addEventListener("click", () => {
+      if (changesMode) showTree();
+      else showChanges();
+    });
     if (maximizeBtn) maximizeBtn.addEventListener("click", () => setMaximized(!maximized));
     filter.addEventListener("input", () => {
       if (!currentState) return;
@@ -599,11 +837,16 @@
      */
     function paintRefresh() {
       const wasHidden = refreshBtn.hidden;
-      refreshBtn.hidden = !treeMode;
+      // One refresh control for both list modes. A second button that also
+      // said "refresh" would be the duplication this panel keeps avoiding.
+      refreshBtn.hidden = !treeMode && !changesMode;
       // In flight covers both loads: pressing refresh during the first listing
       // would ask for the same thing twice.
-      refreshBtn.disabled = !currentState || !!currentState.rootLoad;
-      refreshBtn.classList.toggle("gfp-busy", !!(currentState && currentState.rootLoad));
+      const changesBusy = !!(currentState && changesMode && currentState.changes.loading);
+      refreshBtn.disabled = !currentState || (changesMode ? changesBusy : !!currentState.rootLoad);
+      refreshBtn.classList.toggle("gfp-busy", !!(currentState && (changesMode ? changesBusy : !!currentState.rootLoad)));
+      refreshBtn.title = changesMode ? "Refresh changes" : "Refresh";
+      refreshBtn.setAttribute("aria-label", changesMode ? "Refresh changes" : "Refresh file tree");
       // Read from the scope on screen, never left behind by the one that
       // started it. `rootEl` is shared, and a refresh whose requests are still
       // outstanding on a project you have left would otherwise dim — and, via
@@ -684,6 +927,7 @@
         trailingWidth += box.width
           + (cs ? (parseFloat(cs.marginLeft) || 0) + (parseFloat(cs.marginRight) || 0) : 0);
       }
+      addTrailing(changesBtn);
       addTrailing(refreshBtn);
       addTrailing(maximizeBtn);
       addTrailing(closePanel);
@@ -783,7 +1027,7 @@
       rootEl.classList.toggle("gfp-strip-b", plan.state === "b");
       rootEl.classList.toggle("gfp-strip-c", plan.state === "c");
       title.classList.toggle("gfp-title-icon-only", plan.title === "icon");
-      title.classList.toggle("gfp-title-selected", !!treeMode);
+      title.classList.toggle("gfp-title-selected", !!treeMode && !changesMode);
 
       const tabs = [...tabsEl.querySelectorAll(".gfp-tab")];
       overflowRelPaths = [];
@@ -1022,6 +1266,15 @@
       title.title = scope && (scope.title || scope.label) || "Show file tree";
       paintTitle();
       filter.value = currentState ? currentState.filter : "";
+      // A project switch always lands on that project's own tree. Staying in
+      // Changes would show one project's branch under another's title for as
+      // long as the read takes, which is exactly the kind of cross-project
+      // confusion the per-scope state exists to prevent.
+      changesMode = false;
+      changesEl.hidden = true;
+      rootEl.classList.remove("gfp-changes-mode");
+      paintChangesButton();
+      if (canGit && currentState && gitEnabledNow()) void loadChanges({});
       treeMode = !(currentState && currentState.activeRelPath);
       renderTabs();
       if (!currentState) {
@@ -1496,6 +1749,653 @@
       applyStripPlan();
     }
 
+    /* ---------------------------------------------------------------- *
+     * The Changes view
+     * ---------------------------------------------------------------- */
+
+    /**
+     * Whether to offer the view at all.
+     *
+     * Three conditions, and each removes a different bad outcome. No adapter
+     * call means an older host that would drop the message in silence. Not
+     * Coding mode means somebody writing prose, for whom a git panel is noise —
+     * the same progressive disclosure the app already applies to thinking
+     * traces and tool detail. Not a repository means a button whose only
+     * content would be an explanation of why it is empty.
+     */
+    function gitEnabledNow() {
+      if (typeof options.gitEnabled !== "function") return true;
+      return !!options.gitEnabled();
+    }
+
+    function changesAvailable() {
+      if (!canGit || !currentState) return false;
+      if (!gitEnabledNow()) return false;
+      const state = currentState.changes;
+      return state.errorKind !== "no-git" && state.errorKind !== "not-a-repo";
+    }
+
+    function paintChangesButton() {
+      const available = changesAvailable();
+      const wasHidden = changesBtn.hidden;
+      changesBtn.hidden = !available;
+      changesBtn.classList.toggle("gfp-changes-selected", !!changesMode);
+      changesBtn.setAttribute("aria-pressed", String(!!changesMode));
+      const snapshot = currentState && currentState.changes.snapshot;
+      const count = snapshot && Array.isArray(snapshot.files) ? snapshot.files.length : 0;
+      // The badge counts UNCOMMITTED files only. Unpushed commits are named in
+      // words inside the view; a badge that silently added two different things
+      // together would be a number nobody could act on.
+      changesCount.hidden = !count;
+      changesCount.textContent = count > 99 ? "99+" : String(count);
+      changesBtn.title = count
+        ? (count === 1 ? "Changes — 1 file not committed" : "Changes — " + count + " files not committed")
+        : "Changes";
+      if (changesBtn.hidden !== wasHidden) applyStripShrink();
+    }
+
+    function showChanges() {
+      if (!canGit || !currentState) return;
+      changesMode = true;
+      treeMode = false;
+      rootEl.classList.remove("gfp-viewing");
+      if (mount.viewingBodyClass) doc.body.classList.remove(mount.viewingBodyClass);
+      tree.hidden = true;
+      viewer.hidden = true;
+      changesEl.hidden = false;
+      rootEl.classList.add("gfp-changes-mode");
+      renderTabs();
+      paintChangesButton();
+      paintRefresh();
+      renderChanges();
+      // A snapshot older than this visit is a snapshot of somebody else's
+      // moment — the agent has very likely written files since. Always re-read
+      // on entry; it is two cheap commands and the whole point of the view is
+      // that the number is true.
+      void loadChanges({});
+    }
+
+    async function loadChanges(opts) {
+      if (!canGit || !currentScope || !currentState) return;
+      const state = currentState;
+      const scopeId = currentScope.id;
+      if (state.changes.loading && !(opts && opts.force)) return;
+      state.changes.loading = true;
+      if (changesMode) {
+        paintRefresh();
+        renderChanges();
+      }
+      let result;
+      try {
+        result = await access.gitStatus(scopeId);
+      } catch (err) {
+        result = { ok: false, kind: "failed", reason: String((err && err.message) || err || "Could not read git status.") };
+      }
+      if (destroyed || currentState !== state) return;
+      state.changes.loading = false;
+      if (result && result.ok) {
+        state.changes.snapshot = result.snapshot;
+        state.changes.error = "";
+        state.changes.errorKind = "";
+        // A path that stopped being changed cannot still have its diff on
+        // screen — the host would refuse it, and a stale patch is worse than
+        // none because it looks current.
+        if (state.changes.diffPath && !(result.snapshot.files || []).some((f) => f.path === state.changes.diffPath)) {
+          state.changes.diffPath = null;
+          state.changes.diffPatch = "";
+        }
+      } else {
+        state.changes.snapshot = null;
+        state.changes.errorKind = (result && result.kind) || "failed";
+        state.changes.error = (result && result.reason) || "Could not read git status.";
+        // The two "there is no git here" answers retire the button entirely
+        // rather than parking an explanation behind it.
+        if (state.changes.errorKind === "no-git" || state.changes.errorKind === "not-a-repo") {
+          if (changesMode) showTree();
+        }
+      }
+      paintChangesButton();
+      if (changesMode) {
+        paintRefresh();
+        renderChanges();
+      }
+    }
+
+    async function openChangeDiff(path) {
+      if (!currentScope || !currentState) return;
+      const state = currentState;
+      const scopeId = currentScope.id;
+      state.changes.diffPath = path;
+      state.changes.diffPatch = "";
+      state.changes.diffTruncated = false;
+      state.changes.diffError = "";
+      state.changes.diffLoading = true;
+      renderChanges();
+      let result;
+      try {
+        result = await access.gitDiff(scopeId, path);
+      } catch (err) {
+        result = { ok: false, reason: String((err && err.message) || err || "Could not read the diff.") };
+      }
+      if (destroyed || currentState !== state || state.changes.diffPath !== path) return;
+      state.changes.diffLoading = false;
+      if (result && result.ok) {
+        state.changes.diffPatch = result.patch || "";
+        state.changes.diffTruncated = !!result.truncated;
+      } else {
+        state.changes.diffError = (result && result.reason) || "Could not read the diff.";
+      }
+      renderChanges();
+    }
+
+    function closeChangeDiff() {
+      if (!currentState) return;
+      currentState.changes.diffPath = null;
+      currentState.changes.diffPatch = "";
+      currentState.changes.diffError = "";
+      renderChanges();
+    }
+
+    async function runChangesOp(request) {
+      if (!currentScope || !currentState || typeof access.gitRun !== "function") return;
+      const state = currentState;
+      const scopeId = currentScope.id;
+      if (state.changes.running) return;
+      state.changes.running = true;
+      state.changes.notice = null;
+      renderChanges();
+      let result;
+      try {
+        result = await access.gitRun(scopeId, request);
+      } catch (err) {
+        result = { ok: false, reason: String((err && err.message) || err || "That git command failed.") };
+      }
+      if (destroyed || currentState !== state) return;
+      state.changes.running = false;
+      if (result && result.snapshot) state.changes.snapshot = result.snapshot;
+      if (result && result.ok) {
+        state.changes.notice = { tone: "ok", text: successLine(request, result.snapshot) };
+        // The message has been spent. Leaving it in the box invites the same
+        // commit twice, and the second one would be empty and confusing.
+        if (request.op === "commit") state.changes.message = "";
+        state.changes.diffPath = null;
+        state.changes.diffPatch = "";
+      } else {
+        state.changes.notice = {
+          tone: "warn",
+          text: (result && result.reason) || "That git command failed.",
+          detail: (result && result.detail) || "",
+        };
+      }
+      paintChangesButton();
+      renderChanges();
+    }
+
+    /** What happened, in the person's terms rather than git's. */
+    function successLine(request, snapshot) {
+      const ahead = snapshot ? Number(snapshot.ahead) || 0 : 0;
+      if (request.op === "commit") {
+        if (request.push) return "Committed and pushed.";
+        return ahead > 0
+          ? "Committed. " + (ahead === 1 ? "1 commit is" : ahead + " commits are") + " still only on this machine."
+          : "Committed.";
+      }
+      if (request.op === "push") return "Pushed.";
+      if (request.op === "newBranch") return "Now on " + request.branch + ".";
+      if (request.op === "revertFile") return "Restored " + request.path + " to the last commit.";
+      return "Done.";
+    }
+
+    function renderChanges() {
+      if (!changesMode) return;
+      changesEl.textContent = "";
+      if (!currentState) {
+        changesEl.appendChild(changesEmpty("No repository selected."));
+        return;
+      }
+      const state = currentState.changes;
+      if (state.diffPath) {
+        renderChangeDiff(state);
+        return;
+      }
+      if (state.error) {
+        changesEl.appendChild(changesEmpty(state.error));
+        return;
+      }
+      if (!state.snapshot) {
+        changesEl.appendChild(changesEmpty(state.loading ? "Reading git status\u2026" : "No status yet."));
+        return;
+      }
+      renderChangesList(state);
+    }
+
+    /**
+     * The diff, in the product's one diff style.
+     *
+     * Same markup as chat.js's `buildInlineDiffRegion`: a sign column, a
+     * right-aligned line-number gutter sized to the widest number actually
+     * shown, and the code. A hunk boundary becomes the same dashed rule that
+     * separates two non-contiguous edits in a tool call, because it means the
+     * same thing — the file jumps here.
+     */
+    function diffRegion(rows) {
+      const wrap = doc.createElement("div");
+      wrap.className = "tool-diff-region gfp-diff-region";
+      let widest = 0;
+      for (const row of rows) {
+        const shown = row.kind === "del" ? row.oldNo : row.newNo;
+        if (shown && shown > widest) widest = shown;
+      }
+      // Floored at 4ch so everything up to 999 looks exactly like the inline
+      // diff; only a four-digit file widens the track.
+      const digits = String(widest || 0).length;
+      wrap.style.setProperty("--tdl-num-w", Math.max(4, digits + 1) + "ch");
+      for (const row of rows) {
+        if (row.kind === "hunk") {
+          const sep = doc.createElement("div");
+          sep.className = "tdl-sep";
+          wrap.appendChild(sep);
+          continue;
+        }
+        const line = doc.createElement("div");
+        line.className = "tdl" + (row.kind === "add" ? " tdl-add" : row.kind === "del" ? " tdl-del" : "");
+        const sign = doc.createElement("span");
+        sign.className = "tdl-sign";
+        sign.textContent = row.kind === "add" ? "+" : row.kind === "del" ? "\u2212" : "";
+        sign.setAttribute("aria-hidden", "true");
+        const num = doc.createElement("span");
+        num.className = "tdl-num";
+        const shown = row.kind === "del" ? row.oldNo : row.newNo;
+        num.textContent = shown ? String(shown) : "";
+        const code = doc.createElement("span");
+        code.className = "tdl-code";
+        code.textContent = row.kind === "meta" ? "\u2026 " + row.text : row.text;
+        line.append(sign, num, code);
+        wrap.appendChild(line);
+      }
+      return wrap;
+    }
+
+    function changesEmpty(text) {
+      const el = doc.createElement("p");
+      el.className = "gfp-changes-empty";
+      el.textContent = text;
+      return el;
+    }
+
+    function renderChangesList(state) {
+      const snapshot = state.snapshot;
+      const files = Array.isArray(snapshot.files) ? snapshot.files : [];
+
+      // 1. Where the work is. One quiet line; the branch is context, not news.
+      const branchInfo = changesBranchLine(snapshot);
+      const branchRow = doc.createElement("div");
+      branchRow.className = "gfp-changes-branch";
+      const branchIcon = doc.createElement("span");
+      branchIcon.className = "gfp-changes-branch-icon";
+      branchIcon.innerHTML = ICON.branch;
+      const branchName = doc.createElement("span");
+      branchName.className = "gfp-changes-branch-name";
+      branchName.textContent = branchInfo.branch;
+      branchRow.append(branchIcon, branchName);
+      if (branchInfo.note) {
+        const note = doc.createElement("span");
+        note.className = "gfp-changes-branch-note";
+        note.textContent = branchInfo.note;
+        branchRow.appendChild(note);
+      }
+      changesEl.appendChild(branchRow);
+
+      // 2. The answer to "is it safe to walk away", in one line.
+      const headline = changesHeadline(snapshot);
+      const headlineEl = doc.createElement("p");
+      headlineEl.className = "gfp-changes-headline gfp-changes-" + headline.tone;
+      headlineEl.textContent = headline.text;
+      changesEl.appendChild(headlineEl);
+
+      // 3. The outcome of the last run, if there was one. Above the list,
+      //    because it is about to be contradicted by the list otherwise.
+      if (state.notice) {
+        const notice = doc.createElement("div");
+        notice.className = "gfp-changes-notice gfp-changes-" + state.notice.tone;
+        const line = doc.createElement("p");
+        line.className = "gfp-changes-notice-text";
+        line.textContent = state.notice.text;
+        notice.appendChild(line);
+        if (state.notice.detail) {
+          const detail = doc.createElement("pre");
+          detail.className = "gfp-changes-notice-detail";
+          detail.textContent = state.notice.detail.trim();
+          notice.appendChild(detail);
+        }
+        changesEl.appendChild(notice);
+      }
+
+      // 4. The files. Each row is a link to its own diff and nothing else —
+      //    the destructive action lives one level in, behind having looked.
+      if (files.length) {
+        const list = doc.createElement("div");
+        list.className = "gfp-changes-list";
+        for (const file of files) {
+          list.appendChild(changeRow(file));
+        }
+        changesEl.appendChild(list);
+      }
+
+      // 5. Unpushed commits, only when there are some and nothing uncommitted
+      //    is shouting louder. Two lists at once is the noise the owner
+      //    specifically asked not to have.
+      const unpushed = Array.isArray(snapshot.unpushed) ? snapshot.unpushed : [];
+      if (unpushed.length && !files.length) {
+        const list = doc.createElement("div");
+        list.className = "gfp-changes-commits";
+        for (const commit of unpushed.slice(0, 8)) {
+          const row = doc.createElement("div");
+          row.className = "gfp-changes-commit";
+          const sha = doc.createElement("code");
+          sha.className = "gfp-changes-sha";
+          sha.textContent = commit.sha;
+          const subject = doc.createElement("span");
+          subject.className = "gfp-changes-subject";
+          subject.textContent = commit.subject;
+          row.append(sha, subject);
+          list.appendChild(row);
+        }
+        if (unpushed.length > 8) {
+          const more = doc.createElement("p");
+          more.className = "gfp-changes-more";
+          more.textContent = snapshot.unpushedTruncated
+            ? "and more"
+            : "and " + (unpushed.length - 8) + " more";
+          list.appendChild(more);
+        }
+        changesEl.appendChild(list);
+      }
+
+      changesEl.appendChild(changesActions(state, snapshot, files));
+    }
+
+    function changeRow(file) {
+      const row = doc.createElement("button");
+      row.type = "button";
+      row.className = "gfp-change-row gfp-change-" + (file.status === "?" ? "new" : file.status.toLowerCase());
+      row.dataset.path = file.path;
+      row.title = changeWord(file.status) + " \u2014 " + file.path;
+
+      const badge = doc.createElement("span");
+      badge.className = "gfp-change-badge";
+      badge.textContent = file.status === "?" ? "+" : file.status;
+      badge.setAttribute("aria-hidden", "true");
+
+      const name = doc.createElement("span");
+      name.className = "gfp-change-name";
+      const base = fileName(file.path);
+      const dir = file.path.slice(0, Math.max(0, file.path.length - base.length - 1));
+      const baseEl = doc.createElement("span");
+      baseEl.className = "gfp-change-base";
+      baseEl.textContent = base;
+      name.appendChild(baseEl);
+      if (dir) {
+        const dirEl = doc.createElement("span");
+        dirEl.className = "gfp-change-dir";
+        dirEl.textContent = dir;
+        name.appendChild(dirEl);
+      }
+
+      row.append(badge, name);
+
+      const counts = changeCountLabel(file);
+      if (counts) {
+        const stat = doc.createElement("span");
+        stat.className = "gfp-change-stat";
+        stat.textContent = counts;
+        row.appendChild(stat);
+      } else if (file.status === "?") {
+        const stat = doc.createElement("span");
+        stat.className = "gfp-change-stat gfp-change-stat-word";
+        stat.textContent = "new";
+        row.appendChild(stat);
+      }
+
+      row.addEventListener("click", () => void openChangeDiff(file.path));
+      return row;
+    }
+
+    /**
+     * The commit box and the one primary button.
+     *
+     * Deliberately one button. Every extra control here is a decision somebody
+     * has to make before their work is safe, and the common case — "save this
+     * somewhere I will not lose it" — is one press.
+     */
+    function changesActions(state, snapshot, files) {
+      const wrap = doc.createElement("div");
+      wrap.className = "gfp-changes-actions";
+      const primary = changesPrimaryAction(snapshot, { message: state.message });
+
+      if (files.length) {
+        const box = doc.createElement("textarea");
+        box.className = "gfp-changes-message";
+        box.rows = 2;
+        box.placeholder = "What changed?";
+        box.value = state.message;
+        box.setAttribute("aria-label", "Commit message");
+        box.addEventListener("input", () => {
+          state.message = box.value;
+          const next = changesPrimaryAction(snapshot, { message: state.message });
+          runBtn.disabled = next.disabled || state.running;
+          hint.textContent = next.hint;
+        });
+        wrap.appendChild(box);
+      }
+
+      const runBtn = doc.createElement("button");
+      runBtn.type = "button";
+      runBtn.className = "gfp-changes-primary";
+      runBtn.textContent = state.running ? "Working\u2026" : primary.label;
+      // Naming a branch takes over: one enabled primary at a time is the whole
+      // design of this block.
+      runBtn.disabled = primary.disabled || state.running || typeof state.branchDraft === "string";
+      runBtn.addEventListener("click", () => {
+        if (!primary.op) return;
+        if (primary.op === "commit") {
+          void runChangesOp({ op: "commit", message: state.message, push: !!primary.push });
+          return;
+        }
+        void confirmedPush(snapshot);
+      });
+      wrap.appendChild(runBtn);
+
+      const hint = doc.createElement("p");
+      hint.className = "gfp-changes-hint";
+      hint.textContent = primary.hint;
+      wrap.appendChild(hint);
+
+      // The escape hatch, and the reason the primary button can stay a single
+      // promise: anybody who does not want to commit onto this branch can move
+      // the work first, and that is one line rather than a second mode.
+      if (files.length && snapshot.isDefaultBranch && !snapshot.detached) {
+        if (typeof state.branchDraft === "string") {
+          wrap.appendChild(branchNameRow(state));
+        } else {
+          const move = doc.createElement("button");
+          move.type = "button";
+          move.className = "gfp-changes-secondary";
+          move.textContent = "Move to a new branch\u2026";
+          move.disabled = state.running;
+          move.addEventListener("click", () => {
+            state.branchDraft = "";
+            renderChanges();
+            const input = changesEl.querySelector(".gfp-changes-branch-input");
+            if (input) input.focus();
+          });
+          wrap.appendChild(move);
+        }
+      }
+      return wrap;
+    }
+
+    /**
+     * Naming the branch, in the panel rather than in a dialog.
+     *
+     * The host is the authority on what git will accept — it re-plans every
+     * operation from its own snapshot and refuses names git would reject — so
+     * this checks only enough to keep the button from being pressable while it
+     * obviously cannot work. A second copy of the real rule here would be one
+     * more thing to keep in step with isValidBranchName.
+     */
+    function branchNameRow(state) {
+      const row = doc.createElement("div");
+      row.className = "gfp-changes-branch-row";
+
+      const input = doc.createElement("input");
+      input.type = "text";
+      input.className = "gfp-changes-branch-input";
+      input.placeholder = "new-branch-name";
+      input.value = state.branchDraft;
+      input.setAttribute("aria-label", "Name for the new branch");
+      input.autocomplete = "off";
+      input.spellcheck = false;
+
+      const create = doc.createElement("button");
+      create.type = "button";
+      create.className = "gfp-changes-primary gfp-changes-branch-create";
+      create.textContent = "Create branch";
+
+      const cancel = doc.createElement("button");
+      cancel.type = "button";
+      cancel.className = "gfp-changes-secondary gfp-changes-branch-cancel";
+      cancel.textContent = "Cancel";
+
+      const usable = () => {
+        const name = input.value.trim();
+        return !!name && !/\s/.test(name) && !state.running;
+      };
+      const sync = () => { create.disabled = !usable(); };
+      const submit = () => {
+        if (!usable()) return;
+        const name = input.value.trim();
+        state.branchDraft = null;
+        void runChangesOp({ op: "newBranch", branch: name });
+      };
+
+      input.addEventListener("input", () => { state.branchDraft = input.value; sync(); });
+      input.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") { event.preventDefault(); submit(); }
+        // Escape leaves the naming state without touching the repository. It
+        // stops there rather than bubbling, because the panel's own Escape
+        // closes the whole thing and losing the view is not what "never mind
+        // about the branch name" should mean.
+        if (event.key === "Escape") {
+          event.preventDefault();
+          event.stopPropagation();
+          state.branchDraft = null;
+          renderChanges();
+        }
+      });
+      create.addEventListener("click", submit);
+      cancel.addEventListener("click", () => { state.branchDraft = null; renderChanges(); });
+      sync();
+
+      row.append(input, create, cancel);
+      return row;
+    }
+
+    /**
+     * Pushing the default branch is the one push worth interrupting.
+     *
+     * Not because it is destructive — it is not — but because on `main` it is
+     * the one that other people see immediately, and a phone in a pocket is an
+     * easy place to press a button by accident.
+     */
+    async function confirmedPush(snapshot) {
+      if (snapshot.isDefaultBranch) {
+        const answer = await confirmChoice({
+          title: "Push to " + snapshot.branch + "?",
+          body: "This is the default branch, so anyone working from it will see these commits.",
+          actions: [{ id: "push", label: "Push" }],
+        });
+        if (answer !== "push") return;
+      }
+      await runChangesOp({ op: "push" });
+    }
+
+    function renderChangeDiff(state) {
+      const path = state.diffPath;
+      const file = (state.snapshot && (state.snapshot.files || []).find((f) => f.path === path)) || null;
+
+      const head = doc.createElement("div");
+      head.className = "gfp-changes-diff-head";
+      const back = doc.createElement("button");
+      back.type = "button";
+      back.className = "gfp-changes-back";
+      back.title = "Back to changes";
+      back.setAttribute("aria-label", "Back to changes");
+      back.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>';
+      back.addEventListener("click", closeChangeDiff);
+      const name = doc.createElement("span");
+      name.className = "gfp-changes-diff-name";
+      name.textContent = path;
+      name.title = path;
+      head.append(back, name);
+      if (file) {
+        const word = doc.createElement("span");
+        word.className = "gfp-changes-diff-word";
+        word.textContent = changeWord(file.status);
+        head.appendChild(word);
+      }
+      changesEl.appendChild(head);
+
+      if (state.diffLoading) {
+        changesEl.appendChild(changesEmpty("Reading the diff\u2026"));
+        return;
+      }
+      if (state.diffError) {
+        changesEl.appendChild(changesEmpty(state.diffError));
+        return;
+      }
+
+      const rows = parseUnifiedDiff(state.diffPatch);
+      if (!rows.length) {
+        // A real and confusing case: a file git reports as changed whose
+        // content is identical, which is what a mode change or a line-ending
+        // rewrite looks like. Saying so beats an empty box.
+        changesEl.appendChild(changesEmpty("No line changes to show \u2014 the file's permissions or line endings changed."));
+      } else {
+        changesEl.appendChild(diffRegion(rows));
+        if (state.diffTruncated) {
+          changesEl.appendChild(changesEmpty("This diff is too large to show in full."));
+        }
+      }
+
+      // Revert lives HERE and nowhere else: after the person has seen exactly
+      // what they would be throwing away. A discard button in the file list
+      // would be one mis-tap from losing work with no undo.
+      if (file && file.status !== "?" && file.status !== "U" && typeof access.gitRun === "function") {
+        const foot = doc.createElement("div");
+        foot.className = "gfp-changes-diff-foot";
+        const discard = doc.createElement("button");
+        discard.type = "button";
+        discard.className = "gfp-changes-discard";
+        discard.innerHTML = ICON.undo;
+        const label = doc.createElement("span");
+        label.textContent = "Discard these changes";
+        discard.appendChild(label);
+        discard.disabled = !!state.running;
+        discard.addEventListener("click", async () => {
+          const answer = await confirmChoice({
+            title: "Discard changes to " + fileName(path) + "?",
+            body: "This restores the file to the last commit. It cannot be undone.",
+            actions: [{ id: "discard", label: "Discard", danger: true }],
+          });
+          if (answer !== "discard") return;
+          await runChangesOp({ op: "revertFile", path: path });
+        });
+        foot.appendChild(discard);
+        changesEl.appendChild(foot);
+      }
+    }
+
     function currentTab() {
       return currentState && currentState.activeRelPath
         ? currentState.tabs.get(currentState.activeRelPath) || null
@@ -1504,6 +2404,10 @@
 
     function showTree() {
       treeMode = true;
+      changesMode = false;
+      changesEl.hidden = true;
+      rootEl.classList.remove("gfp-changes-mode");
+      paintChangesButton();
       rootEl.classList.remove("gfp-viewing");
       if (mount.viewingBodyClass) doc.body.classList.remove(mount.viewingBodyClass);
       tree.hidden = false;
@@ -1650,7 +2554,30 @@
       return wrap;
     }
 
+    function leaveChanges() {
+      if (!changesMode) return;
+      changesMode = false;
+      changesEl.hidden = true;
+      rootEl.classList.remove("gfp-changes-mode");
+      paintChangesButton();
+      paintRefresh();
+    }
+
+    /**
+     * Re-read the status because something outside the panel changed the tree.
+     *
+     * The whole value of the count on the button is that it is true without
+     * anybody asking, and the agent writing files is precisely when it stops
+     * being true. Cheap enough to call freely: two git commands with
+     * GIT_OPTIONAL_LOCKS=0, and it no-ops when the view was never available.
+     */
+    function refreshChangesQuietly() {
+      if (!canGit || !currentState || !gitEnabledNow()) return;
+      void loadChanges({});
+    }
+
     function renderViewer() {
+      leaveChanges();
       const tab = currentTab();
       if (!tab) return showTree();
       // Where the caret was, so a repaint does not throw it away.
@@ -2266,6 +3193,7 @@
       currentState = currentScope ? scopeState(currentScope) : null;
       renderedTreeState = null;
       treeMode = true;
+      changesMode = false;
       renderTabs();
       showTree();
       if (open && currentState) void loadRootTree();
@@ -2377,6 +3305,13 @@
       isMaximized: () => maximized,
       openPath: openFile,
       hasDirty: () => anyDirty(scopes),
+      /**
+       * Re-read git status. The host calls this when a turn ends, because that
+       * is exactly when the count on the button stopped being true.
+       */
+      refreshChanges: refreshChangesQuietly,
+      /** Repaint the button — the Coding/Knowledge toggle changes its answer. */
+      refreshChangesAvailability: paintChangesButton,
       confirmClose,
       clearMemory,
       destroy,
@@ -2476,6 +3411,12 @@
     applySaveSuccess,
     anyDirty,
     panelIcon,
+    changeWord,
+    changesHeadline,
+    changesBranchLine,
+    changesPrimaryAction,
+    changeCountLabel,
+    parseUnifiedDiff,
   };
 
   if (typeof module !== "undefined" && module.exports) module.exports = api;

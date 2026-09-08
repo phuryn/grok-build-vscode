@@ -270,6 +270,12 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
   // (writeProjectFile) at the mutation tier below.
   listProjectDir: "view",
   readProjectFile: "view",
+  // The Changes view's two reads. Same fence as the browse above — the host
+  // resolves the root through resolveRemoteFileRoot, not from the message.
+  // Neither can mutate anything: gitStatus and gitFileDiff run git with
+  // GIT_OPTIONAL_LOCKS=0 and no write path at all.
+  gitStatus: "view",
+  gitFileDiff: "view",
   // input/turn control (propose+)
   send: "propose",
   newSession: "propose",
@@ -346,6 +352,23 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
   // read-only remote must not rewrite the desk tree. Existing files only
   // (create/delete/rename are deliberately out of scope).
   writeProjectFile: "propose",
+  // Commit / push / new branch / revert one file, from a phone.
+  //
+  // "full" rather than "propose", and the reason is that the neighbouring rows
+  // already settle it: a remote holds `send: "propose"` and
+  // `permissionAnswer: "full"`, so it can already ask the agent to run any git
+  // command and approve the tool call that does it — with the credentials
+  // already on that machine. A closed set of four operations, each re-planned
+  // from the host's own fresh snapshot, adds strictly LESS capability than the
+  // path that is already open. Refusing it here would remove nothing an
+  // attacker has and would take the feature away from the surface the product
+  // exists for.
+  //
+  // What DOES bound it lives in git-status.ts: four operations, no arbitrary
+  // argv, paths validated against a snapshot the host just computed, branch
+  // names through a validator, and no `git clean` / `reset --hard` / `push
+  // --force` in the set at all.
+  gitRun: "full",
   removeChip: "propose",
   toggleChip: "propose",
   // attaches a chip only after an exact host mention-catalog lookup plus
@@ -545,6 +568,13 @@ export const REMOTE_REQUIRES_BOUND_SESSION: Record<WebviewMsg["type"], boolean> 
   mentionQuery: true,
   listProjectDir: false,
   readProjectFile: false,
+  // The Changes view asks about the REPOSITORY, not the conversation. A tab
+  // whose session mapping went away can still legitimately show what changed
+  // on disk, and refusing here would blank the view for the exact person who
+  // came back to check on it.
+  gitStatus: false,
+  gitFileDiff: false,
+  gitRun: false,
   send: true,
   newSession: false,
   cancel: true,
@@ -735,6 +765,13 @@ export function allowRemoteRepoTarget(msg: WebviewMsg, isKnownCwd: (cwd: string)
     // Write names a cwd too. Without this case the default branch returns true
     // and a remote could claim an arbitrary path — same trap as list/read.
     case "writeProjectFile":
+    // The Changes view names a cwd on all three. Without these cases the
+    // default branch returns TRUE and a remote could claim an arbitrary path —
+    // the same trap the browse rows above exist for, and the one that matters
+    // most here because gitRun writes.
+    case "gitStatus":
+    case "gitFileDiff":
+    case "gitRun":
       return isKnownCwd(msg.cwd);
     case "resumeSession":
     // Same shape as resume: the cwd is optional (the host falls back to its own
@@ -924,6 +961,9 @@ export const OUTBOUND_DISPOSITION: Record<HostMsg["type"], OutboundDisposition> 
   projectDirListing: "mirror",
   projectFileContent: "mirror",
   projectFileWriteResult: "mirror",
+  gitStatusResult: "mirror",
+  gitFileDiffResult: "mirror",
+  gitRunResult: "mirror",
   userMessage: "mirror",
   agentStart: "mirror",
   thoughtChunk: "mirror",
@@ -1101,6 +1141,9 @@ export const OUTBOUND_PROJECT_AUTH: Record<HostMsg["type"], OutboundProjectAuth>
   projectDirListing: "message-cwd",
   projectFileContent: "message-cwd",
   projectFileWriteResult: "message-cwd",
+  gitStatusResult: "message-cwd",
+  gitFileDiffResult: "message-cwd",
+  gitRunResult: "message-cwd",
   userMessage: "scope",
   agentStart: "scope",
   thoughtChunk: "scope",
@@ -1263,7 +1306,10 @@ export function mayDeliverRemoteHostMsg(
       if (
         msg.type === "projectDirListing" ||
         msg.type === "projectFileContent" ||
-        msg.type === "projectFileWriteResult"
+        msg.type === "projectFileWriteResult" ||
+        msg.type === "gitStatusResult" ||
+        msg.type === "gitFileDiffResult" ||
+        msg.type === "gitRunResult"
       ) {
         return cwdIsAuthorized(msg.cwd, authorizedCwds, sameCwd);
       }

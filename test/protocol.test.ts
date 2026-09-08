@@ -43,6 +43,10 @@ describe("host <-> webview message contract (src/protocol.ts is the source of tr
       // Edit+save existing files — separate from browse so a host can offer
       // list/read without a write path.
       editProjectFiles: true,
+      // The Changes view: git status, one file's diff, and the closed set of
+      // four write operations. Separate from browse because every host released
+      // before it DROPS those three messages in silence.
+      gitChanges: true,
       // Running an agent's headless sign-in for a remote. Absent on every host
       // built before it shipped, and those hosts DROP `runGrokLogin` silently —
       // so the client must gate the Connect control on this rather than offer a

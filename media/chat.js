@@ -2254,6 +2254,7 @@
     vscode.postMessage({ type: "setAppPurpose", value: next });
     applyThinkingVisibility();
     applyExpandCommandOutputs();
+    syncChangesAvailability();
     if (!gearPopover.hidden && state.gearView === "main") renderGearMain();
     syncGearPlacement();
   }
@@ -3030,6 +3031,9 @@
 
   // Public UI service consumed by media/file-panel.js in both renderer hosts.
   window.__grokFilePanelConfirm = uiChoice;
+  // Read live by the desktop file panel's bootstrap; a captured boolean would
+  // freeze the Changes button in whichever mode the app booted in.
+  window.__grokCodingPurpose = () => isCodingPurpose();
 
   /** uiConfirm with a single text field. Resolves to the string, or null on
    *  cancel — an empty string is a real answer the caller may want to reject on
@@ -16464,6 +16468,7 @@
         state.appPurpose = msg.value === "coding" ? "coding" : "knowledge";
         applyThinkingVisibility();
         applyExpandCommandOutputs();
+        syncChangesAvailability();
         if (!gearPopover.hidden && state.gearView === "main") renderGearMain();
         syncGearPlacement();
         break;
@@ -17426,6 +17431,7 @@
         markLiveTurnFeedback();
         state.busy = false;
         updateSendButton();
+        refreshChangesCount();
         if (!state.replaying) maybeNotifySound("done"); // #59 — live turns only, and only when away
         speakCompletedTurn();
         break;
@@ -18026,6 +18032,15 @@
       case "projectFileWriteResult":
         handleProjectFileWriteResult(msg);
         break;
+      case "gitStatusResult":
+        handleGitStatusResult(msg);
+        break;
+      case "gitFileDiffResult":
+        handleGitFileDiffResult(msg);
+        break;
+      case "gitRunResult":
+        handleGitRunResult(msg);
+        break;
       default:
         // No case ran. Either the host posted a type outside the contract (drift
         // between src/protocol.ts and the webview-helpers.js copy — the sync test
@@ -18102,6 +18117,18 @@
     return remoteFilesBrowseAvailable() && !!(state.hostCaps && state.hostCaps.editProjectFiles);
   }
 
+  /**
+   * The Changes view rides on the file panel's mount but is its own capability:
+   * a host can browse files without answering git, and every extension released
+   * before this one does exactly that. The flag only says the host UNDERSTANDS
+   * the three messages — a project that is not a repository still advertises it
+   * and answers ok:false, and the panel hides itself on that answer rather than
+   * on the flag.
+   */
+  function remoteGitAvailable() {
+    return remoteFilesBrowseAvailable() && !!(state.hostCaps && state.hostCaps.gitChanges);
+  }
+
   function remoteFilesRepoCwd() {
     return state.selectedRepoCwd || state.activeRepoCwd || state.cwd || "";
   }
@@ -18122,8 +18149,9 @@
     return kind + "\0" + String(cwd || "") + "\0" + String(relPath || "");
   }
 
-  function postRemoteFileRequest(kind, payload) {
-    const key = remoteFileRequestKey(kind, payload.cwd, payload.relPath);
+  function postRemoteFileRequest(kind, payload, keyPath) {
+    const pathKey = typeof keyPath === "string" ? keyPath : (payload.relPath || "");
+    const key = remoteFileRequestKey(kind, payload.cwd, pathKey);
     if (remoteFilePoisoned.has(key)) {
       return Promise.resolve({ ok: false, reason: "Request state is stale. Refresh this page and try again." });
     }
@@ -18138,7 +18166,7 @@
         requestId,
         kind,
         cwd: payload.cwd,
-        relPath: payload.relPath || "",
+        relPath: pathKey,
         key,
         timer,
         resolve,
@@ -18155,8 +18183,19 @@
     return request;
   }
 
+  /**
+   * The path a reply is about, whichever of the two names it uses. Kept as one
+   * function so the fence below cannot drift from the one in the pending record.
+   */
+  function remoteFileReplyPath(msg) {
+    if (typeof msg.relPath === "string") return msg.relPath;
+    if (typeof msg.path === "string") return msg.path;
+    return "";
+  }
+
   function settleRemoteFileRequest(kind, msg) {
     if (!state.filesBrowse.component) return false;
+    const replyPath = remoteFileReplyPath(msg);
     let pending = null;
     if (typeof msg.requestId === "string") {
       remoteFileRequestIdsSupported = true;
@@ -18168,7 +18207,7 @@
         candidate
         && candidate.kind === kind
         && candidate.cwd === msg.cwd
-        && candidate.relPath === (msg.relPath || "")
+        && candidate.relPath === replyPath
       ) {
         pending = candidate;
       }
@@ -18178,7 +18217,7 @@
         if (
           candidate.kind === kind
           && candidate.cwd === msg.cwd
-          && candidate.relPath === (msg.relPath || "")
+          && candidate.relPath === replyPath
         ) {
           pending = candidate;
           break;
@@ -18228,6 +18267,28 @@
           expectedAbsPath: request.expectedAbsPath,
         });
       }
+      if (remoteGitAvailable()) {
+        access.gitStatus = (cwd) => postRemoteFileRequest("gitStatus", {
+          type: "gitStatus", cwd,
+        });
+        access.gitDiff = (cwd, relPath) => postRemoteFileRequest("gitDiff", {
+          type: "gitFileDiff", cwd, path: relPath,
+        }, relPath);
+        // The op set is closed and re-planned host-side from the host's OWN
+        // snapshot, so this passes the request through rather than validating
+        // it: a renderer check here would be a second, weaker copy of a fence
+        // that has to exist on the host anyway.
+        access.gitRun = (cwd, request) => postRemoteFileRequest("gitRun", {
+          type: "gitRun",
+          cwd,
+          op: request.op,
+          message: request.message,
+          push: request.push,
+          paths: request.paths,
+          branch: request.branch,
+          path: request.path,
+        });
+      }
       let initialOpen = false;
       try {
         initialOpen = sessionStorage.getItem("grok.remote.filesOpen") === "1"
@@ -18265,6 +18326,10 @@
           renderMarkdown,
           fileIcons: { baseUrl: iconBase },
         },
+        // Same progressive disclosure as thinking traces and tool detail:
+        // somebody writing prose does not get a git panel. Read live, not
+        // captured, so switching the setting takes effect without a reload.
+        gitEnabled: isCodingPurpose,
         initialOpen,
         onOpenChanged: (open) => {
           state.filesBrowse.open = open;
@@ -18332,6 +18397,41 @@
 
   function handleProjectFileWriteResult(msg) {
     settleRemoteFileRequest("write", msg);
+  }
+
+  function handleGitStatusResult(msg) {
+    settleRemoteFileRequest("gitStatus", msg);
+  }
+
+  function handleGitFileDiffResult(msg) {
+    settleRemoteFileRequest("gitDiff", msg);
+  }
+
+  function handleGitRunResult(msg) {
+    settleRemoteFileRequest("gitRun", msg);
+  }
+
+  function mountedFilePanels() {
+    const panels = [];
+    const desk = window.__grokDeskFilePanel;
+    if (desk) panels.push(desk);
+    const remote = state.filesBrowse && state.filesBrowse.component;
+    if (remote) panels.push(remote);
+    return panels;
+  }
+
+  /** The agent just wrote files; the number on the button is stale. No-ops off Coding. */
+  function refreshChangesCount() {
+    for (const panel of mountedFilePanels()) {
+      if (typeof panel.refreshChanges === "function") panel.refreshChanges();
+    }
+  }
+
+  /** Coding ↔ Knowledge work adds or removes the button outright. */
+  function syncChangesAvailability() {
+    for (const panel of mountedFilePanels()) {
+      if (typeof panel.refreshChangesAvailability === "function") panel.refreshChangesAvailability();
+    }
   }
   // Welcome screen's "about" link → Settings → About.
   const welcomeAboutLink = $("welcome-about-link");
