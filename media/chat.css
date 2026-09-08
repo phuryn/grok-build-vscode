@@ -3219,8 +3219,25 @@ body.vscode-light {
    background it left this button see-through, with the conversation reading
    through the label. The browser client happens to define the same token as
    opaque hex, which is why it only ever looked wrong on the desk. */
-.scroll-bottom-btn:hover,
-.prompt-prev-btn:hover:not(:disabled) {
+/* Hover only where a pointer can actually LEAVE. A tap applies :hover and
+   leaves it applied until something else is tapped, so on a phone the circle
+   stayed lit after every jump - reported as "it stays focused after the
+   click". The scroll pill has always had the same rule and nobody ever saw it,
+   because that one disappears the instant it is used; this one is built to be
+   tapped repeatedly and stays on screen, which is what exposed it. */
+@media (hover: hover) {
+  .scroll-bottom-btn:hover,
+  .prompt-prev-btn:hover:not(:disabled) {
+    background:
+      linear-gradient(var(--vscode-toolbar-hoverBackground), var(--vscode-toolbar-hoverBackground)),
+      var(--vscode-editorWidget-background, var(--vscode-input-background));
+  }
+}
+/* A tap still has to acknowledge itself. :active lasts exactly as long as the
+   finger or button is down and cannot stick, so it is the press feedback on
+   every surface. */
+.scroll-bottom-btn:active,
+.prompt-prev-btn:active:not(:disabled) {
   background:
     linear-gradient(var(--vscode-toolbar-hoverBackground), var(--vscode-toolbar-hoverBackground)),
     var(--vscode-editorWidget-background, var(--vscode-input-background));
