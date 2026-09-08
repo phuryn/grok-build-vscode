@@ -17,6 +17,11 @@ describe("isolateFromInstalledGrok", () => {
     temps.push(dir);
     const decoy = path.join(dir, process.platform === "win32" ? "grok.cmd" : "grok");
     fs.writeFileSync(decoy, "");
+    // A configured path must be an EXECUTABLE regular file, not merely present,
+    // so a decoy that stands in for a real CLI has to carry the bit. Windows
+    // decides by extension and ignores the mode, which is why leaving this out
+    // stayed invisible on a Windows dev box and failed both POSIX CI legs.
+    fs.chmodSync(decoy, 0o755);
     return decoy;
   }
 
