@@ -10,6 +10,11 @@ export async function assertPromptNavigation(page, shot) {
     await hostMsg(page, { type: "userMessage", text: `Navigation prompt ${i}` });
     await hostMsg(page, { type: "messageChunk", text: "A long answer with room to read.\n\n".repeat(45) });
     await hostMsg(page, { type: "promptComplete" });
+    // agentEnd, not just promptComplete: agentEnd is what calls
+    // revealTurnFooter, so without it the LAST turn keeps its Copy/thumbs row
+    // hidden and the transcript never reaches the settled state this control
+    // is used in. That omission is why the overlap check below could not fail.
+    await hostMsg(page, { type: "agentEnd" });
   }
   await page.waitForFunction(() => document.querySelectorAll("#messages .msg.user").length === 3);
 
@@ -26,20 +31,37 @@ export async function assertPromptNavigation(page, shot) {
   });
   assert.deepEqual(off, { prev: false, standalone: true, label: "Scroll to bottom", copies: 1 });
 
-  // Turning it on goes through the real Settings row, because a client-local
-  // preference has no other door - no host message, no config key. That makes
-  // this the only place the row itself is exercised end to end.
-  await page.click("#gear-btn");
-  await page.waitForSelector("#settings-overlay", { timeout: 5000 });
-  await page.click('.settings-nav-item[data-category="advanced"]');
-  await page.click('.settings-row[data-id="promptNav"] .settings-switch');
-  await page.keyboard.press("Escape");
-  await page.waitForFunction(() => !document.getElementById("settings-overlay"));
+  // Turn it on the way a DESK actually receives it: the settings page posts
+  // `setPromptNav`, the host writes `grok.promptNav`, and its config listener
+  // posts this frame back to the chat webview. This is that frame, not a stand
+  // in for it - on a desk the chat page has no other way to learn the value.
+  //
+  // Driving the Settings UI here instead was tried and abandoned. Settings is
+  // not on the composer gear in this window: with the model/effort split on,
+  // that gear carries only "Model and Effort" and app-level panels move to the
+  // rail gear, which is not visible at this viewport. The row's own contract -
+  // local-only on a remote, a host message off it, visible everywhere - is
+  // asserted in test/settings-surface.dom.test.ts, which is where it belongs;
+  // what needs a real browser is the geometry below.
+  // A settle, not a waitForFunction: the webview's CSP has no 'unsafe-eval',
+  // and Playwright's polling path compiles its predicate with eval - so a
+  // predicate that is false on its first synchronous try throws instead of
+  // waiting. The `prev: true` assertion below is what proves the frame landed.
+  await hostMsg(page, { type: "promptNav", value: true });
+  await page.waitForTimeout(250);
 
   // At the bottom of the transcript the scroll pill has nothing to say and this
-  // one does - the reason they are two controls rather than one group. And the
-  // circle has to be clear of the prompts, or it would cover the bubble it just
-  // marked: they are `align-self: flex-end` at 77%, it sits on the left edge.
+  // one does - the reason they are two controls rather than one group.
+  //
+  // `coversNoAction` is the assertion this gate was missing. It used to check
+  // the circle against the PROMPT BUBBLES, which are `align-self: flex-end` at
+  // 77% and therefore never near it - a test that could not fail, guarding
+  // nothing. What the circle floats over is the last message's `.msg-actions`
+  // icons, and on the left it sat squarely on an agent reply's Copy button.
+  //
+  // The icons, not the row: `.msg-actions` is a block-level flex container, so
+  // its rect spans the whole message however far left the icons sit inside it.
+  // Testing the row would fail on geometry that looks perfect.
   await page.evaluate(() => {
     const m = document.getElementById("messages");
     m.scrollTop = m.scrollHeight;
@@ -47,19 +69,36 @@ export async function assertPromptNavigation(page, shot) {
   });
   const atBottom = await page.evaluate(() => {
     const prev = document.getElementById("prompt-prev-btn");
+    const bottomBtn = document.getElementById("scroll-bottom-btn");
     const rect = prev.getBoundingClientRect();
     return {
       prev: prev.classList.contains("visible"),
-      bottom: document.getElementById("scroll-bottom-btn").classList.contains("visible"),
+      bottom: bottomBtn.classList.contains("visible"),
       onScreen: rect.left >= 0 && rect.right <= innerWidth && rect.top >= 0 && rect.bottom <= innerHeight,
       round: Math.abs(rect.width - rect.height) < 2,
-      clearOfPrompts: [...document.querySelectorAll("#messages .msg.user")]
-        .map((p) => p.getBoundingClientRect())
-        .filter((r) => r.bottom > rect.top && r.top < rect.bottom)
-        .every((r) => r.left >= rect.right),
+      // One shared --float-ctl-h. They sit side by side above the same
+      // composer, so any drift between them reads as a mistake.
+      sameHeight: Math.abs(rect.height - bottomBtn.getBoundingClientRect().height) < 1,
+      ...(() => {
+        const icons = [...document.querySelectorAll("#messages .msg-actions")]
+          .flatMap((row) => [...row.children])
+          .map((el) => el.getBoundingClientRect())
+          .filter((r) => r.width > 0 && r.height > 0);
+        return {
+          // Counted, because the check it replaces passed by testing nothing.
+          // An overlap assertion with an empty list is not a weaker test, it
+          // is no test, and it reads identically in a green log.
+          actionsSeen: icons.length > 0,
+          coversNoAction: icons.every((r) => r.right <= rect.left || r.left >= rect.right
+            || r.bottom <= rect.top || r.top >= rect.bottom),
+        };
+      })(),
     };
   });
-  assert.deepEqual(atBottom, { prev: true, bottom: false, onScreen: true, round: true, clearOfPrompts: true });
+  assert.deepEqual(atBottom, {
+    prev: true, bottom: false, onScreen: true, round: true,
+    sameHeight: true, actionsSeen: true, coversNoAction: true,
+  });
   await shot("desk-prompt-navigation");
 
   await page.evaluate(() => {

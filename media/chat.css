@@ -3159,6 +3159,14 @@ body.vscode-light {
      composer (its top padding, --pad) — symmetric spacing. */
   bottom: calc(100% + var(--pad));
   z-index: 6;
+  /* ONE height for both, set here and raised once for touch, because the two
+     sit side by side above the same composer and a 3px difference reads as a
+     mistake. It was one: the pill was sized by its padding and the circle by
+     its width, so they agreed on nothing and drifted by 3px on the desk and
+     2px on touch. Everything shape-specific below is derived from it. */
+  --float-ctl-h: 26px;
+  height: var(--float-ctl-h);
+  border-radius: calc(var(--float-ctl-h) / 2);
   display: inline-flex;
   align-items: center;
   border: 1px solid var(--vscode-editorWidget-border);
@@ -3177,24 +3185,32 @@ body.vscode-light {
   left: 50%;
   transform: translate(-50%, 4px);
   gap: 5px;
-  padding: 4px 11px 4px 9px;
-  border-radius: 13px;
+  /* Horizontal only — the height is the shared token, not a padding sum. */
+  padding: 0 11px 0 9px;
 }
 .scroll-bottom-btn.visible { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; }
-/* Left edge, not centre and not the top. Centre is taken by the scroll pill;
-   the left is permanently clear of the prompts themselves, which are
-   `align-self: flex-end` at 77% width and so never reach this side — the circle
-   cannot cover the bubble it just highlighted. Bottom rather than top because it
-   is tapped repeatedly and the thumb is down here; the mark on the prompt is
-   what serves the eye up there. */
+/* RIGHT edge, not the left. It first sat on the left because the prompts are
+   `align-self: flex-end` at 77% and so never reach that side — true of the
+   bubbles, and the wrong element to have measured. What the circle actually
+   floats over is the last message's `.msg-actions` row, and that row defaults
+   to `flex-start`: an agent reply keeps Copy and the thumbs on the LEFT, which
+   is what the circle covered.
+
+   Both sides carry such a row, so the choice is about WHEN. The agent's is
+   there whenever a conversation is sitting finished — the resting state, and
+   the state someone reaches for this control in. `.msg.user .msg-actions` is
+   `flex-end`, so the right is only occupied in the moment between sending and
+   the first token arriving. Transient beats permanent.
+
+   Bottom rather than top because it is tapped repeatedly and the thumb is down
+   here; the mark on the prompt is what serves the eye up there. */
 .prompt-prev-btn {
-  left: var(--pad);
+  right: var(--pad);
   transform: translateY(4px);
   justify-content: center;
-  width: 26px;
-  height: 26px;
+  /* Square, so the shared radius resolves to a circle. */
+  width: var(--float-ctl-h);
   padding: 0;
-  border-radius: 50%;
 }
 .prompt-prev-btn.visible { opacity: 1; transform: translateY(0); pointer-events: auto; }
 /* Layer the hover tint OVER the button's own fill rather than replacing it.
@@ -5187,11 +5203,16 @@ body.vscode-light .preview-overlay {
   #donut-label { display: none; }
 }
 
-/* Touch devices: both floating controls match the 36px control row. */
+/* Touch devices: both floating controls match the 36px control row — one token
+   now, which is what the line above always claimed and neither control quite
+   did. A finger needs the bigger target; a mouse on a desk, an IDE panel or a
+   desk browser does not, and 26px there keeps the pair from shouting over a
+   transcript. This query is the only thing that separates those two worlds. */
 @media (hover: none), (pointer: coarse) {
-  .scroll-bottom-btn { padding: 8px 16px 8px 13px; border-radius: 19px; font-size: 13px; }
+  .scroll-bottom-btn,
+  .prompt-prev-btn { --float-ctl-h: 36px; }
+  .scroll-bottom-btn { padding: 0 16px 0 13px; font-size: 13px; }
   .scroll-bottom-btn svg { width: 18px; height: 18px; }
-  .prompt-prev-btn { width: 38px; height: 38px; }
   .prompt-prev-btn svg { width: 19px; height: 19px; }
 }
 

@@ -1184,6 +1184,8 @@
   // needs neither to change. A sibling of the scroll-to-bottom pill, not a
   // group with it: the two answer different questions, and this one is still
   // worth having at the bottom of the transcript where that one is meaningless.
+  // They do share a height (--float-ctl-h) and a corner discipline - see the
+  // .prompt-prev-btn rules in chat.css for why it sits on the right.
   const promptPrevBtn = document.createElement("button");
   promptPrevBtn.id = "prompt-prev-btn";
   promptPrevBtn.className = "prompt-prev-btn";
