@@ -4,8 +4,22 @@ import { bootWebview, dispatch, type Harness } from "./webview-harness";
 const opened: Harness[] = [];
 afterEach(() => { for (const h of opened.splice(0)) h.window.happyDOM.abort(); });
 
-function transcript(remote = false, count = 3, height = count * 1000) {
-  const h = bootWebview({ remote });
+/**
+ * `on` seeds the client-local preference the way a previous session would have
+ * left it, because that is the only way in: the toggle is `localOnly`, so it
+ * never becomes a host message and there is nothing to dispatch.
+ */
+function transcript(opts: { remote?: boolean; count?: number; height?: number; on?: boolean } = {}) {
+  const { remote = false, count = 3, on = true } = opts;
+  const height = opts.height ?? count * 1000;
+  const h = bootWebview({
+    remote,
+    beforeScripts: (w) => {
+      if (!on) return;
+      const key = remote ? "grok.remote.promptNav" : "grok.promptNav";
+      (w as any).localStorage.setItem(key, "true");
+    },
+  });
   opened.push(h);
   const { doc, window } = h;
   const messages = doc.getElementById("messages")!;
@@ -29,10 +43,25 @@ function transcript(remote = false, count = 3, height = count * 1000) {
   };
   messages.scrollTo = (options: any) => scroll(Math.min(options.top, height - 200), false);
   const button = (id: string) => doc.getElementById(id) as HTMLButtonElement;
-  return { ...h, messages, scroll, button };
+  const shown = (id: string) => button(id).classList.contains("visible");
+  const marks = () => [...doc.querySelectorAll(".msg.user.prompt-nav-target")];
+  return { ...h, messages, scroll, button, shown, marks };
 }
 
 describe("prompt navigation (#150)", () => {
+  it("is off by default, and off means the plain scroll-to-bottom button and nothing else", () => {
+    // Everyone keeps exactly the control they had before #150 until they opt
+    // in - the shape of the feature is still an open question with the person
+    // who asked for it, so it ships hidden rather than ships wrong.
+    const h = transcript({ on: false });
+    h.scroll(1700);
+    expect(h.shown("prompt-prev-btn")).toBe(false);
+    expect(h.button("prompt-prev-btn").disabled).toBe(true);
+    const bottom = h.button("scroll-bottom-btn");
+    expect(bottom.className).toBe("scroll-bottom-btn visible");
+    expect(bottom.textContent).toContain("Scroll to bottom");
+  });
+
   it("Previous inside an answer finds its starting prompt, and hand scrolling changes the reference", () => {
     const h = transcript();
     h.scroll(1700);
@@ -45,96 +74,65 @@ describe("prompt navigation (#150)", () => {
     expect(h.messages.scrollTop).toBe(2000);
   });
 
-  it("stops at both ends, keeps all controls, and counts only the remote's rendered prompts", () => {
-    const h = transcript(true, 2);
+  it("hides only when there is no earlier prompt, and counts only the remote's rendered ones", () => {
+    // A remote snapshot carries just the tail, so "earlier prompt" has to mean
+    // earlier in the DOM, never a history ordinal the client cannot see.
+    const h = transcript({ remote: true, count: 2 });
     h.scroll(0);
-    expect(h.doc.getElementById("prompt-nav-count")!.textContent).toBe("Prompts 1/2");
+    expect(h.shown("prompt-prev-btn")).toBe(false);
     expect(h.button("prompt-prev-btn").disabled).toBe(true);
     h.button("prompt-prev-btn").click();
     expect(h.messages.scrollTop).toBe(0);
-    h.button("prompt-next-btn").click();
-    expect(h.messages.scrollTop).toBe(1000);
-    expect(h.doc.getElementById("prompt-nav-count")!.textContent).toBe("Prompts 2/2");
-    expect(h.button("prompt-next-btn").disabled).toBe(true);
-    h.button("prompt-next-btn").click();
-    expect(h.messages.scrollTop).toBe(1000);
-    expect(h.doc.querySelectorAll("#prompt-nav button")).toHaveLength(3);
-  });
-
-  it("keeps counting when the last prompt cannot be scrolled to the top", () => {
-    // The owner's report: "I click the chevron, the screen can even move, but
-    // it can still show 6/7". The last screenful of prompts all share the
-    // terminal scrollTop, so no scroll brings them to the top of the viewport
-    // and geometry can never name them. Here prompt 3 sits at 2000 and the
-    // scroll range ends at 1900, so its top never reaches 0.
-    const h = transcript(false, 3, 2100);
-    const count = () => h.doc.getElementById("prompt-nav-count")!.textContent;
-    h.scroll(1000);
-    expect(count()).toBe("Prompts 2/3");
-    h.button("prompt-next-btn").click();
-    expect(h.messages.scrollTop).toBe(1900);
-    // Advanced even though the scroll clamped, and the end is now the end.
-    expect(count()).toBe("Prompts 3/3");
-    expect(h.button("prompt-next-btn").disabled).toBe(true);
-    // The mark is what makes "3/3" mean anything: it is the only thing on
-    // screen saying WHICH prompt the number is naming.
-    const marked = h.doc.querySelectorAll(".msg.user.prompt-nav-target");
-    expect(marked).toHaveLength(1);
-    expect(marked[0].textContent).toContain("Prompt 3");
-    // And Previous still walks back from where the counter says we are.
+    h.scroll(1400);
+    expect(h.shown("prompt-prev-btn")).toBe(true);
     h.button("prompt-prev-btn").click();
-    expect(count()).toBe("Prompts 2/3");
-    expect(h.doc.querySelectorAll(".msg.user.prompt-nav-target")[0].textContent)
-      .toContain("Prompt 2");
+    expect(h.messages.scrollTop).toBe(1000);
   });
 
-  it("hands the readout back to the scroll position once the reader scrolls", () => {
-    // The pin is for navigation, not a mode. A wheel gesture means the reader
-    // is driving again, so the number must describe where they actually are.
-    const h = transcript(false, 3, 2100);
+  it("stays available at the bottom, where scroll-to-bottom has nothing to say", () => {
+    // The reason it is a separate control rather than part of that pill: the
+    // bottom of a long answer is exactly where "what did I ask?" comes up, and
+    // the pill correctly disappears there.
+    const h = transcript();
+    h.scroll(2800);
+    expect(h.messages.classList.contains("stick-to-bottom")).toBe(true);
+    expect(h.shown("scroll-bottom-btn")).toBe(false);
+    expect(h.shown("prompt-prev-btn")).toBe(true);
+    h.button("prompt-prev-btn").click();
+    // And the jump has to release the bottom pin, or the next chunk of streamed
+    // output would yank the reader straight back down again.
+    expect(h.messages.scrollTop).toBe(2000);
+    expect(h.messages.classList.contains("stick-to-bottom")).toBe(false);
+    expect(h.shown("scroll-bottom-btn")).toBe(true);
+  });
+
+  it("marks the prompt it landed on, and hands the view back on a scroll gesture", () => {
+    // The control is at the bottom and the prompt arrives at the top, so the
+    // mark is the only thing joining the tap to its result.
+    const h = transcript({ height: 2100 });
     h.scroll(1000);
-    h.button("prompt-next-btn").click();
-    expect(h.doc.querySelectorAll(".msg.user.prompt-nav-target")).toHaveLength(1);
-    h.scroll(0);
-    expect(h.doc.getElementById("prompt-nav-count")!.textContent).toBe("Prompts 1/3");
-    expect(h.doc.querySelectorAll(".msg.user.prompt-nav-target")).toHaveLength(0);
+    h.button("prompt-prev-btn").click();
+    expect(h.marks()).toHaveLength(1);
+    expect(h.marks()[0].textContent).toContain("Prompt 1");
+    h.scroll(2000);
+    expect(h.marks()).toHaveLength(0);
   });
 
   it("does not let a wheel flick still in its latch undo a deliberate jump", () => {
     // A trackpad flick arms user-scroll intent for 750ms and emits inertial
-    // scroll events after it. A chevron clicked inside that window would
-    // otherwise have its pin cleared by the flick's own tail.
-    const h = transcript(false, 3, 2100);
-    h.scroll(1000);
-    h.button("prompt-next-btn").click();
+    // scroll events after it. A click inside that window would otherwise have
+    // its mark cleared by the flick's own tail.
+    const h = transcript({ height: 2100 });
+    h.scroll(1500);
+    h.button("prompt-prev-btn").click();
     h.messages.dispatchEvent(new h.window.Event("scroll"));
-    expect(h.doc.getElementById("prompt-nav-count")!.textContent).toBe("Prompts 3/3");
-    expect(h.doc.querySelectorAll(".msg.user.prompt-nav-target")).toHaveLength(1);
+    expect(h.marks()).toHaveLength(1);
   });
 
   it("names the bottom control for what it does", () => {
-    // "Latest" read as a prompt-relative move next to Previous/Next; the
-    // button scrolls to the bottom of the transcript.
-    const h = transcript();
-    expect(h.button("scroll-bottom-btn").textContent).toContain("Bottom");
-    expect(h.button("scroll-bottom-btn").getAttribute("title")).toBe("Scroll to bottom");
-  });
-
-  it("replaces the standalone button as one pill under the existing pin rule", () => {
-    const h = transcript();
-    const pill = h.doc.getElementById("prompt-nav")!;
-    expect(pill).not.toBeNull();
-    expect(pill.classList.contains("visible")).toBe(false);
-    expect(h.button("scroll-bottom-btn").parentElement).toBe(pill);
-    expect(h.doc.querySelector(".composer > #scroll-bottom-btn")).toBeNull();
-    h.scroll(1400, false);
-    expect(pill.classList.contains("visible")).toBe(false);
-    h.scroll(1400);
-    expect(pill.classList.contains("visible")).toBe(true);
-    h.button("scroll-bottom-btn").click();
-    expect(h.messages.classList.contains("stick-to-bottom")).toBe(true);
-    expect(pill.classList.contains("visible")).toBe(false);
-    expect(h.button("scroll-bottom-btn").disabled).toBe(true);
-    expect(h.button("prompt-next-btn").disabled).toBe(true);
+    // Voice control acts on the visible word, so the label is the accessible
+    // name; "Bottom" read as prompt-relative next to a navigation control.
+    const h = transcript({ on: false });
+    expect(h.button("scroll-bottom-btn").textContent).toBe("Scroll to bottom");
   });
 });

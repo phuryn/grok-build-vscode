@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { hostMsg } from "./desk-stick-to-bottom.mjs";
 
 /** Real geometry, including CSS chat zoom: DOM tests cannot detect a jump that
- *  overshoots because viewport pixels were assigned directly to scrollTop. */
+ *  overshoots because viewport pixels were assigned directly to scrollTop, and
+ *  they cannot see whether the control sits clear of the prompts it marks. */
 export async function assertPromptNavigation(page, shot) {
   await hostMsg(page, { type: "clearMessages" });
   for (let i = 1; i <= 3; i++) {
@@ -11,12 +12,56 @@ export async function assertPromptNavigation(page, shot) {
     await hostMsg(page, { type: "promptComplete" });
   }
   await page.waitForFunction(() => document.querySelectorAll("#messages .msg.user").length === 3);
-  const atBottom = await page.locator("#prompt-nav").evaluate((el) => ({
-    visible: el.classList.contains("visible"), inert: el.inert,
-    standalone: !!document.querySelector(".composer > #scroll-bottom-btn"),
-    latestCount: document.querySelectorAll("#scroll-bottom-btn").length,
-  }));
-  assert.deepEqual(atBottom, { visible: false, inert: true, standalone: false, latestCount: 1 });
+
+  // Off by default: everyone keeps the plain scroll-to-bottom pill, standing on
+  // its own in the composer, with the label it has always had.
+  const off = await page.evaluate(() => {
+    const bottom = document.getElementById("scroll-bottom-btn");
+    return {
+      prev: document.getElementById("prompt-prev-btn").classList.contains("visible"),
+      standalone: !!document.querySelector(".composer > #scroll-bottom-btn"),
+      label: bottom.textContent.trim(),
+      copies: document.querySelectorAll("#scroll-bottom-btn").length,
+    };
+  });
+  assert.deepEqual(off, { prev: false, standalone: true, label: "Scroll to bottom", copies: 1 });
+
+  // Turning it on goes through the real Settings row, because a client-local
+  // preference has no other door - no host message, no config key. That makes
+  // this the only place the row itself is exercised end to end.
+  await page.click("#gear-btn");
+  await page.waitForSelector("#settings-overlay", { timeout: 5000 });
+  await page.click('.settings-nav-item[data-category="advanced"]');
+  await page.click('.settings-row[data-id="promptNav"] .settings-switch');
+  await page.keyboard.press("Escape");
+  await page.waitForFunction(() => !document.getElementById("settings-overlay"));
+
+  // At the bottom of the transcript the scroll pill has nothing to say and this
+  // one does - the reason they are two controls rather than one group. And the
+  // circle has to be clear of the prompts, or it would cover the bubble it just
+  // marked: they are `align-self: flex-end` at 77%, it sits on the left edge.
+  await page.evaluate(() => {
+    const m = document.getElementById("messages");
+    m.scrollTop = m.scrollHeight;
+    m.dispatchEvent(new Event("scroll"));
+  });
+  const atBottom = await page.evaluate(() => {
+    const prev = document.getElementById("prompt-prev-btn");
+    const rect = prev.getBoundingClientRect();
+    return {
+      prev: prev.classList.contains("visible"),
+      bottom: document.getElementById("scroll-bottom-btn").classList.contains("visible"),
+      onScreen: rect.left >= 0 && rect.right <= innerWidth && rect.top >= 0 && rect.bottom <= innerHeight,
+      round: Math.abs(rect.width - rect.height) < 2,
+      clearOfPrompts: [...document.querySelectorAll("#messages .msg.user")]
+        .map((p) => p.getBoundingClientRect())
+        .filter((r) => r.bottom > rect.top && r.top < rect.bottom)
+        .every((r) => r.left >= rect.right),
+    };
+  });
+  assert.deepEqual(atBottom, { prev: true, bottom: false, onScreen: true, round: true, clearOfPrompts: true });
+  await shot("desk-prompt-navigation");
+
   await page.evaluate(() => {
     const m = document.getElementById("messages");
     const p = m.querySelectorAll(".msg.user")[1];
@@ -26,21 +71,6 @@ export async function assertPromptNavigation(page, shot) {
     m.scrollTop = top + 500;
     m.dispatchEvent(new Event("scroll"));
   });
-  await page.waitForFunction(() => document.getElementById("prompt-nav").classList.contains("visible"));
-  const layout = await page.locator("#prompt-nav").evaluate((el) => {
-    const rect = el.getBoundingClientRect();
-    return {
-      order: [...el.children].map((n) => n.id),
-      weights: [...el.querySelectorAll("svg")].map((svg) => svg.getAttribute("stroke-width")),
-      onScreen: rect.left >= 0 && rect.right <= innerWidth && rect.top >= 0 && rect.bottom <= innerHeight,
-      count: el.querySelector("#prompt-nav-count").textContent,
-    };
-  });
-  assert.deepEqual(layout.order, ["prompt-prev-btn", "prompt-nav-count", "prompt-next-btn", "scroll-bottom-btn"]);
-  assert.deepEqual(layout.weights, ["2.5", "2.5", "2.5"]);
-  assert.equal(layout.onScreen, true, JSON.stringify(layout));
-  assert.equal(layout.count, "Prompts 2/3");
-  await shot("desk-prompt-navigation");
   await page.click("#prompt-prev-btn");
   const alignment = await page.evaluate(() => {
     const m = document.getElementById("messages");
@@ -49,14 +79,12 @@ export async function assertPromptNavigation(page, shot) {
       - parseFloat(getComputedStyle(m).paddingTop);
   });
   assert.ok(Math.abs(alignment) < 3, `Previous must land on the answer's own prompt: delta=${alignment}`);
+  // The mark is what joins a tap at the bottom to a prompt at the top.
+  assert.equal(await page.locator(".msg.user.prompt-nav-target").count(), 1);
+  // Walking back to the first prompt leaves nothing earlier, which is the only
+  // thing that retires the control.
   await page.click("#prompt-prev-btn");
-  assert.equal(await page.locator("#prompt-prev-btn").isDisabled(), true);
-  await page.click("#prompt-next-btn");
-  await page.click("#prompt-next-btn");
-  assert.equal(await page.locator("#prompt-next-btn").isDisabled(), true);
-  assert.equal(await page.locator("#prompt-nav-count").textContent(), "Prompts 3/3");
-  await page.click("#scroll-bottom-btn");
-  await page.waitForFunction(() => !document.getElementById("prompt-nav").classList.contains("visible"));
+  await page.waitForFunction(() => !document.getElementById("prompt-prev-btn").classList.contains("visible"));
 }
 
 /** Exercises paste → staged host attachment → opaque handle → original bytes →

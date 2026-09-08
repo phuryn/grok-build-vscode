@@ -1079,6 +1079,16 @@
       local: "openDeviceManager",
     },
     {
+      id: "promptNav",
+      category: "advanced",
+      title: "Experimental: Previous prompt button",
+      description: "Show a button above the message box that jumps back to your previous prompt and highlights it. This device only.",
+      kind: "toggle",
+      defaultValue: false,
+      get: (s) => !!(s && s.promptNav),
+      localOnly: true,
+    },
+    {
       id: "openGlobalConfig",
       category: "advanced",
       title: "Open global config",
@@ -1511,6 +1521,9 @@
       case "steerByDefault":
         next.steerByDefault = !!value;
         break;
+      case "promptNav":
+        next.promptNav = !!value;
+        break;
       case "readRepliesAloud":
         next.readRepliesAloud = !!value;
         if (!next.readRepliesAloud) next.summarizeRepliesAloud = false;
@@ -1573,6 +1586,7 @@
       voiceKeyterms: [],
       telemetryEnabled: true,
       thumbsFeedback: false,
+      promptNav: false,
       providers: [],
       // Host-owned, never latched locally: an older host that ignores
       // refreshProviders leaves this false and the button stays idle rather

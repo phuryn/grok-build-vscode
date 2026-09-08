@@ -28,7 +28,7 @@ export async function assertPinnedAfterZoomedExpandedTurn(page, opts = {}) {
   const log = opts.log || ((m) => console.log(`[stick] ${m}`));
 
   await page.waitForSelector("#messages", { timeout: 45000 });
-  await page.waitForSelector("#prompt-nav", { state: "attached", timeout: 15000 });
+  await page.waitForSelector("#scroll-bottom-btn", { state: "attached", timeout: 15000 });
 
   // VS Code sidebar geometry: hide desktop chrome that would steal the
   // column, then shrink to a zoomed-sidebar size. Cmd+= is CSS --chat-zoom
@@ -59,7 +59,7 @@ export async function assertPinnedAfterZoomedExpandedTurn(page, opts = {}) {
   // follow stopped. Must stay pinned here or round 4 ships green again.
   const race = await page.evaluate(() => {
     const messages = document.getElementById("messages");
-    const btn = document.getElementById("prompt-nav");
+    const btn = document.getElementById("scroll-bottom-btn");
     messages.scrollTop = messages.scrollHeight;
     const before = {
       pinned: messages.classList.contains("stick-to-bottom"),
@@ -97,7 +97,7 @@ export async function assertPinnedAfterZoomedExpandedTurn(page, opts = {}) {
   // is bubble-phase; we sample after it by registering ours second.
   await page.evaluate(() => {
     const messages = document.getElementById("messages");
-    const btn = document.getElementById("prompt-nav");
+    const btn = document.getElementById("scroll-bottom-btn");
     const snap = (why) => {
       const dist = messages.scrollHeight - (messages.scrollTop + messages.clientHeight);
       return {
@@ -157,7 +157,7 @@ export async function assertPinnedAfterZoomedExpandedTurn(page, opts = {}) {
 
   const afterCard = await page.evaluate(() => {
     const messages = document.getElementById("messages");
-    const btn = document.getElementById("prompt-nav");
+    const btn = document.getElementById("scroll-bottom-btn");
     const active = document.activeElement;
     return {
       pinned: messages.classList.contains("stick-to-bottom"),
@@ -201,7 +201,7 @@ export async function assertPinnedAfterZoomedExpandedTurn(page, opts = {}) {
 
   const result = await page.evaluate(() => {
     const messages = document.getElementById("messages");
-    const btn = document.getElementById("prompt-nav");
+    const btn = document.getElementById("scroll-bottom-btn");
     const dist = messages.scrollHeight - (messages.scrollTop + messages.clientHeight);
     return {
       pinned: messages.classList.contains("stick-to-bottom"),

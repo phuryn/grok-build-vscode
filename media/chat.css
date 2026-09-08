@@ -3146,23 +3146,21 @@ body.vscode-light {
   border-color: var(--vscode-focusBorder);
 }
 
-/* Floating prompt navigation (#150). Anchored to the composer (the chat input
-   area), so it sits inside the `--chat-zoom` scaled coordinate space and stays
+/* Scroll to bottom (#16). Anchored to the composer rather than the message
+   area, so it sits inside the `--chat-zoom` scaled coordinate space and stays
    correctly placed above the input at any font scale. Hidden (opacity + no
-   pointer events) until the user scrolls away from the bottom. */
-.prompt-nav {
+   pointer events) until the user scrolls away from the bottom. The experimental
+   Previous-prompt circle (#150) shares the chrome and the reveal so the two
+   cannot drift apart, and differs only in shape and in where it sits. */
+.scroll-bottom-btn,
+.prompt-prev-btn {
   position: absolute;
   /* Sit above the composer's top edge by the same gap the card sits inside the
-     composer (its top padding, --pad) ÔÇö symmetric spacing. */
+     composer (its top padding, --pad) — symmetric spacing. */
   bottom: calc(100% + var(--pad));
-  left: 50%;
-  transform: translate(-50%, 4px);
   z-index: 6;
   display: inline-flex;
   align-items: center;
-  gap: 0;
-  padding: 2px;
-  border-radius: 18px;
   border: 1px solid var(--vscode-editorWidget-border);
   background: var(--vscode-editorWidget-background, var(--vscode-input-background));
   color: var(--vscode-foreground);
@@ -3175,46 +3173,51 @@ body.vscode-light {
   pointer-events: none;
   transition: opacity 0.14s ease, transform 0.14s ease, background 0.12s ease;
 }
-.prompt-nav.visible {
-  opacity: 1;
-  transform: translate(-50%, 0);
-  pointer-events: auto;
+.scroll-bottom-btn {
+  left: 50%;
+  transform: translate(-50%, 4px);
+  gap: 5px;
+  padding: 4px 11px 4px 9px;
+  border-radius: 13px;
 }
+.scroll-bottom-btn.visible { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; }
+/* Left edge, not centre and not the top. Centre is taken by the scroll pill;
+   the left is permanently clear of the prompts themselves, which are
+   `align-self: flex-end` at 77% width and so never reach this side — the circle
+   cannot cover the bubble it just highlighted. Bottom rather than top because it
+   is tapped repeatedly and the thumb is down here; the mark on the prompt is
+   what serves the eye up there. */
+.prompt-prev-btn {
+  left: var(--pad);
+  transform: translateY(4px);
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 50%;
+}
+.prompt-prev-btn.visible { opacity: 1; transform: translateY(0); pointer-events: auto; }
 /* Layer the hover tint OVER the button's own fill rather than replacing it.
    VS Code themes define toolbar-hoverBackground as a translucent wash (Dark+:
-   rgba(90,93,94,0.31)) meant to tint an opaque toolbar ÔÇö used as the whole
+   rgba(90,93,94,0.31)) meant to tint an opaque toolbar — used as the whole
    background it left this button see-through, with the conversation reading
    through the label. The browser client happens to define the same token as
    opaque hex, which is why it only ever looked wrong on the desk. */
-.prompt-nav button:hover:not(:disabled) {
+.scroll-bottom-btn:hover,
+.prompt-prev-btn:hover:not(:disabled) {
   background:
     linear-gradient(var(--vscode-toolbar-hoverBackground), var(--vscode-toolbar-hoverBackground)),
     var(--vscode-editorWidget-background, var(--vscode-input-background));
 }
-.prompt-nav button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  min-width: 28px;
-  height: 26px;
-  padding: 0 7px;
-  border: 0;
-  border-radius: 14px;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  cursor: pointer;
-}
-.prompt-nav button:disabled { opacity: 0.35; cursor: default; }
-.prompt-nav button:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -2px; }
-.prompt-nav svg { display: block; width: 13px; height: 13px; stroke-width: 2.5; }
-#prompt-nav-count { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.prompt-prev-btn:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -2px; }
+.scroll-bottom-btn svg { display: block; }
+.prompt-prev-btn svg { display: block; width: 15px; height: 15px; stroke-width: 2.5; }
+.scroll-bottom-label { white-space: nowrap; }
 
-/* The prompt the counter is naming. It has to be visible for the last prompts
-   especially, which cannot be scrolled to the top of the viewport at all — the
-   mark is the only thing that says which one "7/7" means. Same blue as find,
-   so a jump target reads like a search hit rather than a new vocabulary. */
+/* The prompt a jump landed on. The control is at the bottom and the prompt it
+   finds arrives at the top, so the mark is the only thing joining the two —
+   without it a short jump reads as "nothing happened". Same blue as find, so a
+   jump target reads like a search hit rather than a new vocabulary. */
 .msg.user.prompt-nav-target .msg-bubble {
   /* The BUBBLE, not `.msg.user` - that outer element is transparent with zero
      padding and no radius, so a tint there sits behind an opaque bubble and is
@@ -3226,13 +3229,6 @@ body.vscode-light {
 }
 @media (prefers-reduced-motion: no-preference) {
   .msg.user.prompt-nav-target .msg-bubble { transition: background 120ms ease-out; }
-}
-.prompt-nav .prompt-bottom {
-  border-left: 1px solid var(--vscode-editorWidget-border);
-  border-top-left-radius: 0;
-  border-bottom-left-radius: 0;
-  margin-left: 2px;
-  padding: 0 9px;
 }
 
 /* The input is a textarea layered over a "backdrop" that highlights recognized
@@ -5191,11 +5187,12 @@ body.vscode-light .preview-overlay {
   #donut-label { display: none; }
 }
 
-/* Touch devices: each prompt control gets its own stable tap target. */
+/* Touch devices: both floating controls match the 36px control row. */
 @media (hover: none), (pointer: coarse) {
-  .prompt-nav { border-radius: 24px; font-size: 13px; }
-  .prompt-nav button { min-width: 40px; height: 40px; border-radius: 20px; }
-  .prompt-nav svg { width: 18px; height: 18px; }
+  .scroll-bottom-btn { padding: 8px 16px 8px 13px; border-radius: 19px; font-size: 13px; }
+  .scroll-bottom-btn svg { width: 18px; height: 18px; }
+  .prompt-prev-btn { width: 38px; height: 38px; }
+  .prompt-prev-btn svg { width: 19px; height: 19px; }
 }
 
 /* Touch devices: question/permission cards are tap surfaces ÔÇö roomier option

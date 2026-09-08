@@ -52,7 +52,7 @@ describe("stick-to-bottom after expanded tool detail growth (#92)", () => {
     await vi.waitFor(() => {
       expect(messages.scrollTop).toBe(1800);
     });
-    expect(doc.getElementById("prompt-nav")!.classList.contains("visible")).toBe(false);
+    expect(doc.getElementById("scroll-bottom-btn")!.classList.contains("visible")).toBe(false);
   });
 
   it("stays pinned when content grows and a non-gesture scroll event fires", async () => {
@@ -70,7 +70,7 @@ describe("stick-to-bottom after expanded tool detail growth (#92)", () => {
     // Distance is 800px, well past any line-height threshold; the pin must hold.
     messages.dispatchEvent(new window.Event("scroll"));
     expect(messages.classList.contains("stick-to-bottom")).toBe(true);
-    expect(doc.getElementById("prompt-nav")!.classList.contains("visible")).toBe(false);
+    expect(doc.getElementById("scroll-bottom-btn")!.classList.contains("visible")).toBe(false);
     dispatch(window, {
       type: "commandOutput",
       command: "node big-output.js",
@@ -81,7 +81,7 @@ describe("stick-to-bottom after expanded tool detail growth (#92)", () => {
     await vi.waitFor(() => {
       expect(messages.scrollTop).toBe(1800);
     });
-    expect(doc.getElementById("prompt-nav")!.classList.contains("visible")).toBe(false);
+    expect(doc.getElementById("scroll-bottom-btn")!.classList.contains("visible")).toBe(false);
   });
 
   it("preserves position when the reader deliberately scrolled up", async () => {
@@ -96,7 +96,7 @@ describe("stick-to-bottom after expanded tool detail growth (#92)", () => {
     wheelUp(window, messages);
     messages.scrollTop = 500;
     messages.dispatchEvent(new window.Event("scroll"));
-    expect(doc.getElementById("prompt-nav")!.classList.contains("visible")).toBe(true);
+    expect(doc.getElementById("scroll-bottom-btn")!.classList.contains("visible")).toBe(true);
     expect(messages.classList.contains("stick-to-bottom")).toBe(false);
 
     grow();
@@ -110,7 +110,7 @@ describe("stick-to-bottom after expanded tool detail growth (#92)", () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
 
     expect(messages.scrollTop).toBe(500);
-    expect(doc.getElementById("prompt-nav")!.classList.contains("visible")).toBe(true);
+    expect(doc.getElementById("scroll-bottom-btn")!.classList.contains("visible")).toBe(true);
   });
 
   it("permission-card focus does not unpin a pinned reader", () => {
@@ -137,7 +137,7 @@ describe("stick-to-bottom after expanded tool detail growth (#92)", () => {
     // must not clear the pin the force-scroll just set.
     messages.dispatchEvent(new window.Event("scroll"));
     expect(messages.classList.contains("stick-to-bottom")).toBe(true);
-    expect(doc.getElementById("prompt-nav")!.classList.contains("visible")).toBe(false);
+    expect(doc.getElementById("scroll-bottom-btn")!.classList.contains("visible")).toBe(false);
     expect(doc.querySelector(".card.permission .card-actions button.primary")).toBeTruthy();
   });
 
@@ -157,6 +157,6 @@ describe("stick-to-bottom after expanded tool detail growth (#92)", () => {
     messages.scrollTop = 800;
     messages.dispatchEvent(new window.Event("scroll"));
     expect(messages.classList.contains("stick-to-bottom")).toBe(true);
-    expect(doc.getElementById("prompt-nav")!.classList.contains("visible")).toBe(false);
+    expect(doc.getElementById("scroll-bottom-btn")!.classList.contains("visible")).toBe(false);
   });
 });

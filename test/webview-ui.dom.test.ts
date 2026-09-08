@@ -2620,9 +2620,9 @@ describe("scroll-to-bottom button (#28)", () => {
     const btn = $(doc, "scroll-bottom-btn");
     const list = $(doc, "messages");
     userScrollTo(window, list, 0, 1000, 300); // 700px from bottom → visible
-    expect(btn.parentElement!.classList.contains("visible")).toBe(true);
+    expect(btn.classList.contains("visible")).toBe(true);
     userScrollTo(window, list, 680, 1000, 300); // 20px from bottom (≤40) → hidden
-    expect(btn.parentElement!.classList.contains("visible")).toBe(false);
+    expect(btn.classList.contains("visible")).toBe(false);
   });
 
   it("re-pins to the bottom and hides on click", () => {
@@ -2631,9 +2631,9 @@ describe("scroll-to-bottom button (#28)", () => {
     const list = $(doc, "messages") as any;
     list.scrollTo = () => {}; // happy-dom has no smooth-scroll impl
     userScrollTo(window, list, 0, 1000, 300);
-    expect(btn.parentElement!.classList.contains("visible")).toBe(true);
+    expect(btn.classList.contains("visible")).toBe(true);
     click(window, btn);
-    expect(btn.parentElement!.classList.contains("visible")).toBe(false);
+    expect(btn.classList.contains("visible")).toBe(false);
   });
 });
 

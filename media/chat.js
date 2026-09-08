@@ -19,6 +19,17 @@
   const CLIENT_FONT_SCALE_MIN = 0.8;
   const CLIENT_FONT_SCALE_MAX = 1.6;
   const CLIENT_FONT_SCALE_STEP = 0.1;
+  /**
+   * Experimental "Previous prompt" control (#150), off by default.
+   *
+   * Stored per CLIENT, not on the host, and so needs no wire message, no policy
+   * row and no host config: it changes nothing but this renderer's chrome, and
+   * a phone and a desk can reasonably disagree about whether they want it. Same
+   * shape as the client-owned font scale, and the reason it works on remote for
+   * free - every display-preference setter is host-local, so a remote could not
+   * have sent one anyway.
+   */
+  const PROMPT_NAV_KEY = IS_REMOTE ? "grok.remote.promptNav" : "grok.promptNav";
   const REMOTE_TTS_KEY = "grok.remote.tts";
   const REMOTE_TTS_SUMMARY_KEY = "grok.remote.ttsSummary";
   const REMOTE_STORAGE_SUFFIX = (
@@ -779,6 +790,8 @@
     appPurpose: "knowledge",
     // CLI worktree RPCs assumed supported until create returns unsupported.
     worktreeSupported: true,
+    // Experimental prompt navigation (#150) - see PROMPT_NAV_KEY.
+    promptNav: storedBool(PROMPT_NAV_KEY, false),
     // grok.steerByDefault (persisted, global): when true a message sent while
     // grok is working SKIPS the queue and is interjected into the running turn.
     // False = today's behavior (queue, with an on-demand Steer button).
@@ -1162,27 +1175,21 @@
   updateSendButton(); // spinner by default — session is starting up (busy+locked)
   gearBtn.innerHTML = ICON.gear;
   addBtn.innerHTML = ICON.plus;
-  // Build around the existing button so older host/relay HTML needs no change.
-  const promptNav = document.createElement("div");
-  promptNav.id = "prompt-nav";
-  promptNav.className = "prompt-nav";
-  promptNav.setAttribute("role", "group");
-  promptNav.setAttribute("aria-label", "Prompt navigation");
-  promptNav.inert = true;
-  promptNav.innerHTML = `<button id="prompt-prev-btn" type="button" title="Previous prompt" aria-label="Previous prompt" disabled>${ICON.chevronUp}</button>`
-    + `<span id="prompt-nav-count">Prompts 0/0</span>`
-    + `<button id="prompt-next-btn" type="button" title="Next prompt" aria-label="Next prompt" disabled>${ICON.chevronDown}</button>`;
-  scrollBottomBtn.before(promptNav);
-  promptNav.appendChild(scrollBottomBtn);
-  scrollBottomBtn.className = "prompt-bottom";
-  scrollBottomBtn.disabled = true;
-  // The visible word IS the accessible name, so voice control can act on what
-  // it reads. "Scroll to bottom" survives as the hover tooltip.
-  scrollBottomBtn.setAttribute("title", "Scroll to bottom");
-  scrollBottomBtn.innerHTML = `${ICON.arrowDown}<span>Bottom</span>`;
-  const promptPrevBtn = $("prompt-prev-btn");
-  const promptNextBtn = $("prompt-next-btn");
-  const promptNavCount = $("prompt-nav-count");
+  scrollBottomBtn.innerHTML = `${ICON.arrowDown}<span class="scroll-bottom-label">Scroll to bottom</span>`;
+  // Created here rather than in the page, because the template lives in
+  // sidebar.ts and the relay serves its own older copy - an element built in JS
+  // needs neither to change. A sibling of the scroll-to-bottom pill, not a
+  // group with it: the two answer different questions, and this one is still
+  // worth having at the bottom of the transcript where that one is meaningless.
+  const promptPrevBtn = document.createElement("button");
+  promptPrevBtn.id = "prompt-prev-btn";
+  promptPrevBtn.className = "prompt-prev-btn";
+  promptPrevBtn.type = "button";
+  promptPrevBtn.title = "Previous prompt";
+  promptPrevBtn.setAttribute("aria-label", "Previous prompt");
+  promptPrevBtn.disabled = true;
+  promptPrevBtn.innerHTML = ICON.chevronUp;
+  scrollBottomBtn.before(promptPrevBtn);
   updateModeBtn("agent");
 
   // ---------- markdown ----------
@@ -2824,6 +2831,7 @@
       voiceKeyterms: Array.isArray(state.voiceKeyterms) ? state.voiceKeyterms : [],
       telemetryEnabled: state.telemetryEnabled,
       thumbsFeedback: !!state.thumbsFeedback,
+      promptNav: !!state.promptNav,
       providers: state.providers || [],
       providersChecking: !!state.providersChecking,
       githubState: state.githubState || undefined,
@@ -2868,6 +2876,12 @@
         break;
       case "chatFontScale":
         if (CLIENT_OWNS_FONT_SCALE) setClientFontScale(Number(value) / 100);
+        return;
+      case "promptNav":
+        state.promptNav = !!value;
+        storeRemotePref(PROMPT_NAV_KEY, state.promptNav);
+        if (!state.promptNav) setPromptNavPin(null);
+        updateScrollBtn();
         return;
       case "readRepliesAloud":
         if (IS_REMOTE) {
@@ -12926,19 +12940,17 @@
   // (position:absolute over the input), so it rides the chat's `--chat-zoom`
   // scale and stays pinned above the input area at any font scale.
   function updateScrollBtn() {
-    promptNav.classList.toggle("visible", !state.stickToBottom);
-    promptNav.inert = state.stickToBottom;
+    scrollBottomBtn.classList.toggle("visible", !state.stickToBottom);
+    scrollBottomBtn.disabled = state.stickToBottom;
     updatePromptNav();
   }
 
-  // The readout cannot come from scroll position alone. The last screenful of
-  // prompts all share the terminal scrollTop, so nothing can bring them to the
-  // top of the viewport and geometry can never name them — the owner hit this
-  // as "I click the chevron, the screen moves, and it still says 6/7". A jump
-  // therefore PINS its target and marks it, so the number always has something
-  // visible it refers to; any real scroll gesture drops the pin and hands the
-  // readout back to geometry. The pin holds the ELEMENT, not an index, so
-  // loading earlier history — which shifts every index — cannot mis-point it.
+  // The prompt a jump landed on. The control is at the bottom, where the thumb
+  // is, and the prompt it finds arrives at the top, where the eye goes - this
+  // mark is what joins the two, and without it a short jump looks like nothing
+  // happened. Any real scroll gesture drops it. It holds the ELEMENT, not an
+  // index, so loading earlier history - which shifts every index - cannot
+  // mis-point it.
   let promptNavPin = null;
   function setPromptNavPin(el) {
     if (promptNavPin === el) return;
@@ -12965,39 +12977,38 @@
   }
 
   function updatePromptNav() {
-    const { prompts, current, previous } = promptPosition();
-    // A pinned element that has left the DOM (cleared transcript, replay) is
-    // stale rather than authoritative: drop it and fall back to geometry.
-    const pinned = promptNavPin ? prompts.indexOf(promptNavPin) : -1;
-    if (promptNavPin && pinned < 0) setPromptNavPin(null);
-    const shown = pinned >= 0 ? pinned : current;
-    promptNavCount.textContent = `Prompts ${prompts.length ? shown + 1 : 0}/${prompts.length}`;
-    promptNavCount.style.minWidth = `${9 + String(prompts.length).length * 2}ch`;
-    // While pinned the neighbour IS the previous prompt. Geometry's `previous`
-    // means something subtler - inside a long answer it is that answer's own
-    // prompt - and it is right only when the readout is geometry's too.
-    promptPrevBtn.disabled = (pinned >= 0 ? shown - 1 : previous) < 0;
-    promptNextBtn.disabled = state.stickToBottom || shown >= prompts.length - 1;
-    scrollBottomBtn.disabled = state.stickToBottom;
+    // Shown whenever there is an earlier prompt to go back to - INCLUDING while
+    // stuck to the bottom, which is the control's best moment rather than its
+    // worst: watching a long answer arrive is exactly when "what did I ask?"
+    // comes up. That is also why it is not part of the scroll-to-bottom pill,
+    // which correctly has nothing to say down there.
+    const available = !!state.promptNav && promptPosition().previous >= 0;
+    promptPrevBtn.classList.toggle("visible", available);
+    promptPrevBtn.disabled = !available;
   }
 
-  function jumpPrompt(direction) {
-    const { prompts, tops, current, previous } = promptPosition();
-    const pinned = promptNavPin ? prompts.indexOf(promptNavPin) : -1;
-    const from = pinned >= 0 ? pinned : current;
-    const target = direction < 0 ? (pinned >= 0 ? from - 1 : previous) : from + 1;
-    if (target < 0 || target >= prompts.length) return;
-    // Scrolling clamps at the end of the range; the pin is what carries the
-    // move when it does. Deliberate navigation also supersedes a wheel flick
-    // still inside its 750ms latch, which would otherwise clear the pin from
-    // the inertial scroll events that arrive after this click.
+  // Previous only, deliberately. Going FORWARD is the direction that could not
+  // be made to work: the last screenful of prompts all share the terminal
+  // scrollTop, so no scroll brings them to the top of the viewport and a
+  // forward step looks like it did nothing (the owner's "it still says 6/7").
+  // Backwards always has somewhere to go, and it is the whole job that was
+  // asked for - take me back to what I asked.
+  function jumpPrompt() {
+    const { prompts, tops, previous } = promptPosition();
+    if (previous < 0) return;
+    // Deliberate navigation supersedes a wheel flick still inside its 750ms
+    // latch, which would otherwise clear the mark from the inertial scroll
+    // events that arrive after this click.
     userScrollIntentUntil = 0;
-    messagesEl.scrollTo({ top: messagesEl.scrollTop + tops[target], behavior: "instant" });
-    setPromptNavPin(prompts[target]);
-    updatePromptNav();
+    messagesEl.scrollTo({ top: messagesEl.scrollTop + tops[previous], behavior: "instant" });
+    setPromptNavPin(prompts[previous]);
+    // We are demonstrably no longer at the bottom, and saying so is not
+    // cosmetic: leaving the pin set would have the next content growth yank the
+    // reader straight back down, undoing the jump they just made.
+    setStickToBottom(false);
+    updateScrollBtn();
   }
-  promptPrevBtn.onclick = () => jumpPrompt(-1);
-  promptNextBtn.onclick = () => jumpPrompt(1);
+  promptPrevBtn.onclick = jumpPrompt;
 
   // Always pull the view to the bottom and re-pin. For interactive activity the
   // user needs to see regardless of where they've scrolled: permission/question
