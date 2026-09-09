@@ -4314,7 +4314,7 @@ describe("file tree rebind on project change (P2-3)", () => {
     expect(src).toContain("onRootChanged");
     expect(src).toContain("onScopeChanged");
     expect(src).toContain("listener(normalizeRoot(await api.root()))");
-    expect(filePanelJs).toContain("function setScope(scope)");
+    expect(filePanelJs).toContain("function setScope(scope");
     expect(filePanelJs).toContain("state = makeScopeState(scope)");
     expect(filePanelJs).toContain("scopes.set(scope.id, state)");
   });

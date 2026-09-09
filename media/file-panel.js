@@ -1419,10 +1419,32 @@
       return state;
     }
 
-    async function setScope(scope) {
+    /**
+     * Point the panel at a project — or hear the SAME project asserted again.
+     *
+     * The second case is not a lesser version of the first, and treating it as
+     * one is what this function got wrong. A host re-asserts its scope whenever
+     * it hands over a fresh snapshot, which on a remote means every reconnect:
+     * a cloud machine that suspended and woke sends `initialState` carrying the
+     * cwd it already had. Nothing about the person's project changed. Only the
+     * socket did.
+     *
+     * So `switched` gates everything that belongs to a project SWITCH — the
+     * abort, leaving Changes, and resetting which of tree or viewer is showing.
+     * A re-assert keeps all of it and re-reads in place, which is the whole
+     * promise the Changes view makes when it says it fills in on reconnect.
+     *
+     * `reconnected` is the caller's to declare, because only it can see a socket.
+     * It forces the read past the in-flight guard: the request that guard is
+     * protecting went down with the previous connection and no answer to it is
+     * ever coming. `loadSeq` is what makes that safe — a superseded read's late
+     * answer is discarded rather than applied over the newer one.
+     */
+    async function setScope(scope, { reconnected = false } = {}) {
       if (destroyed) return;
       const nextState = scope ? scopeState(scope) : null;
-      if (currentState !== nextState) abortPending();
+      const switched = currentState !== nextState;
+      if (switched) abortPending();
       currentState = nextState;
       currentScope = nextState ? nextState.scope : null;
       title.title = scope && (scope.title || scope.label) || "Show file tree";
@@ -1432,12 +1454,14 @@
       // Changes would show one project's branch under another's title for as
       // long as the read takes, which is exactly the kind of cross-project
       // confusion the per-scope state exists to prevent.
-      changesMode = false;
-      changesEl.hidden = true;
-      rootEl.classList.remove("gfp-changes-mode");
+      if (switched) leaveChanges();
       paintChangesButton();
-      if (canGit && currentState && gitEnabledNow()) void loadChanges({});
-      treeMode = !(currentState && currentState.activeRelPath);
+      // Forced ONLY on a reconnect. Hosts reassert one scope from adjacent state
+      // and catalog events too, and forcing on those would turn each into a
+      // duplicate `git status` — the same waste `rootLoad` sharing exists to
+      // avoid one function below.
+      if (canGit && currentState && gitEnabledNow()) void loadChanges({ force: reconnected });
+      if (switched) treeMode = !(currentState && currentState.activeRelPath);
       renderTabs();
       if (!currentState) {
         renderedTreeState = null;
@@ -1448,6 +1472,10 @@
         tree.hidden = false;
         return;
       }
+      // A re-assert that kept Changes stops here: showTree and renderViewer
+      // both belong to the other two views, and renderViewer would undo the
+      // line above by leaving Changes itself.
+      if (changesMode) return;
       if (treeMode) {
         showTree();
         if (open && !currentState.tree) await loadRootTree();

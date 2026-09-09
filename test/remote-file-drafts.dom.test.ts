@@ -645,14 +645,83 @@ describe("remote discard and close semantics", () => {
       ? "Waking your cloud machine. This view fills in when it reconnects."
       : "That machine did not answer. It may be offline; this fills in when it reconnects.");
 
-    // It wakes and dials back in. The next read must reach the WIRE.
+    // It wakes and dials back in. The next read must reach the WIRE — and land
+    // in a view the person is still looking at, which is why nothing clicks
+    // back into Changes here. A reconnect is not a project switch.
     boot();
     await settle();
+    expect(h.doc.querySelector(".gfp-changes-mode"), "the reconnect dropped the Changes view").toBeTruthy();
     expect(requests(h, "gitStatus").length).toBeGreaterThan(asked);
     await reply(h, requests(h, "gitStatus").at(-1)!, { type: "gitStatusResult", ok: true, snapshot: {
       branch: "main", files: [{ path: "docs/loremipsum.md", status: "?", added: null, deleted: null }],
     } });
+    await settle();
+    expect(h.doc.querySelector(".gfp-changes-headline")?.textContent).toBe("1 file not committed");
+    await h.window.happyDOM.abort();
+  });
+
+  /**
+   * A machine woken in ten seconds must not leave the view saying "waking" for
+   * another minute — nor drop the person back into the file tree.
+   *
+   * Every remote snapshot carries an `initialState`, so a cloud machine dialling
+   * back in re-asserts the scope it already had. Two things then went wrong at
+   * once, both of them exactly where the notice above promises the view fills
+   * itself in. `setScope` read the re-assert as a project switch and left
+   * Changes for the tree. And the read it started declined, because the scope
+   * was still `loading` from the request that vanished into the frozen socket —
+   * so even clicking back in waited out that request's own thirty seconds.
+   *
+   * This deliberately does NOT fire the expiries. The reconnect arriving while
+   * the first read is still in flight is the ordinary case now that the relay
+   * probes a frozen uplink on the next click instead of waiting for a heartbeat
+   * to find the corpse.
+   */
+  it("keeps the Changes view across a reconnect, and re-reads without waiting out the timeout", async () => {
+    const caps = { browseProjectFiles: true, editProjectFiles: true, gitChanges: true };
+    const h = bootWebview({ remote: true, beforeScripts: (window) => Object.assign(window, { grokCloudHost: true }) });
+
+    const expiries: Array<() => void> = [];
+    const realTimeout = h.window.setTimeout.bind(h.window);
+    (h.window as unknown as { setTimeout: unknown }).setTimeout = (fn: () => void, ms: number) => {
+      if (ms >= 20_000) {
+        expiries.push(fn);
+        return 0;
+      }
+      return realTimeout(fn, ms);
+    };
+    const boot = () => dispatch(h.window, {
+      type: "initialState", cwd: CWD_A, capabilities: caps, appPurpose: "coding",
+    });
+    boot();
+    dispatch(h.window, {
+      type: "repos",
+      entries: [{ cwd: CWD_A, label: "app", available: true, pinned: false, updatedAt: 2 }],
+      selectedCwd: CWD_A,
+    });
+    await settle();
+    click(h.window, h.doc.getElementById("files-browse-btn")!);
+    await settle();
+    const changesBtn = h.doc.querySelector(".gfp-changes-btn") as HTMLElement | null;
+    expect(changesBtn, "no Changes control").toBeTruthy();
     click(h.window, changesBtn!);
+    await settle();
+    expect(h.doc.querySelector(".gfp-changes-mode"), "never entered Changes").toBeTruthy();
+
+    // The machine freezes: the read is on the wire and nothing comes back.
+    const asked = requests(h, "gitStatus").length;
+    expect(asked).toBeGreaterThan(0);
+    expect(expiries.length, "no request timeout was armed").toBeGreaterThan(0);
+
+    // It wakes and dials back in, still inside that first request's lifetime.
+    boot();
+    await settle();
+    expect(h.doc.querySelector(".gfp-changes-mode"), "the reconnect dropped the Changes view").toBeTruthy();
+    expect(requests(h, "gitStatus").length, "the reconnect did not re-read").toBeGreaterThan(asked);
+
+    await reply(h, requests(h, "gitStatus").at(-1)!, { type: "gitStatusResult", ok: true, snapshot: {
+      branch: "main", files: [{ path: "docs/loremipsum.md", status: "?", added: null, deleted: null }],
+    } });
     await settle();
     expect(h.doc.querySelector(".gfp-changes-headline")?.textContent).toBe("1 file not committed");
     await h.window.happyDOM.abort();

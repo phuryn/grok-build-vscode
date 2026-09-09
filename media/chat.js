@@ -16519,7 +16519,15 @@
         forgetRailProbeVerdict();
         restoreRememberedRemoteSession();
         // Capability field presence — never a version check. Local hosts ignore.
-        ensureRemoteFilesBrowser();
+        //
+        // A SECOND snapshot is a reconnect, and a reconnect voids the previous
+        // socket's outstanding work. The panel already exists by then, which is
+        // the whole test: it is created here, so a mounted one means a snapshot
+        // has landed before. Local hosts never mount it and never take either
+        // branch.
+        const remoteFilesReconnected = !!(state.filesBrowse && state.filesBrowse.component);
+        if (remoteFilesReconnected) abandonRemoteFileRequests();
+        ensureRemoteFilesBrowser({ reconnected: remoteFilesReconnected });
         if (typeof msg.showThinking === "boolean") state.showThinking = msg.showThinking;
         if (typeof msg.expandCommandOutputs === "boolean") state.expandCommandOutputs = msg.expandCommandOutputs;
         if (typeof msg.steerByDefault === "boolean") state.steerByDefault = msg.steerByDefault;
@@ -18599,6 +18607,30 @@
   }
 
   /**
+   * Fail every request still waiting on the connection that just ended.
+   *
+   * A reconnect arrives with a whole fresh snapshot, so anything posted over the
+   * previous socket is unanswerable: either the frame never landed or its reply
+   * went nowhere. Waiting out each request's own thirty seconds is not caution,
+   * it is a delay we can already prove is pointless — and it is not free, because
+   * until a reply proves the host echoes requestIds these are serialized per key,
+   * so ONE read swallowed by a frozen socket holds up every read behind it. That
+   * is what left a woken machine still saying "Waking your cloud machine" half a
+   * minute after it had woken.
+   *
+   * Deliberately does NOT poison the key. Silence across a reconnect says nothing
+   * about whether the host is a build too old to echo requestIds, and treating it
+   * as evidence is the mistake the timeout above documents at length.
+   */
+  function abandonRemoteFileRequests() {
+    for (const pending of [...remoteFilePending.values()]) {
+      clearTimeout(pending.timer);
+      remoteFilePending.delete(pending.requestId);
+      pending.resolve({ ok: false, reason: "The connection dropped before that finished." });
+    }
+  }
+
+  /**
    * The path a reply is about, whichever of the two names it uses. Kept as one
    * function so the fence below cannot drift from the one in the pending record.
    */
@@ -18653,7 +18685,7 @@
     return cwd ? { id: cwd, label: cwdLeaf(cwd) || "Project", title: cwd } : null;
   }
 
-  function ensureSharedRemoteFilePanel() {
+  function ensureSharedRemoteFilePanel(opts) {
     if (!remoteFilesBrowseAvailable()) return false;
     const shared = window.GrokFilePanel;
     if (!shared || typeof shared.createFilePanel !== "function") return false;
@@ -18765,7 +18797,7 @@
     }
     placeRemoteFilesButton(panel.toggleElement);
     panel.toggleElement.hidden = false;
-    void panel.setScope(currentRemoteFileScope());
+    void panel.setScope(currentRemoteFileScope(), opts);
     return true;
   }
   function remoteFilesButtonHost() {
@@ -18791,7 +18823,7 @@
     host.appendChild(btn);
   }
 
-  function ensureRemoteFilesBrowser() {
+  function ensureRemoteFilesBrowser(opts) {
     const available = remoteFilesBrowseAvailable();
     const panel = state.filesBrowse.component;
     if (!available) {
@@ -18803,7 +18835,7 @@
     // file-panel.js is part of the remote page's vendored UI bundle. There is no
     // second renderer here: a missing component is a packaging error, surfaced
     // visibly and recoverable by refreshing after the deploy is corrected.
-    if (!ensureSharedRemoteFilePanel()) {
+    if (!ensureSharedRemoteFilePanel(opts)) {
       console.error("Remote project files require media/file-panel.js");
     }
   }
