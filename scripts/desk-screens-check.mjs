@@ -556,7 +556,8 @@ try {
   await assertNoBlankIcons("desk file open");
   await assertBarIcons("desk file open");
   assert.equal(
-    await page.evaluate(() => { const f = document.querySelector(".gfp-filter"); return !!f && getComputedStyle(f).display !== "none"; }),
+    // The filter sits in a row that hides as a whole, so ask whether the input has a box, not what its own display says.
+    await page.evaluate(() => { const f = document.querySelector(".gfp-filter"); return !!f && f.getClientRects().length > 0; }),
     false,
     "desk: the tree filter must hide once a file is open — it has no tree to search",
   );
