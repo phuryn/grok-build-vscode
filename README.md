@@ -131,6 +131,13 @@ Gear → *Fork conversation* copies the conversation into a **new session** name
 </details>
 
 <details>
+<summary><strong>Changes</strong> — is my work safe to walk away from, answered in the panel</summary>
+
+The project panel's branch button carries a badge of uncommitted files and opens a **Changes** view. One sentence answers the question you actually have — conflicts, then uncommitted work, then unpushed commits, then clean — and one button carries the whole promise (**Commit and push**, **Push 3 commits**), so nothing repeats it back at you in a dialog. Files open into the same diff the chat renders under a tool call; discarding one is reachable only from inside its diff, because an irreversible action should require having looked. Unpushed commits are listed only when nothing is uncommitted — two lists of unfinished work at once is the noise this view exists to remove. It never runs `git fetch`, so *behind* is reported as of your last one and the line says so. Coding purpose only, and it reads and works the same from a phone.
+
+</details>
+
+<details>
 <summary><strong>Rewind</strong> — roll the conversation (and files) back to an earlier point</summary>
 
 Hover a message you sent → **Rewind** (or **Grok: Rewind Conversation**), confirm, and Grok rolls back to that point — truncating the chat and, optionally, restoring the files it changed since then from its own snapshots. A safety prompt shows first, because rewinding can revert code on disk. Both work from a browser as well as at the desk.
@@ -165,7 +172,7 @@ When Grok delegates work to a subagent, the chat shows a card with the task and 
 <details>
 <summary><strong>Tool calls</strong> — every read, edit & command inline; expand for full details</summary>
 
-Every action appears as a category-iconed row, batched and summarized ("Explored 5 items", "Edited 2 files"); a failed tool turns red with the reason. Edits show a `+N −M` change count and expand to an inline diff at the file's real line numbers; shell commands expand to an **IN/OUT block** with the full command and its complete output — exactly what Grok received, exit code included. To audit an Auto-accept run, pre-expand everything with `grok.expandCommandOutputs`, or **Grok: Expand All Tool Details** from the Command Palette.
+Every action appears as a category-iconed row, batched and summarized ("Explored 5 items", "Edited 2 files"); a failed tool turns red with the reason. Edits show a `+N −M` change count and expand to an inline diff at the file's real line numbers; shell commands expand to an **IN/OUT block** with the full command and its complete output — exactly what Grok received, exit code included. In Coding purpose, a turn that changed files ends with a **Changed N files** card rolling up every path and its `+N −M`; tap a row for that file's diff. It steps aside once tool details expand by default, where it would only repeat the rows above it. To audit an Auto-accept run, pre-expand everything with `grok.expandCommandOutputs`, or **Grok: Expand All Tool Details** from the Command Palette.
 
 ![A tool batch with a command expanded to its IN/OUT block](docs/screenshots/tool_calls.png)
 
