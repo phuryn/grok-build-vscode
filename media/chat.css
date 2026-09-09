@@ -2772,20 +2772,28 @@ body.thinking-hidden .msg.thinking { display: none; }
    default; light overrides on the VS Code body class. bg = translucent tint,
    line = the solid stroke used for the left border + the +/- glyph + the stat. */
 :root {
-  --tdiff-add-bg: #40c9773b;
-  --tdiff-del-bg: #fa423e3b;
-  --tdiff-read-bg: #4ea1d93b;
-  --tdiff-add-line: #40c977;
-  --tdiff-del-line: #fa423e;
-  --tdiff-read-line: #4ea1d9;
+  --tdiff-add-bg: #4ec9b03b;
+  --tdiff-del-bg: #f487713b;
+  --tdiff-read-bg: #3794ff3b;
+  --tdiff-add-line: #4ec9b0;
+  --tdiff-del-line: #f48771;
+  --tdiff-read-line: #3794ff;
+  /* The fourth colour: "modified, not committed". The dot on a dirty tab or a
+     changed tree row, the M beside a file, and the count badges — every mark
+     that says "there is work here" is this one hue, so a person learns it
+     once. `-ink` is the text that sits ON a badge of it. */
+  --tdiff-mod-line: #d7ba7d;
+  --tdiff-mod-ink: #2a2000;
 }
 body.vscode-light {
-  --tdiff-add-bg: #00a24026;
-  --tdiff-del-bg: #ba262326;
-  --tdiff-read-bg: #0e639c26;
-  --tdiff-add-line: #00a240;
-  --tdiff-del-line: #ba2623;
-  --tdiff-read-line: #0e639c;
+  --tdiff-add-bg: #0f8a7426;
+  --tdiff-del-bg: #c0392b26;
+  --tdiff-read-bg: #005fb826;
+  --tdiff-add-line: #0f8a74;
+  --tdiff-del-line: #c0392b;
+  --tdiff-read-line: #005fb8;
+  --tdiff-mod-line: #895503;
+  --tdiff-mod-ink: #fff;
 }
 /* Edit rows: the always-visible "+A ÔłĺR" change count (green adds, red removes),
    shown inline after the label AND rolled up onto a collapsed group header, so an
@@ -2810,7 +2818,7 @@ body.vscode-light {
   align-items: baseline;
   gap: 0 4px;
   color: var(--vscode-descriptionForeground);
-  margin-bottom: 4px;
+  margin-bottom: 6px;
 }
 .turn-diff-summary-title {
   font-weight: 600;
@@ -2822,10 +2830,13 @@ body.vscode-light {
   gap: 2px;
 }
 .turn-diff-file {
-  display: flex;
+  /* letter · path · stat. A grid rather than the old space-between flex, so
+     the status letters make a column of their own and the paths start on one
+     line whatever letter precedes them. */
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  gap: 8px;
   width: 100%;
   /* The transcript has no measure of its own, so on a wide desktop window
      space-between threw the +A −R a thousand pixels from the filename it
@@ -2870,34 +2881,51 @@ button.turn-diff-file.has-diff:focus-visible {
   text-decoration: line-through;
   opacity: 0.85;
 }
-.turn-diff-file-action.deleted {
-  flex-shrink: 0;
-  color: var(--tdiff-del-line);
-  font-size: 0.92em;
+/* M / A / D — the same letters git status prints and the Changes view shows,
+   in the same colours, so the card and the view read as one vocabulary. */
+.turn-diff-file-status {
+  font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  text-align: center;
 }
+.turn-diff-file-status.is-m { color: var(--tdiff-mod-line); }
+.turn-diff-file-status.is-a { color: var(--tdiff-add-line); }
+.turn-diff-file-status.is-d { color: var(--tdiff-del-line); }
 /* Knowledge work, or "Expand tool details" on: the rows already carry the
    diffs, so the roll-up would only repeat them. Hidden rather than never
    built, so flipping the setting back restores the cards already in the
    transcript. */
-/* The link out of the card, into the Changes view. A link rather than a
-   button: the rows above it are the card's actions, and a second bordered
-   control at the bottom would compete with them for the same attention. */
+/* The way out of the card, into the Changes view. It shipped first as a text
+   link so as not to compete with the rows; the owner wanted a button, and he
+   is right — it is the card's one action that leaves the card, and the rows
+   are quiet enough that a small secondary button does not shout over them. */
 .turn-diff-summary-foot {
   display: flex;
-  margin-top: 6px;
+  margin-top: 8px;
 }
 .turn-diff-open-changes {
-  padding: 2px 0;
-  border: 0;
-  background: none;
-  color: var(--vscode-textLink-foreground, #4daafc);
+  min-height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--vscode-button-border, var(--vscode-widget-border, rgba(127, 127, 127, 0.35)));
+  border-radius: 6px;
+  background: var(--vscode-button-secondaryBackground, transparent);
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
   font: inherit;
+  font-size: 12.5px;
   cursor: pointer;
 }
-.turn-diff-open-changes:hover { text-decoration: underline; }
-/* A link is still a target on a phone. */
+.turn-diff-open-changes:hover {
+  background: var(--vscode-button-secondaryHoverBackground, var(--vscode-list-hoverBackground, rgba(127, 127, 127, 0.12)));
+}
+.turn-diff-open-changes:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder, #007fd4);
+  outline-offset: 1px;
+}
+/* A button is still a target on a phone. */
 @media (hover: none), (pointer: coarse) {
-  .turn-diff-open-changes { min-height: 36px; padding: 6px 0; }
+  .turn-diff-open-changes { min-height: 36px; padding: 6px 12px; }
 }
 body.hide-turn-diff-summary .turn-diff-summary { display: none; }
 /* A file row opens a diff, so on a phone it is a real target. */

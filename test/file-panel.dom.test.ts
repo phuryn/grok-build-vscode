@@ -1472,7 +1472,10 @@ describe("title strip is a folder label plus file-type tabs", () => {
     });
     expect(srcs[0]).toMatch(/typescript\.svg/);
     expect(srcs[1]).toMatch(/markdown\.svg/);
-    expect(h.document.querySelector(".gfp-title-icon img, .gfp-title-icon .gfp-file-icon-mono")).toBeTruthy();
+    // The folder never comes from the theme: it is the outline glyph whatever
+    // the files beside it wear, so the title stays lighter than its tabs.
+    expect(h.document.querySelector(".gfp-title-icon svg")).toBeTruthy();
+    expect(h.document.querySelector(".gfp-title-icon img, .gfp-title-icon .gfp-file-icon-mono")).toBeNull();
   });
 
   it("stripShrinkState is compact at the default split and extreme near min width", () => {
@@ -2146,6 +2149,24 @@ describe("refreshing the file tree", () => {
     expect(treeRow(h.document, "b.ts")).toBeTruthy();
     // Re-listing a folder never closes it.
     expect(h.document.querySelector('.gfp-node[data-rel="src"]')!.classList.contains("gfp-expanded")).toBe(true);
+    h.panel.destroy();
+  });
+
+  it("draws a folder beside the chevron, and opens it with the folder", async () => {
+    const h = listingHarness();
+    h.panel.setOpen(true);
+    await settle();
+    const icon = () => h.document.querySelector('.gfp-node[data-rel="src"] > .gfp-row > .gfp-dir-icon')!.innerHTML;
+    const closed = icon();
+    expect(closed).toContain("<svg");
+    // Files carry their icon in the lead; only folders get the second glyph.
+    expect(treeRow(h.document, "notes.md")!.querySelector(".gfp-dir-icon")).toBeNull();
+    click(h.window, treeRow(h.document, "src"));
+    await settle();
+    expect(icon()).not.toBe(closed);
+    click(h.window, treeRow(h.document, "src"));
+    await settle();
+    expect(icon()).toBe(closed);
     h.panel.destroy();
   });
 

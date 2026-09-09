@@ -314,7 +314,7 @@ try {
                 0,
                 ...rows.map((r) => {
                   const name = r.querySelector(".turn-diff-file-path");
-                  const stat = r.querySelector(".diff-stat, .turn-diff-file-action");
+                  const stat = r.querySelector(".diff-stat");
                   if (!name || !stat) return 0;
                   // The span is full-width; the TEXT inside it is what is drawn.
                   const range = document.createRange();
@@ -338,8 +338,9 @@ try {
               ? getComputedStyle(card.querySelector(".diff-stat-add") || card).color
               : "",
             paletteAdd: getComputedStyle(document.body).getPropertyValue("--tdiff-add-line").trim(),
+            // The D in front of a deleted path, in the palette's red.
             deletedColour: (() => {
-              const tag = card?.querySelector(".turn-diff-file-action.deleted");
+              const tag = card?.querySelector(".turn-diff-file-status.is-d");
               return tag ? getComputedStyle(tag).color : "";
             })(),
             paletteDel: getComputedStyle(document.body).getPropertyValue("--tdiff-del-line").trim(),
@@ -417,7 +418,7 @@ try {
             fail(`${id}: title reads "${seen.title}", expected "Changed 3 files"`);
           }
           if (seen.rowCount !== 3) fail(`${id}: ${seen.rowCount} rows, expected 3`);
-          if (!seen.deletedColour) fail(`${id}: the shell-deleted file has no Deleted tag`);
+          if (!seen.deletedColour) fail(`${id}: the shell-deleted file has no D letter`);
         }
         // A dead control looks identical to a live one in a screenshot, so the
         // offer itself is asserted — and it is the SAME offer on every surface.

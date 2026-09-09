@@ -148,18 +148,18 @@ describe("fill-less Seti glyphs are theme-tinted, not black", () => {
     expect(mono.has("css")).toBe(false);
   });
 
-  it("renders those as a currentColor-independent theme token, never opacity", () => {
+  it("renders those in the surrounding text colour, never opacity", () => {
     const boot = fileTreePanelBootSource(iconsDir);
     expect(boot).toContain("fileIcons: { baseUrl: iconBase }");
     expect(filePanelJs).toContain("MONOCHROME_FILE_ICONS.has(id)");
     expect(filePanelJs).toContain('"default"');
     expect(filePanelJs).toContain("gfp-file-icon-mono desk-ft-icon-mono");
     expect(filePanelJs).toContain('--gfp-icon-url');
-    // The tint must resolve per theme — the desktop defines
-    // --vscode-descriptionForeground for BOTH light and dark.
-    expect(filePanelCss).toMatch(
-      /\.gfp-file-icon-mono\s*\{[^}]*--vscode-descriptionForeground/s,
-    );
+    // The tint follows the text beside it: a tree row's lead is the muted
+    // grey, an active tab is the foreground, and both resolve per theme
+    // because the text colours do. It used to be pinned to the grey, which
+    // left the selected tab's icon dimmed beside its lit name.
+    expect(filePanelCss).toMatch(/\.gfp-file-icon-mono\s*\{[^}]*background:\s*currentColor/s);
     expect(filePanelCss).toMatch(/\.gfp-file-icon-mono\s*\{[^}]*mask:/s);
   });
 });

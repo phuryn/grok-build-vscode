@@ -65,6 +65,7 @@ function harness(options: {
   run?: (request: Record<string, unknown>) => Promise<unknown>;
   gitEnabled?: () => boolean;
   omitGit?: boolean;
+  list?: (scopeId: string, relPath: string) => Promise<unknown>;
 } = {}) {
   const window = new Window({ url: "https://example.test/" });
   const document = window.document;
@@ -74,7 +75,7 @@ function harness(options: {
 
   const access: Record<string, unknown> = {
     currentScope: async () => ({ id: "/work/app", label: "app", title: "/work/app" }),
-    list: async () => ({ ok: true, entries: [], truncated: false }),
+    list: options.list || (async () => ({ ok: true, entries: [], truncated: false })),
     // Readable, because one test needs a FILE tab open while the Changes view
     // is on screen — the state in which two tabs used to look selected.
     read: async (_scopeId: string, relPath: string) => ({
@@ -311,6 +312,40 @@ describe("the panel", () => {
     // Unpushed commits are named in words inside the view. A badge that added
     // two different things together would be a number nobody could act on.
     expect(h.q(".gfp-changes-btn")?.getAttribute("title")).toBe("Changes — 2 files not committed");
+  });
+
+  it("repeats the count on the panel toggle, and marks the changed file and every folder above it", async () => {
+    const dirs: Record<string, unknown[]> = {
+      "": [{ name: "src", kind: "dir", relPath: "src" }, { name: "README.md", kind: "file", relPath: "README.md" }],
+      src: [{ name: "lib", kind: "dir", relPath: "src/lib" }, { name: "b.ts", kind: "file", relPath: "src/b.ts" }],
+      "src/lib": [{ name: "a.ts", kind: "file", relPath: "src/lib/a.ts" }],
+    };
+    const h = harness({
+      snapshot: snap({ files: [file("src/lib/a.ts", "M")] }),
+      list: async (_scopeId: string, relPath: string) => ({ ok: true, entries: dirs[relPath] || [], truncated: false }),
+    });
+    h.panel.setOpen(true);
+    await settle();
+    await settle();
+    // The same number as the Changes button, readable while the panel is closed.
+    expect(h.q(".gfp-toggle-count")?.hidden).toBe(false);
+    expect(h.q(".gfp-toggle-count")?.textContent).toBe("1");
+
+    const changed = (rel: string) =>
+      h.document.querySelector(`.gfp-node[data-rel="${rel}"]`)!.classList.contains("gfp-node-changed");
+    // A closed folder that hides a change says so; a clean file does not.
+    expect(changed("src")).toBe(true);
+    expect(changed("README.md")).toBe(false);
+    // Rows revealed later are painted from the same snapshot.
+    (h.document.querySelector('.gfp-node[data-rel="src"] > .gfp-row') as HTMLElement).click();
+    await settle();
+    await settle();
+    expect(changed("src/lib")).toBe(true);
+    expect(changed("src/b.ts")).toBe(false);
+    (h.document.querySelector('.gfp-node[data-rel="src/lib"] > .gfp-row') as HTMLElement).click();
+    await settle();
+    await settle();
+    expect(changed("src/lib/a.ts")).toBe(true);
   });
 
   it("sends exactly the operation the button promised", async () => {

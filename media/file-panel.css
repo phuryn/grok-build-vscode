@@ -322,7 +322,7 @@ body.desk-rail-collapsed .desk-rail-open-btn { display: inline-flex; }
    empty slot is free (the planner measures the rendered DOM, so the width it
    gives back is width the names get) and a dirty file spends it in front,
    where it never comes between the pair. */
-.gfp-tab-dirty { flex: 0 0 10px; text-align: center; }
+.gfp-tab-dirty { flex: 0 0 10px; color: var(--tdiff-mod-line, #d7ba7d); text-align: center; }
 .gfp-tab-dirty:empty { display: none; }
 .gfp-tab-icon-only {
   flex: 0 0 auto;
@@ -351,7 +351,7 @@ body.desk-rail-collapsed .desk-rail-open-btn { display: inline-flex; }
   top: 1px;
   right: 3px;
   line-height: 1;
-  color: var(--vscode-foreground, inherit);
+  color: var(--tdiff-mod-line, #d7ba7d);
 }
 /* The chip IS a tab (owner): same cell chrome as an idle tab — full height,
    idle-tab tone, hover — holding "…" where a name would sit. The edges it used
@@ -567,11 +567,41 @@ body.desk-ft-maximized .gfp-panel {
 }
 .gfp-lead svg,
 .gfp-lead img { display: block; width: 16px; height: 16px; }
+/* A folder row is chevron + folder, the way the prototype draws it: the
+   chevron says "opens", the folder says what it is. Outline closed, outline
+   open — the same weight as the file icons beside it, with nothing filled. */
+.gfp-dir-icon {
+  display: inline-flex;
+  flex: 0 0 16px;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: var(--vscode-descriptionForeground, #999);
+}
+.gfp-dir-icon svg { display: block; width: 16px; height: 16px; }
+/* The "there is uncommitted work here" mark, on the file and on every folder
+   above it, so a collapsed tree still shows where the changes are. A slot
+   that collapses when empty — the row's name gets the width back. */
+.gfp-node-dot {
+  display: none;
+  flex: 0 0 6px;
+  width: 6px;
+  height: 6px;
+  margin: 0 2px;
+  border-radius: 50%;
+  background: var(--tdiff-mod-line, #d7ba7d);
+}
+.gfp-node-changed > .gfp-row > .gfp-node-dot { display: inline-block; }
 .gfp-file-icon-mono {
   display: block;
   width: 16px;
   height: 16px;
-  background: var(--vscode-descriptionForeground, #999);
+  /* currentColor, not the muted grey outright: the icon follows the text it
+     sits beside, so an active tab's icon lights up with its name and a tree
+     row's stays as quiet as its lead. The grey used to be pinned here, which
+     left the selected tab's icon dimmed next to a bright label. */
+  background: currentColor;
   -webkit-mask: var(--gfp-icon-url) center / contain no-repeat;
   mask: var(--gfp-icon-url) center / contain no-repeat;
 }
@@ -1142,23 +1172,30 @@ body.vscode-light {
 }
 /* The badge counts UNCOMMITTED FILES only. It is the one number visible while
    the view is closed, so it has to mean exactly one thing. */
-.gfp-changes-count {
+.gfp-changes-count,
+.gfp-toggle-count {
   position: absolute;
-  top: 1px;
-  right: 0;
-  min-width: 14px;
-  padding: 0 3px;
-  border-radius: 7px;
-  background: var(--vscode-activityBarBadge-background, var(--vscode-button-background, #0e639c));
-  color: var(--vscode-activityBarBadge-foreground, var(--vscode-button-foreground, #fff));
-  font-size: 9px;
-  font-weight: 600;
-  line-height: 14px;
+  top: -1px;
+  right: -2px;
+  min-width: 16px;
+  padding: 0 5px;
+  border-radius: 8px;
+  /* The "modified" hue, not the theme's badge blue: this number IS the count
+     of modified files, and the same colour marks each of them in the tree. */
+  background: var(--tdiff-mod-line, #d7ba7d);
+  color: var(--tdiff-mod-ink, #2a2000);
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 16px;
   text-align: center;
   font-variant-numeric: tabular-nums;
   pointer-events: none;
 }
-.gfp-changes-count[hidden] { display: none !important; }
+.gfp-changes-count[hidden],
+.gfp-toggle-count[hidden] { display: none !important; }
+/* The same number on the button that opens the panel, so it is readable
+   while the panel is closed — the one moment the Changes button is not. */
+.gfp-toggle { position: relative; }
 
 .gfp-changes {
   display: flex;
@@ -1212,7 +1249,7 @@ body.vscode-light {
 /* Spent on conflicts and nothing else. A colour that fires on every edit is a
    colour nobody reads, and it would make the state that blocks committing look
    the same as the state that does not. */
-.gfp-changes-warn { color: var(--vscode-editorWarning-foreground, var(--tdiff-del-line, #fa423e)); }
+.gfp-changes-warn { color: var(--vscode-editorWarning-foreground, var(--tdiff-del-line, #f48771)); }
 .gfp-changes-note { color: var(--vscode-foreground, inherit); }
 .gfp-changes-ok { color: var(--vscode-descriptionForeground, #999); font-weight: 500; }
 
@@ -1271,12 +1308,15 @@ body.vscode-light {
   font-weight: 700;
   text-align: center;
 }
-.gfp-change-m .gfp-change-badge { color: var(--vscode-gitDecoration-modifiedResourceForeground, #e2c08d); }
+/* The diff palette, not the IDE's gitDecoration set: the turn card in the
+   transcript prints the same letters from the same variables, and the two
+   must agree on what yellow means. */
+.gfp-change-m .gfp-change-badge { color: var(--tdiff-mod-line, #d7ba7d); }
 .gfp-change-a .gfp-change-badge,
-.gfp-change-new .gfp-change-badge { color: var(--vscode-gitDecoration-untrackedResourceForeground, var(--tdiff-add-line, #40c977)); }
-.gfp-change-d .gfp-change-badge { color: var(--vscode-gitDecoration-deletedResourceForeground, var(--tdiff-del-line, #fa423e)); }
-.gfp-change-r .gfp-change-badge { color: var(--vscode-gitDecoration-renamedResourceForeground, #4ea1d9); }
-.gfp-change-u .gfp-change-badge { color: var(--vscode-gitDecoration-conflictingResourceForeground, #e4676b); }
+.gfp-change-new .gfp-change-badge { color: var(--tdiff-add-line, #4ec9b0); }
+.gfp-change-d .gfp-change-badge { color: var(--tdiff-del-line, #f48771); }
+.gfp-change-r .gfp-change-badge { color: var(--tdiff-read-line, #3794ff); }
+.gfp-change-u .gfp-change-badge { color: var(--vscode-editorError-foreground, var(--tdiff-del-line, #f48771)); }
 
 .gfp-change-name {
   display: flex;
@@ -1317,8 +1357,8 @@ body.vscode-light {
 /* The same two numbers appear on a tool row and on the turn's Changed N files
    card in Codex's green and red; grey here made the list read as a different
    measurement. --tdiff-* is defined in chat.css and carries a light override. */
-.gfp-change-add { color: var(--tdiff-add-line, #40c977); }
-.gfp-change-del { color: var(--tdiff-del-line, #fa423e); }
+.gfp-change-add { color: var(--tdiff-add-line, #4ec9b0); }
+.gfp-change-del { color: var(--tdiff-del-line, #f48771); }
 .gfp-change-stat-word { font-style: italic; }
 /* On the headline the pair rides at the end of a sentence, so it takes that
    sentence's weight back down — it is the size of the change, not a second

@@ -10122,15 +10122,18 @@
           revealToolDiff(revealId);
         };
       }
+      // M / A / D in front of the path — git's own letters, the ones the
+      // Changes view already uses, so a person reads one vocabulary in both
+      // places. The word "Deleted" used to sit where the +/− goes; the D and
+      // the strike-through say it between them.
+      const status = isDel ? "D" : f.action === "created" ? "A" : "M";
+      const letter = document.createElement("span");
+      letter.className = "turn-diff-file-status is-" + status.toLowerCase();
+      letter.textContent = status;
+      letter.title = isDel ? "Deleted" : f.action === "created" ? "Added" : "Modified";
+      row.appendChild(letter);
       row.appendChild(turnDiffFilePathEl(f.path));
-      if (isDel) {
-        const tag = document.createElement("span");
-        tag.className = "turn-diff-file-action deleted";
-        tag.textContent = "Deleted";
-        row.appendChild(tag);
-      } else {
-        row.appendChild(makeDiffStat(f.added, f.removed));
-      }
+      if (!isDel) row.appendChild(makeDiffStat(f.added, f.removed));
       list.appendChild(row);
     }
     el.appendChild(list);

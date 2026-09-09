@@ -258,12 +258,43 @@ describe("turn-level file change summary", () => {
       expect(card).not.toBeNull();
       const deleted = [...card.querySelectorAll(".turn-diff-file.is-deleted")];
       expect(deleted.length).toBeGreaterThanOrEqual(2);
-      expect(deleted.every((r) => r.textContent?.includes("Deleted"))).toBe(true);
+      expect(deleted.every((r) => r.querySelector(".turn-diff-file-status")?.textContent === "D")).toBe(true);
+      // The letter says it; no +/− count competes with it on the same row.
+      expect(deleted.every((r) => r.querySelector(".diff-stat") === null)).toBe(true);
       // F2 was written then deleted → only Deleted, not +3
       const f2 = deleted.find((r) =>
         /F2\.txt/i.test(r.querySelector(".turn-diff-file-path")!.textContent || ""),
       );
       expect(f2).toBeTruthy();
+    });
+
+    it("prints git's letter in front of each path: A created, M edited, D deleted", () => {
+      const { window, doc } = bootWebview();
+      dispatch(window, { type: "agentStart" });
+      dispatch(window, editCall("c1", "new.ts"));
+      dispatch(window, editUpdate("c1", "new.ts", "", "fresh"));
+      dispatch(window, editCall("m1", "old.ts"));
+      dispatch(window, editUpdate("m1", "old.ts", "before", "after"));
+      dispatch(window, {
+        type: "toolCall",
+        call: {
+          toolCallId: "d1",
+          kind: "execute",
+          title: "Shell",
+          rawInput: { command: "Remove-Item 'd:\\Temp\\AITest\\gone.txt'" },
+        },
+      });
+      dispatch(window, { type: "agentEnd" });
+
+      const letter = (re: RegExp) => rowByPath(doc, re)!.querySelector(".turn-diff-file-status")!;
+      expect(letter(/new\.ts/).textContent).toBe("A");
+      expect(letter(/new\.ts/).classList.contains("is-a")).toBe(true);
+      expect(letter(/old\.ts/).textContent).toBe("M");
+      expect(letter(/old\.ts/).classList.contains("is-m")).toBe(true);
+      expect(letter(/gone\.txt/).textContent).toBe("D");
+      expect(letter(/gone\.txt/).classList.contains("is-d")).toBe(true);
+      // First in the row, so the letters make a column down the card.
+      expect(rowByPath(doc, /old\.ts/)!.firstElementChild!.classList.contains("turn-diff-file-status")).toBe(true);
     });
 
     it("edit then delete then recreate only counts post-delete edits", () => {

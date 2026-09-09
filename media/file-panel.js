@@ -631,6 +631,9 @@
     chevronDown: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>',
     file: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>',
     folder: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>',
+    // lucide `folder-open` — an expanded folder in the tree. Outline like its
+    // closed twin; the open state is the shape, never a fill.
+    folderOpen: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></svg>',
     // lucide maximize-2 / minimize-2 — expand the panel over chat, then restore.
     // lucide `maximize` / `minimize` (corner brackets) — the owner's explicit
     // pick over the -2 diagonal-arrow variants.
@@ -832,6 +835,14 @@
     toggle.className = "gfp-toggle desk-ft-top-toggle";
     toggle.setAttribute("aria-label", "Toggle file panel");
     toggle.innerHTML = panelIcon("right");
+    // The uncommitted count, on the button that opens the panel. The Changes
+    // button carries the same number, but that one is inside the panel and
+    // this is the only copy readable while the panel is closed.
+    const toggleCount = doc.createElement("span");
+    toggleCount.className = "gfp-toggle-count";
+    toggleCount.hidden = true;
+    toggleCount.setAttribute("aria-hidden", "true");
+    toggle.appendChild(toggleCount);
     toggle.addEventListener("click", () => setOpen(!open));
     closePanel.addEventListener("click", () => setOpen(false));
     title.addEventListener("click", showTree);
@@ -1612,6 +1623,36 @@
       // Below the rows, not instead of them: appendStatus clears its host, so
       // this used to throw away every entry of a folder big enough to be cut.
       if (result.truncated) container.appendChild(statusLine("Folder truncated — more entries exist."));
+      paintTreeDirty();
+    }
+
+    /**
+     * The dot on a tree row: this file, or something under this folder, is
+     * not committed. Read off the same snapshot the Changes badge counts, so
+     * the tree and the badge cannot disagree about what is dirty. Painted
+     * over the rendered rows rather than by rebuilding them — a snapshot
+     * arrives after every turn, and the tree must not flicker for it.
+     *
+     * Every folder above a changed file is marked too; a closed folder that
+     * hides a change would otherwise look exactly like one that does not.
+     */
+    function paintTreeDirty() {
+      const snapshot = currentState && currentState.changes.snapshot;
+      const files = snapshot && Array.isArray(snapshot.files) ? snapshot.files : [];
+      const changed = new Set();
+      for (const file of files) {
+        const path = file && typeof file.path === "string" ? file.path : "";
+        if (!path) continue;
+        changed.add(path);
+        let cut = path.lastIndexOf("/");
+        while (cut > 0) {
+          changed.add(path.slice(0, cut));
+          cut = path.lastIndexOf("/", cut - 1);
+        }
+      }
+      for (const node of tree.querySelectorAll(".gfp-node")) {
+        node.classList.toggle("gfp-node-changed", changed.has(node.dataset.rel));
+      }
     }
 
     function makeTreeNode(entry, parentRelPath, listings) {
@@ -1629,14 +1670,24 @@
       row.style.setProperty("--gfp-depth", String(depth));
       const lead = doc.createElement("span");
       lead.className = "gfp-lead desk-ft-lead files-browse-row-icon";
+      // A folder row is chevron AND folder — the chevron is the twist, the
+      // folder is the noun. Files get their icon in the lead itself.
+      let dirIcon = null;
       if (entry.kind === "dir") {
         lead.classList.add("desk-ft-twist");
         lead.innerHTML = ICON.chevronRight;
+        dirIcon = doc.createElement("span");
+        dirIcon.className = "gfp-dir-icon";
+        dirIcon.innerHTML = ICON.folder;
       }
       else renderFileIcon(lead, entry.name, entry.kind);
       const name = doc.createElement("span");
       name.className = "gfp-name desk-ft-name files-browse-row-name";
       name.textContent = entry.name;
+      // The uncommitted mark; paintTreeDirty decides whether it shows.
+      const dot = doc.createElement("span");
+      dot.className = "gfp-node-dot";
+      dot.setAttribute("aria-hidden", "true");
       const actions = doc.createElement("div");
       actions.className = "gfp-row-actions desk-ft-row-actions";
       // Copy path is host-free, so every row has a menu — including remote,
@@ -1654,7 +1705,8 @@
         openRowMenu(more, entry);
       });
       actions.appendChild(more);
-      row.append(lead, name, actions);
+      if (dirIcon) row.append(lead, dirIcon, name, dot, actions);
+      else row.append(lead, name, dot, actions);
       node.appendChild(row);
       if (entry.kind === "dir") {
         const children = doc.createElement("div");
@@ -1667,6 +1719,7 @@
         if (reopened) {
           node.classList.add("gfp-expanded", "desk-ft-open");
           lead.innerHTML = ICON.chevronDown;
+          dirIcon.innerHTML = ICON.folderOpen;
           children.dataset.loaded = "1";
           renderDirectory(children, reopened, entry.relPath, listings);
         }
@@ -1696,6 +1749,8 @@
       node.classList.toggle("gfp-expanded", opening);
       node.classList.toggle("desk-ft-open", opening);
       lead.innerHTML = opening ? ICON.chevronDown : ICON.chevronRight;
+      const dirIcon = node.querySelector(":scope > .gfp-row > .gfp-dir-icon");
+      if (dirIcon) dirIcon.innerHTML = opening ? ICON.folderOpen : ICON.folder;
       if (!opening) return;
       if (children.dataset.loaded === "1") return;
       appendStatus(children, "Loading…");
@@ -1719,6 +1774,13 @@
     }
 
     function renderFileIcon(host, name, kind) {
+      // Folders are always the outline glyph, whatever icon theme the files
+      // wear. The theme's folder is a filled block that reads heavier than
+      // every file beside it, and the owner asked for the unfilled one.
+      if (kind === "dir") {
+        host.innerHTML = ICON.folder;
+        return;
+      }
       const icons = ui.fileIcons;
       if (!icons || !icons.baseUrl) {
         host.innerHTML = kind === "dir" ? ICON.folder : ICON.file;
@@ -1975,6 +2037,11 @@
       changesBtn.title = count
         ? (count === 1 ? "Changes — 1 file not committed" : "Changes — " + count + " files not committed")
         : "Changes";
+      // Same number, same rule, on the panel toggle — and gone with the
+      // Changes button when there is no repository to count.
+      toggleCount.hidden = !available || !count;
+      toggleCount.textContent = changesCount.textContent;
+      paintTreeDirty();
       if (changesBtn.hidden !== wasHidden) applyStripShrink();
     }
 
