@@ -1504,10 +1504,13 @@ body.vscode-light {
   margin: 0;
   color: var(--vscode-descriptionForeground, #999);
   font-size: 0.88em;
+  line-height: 1.4;
+  /* The no-remote sentence wraps on phones. Keep room when the typing hint
+     clears, but let longer copy (or larger text) grow rather than clip. */
+  min-height: 2.8em;
 }
-.gfp-changes-hint:empty { display: none; }
 /* The all-or-nothing rule, under the buttons it governs. Quieter than the
-   hint above it — the hint is about the press you are about to make, this is
+   hint above the message — the hint is about the press you are about to make, this is
    about what that press covers, and it is true whether or not you read it. */
 .gfp-changes-rule {
   margin: 0;

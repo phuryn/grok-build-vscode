@@ -134,6 +134,10 @@ const CASES = {
       ],
     }),
   },
+  noRemoteDirty: {
+    snapshot: snap({ hasRemote: false, hasUpstream: false, upstream: null, behind: null,
+      files: [file("docs/loremipsum.md", "?", null, null)] }),
+  },
   // The strip with real tabs in it, at both ends of the rule: the Changes list
   // showing over three open files, and one of those files showing instead.
   tabsInChanges: {
@@ -242,7 +246,7 @@ const CASES = {
 // one frame each. Photographing thirteen states at three widths twice over is
 // forty minutes of nobody looking at any of them.
 const WIDE_MATRIX = new Set([
-  "dirty", "diff", "dirtyAndUnpushed", "noRemote", "longPaths", "typed",
+  "dirty", "diff", "dirtyAndUnpushed", "noRemote", "noRemoteDirty", "longPaths", "typed",
   "tabsInChanges", "tabsViewingFile", "badges", "authFailure", "failure", "branchPull",
 ]);
 
@@ -362,6 +366,26 @@ async function audit(page, label, touch, viewer) {
     const changes = panel.querySelector(".gfp-changes");
     if (viewer) return bad;
     if (!changes || changes.hidden) return bad.concat([`${label}: the Changes body is not showing`]);
+
+    // Typing clears one hint and keeps another (the no-remote explanation).
+    // The box and buttons must hold still at phone AND desk widths, and the
+    // longer sentence must grow naturally instead of overflowing a fixed slot.
+    const message = changes.querySelector(".gfp-changes-message");
+    const hint = changes.querySelector(".gfp-changes-hint");
+    if (message && hint) {
+      if (hint.nextElementSibling !== message) bad.push(`${label}: hint is not above the message`);
+      const button = changes.querySelector(".gfp-changes-primary");
+      const before = [message.getBoundingClientRect().top, button.getBoundingClientRect().top];
+      const text = message.value;
+      message.value = text ? "" : "Describe the change";
+      message.dispatchEvent(new Event("input", { bubbles: true }));
+      const after = [message.getBoundingClientRect().top, button.getBoundingClientRect().top];
+      if (before.some((y, i) => Math.abs(y - after[i]) > 0.5)) bad.push(`${label}: typing shifts the commit controls`);
+      message.value = text;
+      message.dispatchEvent(new Event("input", { bubbles: true }));
+      if (hint.scrollHeight > hint.clientHeight + 1) bad.push(`${label}: hint text is clipped`);
+      if (getComputedStyle(hint).minHeight === "0px") bad.push(`${label}: hint reserves no height`);
+    }
 
     // 1. Nothing scrolls sideways. A phone that has to be dragged left to read
     //    a filename is the commonest way a panel like this fails.
@@ -506,7 +530,7 @@ async function audit(page, label, touch, viewer) {
 }
 
 async function main() {
-  const browser = await chromium.launch();
+  const browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || undefined });
   const failures = [];
   let frames = 0;
 

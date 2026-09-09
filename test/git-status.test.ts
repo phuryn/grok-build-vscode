@@ -12,6 +12,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildGitStatusSnapshot,
+  GIT_STATUS_ARGS,
   canRevertFile,
   combineStatusCodes,
   describeGitFailure,
@@ -53,6 +54,21 @@ function planOrThrow(result: ReturnType<typeof planGitOp>): GitOpPlan {
 }
 
 describe("parseGitStatusPorcelain2", () => {
+  it("asks git for individual untracked files, preserving all of them for operation validation", () => {
+    expect(GIT_STATUS_ARGS).toContain("-uall");
+    const paths = Array.from({ length: 1205 }, (_, i) => `docs/file-${i}.md`);
+    const snapshot = buildGitStatusSnapshot({
+      status: parseGitStatusPorcelain2(z("# branch.head main", ...paths.map((path) => "? " + path))),
+      hasRemote: false,
+    });
+    expect(snapshot.files).toHaveLength(paths.length);
+    expect(isKnownChangedPath(snapshot, paths.at(-1))).toBe(true);
+    expect(isKnownChangedPath(snapshot, "docs/")).toBe(false);
+    const plan = planOrThrow(planGitOp({ op: "commit", message: "Save all files" }, snapshot));
+    expect(plan.steps.map((step) => step.args)).toEqual([["add", "-A"], ["commit", "-m", "Save all files"]]);
+    const selected = planOrThrow(planGitOp({ op: "commit", message: "Save last file", paths: [paths.at(-1)!] }, snapshot));
+    expect(selected.steps[0].args).toContain(paths.at(-1));
+  });
   it("reads the branch header, including ahead and behind", () => {
     const { headers } = parseGitStatusPorcelain2(
       z(

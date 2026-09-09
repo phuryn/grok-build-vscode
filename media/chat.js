@@ -18516,14 +18516,19 @@
    *
    * On a cloud machine the overwhelmingly likely reason is that the machine is
    * asleep — it suspends about a minute after the last frame, so reading the
-   * transcript for a couple of minutes is enough. Sending anything wakes it,
-   * and this panel re-reads on its own when the host dials back in, so telling
-   * the owner to refresh the page named the one remedy that was neither needed
-   * nor the real one. He hit exactly this and asked whether the machine sleeps.
+   * transcript for a couple of minutes is enough. The click already sent the
+   * request that wakes it, and this panel re-reads when the host dials back in.
+   * Describe that work without promising a boot time or asking for another send.
+   *
+   * The opening words match the relay's own page-level notice ("Waking your
+   * cloud machine…" in web/chat.html) on purpose: a person can meet both in one
+   * session, and two voices for one event read as two different systems. This
+   * one deliberately omits the duration that one gives — there, a boot is
+   * already underway and timeable; here, a silent read is only evidence.
    */
   function remoteFileSilenceReason() {
     return IS_CLOUD_HOST
-      ? "Your cloud machine is asleep. This fills in when it wakes — send anything to wake it now."
+      ? "Waking your cloud machine. This view fills in when it reconnects."
       : "That machine did not answer. It may be offline; this fills in when it reconnects.";
   }
 
@@ -18742,6 +18747,11 @@
         // somebody writing prose does not get a git panel. Read live, not
         // captured, so switching the setting takes effect without a reload.
         gitEnabled: isCodingPurpose,
+        // Only the remote mount polls. A proven requestId echo is needed too:
+        // a legacy timeout must poison its key to fence late, uncorrelated
+        // replies. Background work must never strand the next explicit read.
+        // Older hosts retain their entry/reconnect/turn-end refresh behavior.
+        pollChanges: () => remoteFileRequestIdsSupported === true,
         initialOpen,
         onOpenChanged: (open) => {
           state.filesBrowse.open = open;

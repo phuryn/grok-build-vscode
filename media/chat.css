@@ -2930,6 +2930,7 @@ button.turn-diff-file.has-diff:focus-visible {
   font-size: 12.5px;
   cursor: pointer;
 }
+body.changes-unavailable .turn-diff-open-changes { display: none; }
 .turn-diff-open-changes:hover {
   background: var(--vscode-button-secondaryHoverBackground, var(--vscode-list-hoverBackground, rgba(127, 127, 127, 0.12)));
 }

@@ -151,6 +151,7 @@
       changes: {
         snapshot: null,
         loading: false,
+        loadSeq: 0,
         error: "",
         /** "no-git" and "not-a-repo" hide the view; "failed" shows the reason. */
         errorKind: "",
@@ -693,6 +694,9 @@
      * active while the Changes list is on screen.
      */
     let changesMode = false;
+    let changesPollTimer = null;
+    let gitWritesInFlight = 0;
+    let renderedChangesState = null;
     /** Which tab the live textarea belongs to, so a repaint only restores a
      *  caret into the same file it came from. */
     let editingTabKey = null;
@@ -928,6 +932,7 @@
     }
 
     function setOpen(next) {
+      const wasOpen = open;
       open = !!next;
       rootEl.hidden = !open;
       toggle.setAttribute("aria-expanded", String(open));
@@ -935,6 +940,8 @@
       if (!open) setMaximized(false);
       applyPresentation();
       if (open && currentState && !currentState.tree) void loadRootTree();
+      syncChangesPolling();
+      if (open && !wasOpen && changesMode) void loadChanges({});
       if (typeof options.onOpenChanged === "function") options.onOpenChanged(open);
     }
 
@@ -1996,7 +2003,7 @@
     }
 
     function changesAvailable() {
-      if (!canGit || !currentState) return false;
+      if (destroyed || !canGit || !currentState) return false;
       if (!gitEnabledNow()) return false;
       const state = currentState.changes;
       return state.errorKind !== "no-git" && state.errorKind !== "not-a-repo";
@@ -2006,6 +2013,10 @@
       const available = changesAvailable();
       const wasHidden = changesBtn.hidden;
       changesBtn.hidden = !available;
+      // Turn cards are painted before the first status read can finish. One
+      // live hook retires every existing link when that read says no git,
+      // and restores them when a different project does offer Changes.
+      doc.body.classList.toggle("changes-unavailable", !available);
       changesBtn.classList.toggle("gfp-changes-selected", !!changesMode);
       changesBtn.setAttribute("aria-pressed", String(!!changesMode));
       const snapshot = currentState && currentState.changes.snapshot;
@@ -2024,6 +2035,37 @@
       toggleCount.textContent = changesCount.textContent;
       paintTreeDirty();
       if (changesBtn.hidden !== wasHidden) applyStripShrink();
+      syncChangesPolling();
+    }
+
+    function canPollChanges() {
+      return !destroyed && open && changesMode && doc.visibilityState === "visible"
+        && changesAvailable() && !gitWritesInFlight
+        && typeof options.pollChanges === "function" && options.pollChanges();
+    }
+
+    /**
+     * Remote status replies are already host frames, which keep a Sprite awake.
+     * Thirty seconds stays inside the relay's 90s silence window without a new
+     * keepalive protocol. Visibility is a billing boundary: a forgotten tab or
+     * a closed view must stop holding the machine, even if a timer was queued.
+     * Desktop mounts do not opt in; their host already announces file writes.
+     */
+    function syncChangesPolling() {
+      if (!canPollChanges()) {
+        if (changesPollTimer !== null) win.clearInterval(changesPollTimer);
+        changesPollTimer = null;
+      } else if (changesPollTimer === null) {
+        changesPollTimer = win.setInterval(() => {
+          if (!canPollChanges()) { syncChangesPolling(); return; }
+          void loadChanges({ quiet: true });
+        }, 30000);
+      }
+    }
+
+    function changesVisibilityChanged() {
+      syncChangesPolling();
+      if (canPollChanges()) void loadChanges({ quiet: true });
     }
 
     function showChanges() {
@@ -2048,12 +2090,14 @@
     }
 
     async function loadChanges(opts) {
-      if (!canGit || !currentScope || !currentState) return;
+      if (destroyed || !canGit || !currentScope || !currentState || gitWritesInFlight) return;
       const state = currentState;
       const scopeId = currentScope.id;
+      const quiet = !!(opts && opts.quiet);
       if (state.changes.loading && !(opts && opts.force)) return;
+      const seq = ++state.changes.loadSeq;
       state.changes.loading = true;
-      if (changesMode) {
+      if (changesMode && !quiet) {
         paintRefresh();
         renderChanges();
       }
@@ -2063,8 +2107,13 @@
       } catch (err) {
         result = { ok: false, kind: "failed", reason: String((err && err.message) || err || "Could not read git status.") };
       }
-      if (destroyed || currentState !== state) return;
+      if (seq !== state.changes.loadSeq) return;
       state.changes.loading = false;
+      if (destroyed || currentState !== state) return;
+      // A background failure cannot replace good data, hide a working tab, or
+      // erase a notice. The next tick may succeed; explicit reads still explain
+      // failures to the person who asked for them.
+      if (quiet && (!result || !result.ok)) return;
       if (result && result.ok) {
         state.changes.snapshot = result.snapshot;
         state.changes.error = "";
@@ -2135,6 +2184,13 @@
       if (state.changes.running) return;
       const before = state.changes.snapshot;
       state.changes.running = true;
+      gitWritesInFlight += 1;
+      // A read started before this write may arrive after its newer snapshot.
+      // Invalidate it now, including its loading flag, so it cannot undo a
+      // successful commit or strand polling when it eventually returns.
+      state.changes.loadSeq += 1;
+      state.changes.loading = false;
+      syncChangesPolling();
       state.changes.notice = null;
       renderChanges();
       let result;
@@ -2143,8 +2199,10 @@
       } catch (err) {
         result = { ok: false, reason: String((err && err.message) || err || "That git command failed.") };
       }
-      if (destroyed || currentState !== state) return;
       state.changes.running = false;
+      gitWritesInFlight -= 1;
+      syncChangesPolling();
+      if (destroyed || currentState !== state) return;
       if (result && result.snapshot) state.changes.snapshot = result.snapshot;
       // A push can fail after its commit succeeded. An advanced local history
       // with no remaining files proves the message was spent in that case too.
@@ -2202,6 +2260,20 @@
 
     function renderChanges() {
       if (!changesMode) return;
+      // Like renderViewer, this rebuilds textareas. Keep the caret, selection
+      // direction and scroll for this scope only; input listeners already keep
+      // the draft text in state. A poll must not interrupt a half-written commit
+      // message (or the branch name being entered beside it).
+      const live = changesEl.querySelector(".gfp-changes-message, .gfp-changes-branch-input");
+      const focused = changesEl.contains(doc.activeElement) ? doc.activeElement : null;
+      const editor = focused && focused.matches("textarea, input") ? focused : live;
+      const carry = editor && currentState && renderedChangesState === currentState.changes
+        ? { selector: editor.classList.contains("gfp-changes-message") ? ".gfp-changes-message" : ".gfp-changes-branch-input",
+            start: editor.selectionStart, end: editor.selectionEnd, direction: editor.selectionDirection,
+            scrollTop: editor.scrollTop, scrollLeft: editor.scrollLeft, focused: doc.activeElement === editor }
+        : null;
+      const scrollTop = changesEl.scrollTop;
+      renderedChangesState = currentState && currentState.changes;
       changesEl.textContent = "";
       if (!currentState) {
         changesEl.appendChild(changesEmpty("No repository selected."));
@@ -2221,6 +2293,14 @@
         return;
       }
       renderChangesList(state);
+      const next = carry && changesEl.querySelector(carry.selector);
+      if (next) {
+        if (carry.focused && open && doc.visibilityState === "visible") next.focus({ preventScroll: true });
+        next.setSelectionRange(carry.start, carry.end, carry.direction);
+        next.scrollTop = carry.scrollTop;
+        next.scrollLeft = carry.scrollLeft;
+      }
+      changesEl.scrollTop = scrollTop;
     }
 
     /**
@@ -2362,8 +2442,18 @@
         changesEl.appendChild(changesSectionHeader("Not committed"));
         const list = doc.createElement("div");
         list.className = "gfp-changes-list";
-        for (const file of files) {
+        // A beginner's unignored node_modules can contain thousands of files.
+        // Cap DOM work only: the full snapshot drives counts, validation and
+        // commit scope, including files below this fold.
+        const rowLimit = 200;
+        for (const file of files.slice(0, rowLimit)) {
           list.appendChild(changeRow(file));
+        }
+        if (files.length > rowLimit) {
+          const more = doc.createElement("p");
+          more.className = "gfp-changes-more";
+          more.textContent = "and " + (files.length - rowLimit) + " more";
+          list.appendChild(more);
         }
         changesEl.appendChild(list);
       }
@@ -2461,7 +2551,7 @@
      * The common case — "put this somewhere I will not lose it" — stays one
      * press on the primary, and everything else is deliberately quieter than
      * it: a second commit that does not push, and the branch escape hatch.
-     * Both commit choices share a row, followed by their hint and scope rule.
+     * The hint precedes the message; both commit choices share the row below it.
      */
     function changesActions(state, snapshot, files) {
       const wrap = doc.createElement("div");
@@ -2470,6 +2560,11 @@
       // Declared up here because the message box's listener, built below,
       // has to keep it in step and closes over the binding.
       let onlyBtn = null;
+
+      const hint = doc.createElement("p");
+      hint.className = "gfp-changes-hint";
+      hint.textContent = primary.hint;
+      wrap.appendChild(hint);
 
       if (files.length) {
         const box = doc.createElement("textarea");
@@ -2481,11 +2576,11 @@
         box.addEventListener("input", () => {
           state.message = box.value;
           const next = changesPrimaryAction(snapshot, { message: state.message });
-          runBtn.disabled = next.disabled || state.running;
+          runBtn.disabled = next.disabled || state.running || typeof state.branchDraft === "string";
           hint.textContent = next.hint;
           if (onlyBtn) {
             onlyBtn.disabled = changesCommitOnlyAction(snapshot, { message: state.message }).disabled
-              || state.running;
+              || state.running || typeof state.branchDraft === "string";
           }
         });
         wrap.appendChild(box);
@@ -2510,11 +2605,6 @@
       actionRow.className = "gfp-changes-action-row";
       actionRow.appendChild(runBtn);
       wrap.appendChild(actionRow);
-
-      const hint = doc.createElement("p");
-      hint.className = "gfp-changes-hint";
-      hint.textContent = primary.hint;
-      wrap.appendChild(hint);
 
       // The rule, said under the buttons rather than in the README. The owner
       // asked "all files or nothing? is that correct?" — which is the question
@@ -3569,6 +3659,8 @@
 
     function destroy() {
       destroyed = true;
+      syncChangesPolling();
+      doc.body.classList.add("changes-unavailable");
       abortPending();
       closeMenu();
       if (copyFlashTimer) {
@@ -3587,6 +3679,7 @@
       // The `true` must match the registration, or this removes nothing and the
       // listener outlives the panel.
       doc.removeEventListener("click", closeMenuFromOutside, true);
+      doc.removeEventListener("visibilitychange", changesVisibilityChanged);
       toggle.remove();
       resizer.remove();
       rootEl.remove();
@@ -3610,6 +3703,7 @@
     // null on the opening click (so it cannot close what has not opened), and
     // on a second click of the same button it skips so `beginMenu` can toggle.
     doc.addEventListener("click", closeMenuFromOutside, true);
+    doc.addEventListener("visibilitychange", changesVisibilityChanged);
     win.addEventListener("resize", applyPresentation);
     function onChromeKey(event) {
       if (event.key !== "Escape" || event.defaultPrevented) return;

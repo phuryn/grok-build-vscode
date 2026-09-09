@@ -603,9 +603,9 @@ describe("remote discard and close semantics", () => {
    * repeatedly. A reply WITHOUT a requestId is what proves an old host, and
    * that case is covered above.
    */
-  it("still reads after a silent host, so a woken machine fills the view in", async () => {
+  it.each([false, true])("still reads after a silent host, so a woken machine fills the view in (cloud=%s)", async (cloud) => {
     const caps = { browseProjectFiles: true, editProjectFiles: true, gitChanges: true };
-    const h = bootWebview({ remote: true });
+    const h = bootWebview({ remote: true, beforeScripts: (window) => Object.assign(window, { grokCloudHost: cloud }) });
 
     // The harness window owns its own timers, so hold the request timeout here
     // and fire it by hand rather than waiting thirty real seconds.
@@ -641,10 +641,86 @@ describe("remote discard and close semantics", () => {
     expect(expiries.length).toBeGreaterThan(0);
     for (const expire of expiries.splice(0)) expire();
     await settle();
+    expect(h.doc.querySelector(".gfp-changes-empty")?.textContent).toBe(cloud
+      ? "Waking your cloud machine. This view fills in when it reconnects."
+      : "That machine did not answer. It may be offline; this fills in when it reconnects.");
 
     // It wakes and dials back in. The next read must reach the WIRE.
     boot();
     await settle();
     expect(requests(h, "gitStatus").length).toBeGreaterThan(asked);
+    await reply(h, requests(h, "gitStatus").at(-1)!, { type: "gitStatusResult", ok: true, snapshot: {
+      branch: "main", files: [{ path: "docs/loremipsum.md", status: "?", added: null, deleted: null }],
+    } });
+    click(h.window, changesBtn!);
+    await settle();
+    expect(h.doc.querySelector(".gfp-changes-headline")?.textContent).toBe("1 file not committed");
+    await h.window.happyDOM.abort();
+  });
+
+  it.each([false, true])("keeps background polling from poisoning a later explicit read (legacy=%s)", async (legacy) => {
+    const h = bootWebview({ remote: true });
+    const intervals = new Map<number, () => void>();
+    const expiries = new Map<number, () => void>();
+    const originalTimeout = h.window.setTimeout.bind(h.window);
+    const originalClear = h.window.clearTimeout.bind(h.window);
+    let id = 100000;
+    Object.assign(h.window, {
+      setInterval: (fn: () => void, ms: number) => {
+        expect(ms).toBe(30000);
+        intervals.set(++id, fn);
+        return id;
+      },
+      clearInterval: (key: number) => intervals.delete(key),
+      setTimeout: (fn: () => void, ms: number) => {
+        if (ms < 20000) return originalTimeout(fn, ms);
+        expiries.set(++id, fn);
+        return id;
+      },
+      clearTimeout: (key: number) => { if (!expiries.delete(key)) originalClear(key); },
+    });
+    const snapshot = { branch: "main", hasRemote: false,
+      files: [{ path: "docs/loremipsum.md", status: "?", added: null, deleted: null }] };
+    dispatch(h.window, { type: "initialState", cwd: CWD_A, appPurpose: "coding",
+      capabilities: { browseProjectFiles: true, gitChanges: true } });
+    await settle();
+    await reply(h, requests(h, "gitStatus").at(-1)!, { type: "gitStatusResult", ok: true, snapshot }, { legacy });
+    click(h.window, h.doc.getElementById("files-browse-btn")!);
+    await settle();
+    await listRoot(h, [], undefined, legacy);
+    click(h.window, h.doc.querySelector(".gfp-changes-btn")!);
+    await settle();
+    await reply(h, requests(h, "gitStatus").at(-1)!, { type: "gitStatusResult", ok: true, snapshot }, { legacy });
+    const before = requests(h, "gitStatus").length;
+    expect(intervals.size).toBe(legacy ? 0 : 1);
+    for (const tick of [...intervals.values()]) tick();
+    await settle();
+    expect(requests(h, "gitStatus")).toHaveLength(before + (legacy ? 0 : 1));
+    if (!legacy) {
+      const poll = requests(h, "gitStatus").at(-1)!;
+      expect(Object.keys(poll).sort()).toEqual(["cwd", "requestId", "type"]);
+      expect(expiries.size).toBe(1);
+      const unchanged = h.doc.querySelector(".gfp-changes")!.innerHTML;
+      for (const expire of [...expiries.values()]) expire();
+      expiries.clear();
+      await settle();
+      expect(h.doc.querySelector(".gfp-changes")!.innerHTML).toBe(unchanged);
+      for (const tick of [...intervals.values()]) tick();
+      await settle();
+      expect(requests(h, "gitStatus")).toHaveLength(before + 2);
+      await reply(h, poll, { type: "gitStatusResult", ok: true, snapshot: { branch: "stale", files: [] } });
+      expect(h.doc.querySelector(".gfp-changes-branch-name")?.textContent).toBe("main");
+      await reply(h, requests(h, "gitStatus").at(-1)!, { type: "gitStatusResult", ok: true, snapshot });
+    }
+    // Even on a legacy host, the next deliberate visit still reaches the wire.
+    click(h.window, h.doc.querySelector(".gfp-title")!);
+    expect(intervals.size).toBe(0);
+    const explicitBefore = requests(h, "gitStatus").length;
+    click(h.window, h.doc.querySelector(".gfp-changes-btn")!);
+    await settle();
+    expect(requests(h, "gitStatus")).toHaveLength(explicitBefore + 1);
+    await reply(h, requests(h, "gitStatus").at(-1)!, { type: "gitStatusResult", ok: true, snapshot }, { legacy });
+    expect(h.doc.querySelector(".gfp-changes-headline")?.textContent).toBe("1 file not committed");
+    await h.window.happyDOM.abort();
   });
 });

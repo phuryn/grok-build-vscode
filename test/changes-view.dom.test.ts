@@ -12,6 +12,7 @@
 // `scripts/changes-view-screens.mjs` owns how it looks at three viewports.
 import { describe, expect, it, vi } from "vitest";
 import { Window } from "happy-dom";
+import { readFileSync } from "node:fs";
 import { describeGitFailure } from "../src/git-status";
 import { bootWebview, dispatch } from "./webview-harness";
 import { fileTreePanelBootSource } from "../src/desktop/file-tree-panel";
@@ -67,6 +68,7 @@ function harness(options: {
   diff?: () => Promise<unknown>;
   run?: (request: Record<string, unknown>) => Promise<unknown>;
   gitEnabled?: () => boolean;
+  pollChanges?: () => boolean;
   omitGit?: boolean;
   askAgent?: (text: string) => void;
   openSettings?: () => void;
@@ -76,6 +78,17 @@ function harness(options: {
 } = {}) {
   const window = new Window({ url: "https://example.test/" });
   const document = window.document;
+  const intervals = new Map<number, () => void>();
+  const intervalDelays: number[] = [];
+  let timerSeq = 0;
+  if (options.pollChanges) Object.assign(window, {
+    setInterval: (fn: () => void, ms: number) => {
+      intervalDelays.push(ms);
+      intervals.set(++timerSeq, fn);
+      return timerSeq;
+    },
+    clearInterval: (id: number) => intervals.delete(id),
+  });
   const composer = document.createElement("textarea");
   composer.value = "Keep my draft";
   document.body.appendChild(composer);
@@ -125,6 +138,7 @@ function harness(options: {
       openSettings: options.openSettings,
     },
     gitEnabled: options.gitEnabled,
+    pollChanges: options.pollChanges,
   });
 
   const q = (selector: string) => document.querySelector(selector) as HTMLElement | null;
@@ -132,6 +146,11 @@ function harness(options: {
 
   return {
     window, document, panel, runs, diffs, q, qq, composer,
+    intervals, intervalDelays,
+    async tick() {
+      for (const fn of [...intervals.values()]) fn();
+      await settle();
+    },
     statusCalls: () => statusCalls,
     async open() {
       panel.setOpen(true);
@@ -736,7 +755,7 @@ describe("GitHub disconnected, GitHub remote", () => {
     expect(only.textContent).toBe("Commit");
     expect(only.parentElement?.classList.contains("gfp-changes-action-row")).toBe(true);
     expect(only.nextElementSibling).toBe(h.q(".gfp-changes-primary"));
-    expect(only.parentElement?.nextElementSibling).toBe(h.q(".gfp-changes-hint"));
+    expect(h.q(".gfp-changes-hint")?.nextElementSibling).toBe(h.q(".gfp-changes-message"));
     only.click();
     await settle();
     expect(h.runs).toEqual([{ op: "commit", message: "Save the work", push: false }]);
@@ -766,12 +785,17 @@ describe("Project without GitHub", () => {
       askAgent: vi.fn(), openSettings: vi.fn(),
     });
     await h.open();
+    expect(h.q(".gfp-changes-btn")?.hidden).toBe(false);
+    expect(h.panel.canShowChanges()).toBe(true);
     expect(h.q(".gfp-changes-primary")?.textContent).toBe("Commit");
     expect(h.q(".gfp-changes-commit-only")).toBeNull();
     expect(h.q(".gfp-changes-action-row")?.children).toHaveLength(1);
     expect(h.q(".gfp-changes-hint")?.textContent).toContain("no remote");
     expect(h.q(".gfp-changes-ask-pull")).toBeNull();
     expect(h.q(".gfp-changes")?.textContent).not.toMatch(/push/i);
+    await typeCommit(h);
+    await runPrimary(h);
+    expect(h.runs).toEqual([{ op: "commit", message: "Save the work", push: false }]);
     h.panel.destroy();
   });
 
@@ -790,6 +814,20 @@ describe("Project without GitHub", () => {
 });
 
 describe("Origin conflict", () => {
+  it("explains a non-fast-forward after the commit succeeds and keeps the local save visible", async () => {
+    const detail = "To https://example.test/team/app.git\n ! [rejected] main -> main (non-fast-forward)\nerror: failed to push some refs";
+    const h = harness({ snapshot: snap({ files: [file("a.ts", "M")] }),
+      run: async () => ({ ok: false, snapshot: snap({ ahead: 1 }),
+        reason: describeGitFailure("commit", detail, "push"), detail }),
+    });
+    await h.open();
+    await typeCommit(h);
+    await runPrimary(h);
+    expect(h.q(".gfp-changes-headline")?.textContent).toBe("1 commit saved here but not pushed");
+    expect(h.q(".gfp-changes-notice-text")?.textContent).toBe(rejectedReason);
+    expect(h.q(".gfp-changes-notice-detail")?.textContent).toBe(detail);
+    h.panel.destroy();
+  });
   it.each(["overlay", "dock"] as const)("offers the exact pull draft in the notice and branch line (%s)", async (presentation) => {
     const askAgent = vi.fn(() => expect(h.panel.isOpen()).toBe(presentation === "dock"));
     const h = harness({ presentation, askAgent, snapshot: snap({ ahead: 1 }),
@@ -828,6 +866,262 @@ describe("Origin conflict", () => {
     expect(h.q(".gfp-changes-ask-pull")).toBeNull();
     expect(askAgent).not.toHaveBeenCalled();
     h.panel.destroy();
+  });
+});
+
+describe("bounded rendering with the complete change list", () => {
+  it("caps rows while counting and retaining every path in a large untracked tree", async () => {
+    const files = Array.from({ length: 1205 }, (_, i) => file(`docs/file-${i}.md`, "?", null, null));
+    const snapshot = snap({ files });
+    const h = harness({ snapshot });
+    await h.open();
+    expect(h.qq(".gfp-change-row")).toHaveLength(200);
+    expect(h.q(".gfp-changes-more")?.textContent).toBe("and 1005 more");
+    expect(h.q(".gfp-changes-headline")?.textContent).toBe("1205 files not committed");
+    expect(h.q(".gfp-changes-btn")?.title).toContain("1205 files not committed");
+    expect(h.panel._scopes.get("/work/app").changes.snapshot.files).toBe(files);
+    expect(files).toHaveLength(1205);
+    h.q(".gfp-change-row")!.click();
+    await settle();
+    expect(h.diffs).toEqual(["docs/file-0.md"]);
+    h.panel.destroy();
+  });
+
+  it.each([0, 1, 200])("does not invent a remainder for %i files", async (count) => {
+    const h = harness({ snapshot: snap({ files: Array.from({ length: count }, (_, i) => file(`${i}.ts`, "M")) }) });
+    await h.open();
+    expect(h.qq(".gfp-change-row")).toHaveLength(count);
+    expect(h.q(".gfp-changes-more")).toBeNull();
+    h.panel.destroy();
+  });
+});
+
+describe("remote Changes polling", () => {
+  it("keeps the branch draft and its selection without re-enabling Commit while naming", async () => {
+    const h = harness({ pollChanges: () => true, snapshot: snap({ files: [file("a.ts", "M")] }) });
+    await h.open();
+    h.q(".gfp-changes-move-branch")!.click();
+    await typeCommit(h);
+    expect((h.q(".gfp-changes-primary") as HTMLButtonElement).disabled).toBe(true);
+    expect((h.q(".gfp-changes-commit-only") as HTMLButtonElement).disabled).toBe(true);
+    const branch = h.q(".gfp-changes-branch-input") as HTMLInputElement;
+    branch.value = "feature/cloud";
+    branch.dispatchEvent(new h.window.Event("input", { bubbles: true }));
+    branch.focus();
+    branch.setSelectionRange(8, 13);
+    await h.tick();
+    const next = h.q(".gfp-changes-branch-input") as HTMLInputElement;
+    expect(next.value).toBe("feature/cloud");
+    expect([next.selectionStart, next.selectionEnd]).toEqual([8, 13]);
+    expect(h.document.activeElement).toBe(next);
+    h.panel.destroy();
+  });
+
+  it("runs every 30s only while the view and document are visible, including a diff", async () => {
+    const h = harness({ pollChanges: () => true, snapshot: snap({ files: [file("a.ts", "M")] }) });
+    await settle();
+    expect(h.intervals.size).toBe(0);
+    await h.open();
+    expect(h.intervalDelays).toEqual([30000]);
+    let before = h.statusCalls();
+    await h.tick();
+    expect(h.statusCalls()).toBe(before + 1);
+    h.q(".gfp-change-row")!.click();
+    await settle();
+    before = h.statusCalls();
+    await h.tick();
+    expect(h.statusCalls()).toBe(before + 1);
+
+    // Clearing the timer AND checking inside its callback protect against a
+    // tick already queued before a visibility event was delivered.
+    const queued = [...h.intervals.values()][0];
+    Object.defineProperty(h.document, "visibilityState", { configurable: true, value: "hidden" });
+    h.document.dispatchEvent(new h.window.Event("visibilitychange"));
+    expect(h.intervals.size).toBe(0);
+    before = h.statusCalls();
+    queued();
+    await h.tick();
+    expect(h.statusCalls()).toBe(before);
+    Object.defineProperty(h.document, "visibilityState", { configurable: true, value: "visible" });
+    h.document.dispatchEvent(new h.window.Event("visibilitychange"));
+    await settle();
+    expect(h.statusCalls()).toBe(before + 1); // fresh on return, not 30s later
+    expect(h.intervals.size).toBe(1);
+
+    h.panel.setOpen(false);
+    expect(h.intervals.size).toBe(0);
+    before = h.statusCalls();
+    queued();
+    await h.tick();
+    expect(h.statusCalls()).toBe(before);
+    h.panel.setOpen(true);
+    await settle();
+    expect(h.statusCalls()).toBe(before + 1);
+    h.q(".gfp-title")!.click();
+    expect(h.intervals.size).toBe(0);
+    before = h.statusCalls();
+    await h.tick();
+    expect(h.statusCalls()).toBe(before);
+    h.panel.destroy();
+  });
+
+  it("stops on a file tab, scope change, loss of availability and destruction", async () => {
+    let enabled = true;
+    const h = harness({ pollChanges: () => true, gitEnabled: () => enabled });
+    await h.open();
+    await h.panel.openPath("notes.md");
+    expect(h.intervals.size).toBe(0);
+    await h.open();
+    enabled = false;
+    h.panel.refreshChangesAvailability();
+    expect(h.intervals.size).toBe(0);
+    enabled = true;
+    h.panel.refreshChangesAvailability();
+    expect(h.intervals.size).toBe(1);
+    await h.panel.setScope({ id: "/work/other", label: "other" });
+    expect(h.intervals.size).toBe(0);
+    await h.open();
+    const queued = [...h.intervals.values()][0];
+    h.panel.destroy();
+    expect(h.intervals.size).toBe(0);
+    const before = h.statusCalls();
+    queued();
+    await settle();
+    expect(h.statusCalls()).toBe(before);
+  });
+
+  it("does not opt a desktop mount into polling", async () => {
+    const h = harness();
+    const interval = vi.spyOn(h.window, "setInterval");
+    await h.open();
+    expect(interval).not.toHaveBeenCalled();
+    h.panel.destroy();
+  });
+
+  it("preserves message text, focus, backward selection and scroll through a delayed poll", async () => {
+    let finish: (result: unknown) => void = () => {};
+    let delayed = false;
+    const snapshot = snap({ files: [file("a.ts", "M")] });
+    const h = harness({ pollChanges: () => true, status: async () => delayed
+      ? new Promise((resolve) => { finish = resolve; }) : { ok: true, snapshot } });
+    await h.open();
+    delayed = true;
+    await h.tick();
+    const before = h.statusCalls();
+    await h.tick();
+    expect(h.statusCalls()).toBe(before); // no overlapping reads
+    await typeCommit(h, "Keep this draft\nand this line");
+    const box = h.q(".gfp-changes-message") as HTMLTextAreaElement;
+    box.focus();
+    box.setSelectionRange(5, 14, "backward");
+    box.scrollTop = 12;
+    finish({ ok: true, snapshot: snap({ files: [file("a.ts", "M"), file("b.ts", "?")] }) });
+    await settle();
+    const next = h.q(".gfp-changes-message") as HTMLTextAreaElement;
+    expect(next).not.toBe(box);
+    expect(next.value).toBe("Keep this draft\nand this line");
+    expect([next.selectionStart, next.selectionEnd, next.selectionDirection, next.scrollTop]).toEqual([5, 14, "backward", 12]);
+    expect(h.document.activeElement).toBe(next);
+    expect(h.q(".gfp-changes-headline")?.textContent).toContain("2 files");
+    expect(h.q(".gfp-changes-hint")?.nextElementSibling).toBe(next);
+    h.panel.destroy();
+  });
+
+  it.each(["failed", "not-a-repo", "no-git", "throw"])("keeps good data and retries after a quiet %s failure", async (kind) => {
+    let failing = false;
+    const snapshot = snap({ files: [file("a.ts", "M")] });
+    const h = harness({ pollChanges: () => true, status: async () => {
+      if (failing && kind === "throw") throw new Error("Offline");
+      return failing ? { ok: false, kind, reason: "Offline" } : { ok: true, snapshot };
+    } });
+    await h.open();
+    await typeCommit(h);
+    const html = h.q(".gfp-changes")!.innerHTML;
+    failing = true;
+    await h.tick();
+    expect(h.q(".gfp-changes")!.innerHTML).toBe(html);
+    expect(h.panel.canShowChanges()).toBe(true);
+    expect(h.panel._scopes.get("/work/app").changes.errorKind).toBe("");
+    const before = h.statusCalls();
+    failing = false;
+    await h.tick();
+    expect(h.statusCalls()).toBe(before + 1);
+    h.panel.destroy();
+  });
+
+  it("pauses for a long write and rejects a poll that arrives after the committed snapshot", async () => {
+    let finishRead: (result: unknown) => void = () => {};
+    let finishWrite: (result: unknown) => void = () => {};
+    let delayed = false;
+    const old = snap({ files: [file("a.ts", "M")] });
+    const h = harness({ pollChanges: () => true,
+      status: async () => delayed ? new Promise((resolve) => { finishRead = resolve; }) : { ok: true, snapshot: old },
+      run: async () => new Promise((resolve) => { finishWrite = resolve; }),
+    });
+    await h.open();
+    delayed = true;
+    const queued = [...h.intervals.values()][0];
+    await h.tick();
+    await typeCommit(h);
+    await runPrimary(h);
+    expect(h.intervals.size).toBe(0);
+    const before = h.statusCalls();
+    for (let i = 0; i < 6; i++) { queued(); await h.tick(); }
+    expect(h.statusCalls()).toBe(before);
+    finishWrite({ ok: true, snapshot: snap() });
+    await settle();
+    finishRead({ ok: true, snapshot: old });
+    await settle();
+    expect(h.q(".gfp-changes-headline")?.textContent).toBe("Everything is committed and pushed");
+    expect(h.intervals.size).toBe(1);
+    delayed = false;
+    await h.tick();
+    expect(h.statusCalls()).toBe(before + 1);
+    h.panel.destroy();
+  });
+});
+
+describe("late git availability and existing turn cards", () => {
+  it.each(["not-a-repo", "no-git"])("hides every existing Open Changes link after %s resolves", async (kind) => {
+    const h = bootWebview({ remote: true });
+    const style = h.doc.createElement("style");
+    style.textContent = readFileSync(new URL("../media/chat.css", import.meta.url), "utf8");
+    h.doc.head.appendChild(style);
+    dispatch(h.window, { type: "initialState", cwd: "/work/app", appPurpose: "coding",
+      capabilities: { browseProjectFiles: true, gitChanges: true } });
+    await settle();
+    dispatch(h.window, { type: "agentStart" });
+    dispatch(h.window, { type: "toolCall", call: { toolCallId: "edit", kind: "edit", title: "Edit a.ts" } });
+    dispatch(h.window, { type: "toolCallUpdate", call: { toolCallId: "edit", content: [
+      { type: "diff", path: "a.ts", oldText: "x", newText: "y" },
+    ] } });
+    dispatch(h.window, { type: "agentEnd" });
+    (h.doc.querySelector(".turn-diff-summary-header") as HTMLElement).click();
+    const link = h.doc.querySelector(".turn-diff-open-changes") as HTMLElement;
+    expect(link).toBeTruthy();
+    expect(h.window.getComputedStyle(link).display).not.toBe("none");
+    const request = h.posted.find((msg) => msg.type === "gitStatus")!;
+    dispatch(h.window, { ...request, type: "gitStatusResult", ok: false, kind, reason: "No repository" });
+    await settle();
+    expect((h.doc.querySelector(".gfp-changes-btn") as HTMLElement).hidden).toBe(true);
+    // happy-dom caches a failed ancestor selector on the descendant. Changing
+    // a harmless attribute invalidates that cache before reading live CSS.
+    link.setAttribute("data-style-read", "unavailable");
+    expect(h.window.getComputedStyle(link).display).toBe("none");
+    expect(link.isConnected).toBe(true); // no disappearing-on-click workaround
+    dispatch(h.window, { type: "repos", selectedCwd: "/work/repo", activeCwd: "/work/repo", entries: [
+      { cwd: "/work/repo", label: "repo", available: true, pinned: false, updatedAt: 2 },
+    ] });
+    await settle();
+    expect(h.doc.body.classList.contains("changes-unavailable")).toBe(false);
+    const next = h.posted.filter((msg) => msg.type === "gitStatus").at(-1)!;
+    dispatch(h.window, { ...next, type: "gitStatusResult", ok: true, snapshot: snap() });
+    await settle();
+    expect(link.isConnected).toBe(true);
+    expect(h.doc.body.classList.contains("changes-unavailable")).toBe(false);
+    link.setAttribute("data-style-read", "available");
+    expect(h.window.getComputedStyle(link).display).not.toBe("none");
+    await h.window.happyDOM.abort();
   });
 });
 

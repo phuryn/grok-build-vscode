@@ -113,15 +113,20 @@ export function emptyGitStatus(): GitStatusSnapshot {
  * ------------------------------------------------------------------ */
 
 /**
- * `git status --porcelain=2 --branch -z`.
+ * `git status --porcelain=2 --branch -z -uall`.
  *
  * `-z` rather than the quoted default because the default C-quotes any path
  * with a space, a quote or a non-ASCII byte, and un-quoting it correctly is a
  * parser nobody should write twice. Porcelain v2 (not v1) because it carries
  * the branch header, which is where ahead/behind come from without a second
  * `rev-list`.
+ *
+ * `-uall` keeps wholly untracked directories from becoming one bogus file
+ * (and a diff against `docs/null`). Keep every path in the snapshot: it is
+ * also the operation allowlist, and `git add -A` includes them all. Only the
+ * renderer may cap how many rows it draws.
  */
-export const GIT_STATUS_ARGS: readonly string[] = ["status", "--porcelain=2", "--branch", "-z"];
+export const GIT_STATUS_ARGS: readonly string[] = ["status", "--porcelain=2", "--branch", "-z", "-uall"];
 
 /**
  * `git diff HEAD --numstat -z` — line counts for tracked changes.

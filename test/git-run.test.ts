@@ -308,6 +308,18 @@ afterAll(() => {
 });
 
 describe.runIf(gitAvailable !== false)("readGitStatus against real git", () => {
+  it("expands a wholly untracked directory into diffable files", async () => {
+    const root = await makeRepo("new-directory");
+    fs.mkdirSync(path.join(root, "docs", "nested"), { recursive: true });
+    fs.writeFileSync(path.join(root, "docs", "loremipsum.md"), "lorem ipsum\n");
+    fs.writeFileSync(path.join(root, "docs", "nested", "notes.md"), "notes\n");
+    const result = await readGitStatus(root);
+    if (!result.ok) throw new Error(result.reason);
+    expect(result.snapshot.files.map((file) => file.path)).toEqual(["docs/loremipsum.md", "docs/nested/notes.md"]);
+    const diff = await readGitFileDiff(root, "docs/loremipsum.md", { untracked: true });
+    expect(diff.ok).toBe(true);
+    if (diff.ok) expect(diff.patch).toContain("+lorem ipsum");
+  });
   it("reads a clean repository as having nothing to do", async () => {
     const root = await makeRepo("clean");
     const result = await readGitStatus(root);
