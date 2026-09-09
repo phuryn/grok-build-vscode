@@ -10069,7 +10069,7 @@
     }
     el.appendChild(hdr);
 
-    // Path → the LAST tool call that touched it, for the remote reveal below.
+    // Path → the LAST tool call that touched it, for the reveal below.
     // Same normalization aggregateTurnEdits merges on, so the lookup cannot
     // miss on a case variant that the card itself folded into one row.
     const lastCallByPath = new Map();
@@ -10083,43 +10083,26 @@
     list.className = "turn-diff-summary-list";
     for (const f of agg.files) {
       const isDel = f.action === "deleted";
-      // On a remote the native diff is unreachable, so the row is a button only
-      // where the in-transcript row it would reveal is known. Better a plain
-      // line than a control that looks tappable and does nothing on a phone.
-      const revealId = IS_REMOTE ? lastCallByPath.get(normalizeTurnEditPathKey(f.path || "")) : null;
-      const clickable = !isDel && (IS_REMOTE ? !!revealId : !!f.openDiff);
+      // The row opens that file's own tool row, on every surface. There is no
+      // whole-turn diff to open instead: a wire diff carries the REPLACED
+      // REGION, not a snapshot, so a file edited twice has no honest before/
+      // after without host-side baselines — and the tool row it reveals holds
+      // the real diff, with its own "open diff →" to the native editor beside
+      // it. A remote could not have posted openDiff anyway (host-local).
+      const revealId = lastCallByPath.get(normalizeTurnEditPathKey(f.path || ""));
+      const clickable = !isDel && !!revealId;
       const row = document.createElement(clickable ? "button" : "div");
       row.className = "turn-diff-file"
         + (clickable ? " has-diff" : "")
         + (isDel ? " is-deleted" : "");
       if (clickable) {
         row.type = "button";
-        row.title = IS_REMOTE ? "Show the diff" : "Open diff";
-        const payload = f.openDiff;
+        row.title = "Show the diff";
         row.onclick = (e) => {
           e.stopPropagation();
-          if (IS_REMOTE) {
-            // Expands that file's inline diff in place and scrolls to it — the
-            // same answer the permission card gives a remote.
-            revealToolDiff(revealId);
-            return;
-          }
-          // Desktop routes a diff into its in-app overlay; VS Code opens the
-          // native editor. The payload is already a complete openDiff message,
-          // so it is posted as-is rather than rebuilt through openDiffMessage —
-          // that reader indexes diff.sites, which an aggregate need not carry.
-          if (hostPreviewsInApp()) {
-            openPreviewOverlay({
-              kind: "diff",
-              path: payload.path,
-              oldText: payload.oldText,
-              newText: payload.newText,
-              sites: payload.sites,
-              replaceAll: payload.replaceAll,
-            });
-            return;
-          }
-          vscode.postMessage(payload);
+          // Expands the row and its group, and scrolls it into view — the same
+          // answer the permission card gives a remote.
+          revealToolDiff(revealId);
         };
       }
       row.appendChild(turnDiffFilePathEl(f.path));

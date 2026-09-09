@@ -47,6 +47,8 @@ const DARK = {
   foreground: "#CCCCCC",
   descriptionForeground: "rgba(204,204,204,0.7)",
   "editor-background": "#1F1F1F",
+  // chat.css paints html/body from this one, not from editor-background.
+  "sideBar-background": "#181818",
   "editor-foreground": "#CCCCCC",
   "editorWidget-background": "#202020",
   "editorWidget-border": "#454545",
@@ -74,6 +76,7 @@ const LIGHT = {
   foreground: "#3B3B3B",
   descriptionForeground: "rgba(59,59,59,0.7)",
   "editor-background": "#FFFFFF",
+  "sideBar-background": "#F8F8F8",
   "editor-foreground": "#3B3B3B",
   "editorWidget-background": "#F8F8F8",
   "editorWidget-border": "#C8C8C8",
@@ -96,7 +99,7 @@ const vars = (theme) =>
     .map(([k, v]) => `--vscode-${k}: ${v};`)
     .join("\n");
 
-function page(theme, themeClass) {
+function page(theme, themeClass, remote) {
   // The relay's chat.html carries this, and without it Chromium's mobile
   // emulation lays the page out at 980px and scales the result down — every
   // measurement then reads correct while the pixels a thumb meets are half the
@@ -110,7 +113,7 @@ function page(theme, themeClass) {
 html, body {
   margin: 0;
   height: 100%;
-  background: var(--vscode-editor-background);
+  background: var(--vscode-sideBar-background);
   color: var(--vscode-editor-foreground);
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
   font-size: 13px;
@@ -123,6 +126,7 @@ ${chatCss}</style></head>
     setState: () => {}, getState: () => undefined,
   });
 </script>
+${remote ? "<script>window.grokRemoteClient = true;</script>" : ""}
 <script>${helperJs}</script>
 <script>${settingsJs}</script>
 <script>${panelJs}</script>
@@ -211,6 +215,10 @@ const CASES = {
   expanded: { messages: [...TURN, { type: "expandCommandOutputs", value: true }], expectCard: false },
   // Knowledge work is not about files being edited.
   knowledge: { messages: [...TURN, { type: "appPurpose", value: "knowledge" }], expectCard: false },
+  // The same turn on a phone. The rows behave identically here — they reveal
+  // the file's own tool row — and the frame is the only place to SEE that they
+  // still read as rows you can press at thumb size.
+  remote: { messages: TURN, expectCard: true, remote: true },
 };
 
 const VIEWPORTS = [
@@ -246,7 +254,7 @@ try {
       });
       for (const [caseName, spec] of Object.entries(CASES)) {
         const p = await context.newPage();
-        await p.setContent(page(th.theme, th.cls), { waitUntil: "load" });
+        await p.setContent(page(th.theme, th.cls, spec.remote), { waitUntil: "load" });
         for (const m of spec.messages) {
           await p.evaluate((data) => window.dispatchEvent(new MessageEvent("message", { data })), m);
         }
@@ -298,6 +306,12 @@ try {
                 }),
               ),
             ),
+            // A row is either a control with a promise in its tooltip, or a
+            // plain line. Nothing in between, on any surface.
+            rowKinds: rows.map((r) => `${r.tagName}:${r.title || ""}`),
+            // The ground the card is actually drawn on. A themed card floating
+            // on an unthemed page is a frame nobody should trust.
+            pageGround: getComputedStyle(document.body).backgroundColor,
             cardWidth: card ? Math.round(card.getBoundingClientRect().width) : 0,
             // The card must take its +/- colours from the shared diff palette,
             // not a second one invented for it.
@@ -350,6 +364,24 @@ try {
           }
           if (seen.rowCount !== 3) fail(`${id}: ${seen.rowCount} rows, expected 3`);
           if (!seen.deletedColour) fail(`${id}: the shell-deleted file has no Deleted tag`);
+        }
+        // A dead control looks identical to a live one in a screenshot, so the
+        // offer itself is asserted — and it is the SAME offer on every surface.
+        if (spec.expectCard && (caseName === "turn" || caseName === "remote")) {
+          const want = "Show the diff";
+          const wrong = seen.rowKinds.filter(
+            (k) => k !== `BUTTON:${want}` && k !== "DIV:",
+          );
+          if (wrong.length) fail(`${id}: rows offer ${wrong.join(", ")}, expected "${want}" or a plain line`);
+          if (!seen.rowKinds.some((k) => k === `BUTTON:${want}`)) {
+            fail(`${id}: no row offers "${want}" — every edited file here has a diff to show`);
+          }
+        }
+        // A dark frame on a white page is not a dark frame.
+        {
+          const ground = seen.pageGround.replace(/\s+/g, "");
+          const want = th.name === "dark" ? "rgb(24,24,24)" : "rgb(248,248,248)";
+          if (ground !== want) fail(`${id}: page ground is ${seen.pageGround}, expected ${want}`);
         }
         await p.close();
       }

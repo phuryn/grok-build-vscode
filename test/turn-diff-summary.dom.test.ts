@@ -32,7 +32,7 @@ function rowByPath(doc: Document, re: RegExp) {
 }
 
 describe("turn-level file change summary", () => {
-  it("lists every edited file with path-deduped totals and opens the native diff", () => {
+  it("lists every edited file with path-deduped totals and reveals its diff", () => {
     const { window, doc, posted } = bootWebview();
 
     dispatch(window, { type: "agentStart" });
@@ -62,13 +62,14 @@ describe("turn-level file change summary", () => {
     expect(rows[1].querySelector(".turn-diff-file-path")!.textContent).toBe("src/b.ts");
 
     click(window, rows[0] as HTMLElement);
-    const opens = posted.filter((m: any) => m.type === "openDiff");
-    expect(opens).toHaveLength(1);
-    expect(opens[0]).toMatchObject({ path: "src/a.ts", oldText: "x", newText: "yz" });
+    // The row reveals that file's own tool row — there is no honest
+    // turn-level diff to post (see webview-helpers.js § aggregateTurnEdits).
+    expect(posted.filter((m: any) => m.type === "openDiff")).toHaveLength(0);
+    expect(doc.querySelector(".tool-item.expanded, .tool-item-flat.expanded")).toBeTruthy();
   });
 
   describe("same file edited multiple times in one turn", () => {
-    it("sums create + later edit across case-variant paths; openDiff is first→last", () => {
+    it("sums create + later edit across case-variant paths", () => {
       const { window, doc, posted } = bootWebview();
       dispatch(window, { type: "agentStart" });
       dispatch(window, editCall("c1", "F1.txt", "Write F1.txt"));
@@ -84,11 +85,13 @@ describe("turn-level file change summary", () => {
       expect(rows[0].querySelector(".diff-stat-del")!.textContent).toBe("−3");
 
       click(window, rows[0] as HTMLElement);
-      const opens = posted.filter((m: any) => m.type === "openDiff");
-      expect(opens[0]).toMatchObject({ oldText: "", newText: "A\nB\nC" });
+      // The row reveals that file's own tool row — there is no honest
+      // turn-level diff to post (see webview-helpers.js § aggregateTurnEdits).
+      expect(posted.filter((m: any) => m.type === "openDiff")).toHaveLength(0);
+      expect(doc.querySelector(".tool-item.expanded, .tool-item-flat.expanded")).toBeTruthy();
     });
 
-    it("three sequential appends on F3 sum to +3 and open the full span", () => {
+    it("three sequential appends on F3 sum to +3", () => {
       const { window, doc, posted } = bootWebview();
       const v0 = "base\n";
       const v1 = "base\npass1\n";
@@ -107,10 +110,10 @@ describe("turn-level file change summary", () => {
       expect(row.querySelector(".diff-stat-add")!.textContent).toBe("+3");
       expect(row.querySelector(".diff-stat-del")!.textContent).toBe("−0");
       click(window, row);
-      expect(posted.filter((m: any) => m.type === "openDiff").pop()).toMatchObject({
-        oldText: v0,
-        newText: v3,
-      });
+      // The row reveals that file's own tool row — there is no honest
+      // turn-level diff to post (see webview-helpers.js § aggregateTurnEdits).
+      expect(posted.filter((m: any) => m.type === "openDiff")).toHaveLength(0);
+      expect(doc.querySelector(".tool-item.expanded, .tool-item-flat.expanded")).toBeTruthy();
     });
 
     it("add a line then remove that same line — both + and − appear in the sum", () => {
@@ -132,10 +135,10 @@ describe("turn-level file change summary", () => {
       expect(row.querySelector(".diff-stat-add")!.textContent).toBe("+1");
       expect(row.querySelector(".diff-stat-del")!.textContent).toBe("−1");
       click(window, row);
-      expect(posted.filter((m: any) => m.type === "openDiff").pop()).toMatchObject({
-        oldText: before,
-        newText: after,
-      });
+      // The row reveals that file's own tool row — there is no honest
+      // turn-level diff to post (see webview-helpers.js § aggregateTurnEdits).
+      expect(posted.filter((m: any) => m.type === "openDiff")).toHaveLength(0);
+      expect(doc.querySelector(".tool-item.expanded, .tool-item-flat.expanded")).toBeTruthy();
     });
 
     it("add content then rewrite that same content", () => {
@@ -176,10 +179,10 @@ describe("turn-level file change summary", () => {
       expect(row.querySelector(".diff-stat-add")!.textContent).toBe("+2");
       expect(row.querySelector(".diff-stat-del")!.textContent).toBe("−2");
       click(window, row);
-      expect(posted.filter((m: any) => m.type === "openDiff").pop()).toMatchObject({
-        oldText: v0,
-        newText: v3,
-      });
+      // The row reveals that file's own tool row — there is no honest
+      // turn-level diff to post (see webview-helpers.js § aggregateTurnEdits).
+      expect(posted.filter((m: any) => m.type === "openDiff")).toHaveLength(0);
+      expect(doc.querySelector(".tool-item.expanded, .tool-item-flat.expanded")).toBeTruthy();
     });
 
     it("live card grows as a second edit lands on the same file (before agentEnd)", () => {
@@ -288,11 +291,11 @@ describe("turn-level file change summary", () => {
       expect(rows[0].classList.contains("is-deleted")).toBe(false);
       // create +2, append +1 → +3 (pre-delete edit wiped)
       expect(rows[0].querySelector(".diff-stat-add")!.textContent).toBe("+3");
-      click(window, rows[0]);
-      expect(posted.filter((m: any) => m.type === "openDiff").pop()).toMatchObject({
-        oldText: "",
-        newText: "brand\nnew\nplus",
-      });
+      click(window, rows[0] as HTMLElement);
+      // The row reveals that file's own tool row — there is no honest
+      // turn-level diff to post (see webview-helpers.js § aggregateTurnEdits).
+      expect(posted.filter((m: any) => m.type === "openDiff")).toHaveLength(0);
+      expect(doc.querySelector(".tool-item.expanded, .tool-item-flat.expanded")).toBeTruthy();
     });
   });
 
@@ -401,10 +404,10 @@ describe("turn-level file change summary", () => {
     const row = rowByPath(doc, /multi\.txt/)!;
     expect(row.querySelector(".diff-stat-add")!.textContent).toBe("+2");
     click(window, row);
-    expect(posted.filter((m: any) => m.type === "openDiff").pop()).toMatchObject({
-      oldText: "",
-      newText: "one\ntwo",
-    });
+    // The row reveals that file's own tool row — there is no honest
+    // turn-level diff to post (see webview-helpers.js § aggregateTurnEdits).
+    expect(posted.filter((m: any) => m.type === "openDiff")).toHaveLength(0);
+    expect(doc.querySelector(".tool-item.expanded, .tool-item-flat.expanded")).toBeTruthy();
   });
 
   it("does not appear for non-edit tool turns", () => {
@@ -453,13 +456,15 @@ describe("turn-level file change summary", () => {
     expect(path.textContent).toBe("README.md");
   });
 
-  // openDiff is "host-local" in src/remote-policy.ts, so a phone posting it
-  // gets nothing back. A row that looks tappable and does nothing is worse than
-  // a row that does not; on a remote the click expands that file's own inline
-  // diff in the transcript instead — the same answer the permission card gives.
-  describe("on a remote, where the native diff is unreachable", () => {
-    function remoteEditTurn() {
-      const h = bootWebview({ remote: true });
+  // Two independent reasons the card cannot open a native diff, and together
+  // they leave ONE behaviour rather than a per-surface branch. A remote may not
+  // post openDiff at all (host-local in src/remote-policy.ts). And a host has
+  // nothing honest to post: the wire carries each edit's REPLACED REGION, so a
+  // twice-edited file has no before/after without a pre-turn baseline. The row
+  // reveals that file's own tool row, where the real diff already is.
+  describe("the row reveals the file's own diff, on every surface", () => {
+    function editTurn(remote: boolean) {
+      const h = bootWebview(remote ? { remote: true } : {});
       dispatch(h.window, { type: "appPurpose", value: "coding" });
       dispatch(h.window, { type: "agentStart" });
       dispatch(h.window, editCall("r1", "src/a.ts"));
@@ -468,30 +473,20 @@ describe("turn-level file change summary", () => {
       return h;
     }
 
-    it("reveals the file's inline diff rather than posting a message nothing answers", () => {
-      const { window, doc, posted } = remoteEditTurn();
-      const row = doc.querySelector(".turn-diff-file") as HTMLElement;
-      expect(row.tagName).toBe("BUTTON");
-      expect(row.title).toBe("Show the diff");
+    for (const remote of [false, true]) {
+      it(`expands the tool row and posts nothing (${remote ? "remote" : "host"})`, () => {
+        const { window, doc, posted } = editTurn(remote);
+        const row = doc.querySelector(".turn-diff-file") as HTMLElement;
+        expect(row.tagName).toBe("BUTTON");
+        expect(row.title).toBe("Show the diff");
 
-      click(window, row);
-      expect(posted.filter((m: any) => m.type === "openDiff")).toHaveLength(0);
-      // revealToolDiff opens the row AND its group, so the diff is on screen.
-      const item = doc.querySelector(".tool-item.expanded, .tool-item-flat.expanded, .tool-item");
-      expect(item!.classList.contains("expanded")).toBe(true);
-    });
-
-    it("still posts openDiff on a host, where the native editor exists", () => {
-      const { window, doc, posted } = bootWebview();
-      dispatch(window, { type: "appPurpose", value: "coding" });
-      dispatch(window, { type: "agentStart" });
-      dispatch(window, editCall("h1", "src/a.ts"));
-      dispatch(window, editUpdate("h1", "src/a.ts", "x", "y"));
-      dispatch(window, { type: "agentEnd" });
-
-      click(window, doc.querySelector(".turn-diff-file") as HTMLElement);
-      expect(posted.filter((m: any) => m.type === "openDiff")).toHaveLength(1);
-    });
+        click(window, row);
+        expect(posted.filter((m: any) => m.type === "openDiff")).toHaveLength(0);
+        // revealToolDiff opens the row AND its group, so the diff is on screen.
+        const item = doc.querySelector(".tool-item, .tool-item-flat");
+        expect(item!.classList.contains("expanded")).toBe(true);
+      });
+    }
   });
 
   describe("when the roll-up earns its space", () => {

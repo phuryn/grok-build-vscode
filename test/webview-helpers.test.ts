@@ -1842,7 +1842,7 @@ describe("aggregateTurnEdits (turn-level file change summary)", () => {
     expect(turnDiffSummaryTitle({ files: [], totalAdded: 0, totalRemoved: 0 })).toBe("");
   });
 
-  it("merges case-variant paths, sums multi-edit +/−, openDiff spans first→last", () => {
+  it("merges case-variant paths and sums multi-edit +/−", () => {
     const e1 = edit("src/A.ts", "x", "y");
     const e2 = edit("src/a.ts", "y", "z");
     const b = edit("src/b.ts", "", "hi");
@@ -1851,7 +1851,6 @@ describe("aggregateTurnEdits (turn-level file change summary)", () => {
     const a = r.files.find((f) => /a\.ts$/i.test(f.path))!;
     expect(a.added).toBe(e1.added + e2.added);
     expect(a.removed).toBe(e1.removed + e2.removed);
-    expect(a.openDiff).toMatchObject({ oldText: "x", newText: "z" });
     expect(r.totalAdded).toBe(a.added + b.added);
     expect(r.totalRemoved).toBe(a.removed + b.removed);
     expect(turnDiffSummaryTitle(r)).toBe("Changed 2 files");
@@ -1865,12 +1864,11 @@ describe("aggregateTurnEdits (turn-level file change summary)", () => {
     expect(r.files).toHaveLength(1);
     expect(r.files[0].path).toBe("");
     expect(r.files[0].added).toBe(edit("", "a", "b").added + edit("", "b", "cd").added);
-    expect(r.files[0].openDiff).toMatchObject({ oldText: "a", newText: "cd" });
     expect(turnDiffSummaryTitle(r)).toBe("Changed 1 file");
   });
 
   describe("same file edited multiple times in one turn", () => {
-    it("sums three sequential appends and openDiffs first.old → last.new", () => {
+    it("sums three sequential appends", () => {
       const v0 = "base\n";
       const v1 = "base\npass1\n";
       const v2 = "base\npass1\npass2\n";
@@ -1885,11 +1883,10 @@ describe("aggregateTurnEdits (turn-level file change summary)", () => {
       // Each append is pure +1; three passes → +3 −0
       expect(r.files[0].added).toBe(3);
       expect(r.files[0].removed).toBe(0);
-      expect(r.files[0].openDiff).toMatchObject({ oldText: v0, newText: v3 });
       expect(r.files[0].action).toBe("edited");
     });
 
-    it("create then append: empty first.old so openDiff includes batch-1 lines", () => {
+    it("create then append across case-variant paths sums both batches", () => {
       const batch1 = "F1 initial content\nCreated in batch 1 (tracked).\n";
       const batch2 = batch1 + "F1 edited in batch 2 (tracked).\n";
       const e1 = edit("F1.txt", "", batch1);
@@ -1899,7 +1896,6 @@ describe("aggregateTurnEdits (turn-level file change summary)", () => {
       expect(r.files[0].added).toBe(e1.added + e2.added);
       expect(r.files[0].removed).toBe(0);
       expect(r.files[0].action).toBe("created");
-      expect(r.files[0].openDiff).toMatchObject({ oldText: "", newText: batch2 });
     });
 
     it("add content then remove that same content (sum + and −)", () => {
@@ -1919,7 +1915,6 @@ describe("aggregateTurnEdits (turn-level file change summary)", () => {
       // Sum of activity, not net zero — both the add and the remove count.
       expect(r.files[0].added).toBe(1);
       expect(r.files[0].removed).toBe(1);
-      expect(r.files[0].openDiff).toMatchObject({ oldText: before, newText: after });
       expect(r.totalAdded).toBe(1);
       expect(r.totalRemoved).toBe(1);
     });
@@ -1936,7 +1931,6 @@ describe("aggregateTurnEdits (turn-level file change summary)", () => {
       const r = aggregateTurnEdits([e1, e2]);
       expect(r.files[0].added).toBe(e1.added + e2.added); // 1+1
       expect(r.files[0].removed).toBe(e1.removed + e2.removed); // 0+1
-      expect(r.files[0].openDiff).toMatchObject({ oldText: v0, newText: v2 });
     });
 
     it("add then fully delete the file content (empty newText)", () => {
@@ -1948,7 +1942,6 @@ describe("aggregateTurnEdits (turn-level file change summary)", () => {
       const r = aggregateTurnEdits([e1, e2]);
       expect(r.files[0].added).toBe(2);
       expect(r.files[0].removed).toBe(2);
-      expect(r.files[0].openDiff).toMatchObject({ oldText: "", newText: "" });
       expect(r.files[0].action).toBe("created"); // first old was empty
     });
 
@@ -1966,7 +1959,6 @@ describe("aggregateTurnEdits (turn-level file change summary)", () => {
       // append +1, rewrite +1−1, remove −1 → +2 −2
       expect(r.files[0].added).toBe(2);
       expect(r.files[0].removed).toBe(2);
-      expect(r.files[0].openDiff).toMatchObject({ oldText: v0, newText: v3 });
     });
 
     it("interleaved edits on two files still path-dedupe each", () => {
@@ -1979,13 +1971,11 @@ describe("aggregateTurnEdits (turn-level file change summary)", () => {
       const a = r.files.find((f) => f.path === "a.ts")!;
       const b = r.files.find((f) => f.path === "b.ts")!;
       expect(a.added).toBe(a1.added + a2.added);
-      expect(a.openDiff).toMatchObject({ oldText: "1", newText: "3" });
       expect(b.added).toBe(b1.added + b2.added);
-      expect(b.openDiff).toMatchObject({ oldText: "", newText: "x\ny\n" });
       expect(b.action).toBe("created");
     });
 
-    it("unchained independent regions still sum and span first.old → last.new", () => {
+    it("unchained independent regions still sum, and carry no turn-level diff", () => {
       // Non-overlapping search_replace-style regions (old of #2 ≠ new of #1).
       const e1 = edit("f.txt", "tokenA", "tokenB");
       const e2 = edit("f.txt", "otherX", "otherY");
@@ -1993,7 +1983,11 @@ describe("aggregateTurnEdits (turn-level file change summary)", () => {
       const r = aggregateTurnEdits([e1, e2]);
       expect(r.files[0].added).toBe(e1.added + e2.added);
       expect(r.files[0].removed).toBe(e1.removed + e2.removed);
-      expect(r.files[0].openDiff).toMatchObject({ oldText: "tokenA", newText: "otherY" });
+      // And no turn-level openDiff. These two regions never formed one edit,
+      // so "tokenA" → "otherY" would be a substitution nobody made — the very
+      // fiction a whole-file expansion on the host would have presented as
+      // fact. The card's rows reveal each file's own tool row instead.
+      expect("openDiff" in r.files[0]).toBe(false);
     });
   });
 
@@ -2009,7 +2003,6 @@ describe("aggregateTurnEdits (turn-level file change summary)", () => {
         action: "deleted",
         added: 0,
         removed: 0,
-        openDiff: null,
       });
       expect(r.files.find((f) => /keep/i.test(f.path))).toMatchObject({ action: "edited", added: 1, removed: 1 });
       expect(r.totalAdded).toBe(1);
@@ -2031,17 +2024,16 @@ describe("aggregateTurnEdits (turn-level file change summary)", () => {
       expect(f.added).toBe(e3.added + e4.added);
       expect(f.removed).toBe(e3.removed + e4.removed);
       expect(f.action).toBe("created");
-      expect(f.openDiff).toMatchObject({ oldText: "", newText: "brand\nnew\nplus\n" });
     });
 
-    it("delete-only path has no openDiff and is sorted after edits", () => {
+    it("delete-only path is sorted after edits", () => {
       const r = aggregateTurnEdits([
         { path: "gone.txt", kind: "delete" },
         edit("a.txt", "x", "y"),
       ]);
       expect(r.files.map((f) => f.path)).toEqual(["a.txt", "gone.txt"]);
       expect(r.files[1].action).toBe("deleted");
-      expect(r.files[1].openDiff).toBeNull();
+      expect("openDiff" in r.files[1]).toBe(false);
     });
   });
 });

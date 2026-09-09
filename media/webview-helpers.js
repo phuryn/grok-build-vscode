@@ -3041,7 +3041,6 @@
           action: "deleted",
           added: 0,
           removed: 0,
-          openDiff: null,
         });
         continue;
       }
@@ -3055,28 +3054,19 @@
       }
 
       const first = edits[0];
-      const last = edits[edits.length - 1];
-      // Full-turn openDiff: first block's before → last block's after. That way
-      // a create in batch 1 + edit in batch 2 opens as one span (batch 1 content
-      // is part of the change), not only the last region's old/new. Drop
-      // per-site metadata — it belongs to a single edit and would mis-expand.
-      let openDiff = last.openDiff || first.openDiff || null;
-      if (typeof first.oldText === "string" && typeof last.newText === "string") {
-        openDiff = {
-          type: "openDiff",
-          path: (openDiff && openDiff.path) || g.path,
-          oldText: first.oldText,
-          newText: last.newText,
-        };
-      }
-
+      // There is deliberately no turn-level openDiff here. oldText/newText on
+      // the wire are the REPLACED REGION of one edit, not snapshots of the
+      // file, so splicing the first edit's old onto the last edit's new
+      // describes a substitution that never happened — and the host expands it
+      // against disk into a confident whole-file diff of that fiction. A true
+      // one would need a pre-turn baseline the host does not keep. The card's
+      // rows reveal each file's own tool row instead, where the real diff is.
       const created = first.oldText === "" || (first.openDiff && first.openDiff.oldText === "");
       files.push({
         path: g.path,
         action: created ? "created" : "edited",
         added,
         removed,
-        openDiff,
       });
     }
 

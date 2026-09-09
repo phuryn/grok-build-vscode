@@ -78,11 +78,9 @@ in that turn. Pure client aggregation — no disk re-diff, no new ACP surface.
   so `F1.txt` and `f1.txt` are one row on Windows.
 - **Multi-edit:** pure `aggregateTurnEdits` **sums** every edit's +/− for that
   path (create in batch 1 + edit in batch 2 both count — we do not keep only
-  the last). `openDiff` spans **first.oldText → last.newText** so the native
-  editor shows the whole turn (batch-1 content included), not only the last
-  region. A delete after edits wins; an edit after a delete recreates the row.
-- **Live / restore / click:** same as before (card pins at turn end; restore
-  rebuilds from completed `tool_call`s; click posts `openDiff`).
+  the last). The aggregate carries **no `openDiff`** — see below. A delete after edits wins; an edit after a delete recreates the row.
+- **Live / restore / click:** card pins at turn end; restore rebuilds from
+  completed `tool_call`s; a click reveals that file's own tool row.
 - **When it shows (#83 rebase).** The card repeats, one line per file, what an
   expanded diff row already shows in full — so it is gated on
   `isCodingPurpose() && !detailShouldExpand()`. Knowledge work never shows it;
@@ -90,12 +88,27 @@ in that turn. Pure client aggregation — no disk re-diff, no new ACP surface.
   *Expand tool details* or the Expand-All latch opens them. Hidden via a body
   class, never removed: the reverse flip has to bring back cards whose
   `turnEditsByToolCallId` entries are gone.
-- **Clicking a row (#83 rebase).** `openDiff` is `host-local`, so a remote
-  posting it gets silence. Entries carry their `toolCallId` and a remote
-  click calls `revealToolDiff` instead, expanding that file's inline diff in
-  the transcript. Residue, accepted: on a card whose tool rows have since
-  left the window the tap does nothing. It is one turn's own card and the
-  rows are right above it, so this is rare enough not to buy machinery for.
+- **Clicking a row (#83 rebase).** One behaviour on every surface: entries
+  carry their `toolCallId` and the click calls `revealToolDiff`, expanding
+  that file's inline diff in the transcript. Two independent reasons there is
+  no native-diff branch:
+  - a remote may not post `openDiff` at all — it is `host-local` in
+    `remote-policy.ts`, so the row would have been a dead control on a phone;
+  - a host has nothing honest to post. `oldText`/`newText` on the wire are
+    the **replaced region** of a single edit, not snapshots, so the PR's
+    first.oldText → last.newText span is a substitution nobody performed —
+    and `expandDiffToWholeFile` finds the last region on disk and renders the
+    fiction as an authoritative whole-file diff. Two search_replaces show the
+    first search string becoming the second replacement; a Write followed by
+    one edit shows the file's entire contents as the last replacement token.
+    A true turn-level diff needs the pre-turn baseline `f274026` would have
+    kept, and that commit is not in this rebase.
+
+  So `aggregateTurnEdits` no longer returns an `openDiff` field. The real
+  diff is one row up, with its own `open diff →` to the native editor.
+  Residue, accepted: on a card whose tool rows have since left the window the
+  tap does nothing. It is one turn's own card and the rows are right above it,
+  so this is rare enough not to buy machinery for.
 - **Out of scope:** non-delete shell mutations (`sed`, `mv`, redirects),
   subagent child edits, LLM prose "what changed".
 
