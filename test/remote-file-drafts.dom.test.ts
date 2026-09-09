@@ -727,6 +727,66 @@ describe("remote discard and close semantics", () => {
     await h.window.happyDOM.abort();
   });
 
+  it("re-reads the OPEN DIFF across a reconnect, not just the list", async () => {
+    // The owner hit this on a phone: the diff subview kept "The connection
+    // dropped before that finished." for ever, because the reconnect refreshed
+    // the Changes LIST and nothing ever re-asked for the diff on screen.
+    const caps = { browseProjectFiles: true, editProjectFiles: true, gitChanges: true };
+    const h = bootWebview({ remote: true, beforeScripts: (window) => Object.assign(window, { grokCloudHost: true }) });
+    const boot = () => dispatch(h.window, {
+      type: "initialState", cwd: CWD_A, capabilities: caps, appPurpose: "coding",
+    });
+    boot();
+    dispatch(h.window, {
+      type: "repos",
+      entries: [{ cwd: CWD_A, label: "app", available: true, pinned: false, updatedAt: 2 }],
+      selectedCwd: CWD_A,
+    });
+    await settle();
+    click(h.window, h.doc.getElementById("files-browse-btn")!);
+    await settle();
+    const changesBtn = h.doc.querySelector(".gfp-changes-btn") as HTMLElement | null;
+    expect(changesBtn, "no Changes control").toBeTruthy();
+    click(h.window, changesBtn!);
+    await settle();
+
+    await reply(h, requests(h, "gitStatus").at(-1)!, { type: "gitStatusResult", ok: true, snapshot: {
+      branch: "main", files: [{ path: "docs/loremipsum.md", status: "?", added: null, deleted: null }],
+    } });
+    const row = h.doc.querySelector(".gfp-change-row") as HTMLElement | null;
+    expect(row, "no change row to open").toBeTruthy();
+    click(h.window, row!);
+    await settle();
+    const askedDiff = requests(h, "gitFileDiff").length;
+    expect(askedDiff, "the row did not request a diff").toBeGreaterThan(0);
+
+    // The machine freezes with that diff request on the wire, then wakes and
+    // dials back in with a fresh snapshot.
+    boot();
+    await settle();
+    expect(
+      requests(h, "gitFileDiff").length,
+      "the reconnect re-read the list but left the open diff on the dead connection",
+    ).toBeGreaterThan(askedDiff);
+
+    // The answer to the NEW request lands, and the dropped-connection message
+    // from the abandoned one does not survive it.
+    const asked = requests(h, "gitFileDiff").at(-1)!;
+    dispatch(h.window, {
+      type: "gitFileDiffResult",
+      ok: true,
+      patch: "@@ -0,0 +1 @@\n+lorem\n",
+      cwd: asked.cwd,
+      path: "docs/loremipsum.md",
+      requestId: asked.requestId,
+    });
+    await settle();
+    const changesText = h.doc.querySelector(".gfp-changes")?.textContent || "";
+    expect(changesText, "the abandoned diff's error outlived the reconnect")
+      .not.toContain("The connection dropped");
+    await h.window.happyDOM.abort();
+  });
+
   it.each([false, true])("keeps background polling from poisoning a later explicit read (legacy=%s)", async (legacy) => {
     const h = bootWebview({ remote: true });
     const intervals = new Map<number, () => void>();

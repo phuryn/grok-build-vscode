@@ -164,6 +164,13 @@
         diffTruncated: false,
         diffLoading: false,
         diffError: "",
+        /**
+         * Fences a superseded diff read, exactly as `loadSeq` does for the
+         * list. A reconnect re-asks for the open diff while the previous
+         * connection's request is still unresolved; without this the older
+         * one's late answer lands on top of the newer one's.
+         */
+        diffSeq: 0,
         /** Outcome of the last run, shown until the next one starts. */
         notice: null,
         running: false,
@@ -1460,7 +1467,18 @@
       // and catalog events too, and forcing on those would turn each into a
       // duplicate `git status` — the same waste `rootLoad` sharing exists to
       // avoid one function below.
-      if (canGit && currentState && gitEnabledNow()) void loadChanges({ force: reconnected });
+      if (canGit && currentState && gitEnabledNow()) {
+        // The list re-reads itself here; the OPEN DIFF has to be asked for
+        // separately or it keeps whatever the dead connection left on it.
+        // That is what the owner hit: a diff subview pinned to "The
+        // connection dropped before that finished." with nothing that would
+        // ever replace it, because only the list was ever refreshed. Status
+        // and diff are different request keys, so this does not queue behind
+        // the read above.
+        const openDiff = reconnected ? currentState.changes.diffPath : null;
+        void loadChanges({ force: reconnected });
+        if (openDiff) void openChangeDiff(openDiff);
+      }
       if (switched) treeMode = !(currentState && currentState.activeRelPath);
       renderTabs();
       if (!currentState) {
@@ -2174,6 +2192,7 @@
       if (!currentScope || !currentState) return;
       const state = currentState;
       const scopeId = currentScope.id;
+      const seq = ++state.changes.diffSeq;
       state.changes.diffPath = path;
       state.changes.diffPatch = "";
       state.changes.diffTruncated = false;
@@ -2186,7 +2205,7 @@
       } catch (err) {
         result = { ok: false, reason: String((err && err.message) || err || "Could not read the diff.") };
       }
-      if (destroyed || currentState !== state || state.changes.diffPath !== path) return;
+      if (destroyed || seq !== state.changes.diffSeq || currentState !== state || state.changes.diffPath !== path) return;
       state.changes.diffLoading = false;
       if (result && result.ok) {
         state.changes.diffPatch = result.patch || "";
