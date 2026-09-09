@@ -684,7 +684,15 @@ describe("the wizard and Settings share a screen", () => {
     // overlay's 120, so a Connect clicked in Settings opened the wizard
     // behind the page that launched it — reproducing the exact invisibility
     // the wizard was built to cure (review, 2026-08-31).
-    const wizard = zIndexOf(chatCss, ".connect-wizard-overlay");
+    //
+    // The private `.connect-wizard-overlay { z-index: 200 }` that fixed it is
+    // gone: the same bug turned up a third time on the Changes view's Discard,
+    // so the base now clears every layer that can launch a confirmation (see
+    // confirm-stacking.test.ts). Keeping the 200 would have been actively
+    // harmful — equal specificity, later in the file, so it would have pinned
+    // the wizard back under the phone's full-screen panel. The wizard mounts as
+    // `confirm-overlay connect-wizard-overlay` and now simply inherits.
+    const wizard = zIndexOf(chatCss, ".confirm-overlay");
     const settings = zIndexOf(settingsCss, ".settings-overlay");
     expect(settings).toBeGreaterThan(0);
     expect(wizard).toBeGreaterThan(settings);

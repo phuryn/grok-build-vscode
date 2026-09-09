@@ -5033,7 +5033,19 @@ mjx-container[display="true"] {
 .confirm-overlay {
   position: fixed;
   inset: 0;
-  z-index: 100;
+  /* A CONFIRMATION IS THE TOPMOST THING ON SCREEN, BY DEFINITION. It asks a
+     question about something the person cannot undo, so nothing may cover it.
+     At 100 it sat under almost everything that opens it, and that was patched
+     twice per-caller instead of here: the panel's own menus went 1000 -> 1300
+     in 2026-08-15, the connect wizard 100 -> 200. The third instance was the
+     Changes view's Discard on a phone — the panel goes full-screen at 1200, so
+     the dialog was painted underneath it and tapping Discard appeared to do
+     nothing at all, leaving a destructive confirm floating invisibly behind the
+     panel (owner-caught, 2026-09-09).
+     Above every layer that can launch one: the rail's colour picker (10000),
+     the panel's menus (1300), the phone's full-screen panel (1200), the rail
+     (1100), the image preview (1000) and Settings (120). */
+  z-index: 10100;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -5045,11 +5057,6 @@ mjx-container[display="true"] {
    two links and a set of steps. At the confirm dialog's 340px that stack ran
    to 600px tall and the code wrapped awkwardly. Wider, and scrollable rather
    than clipped on a short phone screen. */
-/* Above the settings overlay (z-index 120), because Settings is one of the two
-   places this is opened FROM. At the confirm dialog's 100 it opened behind the
-   page that launched it — the very failure the wizard replaced. */
-.connect-wizard-overlay { z-index: 200; }
-
 .confirm-panel.connect-wizard-panel {
   width: min(460px, 100%);
   max-height: min(88vh, 760px);
