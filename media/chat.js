@@ -2465,6 +2465,23 @@
     return null;
   }
 
+  /**
+   * The mounted file panel, for callers that only want to steer it.
+   *
+   * Deliberately NOT previewFilePanelController above: that one is gated on
+   * hostPreviewsInApp(), which asks whether previews open in the app rather
+   * than in a native editor. Steering the panel is a different question, and
+   * every caller here still capability-detects the method it is about to use,
+   * so a host without a panel simply gets null and offers nothing.
+   */
+  function filePanelController() {
+    const desk = window.__grokDeskFilePanel;
+    if (desk && typeof desk.showChanges === "function") return desk;
+    const remote = state.filesBrowse && state.filesBrowse.component;
+    if (remote && typeof remote.showChanges === "function") return remote;
+    return null;
+  }
+
   let previewFileSeq = 0;
   let previewOverlayGen = 0;
   const previewFilePending = new Map();
@@ -10117,6 +10134,30 @@
       list.appendChild(row);
     }
     el.appendChild(list);
+
+    // The way OUT of the card, and into the whole picture.
+    //
+    // The card answers "what did this turn touch"; the next question is almost
+    // always "what is uncommitted now", and until this link the only route was
+    // to find the panel and press a glyph. Offered only where the panel exists
+    // AND has a repository to talk about — a dead link on a knowledge-work
+    // session would be worse than no link, and both are ordinary states.
+    const panel = filePanelController();
+    if (panel && typeof panel.canShowChanges === "function" && panel.canShowChanges()) {
+      const foot = document.createElement("div");
+      foot.className = "turn-diff-summary-foot";
+      const open = document.createElement("button");
+      open.type = "button";
+      open.className = "turn-diff-open-changes";
+      open.textContent = "Open Changes";
+      open.onclick = (e) => {
+        e.stopPropagation();
+        panel.showChanges();
+      };
+      foot.appendChild(open);
+      el.appendChild(foot);
+    }
+
     appendTranscriptChild(el); // live: always ride at the end of the turn
     scrollToBottom();
   }

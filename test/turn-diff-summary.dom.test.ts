@@ -489,6 +489,68 @@ describe("turn-level file change summary", () => {
     }
   });
 
+  describe("the way out of the card, into the Changes view", () => {
+    function editedTurn(window: any) {
+      dispatch(window, { type: "agentStart" });
+      dispatch(window, editCall("c1", "src/a.ts"));
+      dispatch(window, editUpdate("c1", "src/a.ts", "x", "y"));
+      dispatch(window, { type: "agentEnd" });
+    }
+
+    // A stand-in for the mounted file panel. The card capability-detects the
+    // two methods, so a fake carrying them is the whole contract.
+    function fakePanel(available: boolean) {
+      const calls: string[] = [];
+      return {
+        calls,
+        canShowChanges: () => available,
+        showChanges: () => {
+          calls.push("showChanges");
+          return available;
+        },
+      };
+    }
+
+    it("offers the link when a panel is mounted and has a repository to show", () => {
+      const { window, doc } = bootWebview();
+      const panel = fakePanel(true);
+      (window as any).__grokDeskFilePanel = panel;
+      editedTurn(window);
+
+      const link = doc.querySelector(".turn-diff-open-changes") as HTMLElement;
+      expect(link).not.toBeNull();
+      expect(link.textContent).toBe("Open Changes");
+      click(window as any, link);
+      expect(panel.calls).toEqual(["showChanges"]);
+    });
+
+    it("offers nothing when no panel is mounted", () => {
+      const { window, doc } = bootWebview();
+      editedTurn(window);
+      expect(doc.querySelector(".turn-diff-open-changes")).toBeNull();
+    });
+
+    // Knowledge work and a folder that is not a repository both land here, and
+    // both are ordinary. A link that opens an empty explanation is worse than
+    // no link, which is why the card ASKS rather than assuming.
+    it("offers nothing when the panel says it has no changes view to show", () => {
+      const { window, doc } = bootWebview();
+      (window as any).__grokDeskFilePanel = fakePanel(false);
+      editedTurn(window);
+      expect(doc.querySelector(".turn-diff-open-changes")).toBeNull();
+    });
+
+    // An older panel — one built before showChanges existed — is exactly the
+    // legacy host this project ships against, and it must degrade to silence
+    // rather than to a control that throws.
+    it("offers nothing to a panel too old to know the method", () => {
+      const { window, doc } = bootWebview();
+      (window as any).__grokDeskFilePanel = { openPath: () => {} };
+      editedTurn(window);
+      expect(doc.querySelector(".turn-diff-open-changes")).toBeNull();
+    });
+  });
+
   describe("when the roll-up earns its space", () => {
     const HIDDEN = "hide-turn-diff-summary";
 

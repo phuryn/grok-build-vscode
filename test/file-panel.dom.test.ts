@@ -1591,6 +1591,31 @@ describe("planStrip three-state layout", () => {
     tabIconWidths: Array.from({ length: n }, () => icon),
   });
 
+  // Nothing selected means the Changes list or the tree is what you are
+  // looking at. B's whole idea is "name the current file, demote the rest", so
+  // with no current file it demotes ALL of them: a row of anonymous glyphs
+  // with no names and — because an icon-only tab hides its close — no way to
+  // shut any of them either. C is the honest answer at that width: one … chip
+  // whose menu lists every file by name with its own X.
+  it("never picks B when nothing is selected, however much room there is", () => {
+    const base = {
+      stripWidth: 400,
+      titleWidth: 80,
+      titleIconWidth: 24,
+      trailingWidth: 32,
+      tabCount: 3,
+      ...widths(3, 160, 32),
+      chipWidth: 36,
+    };
+    // Same width, same tabs: with a selection B is right and is chosen.
+    expect(planStrip({ ...base, activeIndex: 1 }).state).toBe("b");
+    const none = planStrip({ ...base, activeIndex: -1 });
+    expect(none.state).toBe("c");
+    // And C with no active tab shows the chip alone rather than a bare strip.
+    expect(none.visible).toEqual([]);
+    expect(none.overflow).toEqual([0, 1, 2]);
+  });
+
   it("picks A when named tabs plus the title fit", () => {
     const plan = planStrip({
       stripWidth: 500,

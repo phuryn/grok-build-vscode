@@ -488,6 +488,7 @@
     "e2e:open-timing": "npm run compile && node scripts/open-timing-check.mjs",
     "e2e:hc-colour": "node scripts/hc-colour-screens.mjs",
     "e2e:changes": "node scripts/changes-view-screens.mjs",
+    "e2e:panel-flow": "node scripts/panel-flow-screens.mjs",
     "e2e:turn-diff": "node scripts/turn-diff-screens.mjs",
     "e2e:welcome-tip": "node scripts/ide-welcome-tip-screens.mjs",
     "e2e:gh-unauth": "npm run compile && node scripts/gh-unauth-check.mjs",

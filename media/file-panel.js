@@ -356,7 +356,15 @@
       }
       return out;
     };
-    if (!preferChip) {
+    // B has nothing to say when NOTHING is selected. Its whole idea is "keep
+    // the current file named, demote the rest to icons" — with no current file
+    // (the Changes list or the tree is what you are looking at) every tab
+    // demotes, and the strip becomes a row of anonymous glyphs: no name to
+    // read, and no X either, since an icon-only tab hides its close. Three
+    // files open and no way to shut any of them, which is exactly the strip
+    // the owner photographed. C answers the same width honestly — one … chip
+    // that lists every file by name with its own close beside it.
+    if (!preferChip && activeIndex >= 0) {
       if (titleWidth + bTabs <= avail) {
         return result("b", "full", all, [], promoteIdles(bModes, avail - titleWidth - bTabs));
       }
@@ -570,6 +578,41 @@
     return rows;
   }
 
+  /**
+   * The +N −M pair as DOM, in the product's diff palette.
+   *
+   * Three places print this pair now — the file row, the total on the headline
+   * and the open file's own diff header — and a fourth (the turn card) prints
+   * it in chat.js. Colour is not decoration on these two numbers: green and
+   * red are what say WHICH is which without reading the sign, and a grey pair
+   * reads as a measurement of something else entirely.
+   */
+  function appendCountLabel(host, label, doc) {
+    if (!label) return host;
+    for (const part of label.split(" ")) {
+      const span = doc.createElement("span");
+      span.className = part.charAt(0) === "+" ? "gfp-change-add" : "gfp-change-del";
+      span.textContent = part;
+      host.appendChild(span);
+    }
+    return host;
+  }
+
+  /** "+12 −3" summed over every file, or "" when no file carries counts. */
+  function changeTotalLabel(files) {
+    const list = Array.isArray(files) ? files : [];
+    let added = 0;
+    let deleted = 0;
+    let known = false;
+    for (const file of list) {
+      if (!file) continue;
+      if (typeof file.added === "number") { added += file.added; known = true; }
+      if (typeof file.deleted === "number") { deleted += file.deleted; known = true; }
+    }
+    if (!known) return "";
+    return changeCountLabel({ added: added, deleted: deleted });
+  }
+
   /** "+12 −3", or "" when there is nothing knowable to say. */
   function changeCountLabel(file) {
     const entry = file || {};
@@ -701,6 +744,17 @@
     changesCount.className = "gfp-changes-count";
     changesCount.hidden = true;
     changesBtn.innerHTML = ICON.branch;
+    // "Changes", not just a glyph, whenever the strip has room for it. The
+    // prototype made this a named tab beside the folder and the open file, and
+    // the strip reads better for it: a row of anonymous glyphs asks you to
+    // remember what each one was. The word hides under .gfp-strip-compact,
+    // which is the same ladder the project title already climbs down — and
+    // collectStripMeasurements reads this button as trailing width, so the
+    // A/B/C planner absorbs the extra automatically.
+    const changesLabel = doc.createElement("span");
+    changesLabel.className = "gfp-changes-label";
+    changesLabel.textContent = "Changes";
+    changesBtn.appendChild(changesLabel);
     changesBtn.appendChild(changesCount);
 
     const tabsEl = doc.createElement("div");
@@ -1011,28 +1065,50 @@
         const iconEl = el.querySelector(".gfp-tab-icon");
         const dirtyEl = el.querySelector(".gfp-tab-dirty");
         const iconW = iconEl ? iconEl.getBoundingClientRect().width : 16;
-        // Two dirty numbers: the SLOT is always rendered on a full tab
-        // (flex-basis 10px, empty or not) — counting it only when dirty
-        // under-budgeted clean tabs by slot+gap and the shortfall came out of
-        // the name. Icon-only mode display:nones the EMPTY slot, so there the
-        // dot counts only when actually dirty.
+        // The dot costs width only when there IS a dot. It used to be a slot
+        // held open on every tab, empty or not, and the planner had to budget
+        // it that way to match; both are gone, because a permanent 10px
+        // between a filename and the X that closes it is 10px of the wrong
+        // message. Two names remain only because the icon-only branch below
+        // reads the same number under its own rule.
         const dirtyOn = dirtyEl && dirtyEl.textContent;
-        const dirtySlotW = dirtyEl ? Math.max(dirtyEl.getBoundingClientRect().width, 10) : 0;
         const dirtyDotW = dirtyOn ? Math.max(dirtyEl.getBoundingClientRect().width, 10) : 0;
+        const dirtySlotW = dirtyDotW;
         // Floor so an unloaded img (0×0) cannot convince the planner that
         // icon-only tabs are free. 28px is pad+icon in the icon-only rule.
         const iconOnly = Math.max(28, pad + Math.max(iconW, 16) + (dirtyDotW ? gap + dirtyDotW : 0));
         const wasIconOnly = el.classList.contains("gfp-tab-icon-only");
         const box = el.getBoundingClientRect().width || 0;
-        // A tab's own scrollWidth cannot see through the NAME's ellipsis (the
-        // span hides its own overflow), so a tab that ever rendered squeezed
-        // would measure its squeezed width as "full" and the plan would
-        // believe it forever. Sum the parts with the name's scrollWidth — the
-        // one number that still knows the untruncated text.
+        // Measure the TEXT, not the box that holds it.
+        //
+        // Both of the box's numbers are the previous pass's answer coming
+        // back: the name is a flex item that fills whatever the tab's basis
+        // gave it, and the basis is the number computed here. Feeding either
+        // one in latched the first pass's figure forever — measured at 148px
+        // for a run of glyphs 109px wide, and the surplus is dead space inside
+        // the name, which is what pushed the close button a thumb's width away
+        // from the filename it closes (owner: "closing file closer to the
+        // filename"). Same ratchet the note below this one describes for the
+        // tab box, one element down, and it survived because scrollWidth
+        // sounds like a content measurement.
+        //
+        // A Range over the text nodes reports the laid-out glyph run and
+        // nothing else, so it cannot ratchet. It also still sees through the
+        // ellipsis, which is why scrollWidth was reached for in the first
+        // place: text-overflow clips at paint, so the run is laid out at full
+        // width even when the box shows three dots. scrollWidth remains the
+        // fallback for engines with no Range (happy-dom's tests measure zero
+        // either way, and take the A-plan short-circuit above).
         const nameEl = el.querySelector(".gfp-tab-name");
-        const nameW = nameEl
-          ? Math.max(nameEl.scrollWidth || 0, nameEl.getBoundingClientRect().width || 0)
-          : 0;
+        let nameW = 0;
+        if (nameEl) {
+          if (typeof doc.createRange === "function") {
+            const range = doc.createRange();
+            range.selectNodeContents(nameEl);
+            nameW = range.getBoundingClientRect().width || 0;
+          }
+          if (!nameW) nameW = nameEl.scrollWidth || 0;
+        }
         const closeEl = el.querySelector(".gfp-tab-close");
         const closeW = closeEl && !closeEl.hidden ? Math.max(closeEl.getBoundingClientRect().width, 22) : 0;
         // +2 on the name: integer scrollWidth under-reports fractional text
@@ -1114,7 +1190,18 @@
           chip.addEventListener("click", () => openOverflowMenu(chip));
           tabsEl.appendChild(chip);
         }
-        chip.title = overflowRelPaths.map((rel) => fileName(rel)).join(", ");
+        // On a phone the chip IS the rest of the strip, so anything unsaved in
+        // there has no other way to say so — the dot lives on the menu ROW,
+        // which is one tap past the point of noticing. Nothing is lost either
+        // way (a dirty close still asks), but "you have unsaved work" is not a
+        // thing to make somebody go looking for.
+        const dirtyBehind = !!currentState && overflowRelPaths.some((rel) => {
+          const t = currentState.tabs.get(rel);
+          return !!(t && t.dirty);
+        });
+        chip.classList.toggle("gfp-overflow-chip-dirty", dirtyBehind);
+        const names = overflowRelPaths.map((rel) => fileName(rel)).join(", ");
+        chip.title = dirtyBehind ? names + " — unsaved changes" : names;
         chip.setAttribute("aria-expanded", menu && menu.classList.contains("gfp-overflow-menu") ? "true" : "false");
         chip.hidden = false;
       } else if (chip) {
@@ -1756,6 +1843,10 @@
         });
         if (answer !== "discard") return false;
       }
+      // Was the tab being CLOSED the one on screen? Only that answer decides
+      // whether the body needs a new subject, and it has to be read before the
+      // bookkeeping below moves activeRelPath onto a survivor.
+      const wasOnScreen = !treeMode && !changesMode && state.activeRelPath === relPath;
       state.tabs.delete(relPath);
       state.order = state.order.filter((item) => item !== relPath);
       if (state.activeRelPath === relPath) {
@@ -1767,6 +1858,13 @@
       // took effect in its own scope either way.
       if (state !== currentState) return true;
       renderTabs();
+      // Closing a file is tidying, not navigation. Every named tab now carries
+      // an X and so does every row of the … menu, so a close can be pressed
+      // while the tree or the Changes list is what you are looking at — and
+      // this used to open an editor over it, leaving the folder or the Changes
+      // button still underlined above somebody else's file. Stay put; the
+      // strip repaint is the whole of the change you asked for.
+      if (!wasOnScreen) return true;
       if (state.activeRelPath) renderViewer();
       else showTree();
       return true;
@@ -1803,7 +1901,13 @@
         const dirty = doc.createElement("span");
         dirty.className = "gfp-tab-dirty desk-ft-tab-dirty";
         dirty.textContent = tab.dirty ? "•" : "";
-        item.append(icon, name, dirty);
+        // icon · dot · name · X — the prototype's order, and it is better than
+        // the one we shipped for a reason worth naming: with the dot AFTER the
+        // name it is the one thing entitled to sit between a filename and the
+        // X that closes it, so a dirty tab pushes its own close away exactly
+        // when you are most likely to reach for it. In front of the name the
+        // dot costs the same width and never separates the pair.
+        item.append(icon, dirty, name);
         // Every tab that shows a name carries its own X, active or not.
         // Closing used to require opening the file first, which is worst
         // exactly where tabs are scarcest: in State C a phone shows one tab,
@@ -2131,6 +2235,20 @@
       const headlineEl = doc.createElement("p");
       headlineEl.className = "gfp-changes-headline gfp-changes-" + headline.tone;
       headlineEl.textContent = headline.text;
+      // The size of it, beside the count of it. "8 files not committed" says
+      // how many places changed and nothing about how much — which is the
+      // difference between a rename sweep and a rewrite, and it is the number
+      // the turn card has been showing all along.
+      // snapshot.files, not the `files` binding below — that one is declared
+      // further down this function and reading it here is a dead-zone throw.
+      const total = changeTotalLabel(snapshot.files);
+      if (total) {
+        const totalEl = doc.createElement("span");
+        totalEl.className = "gfp-change-stat gfp-changes-total";
+        appendCountLabel(totalEl, total, doc);
+        headlineEl.appendChild(doc.createTextNode(" "));
+        headlineEl.appendChild(totalEl);
+      }
       changesEl.appendChild(headlineEl);
 
       // 3. The outcome of the last run, if there was one. Above the list,
@@ -2228,16 +2346,7 @@
       if (counts) {
         const stat = doc.createElement("span");
         stat.className = "gfp-change-stat";
-        // Split so + and − can take the shared --tdiff-* palette — the same
-        // green and red the tool rows and the turn card already use for these
-        // same two numbers. One grey blob made the list look like it was
-        // measuring something other than added and removed lines.
-        for (const part of counts.split(" ")) {
-          const span = doc.createElement("span");
-          span.className = part.charAt(0) === "+" ? "gfp-change-add" : "gfp-change-del";
-          span.textContent = part;
-          stat.appendChild(span);
-        }
+        appendCountLabel(stat, counts, doc);
         row.appendChild(stat);
       } else if (file.status === "?") {
         const stat = doc.createElement("span");
@@ -2308,6 +2417,18 @@
       hint.className = "gfp-changes-hint";
       hint.textContent = primary.hint;
       wrap.appendChild(hint);
+
+      // The rule, said under the buttons rather than in the README. The owner
+      // asked "all files or nothing? is that correct?" — which is the question
+      // a person has at exactly this moment, and the answer was nowhere on the
+      // screen where they have it. Lifted from the prototype, whose footer
+      // does the same job.
+      if (files.length) {
+        const rule = doc.createElement("p");
+        rule.className = "gfp-changes-rule";
+        rule.textContent = "Every not-committed file goes in. To leave one out, discard it from its ⋯ menu first.";
+        wrap.appendChild(rule);
+      }
 
       const commitOnly = changesCommitOnlyAction(snapshot, { message: state.message });
       if (commitOnly.show) {
@@ -2454,6 +2575,16 @@
         word.className = "gfp-changes-diff-word";
         word.textContent = changeWord(file.status);
         head.appendChild(word);
+        // The row you pressed to get here showed these two numbers; the header
+        // that replaced it did not, so the size of what you are reading
+        // disappeared at the moment you started reading it.
+        const counts = changeCountLabel(file);
+        if (counts) {
+          const stat = doc.createElement("span");
+          stat.className = "gfp-change-stat";
+          appendCountLabel(stat, counts, doc);
+          head.appendChild(stat);
+        }
       }
       changesEl.appendChild(head);
 
@@ -3447,6 +3578,21 @@
       refreshChanges: refreshChangesQuietly,
       /** Repaint the button — the Coding/Knowledge toggle changes its answer. */
       refreshChangesAvailability: paintChangesButton,
+      /**
+       * Is the Changes view offered at all right now? Anything outside the
+       * panel that wants to link INTO it has to ask, rather than assume: a
+       * knowledge-work session, a folder that is not a repository and a host
+       * too old to answer git at all each make the link a dead control, and
+       * they are all ordinary situations rather than edge cases.
+       */
+      canShowChanges: () => changesAvailable(),
+      /** Open the panel, on the Changes list. The link from the turn card. */
+      showChanges: () => {
+        if (!changesAvailable()) return false;
+        setOpen(true);
+        showChanges();
+        return true;
+      },
       confirmClose,
       clearMemory,
       destroy,
@@ -3552,6 +3698,7 @@
     changesPrimaryAction,
     changesCommitOnlyAction,
     changeCountLabel,
+    changeTotalLabel,
     parseUnifiedDiff,
   };
 

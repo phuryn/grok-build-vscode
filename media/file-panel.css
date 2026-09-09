@@ -257,13 +257,12 @@ body.desk-rail-collapsed .desk-rail-open-btn { display: inline-flex; }
    and State C paints icons AND the chip. */
 .gfp-tab[hidden],
 .gfp-overflow-chip[hidden] { display: none !important; }
-/* Close the run: tabs draw a left edge, so the last item also needs a right
-   one or the last tab dissolves into the empty strip. */
-.gfp-tabs > :last-child { border-right: 1px solid var(--gfp-border); }
-/* No files open: the folder "tab" closes its own right edge — with tabs
-   present the first tab's left border draws that line instead (owner:
-   a borderless folder-only strip read as inconsistent). */
-.gfp-header:not(:has(.gfp-tabs > *)) .gfp-title { border-right: 1px solid var(--gfp-border); }
+/* No dividers ANYWHERE in the strip, deliberately. A per-tab border draws a
+   box, and a box says "this is a discrete cell"; the underline says "this one
+   is current". Running both left the strip saying half of each — cells with a
+   stray accent, which is what the owner saw and named. Spacing separates the
+   tabs now, hover gives the cell back on the one under the pointer, and the
+   underline is the only thing that ever marks selection. */
 
 .gfp-tab {
   position: relative;
@@ -281,8 +280,9 @@ body.desk-rail-collapsed .desk-rail-open-btn { display: inline-flex; }
      floor was the old scroll model's way to stop shrinking — it forced the
      strip to overflow. Icon and close are flex-none so they survive first. */
   max-width: 170px;
-  padding: 0 6px 0 10px;
-  border-left: 1px solid var(--gfp-border);
+  /* Symmetric now. The old 10/6 split existed to sit the text off a left
+     border that no longer exists; kept, it made every tab look nudged right. */
+  padding: 0 8px;
   color: var(--vscode-descriptionForeground, #999);
   cursor: pointer;
 }
@@ -315,14 +315,21 @@ body.desk-rail-collapsed .desk-rail-open-btn { display: inline-flex; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* The dot sits BEFORE the name, so nothing separates a filename from the X
+   that closes it. It used to sit after, in a 10px slot held open on every tab
+   whether or not there was a dot to put in it — a permanent gap reserved for
+   an absent mark, in the one place where a gap costs something. Collapsing the
+   empty slot is free (the planner measures the rendered DOM, so the width it
+   gives back is width the names get) and a dirty file spends it in front,
+   where it never comes between the pair. */
 .gfp-tab-dirty { flex: 0 0 10px; text-align: center; }
+.gfp-tab-dirty:empty { display: none; }
 .gfp-tab-icon-only {
   flex: 0 0 auto;
   max-width: none;
   padding: 0 8px;
 }
 .gfp-tab-icon-only .gfp-tab-name { display: none; }
-.gfp-tab-icon-only .gfp-tab-dirty:empty { display: none; }
 /* No name, no X — an X alone on an icon-only tab is a control with nothing to
    say what it would close. collectStripMeasurements budgets this mode from the
    icon and the dirty dot, so hiding it here costs the planner nothing. */
@@ -335,9 +342,23 @@ body.desk-rail-collapsed .desk-rail-open-btn { display: inline-flex; }
   .gfp-overflow-chip { min-width: 40px; }
 }
 
+/* Something behind the chip is unsaved. Same dot the tabs and the menu rows
+   use, in the corner rather than in the flow, because the chip's content is
+   the ellipsis and a second glyph beside it would read as two files. */
+.gfp-overflow-chip-dirty::after {
+  content: "•";
+  position: absolute;
+  top: 1px;
+  right: 3px;
+  line-height: 1;
+  color: var(--vscode-foreground, inherit);
+}
 /* The chip IS a tab (owner): same cell chrome as an idle tab — full height,
-   both edges, idle-tab tone, hover — holding "…" where a name would sit. */
+   idle-tab tone, hover — holding "…" where a name would sit. The edges it used
+   to draw went with every other tab's: one idiom, and the idiom is spacing
+   plus an underline on whatever is current. */
 .gfp-overflow-chip {
+  position: relative;
   display: flex;
   flex: 0 0 auto;
   align-items: center;
@@ -346,8 +367,6 @@ body.desk-rail-collapsed .desk-rail-open-btn { display: inline-flex; }
   min-width: 40px;
   padding: 0 10px;
   border: 0;
-  border-left: 1px solid var(--gfp-border);
-  border-right: 1px solid var(--gfp-border);
   background: transparent;
   color: var(--vscode-descriptionForeground, #999);
   font: inherit;
@@ -1091,6 +1110,25 @@ body.vscode-light {
   margin-right: 2px;
 }
 .gfp-changes-btn[hidden] { display: none !important; }
+/* Named where there is room, a glyph where there is not.
+   The button is the bar-icon primitive — a 28px square — so wearing a word
+   means giving up the square, which is why the width and padding are restated
+   here rather than inherited. The badge comes out of the corner at the same
+   time: over a word it would cover the last letters, and beside one it reads
+   as what it is, a count of the thing just named. */
+.gfp-changes-label { display: none; }
+.gfp-panel:not(.gfp-strip-compact) .gfp-changes-btn {
+  gap: 6px;
+  width: auto;
+  min-width: 28px;
+  padding: 0 8px;
+}
+.gfp-panel:not(.gfp-strip-compact) .gfp-changes-label { display: inline; }
+.gfp-panel:not(.gfp-strip-compact) .gfp-changes-count {
+  position: static;
+  top: auto;
+  right: auto;
+}
 .gfp-changes-btn.gfp-changes-selected { color: var(--vscode-foreground, inherit); }
 .gfp-changes-btn.gfp-changes-selected::after {
   content: "";
@@ -1282,6 +1320,10 @@ body.vscode-light {
 .gfp-change-add { color: var(--tdiff-add-line, #40c977); }
 .gfp-change-del { color: var(--tdiff-del-line, #fa423e); }
 .gfp-change-stat-word { font-style: italic; }
+/* On the headline the pair rides at the end of a sentence, so it takes that
+   sentence's weight back down — it is the size of the change, not a second
+   headline. */
+.gfp-changes-total { font-weight: 400; font-variant-numeric: tabular-nums; }
 
 .gfp-changes-commits { display: flex; flex-direction: column; gap: 2px; }
 .gfp-changes-commit {
@@ -1368,6 +1410,16 @@ body.vscode-light {
   font-size: 0.88em;
 }
 .gfp-changes-hint:empty { display: none; }
+/* The all-or-nothing rule, under the buttons it governs. Quieter than the
+   hint above it — the hint is about the press you are about to make, this is
+   about what that press covers, and it is true whether or not you read it. */
+.gfp-changes-rule {
+  margin: 0;
+  color: var(--vscode-descriptionForeground, #999);
+  font-size: 0.82em;
+  line-height: 1.45;
+  opacity: 0.85;
+}
 
 /* One file's diff. The header is the way back and the file's name; the diff
    below it is the product's own `.tool-diff-region`. */

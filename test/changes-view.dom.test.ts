@@ -17,6 +17,7 @@ import {
   changeCountLabel,
   changesBranchLine,
   changesCommitOnlyAction,
+  changeTotalLabel,
   changesHeadline,
   changesPrimaryAction,
   createFilePanel,
@@ -554,6 +555,32 @@ describe("the panel", () => {
     const stat = h.q(".gfp-change-stat")!;
     expect(stat.querySelector(".gfp-change-add")?.textContent).toBe("+12");
     expect(stat.querySelector(".gfp-change-del")?.textContent).toBe("−3");
+  });
+});
+
+describe("the size of the whole change, not only the count of it", () => {
+  it("sums every file's counts", () => {
+    expect(changeTotalLabel([
+      { path: "a.ts", status: "M", added: 12, deleted: 3 },
+      { path: "b.ts", status: "A", added: 288, deleted: 0 },
+      { path: "c.ts", status: "D", added: 0, deleted: 91 },
+    ])).toBe("+300 −94");
+  });
+
+  // Untracked files carry null counts by design — counting them would mean
+  // reading every one. A list of only those has nothing to total, and saying
+  // "+0 −0" there would be a number the view invented.
+  it("says nothing when no file carries a count", () => {
+    expect(changeTotalLabel([{ path: "n.md", status: "?", added: null, deleted: null }])).toBe("");
+    expect(changeTotalLabel([])).toBe("");
+    expect(changeTotalLabel(undefined as never)).toBe("");
+  });
+
+  it("still totals the files that DO carry counts", () => {
+    expect(changeTotalLabel([
+      { path: "a.ts", status: "M", added: 4, deleted: 4 },
+      { path: "n.md", status: "?", added: null, deleted: null },
+    ])).toBe("+4 −4");
   });
 });
 

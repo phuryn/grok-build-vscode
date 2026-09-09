@@ -2879,6 +2879,26 @@ button.turn-diff-file.has-diff:focus-visible {
    diffs, so the roll-up would only repeat them. Hidden rather than never
    built, so flipping the setting back restores the cards already in the
    transcript. */
+/* The link out of the card, into the Changes view. A link rather than a
+   button: the rows above it are the card's actions, and a second bordered
+   control at the bottom would compete with them for the same attention. */
+.turn-diff-summary-foot {
+  display: flex;
+  margin-top: 6px;
+}
+.turn-diff-open-changes {
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: var(--vscode-textLink-foreground, #4daafc);
+  font: inherit;
+  cursor: pointer;
+}
+.turn-diff-open-changes:hover { text-decoration: underline; }
+/* A link is still a target on a phone. */
+@media (hover: none), (pointer: coarse) {
+  .turn-diff-open-changes { min-height: 36px; padding: 6px 0; }
+}
 body.hide-turn-diff-summary .turn-diff-summary { display: none; }
 /* A file row opens a diff, so on a phone it is a real target. */
 @media (hover: none), (pointer: coarse) {

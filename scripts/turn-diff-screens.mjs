@@ -219,6 +219,14 @@ const CASES = {
   // the file's own tool row — and the frame is the only place to SEE that they
   // still read as rows you can press at thumb size.
   remote: { messages: TURN, expectCard: true, remote: true },
+  // The way out of the card. The link is offered only where a file panel is
+  // mounted AND has a repository to talk about, so it needs a panel on the
+  // page to exist at all — every other case here is the negative frame.
+  withPanel: { messages: TURN, expectCard: true, panel: true },
+  // A panel that says no. A knowledge-work session and a folder that is not a
+  // repository both land here, and both are ordinary rather than exotic: the
+  // card must simply not offer the link.
+  panelSaysNo: { messages: TURN, expectCard: true, panel: "no" },
 };
 
 const VIEWPORTS = [
@@ -255,6 +263,17 @@ try {
       for (const [caseName, spec] of Object.entries(CASES)) {
         const p = await context.newPage();
         await p.setContent(page(th.theme, th.cls, spec.remote), { waitUntil: "load" });
+        if (spec.panel) {
+          // The smallest thing chat.js will accept as a panel: the two methods
+          // it capability-detects, and nothing else. Standing in for the real
+          // component keeps this harness about the CARD.
+          await p.evaluate((available) => {
+            window.__grokDeskFilePanel = {
+              canShowChanges: () => available,
+              showChanges: () => { window.__openedChanges = true; return true; },
+            };
+          }, spec.panel !== "no");
+        }
         for (const m of spec.messages) {
           await p.evaluate((data) => window.dispatchEvent(new MessageEvent("message", { data })), m);
         }
@@ -324,6 +343,21 @@ try {
               return tag ? getComputedStyle(tag).color : "";
             })(),
             paletteDel: getComputedStyle(document.body).getPropertyValue("--tdiff-del-line").trim(),
+            // The link out of the card: present, named, and a real target on
+            // a phone. Measured rather than assumed, because it is a control
+            // that appears only under a condition and those are the ones that
+            // quietly stop appearing.
+            openChanges: (() => {
+              const link = card?.querySelector(".turn-diff-open-changes");
+              if (!link) return null;
+              const box = link.getBoundingClientRect();
+              return {
+                text: link.textContent,
+                height: Math.round(box.height),
+                inside: !!card && box.right <= card.getBoundingClientRect().right + 1,
+                last: card.lastElementChild?.classList.contains("turn-diff-summary-foot") === true,
+              };
+            })(),
             px,
           };
         }, MIN_TOUCH_PX);
@@ -335,6 +369,26 @@ try {
           if (seen.shown) fail(`${id}: the roll-up should be hidden here, it is visible`);
           // Built but hidden, so flipping the preference back restores it.
           if (!seen.present) fail(`${id}: card was removed rather than hidden`);
+        }
+        // Offered exactly where a panel says it can show Changes, and nowhere
+        // else. A dead link on a knowledge session is worse than no link.
+        const wantsLink = spec.panel === true;
+        if (wantsLink && !seen.openChanges) fail(`${id}: no way out of the card into Changes`);
+        if (!wantsLink && seen.openChanges) fail(`${id}: offered Changes with no panel able to show it`);
+        if (seen.openChanges) {
+          if (!/changes/i.test(seen.openChanges.text)) fail(`${id}: the link does not name Changes: "${seen.openChanges.text}"`);
+          if (!seen.openChanges.last) fail(`${id}: the link is not the last thing in the card`);
+          if (!seen.openChanges.inside) fail(`${id}: the link overflows the card`);
+          if (vp.touch && seen.openChanges.height < MIN_TOUCH_PX) {
+            fail(`${id}: the link is ${seen.openChanges.height}px tall on a touch surface`);
+          }
+        }
+        // Pressing it has to reach the panel, not merely look like it would.
+        if (wantsLink) {
+          await p.click(".turn-diff-open-changes");
+          if (!(await p.evaluate(() => window.__openedChanges === true))) {
+            fail(`${id}: pressing the link did not open Changes`);
+          }
         }
         if (seen.overflowX > 0) fail(`${id}: page scrolls sideways by ${seen.overflowX}px`);
         if (seen.shown && seen.widest > seen.cardWidth) {
