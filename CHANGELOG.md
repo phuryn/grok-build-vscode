@@ -1,5 +1,25 @@
 # Changelog
 
+## 4.4.0 - 2026-09-09
+
+**Is my work safe to walk away from?** The panel now answers that without leaving the conversation: a **Changes** view that says where things stand in one sentence and carries one button for the whole promise, a **Changed N files** card at the end of every coding turn, and a refused push that names the next move instead of quoting git at you. Alongside it, a design pass over the file panel's strip: one selected thing, one palette for "changed", and a folder icon that means "project" and nothing else.
+
+### Added
+
+- **A Changes view, reachable from a phone.** The file panel's branch button carries a badge of not-committed files and opens a view that answers the question you actually have — conflicts, then uncommitted work, then unpushed commits, then clean — in one sentence, with the size of the change beside it. **Commit** and **Commit and push** share one row, unpushed commits get **Push N commits**, and **Move to a new branch…** takes the whole batch aside. It is every changed file or none: to leave one out, discard it from inside its diff, because an irreversible action should require having looked. Each file opens into the same diff the chat renders under a tool call. It never runs `git fetch`, so *behind* is as of your last one and the line says so. Coding purpose only, and it reads and works the same from a phone as at the desk.
+
+- **A refused push says what to do next.** When GitHub will not let you push, the notice reads **Push needs GitHub. Connect it in Settings.** with a **Connect GitHub** button that takes you there. When the remote has commits you do not have, it says so and offers **Ask the agent to pull**. A protected branch, a repository that is not there, a remote that cannot be reached and hosts other than GitHub each get one plain sentence, with git's own line underneath for those who want it. **Ask agent to pull** also sits on the branch line at all times; it puts the request into the message box and leaves sending to you.
+
+- **A "Changed N files" card at the end of every coding turn** ([#82](https://github.com/phuryn/grok-build-vscode/issues/82), [PR #83](https://github.com/phuryn/grok-build-vscode/pull/83)). Every path the turn touched with its `+N −M`, git's own M / A / D letters in front, and **Open Changes** one tap away. Tap a row for that file's diff, or the header to fold and unfold the card. **Expand diff card** (Settings → General) chooses whether cards start open; on a phone the choice is per device. Built by @datvm.
+
+### Changed
+
+- **One selected thing in the file panel's strip.** The project folder, the file tabs and the Changes button used to mark "where am I" three different ways, and entering Changes lit two at once. Now one underline, on whichever of the three is showing. Every named tab closes itself, and so does every row of the overflow menu, so shutting five files on a phone no longer means opening five files first.
+
+- **One palette for "changed".** The yellow that means "modified, not committed" marks the dot on a tab, the M beside a file, the count badges, and a small dot on every changed file and every folder above it — so a closed folder that hides a change now says so. Added is teal and deleted is coral on the tree, the card and the diff alike, with darker relatives on a light theme.
+
+- **A folder icon means a project.** Tree rows lost their folder glyphs; the strip title wears the open-folder outline and stays muted until it is the selected thing; the projects rail draws its folders in outline too. The count badge is a circle. Refresh lives beside the tree's filter and only there — Changes re-reads on its own.
+
 ## 4.3.0 - 2026-09-08
 
 **A long conversation stops paying twice for the context it already sent.** An outside contributor benchmarked multi-turn conversations and found prompt caching never engaging at all — input climbing turn after turn while nothing was ever read back from cache. Five separate causes, each fixed where it started. Alongside that: copying a picture out of a conversation, an experimental button that walks back through your own prompts, and dragging files in from the Explorer finally doing what it looks like it does.
