@@ -22,8 +22,13 @@ import { describe, expect, it } from "vitest";
  * No DOM suite could catch this: each drives one page's elements, and this is a
  * relationship BETWEEN stylesheets. So it is asserted against the CSS itself.
  *
- * The four files here are the whole stacking universe — the relay serves the
- * same webview and its own stylesheets declare no z-index at all.
+ * The four files here are the whole stacking universe FOR THIS REPO, and not
+ * for the phone: the relay serves this webview inside its own page, whose
+ * chrome declares layers inline in a `web/chat.html` nothing here can see. An
+ * independent review caught that on 2026-09-09, when this comment claimed the
+ * relay declared none. Its half of the guard is grok-remote's own
+ * `test/confirm-stacking.test.ts`, which compares its layers against the
+ * vendored copy of the rule below. Neither test is complete alone.
  */
 
 const mediaDir = fileURLToPath(new URL("../media/", import.meta.url));
