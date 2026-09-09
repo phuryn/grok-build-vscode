@@ -1254,6 +1254,21 @@ describe("app-resource serve policy (no credential leak)", () => {
   });
 });
 
+describe("webview message schema validation — display-preference setters", () => {
+  // The desktop app gates every webview message through parseWebviewMsg, and
+  // an unknown type is dropped silently (default: return null). A setter that
+  // VS Code accepts (no gate there) and a phone never posts (local-only) can
+  // therefore be dead on the desktop and on a cloud machine alone — which is
+  // exactly what happened to setExpandDiffCard the day it shipped.
+  it("accepts setExpandDiffCard with a boolean and refuses anything else", () => {
+    expect(parseWebviewMsg({ type: "setExpandDiffCard", value: true }))
+      .toEqual({ type: "setExpandDiffCard", value: true });
+    expect(parseWebviewMsg({ type: "setExpandDiffCard", value: false })?.type).toBe("setExpandDiffCard");
+    expect(parseWebviewMsg({ type: "setExpandDiffCard", value: "yes" })).toBeNull();
+    expect(parseWebviewMsg({ type: "setExpandDiffCard" })).toBeNull();
+  });
+});
+
 describe("webview message schema validation — routines", () => {
   // This validator is a strict allowlist ending in `default: return null`, so
   // TypeScript does NOT force a new message type to be handled here. The

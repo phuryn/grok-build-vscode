@@ -231,6 +231,7 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
     case "setExpandCommandOutputs":
     case "setSteerByDefault":
     case "setPromptNav":
+    case "setExpandDiffCard":
     case "setTelemetryEnabled":
     case "setThumbsFeedback":
     case "composerFocus":

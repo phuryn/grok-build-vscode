@@ -5,6 +5,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { TIER1_CONNECTORS } from "../src/mcp-connectors";
+import { parseWebviewMsg } from "../src/desktop/webview-msg-validate";
 import { bootWebview, click, dispatch } from "./webview-harness";
 
 const settingsSrc = readFileSync(
@@ -2550,6 +2551,26 @@ describe("the experimental Previous-prompt row (#150)", () => {
   });
 });
 
+
+describe("every desktop toggle reaches the desktop host", () => {
+  // The desktop app drops any webview message its validator does not list,
+  // silently. VS Code has no such gate and a phone applies local-only rows
+  // without posting, so a toggle can work on three surfaces and be dead on
+  // the fourth — setExpandDiffCard was, for one commit. This walks the rows
+  // the desktop actually shows and posts each one through that gate.
+  it("accepts the message of every visible toggle row", () => {
+    const api = loadSettings() as any;
+    const snapshot = { ...api.defaultSnapshot(), appPurpose: "coding" };
+    const env = { isRemote: false, isDesktop: true };
+    const toggles = api.visibleRows(snapshot, env)
+      .filter((r: any) => r.kind === "toggle" && typeof r.message === "function"
+        && !(typeof r.localOnly === "function" && r.localOnly(snapshot, env)));
+    expect(toggles.length).toBeGreaterThan(5);
+    for (const row of toggles) {
+      expect(parseWebviewMsg(row.message(true)), row.id).not.toBeNull();
+    }
+  });
+});
 
 describe("Expand diff card across settings surfaces", () => {
   it("is a coding-only General row directly after tool details on every surface", () => {
