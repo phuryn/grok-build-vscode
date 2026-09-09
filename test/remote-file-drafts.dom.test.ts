@@ -11,7 +11,7 @@
  * or navigating to the tree keeps them; Cancel and closing a dirty tab ask;
  * page unload still warns while any scope owns dirty text.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { bootWebview, click, dispatch, type Harness, type Posted } from "./webview-harness";
 
 const CWD_A = "/work/app";
@@ -587,5 +587,64 @@ describe("remote discard and close semantics", () => {
 
     expect([...h.doc.querySelectorAll("button")].some((item) => item.textContent === "Edit")).toBe(false);
     expect(requests(h, "writeProjectFile")).toHaveLength(0);
+  });
+
+  /*
+   * A cloud machine suspends about a minute after the last frame, which is one
+   * paragraph of reading, so the Changes view meets a sleeping host constantly
+   * and its read simply gets no answer.
+   *
+   * Silence must not convict that host of being a released build too old to
+   * echo requestIds. The poison set exists to stop a late legacy answer landing
+   * in a different request's tab, and applying it on a timeout made every later
+   * read answer "Request state is stale. Refresh this page and try again." from
+   * memory, without ever reaching the wire — so the view stayed dead after the
+   * machine woke, and reloading the page was the only cure. The owner hit that
+   * repeatedly. A reply WITHOUT a requestId is what proves an old host, and
+   * that case is covered above.
+   */
+  it("still reads after a silent host, so a woken machine fills the view in", async () => {
+    const caps = { browseProjectFiles: true, editProjectFiles: true, gitChanges: true };
+    const h = bootWebview({ remote: true });
+
+    // The harness window owns its own timers, so hold the request timeout here
+    // and fire it by hand rather than waiting thirty real seconds.
+    const expiries: Array<() => void> = [];
+    const realTimeout = h.window.setTimeout.bind(h.window);
+    (h.window as unknown as { setTimeout: unknown }).setTimeout = (fn: () => void, ms: number) => {
+      if (ms >= 20_000) {
+        expiries.push(fn);
+        return 0;
+      }
+      return realTimeout(fn, ms);
+    };
+    const boot = () => dispatch(h.window, {
+      type: "initialState", cwd: CWD_A, capabilities: caps, appPurpose: "coding",
+    });
+    boot();
+    dispatch(h.window, {
+      type: "repos",
+      entries: [{ cwd: CWD_A, label: "app", available: true, pinned: false, updatedAt: 2 }],
+      selectedCwd: CWD_A,
+    });
+    await settle();
+    click(h.window, h.doc.getElementById("files-browse-btn")!);
+    await settle();
+    const changesBtn = h.doc.querySelector(".gfp-changes-btn") as HTMLElement | null;
+    expect(changesBtn, "no Changes control").toBeTruthy();
+    click(h.window, changesBtn!);
+    await settle();
+
+    // Asleep: the read goes out and nothing at all comes back.
+    const asked = requests(h, "gitStatus").length;
+    expect(asked).toBeGreaterThan(0);
+    expect(expiries.length).toBeGreaterThan(0);
+    for (const expire of expiries.splice(0)) expire();
+    await settle();
+
+    // It wakes and dials back in. The next read must reach the WIRE.
+    boot();
+    await settle();
+    expect(requests(h, "gitStatus").length).toBeGreaterThan(asked);
   });
 });

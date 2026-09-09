@@ -13357,9 +13357,18 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   }
 
   private reportProtectedSession(origin: MsgOrigin, clientId: string | undefined, action: "delete" | "clear"): void {
+    // Name only surfaces that EXIST here. A cloud machine has no VS Code view
+    // and no second screen, so the desk wording sent the owner hunting for a
+    // window that could not be there; what actually held the conversation was
+    // another browser tab or his phone. Same guard, an address he can act on.
+    const cloud = isCloudEnvironment();
     const text = action === "delete"
-      ? "This conversation is open in another tab or the VS Code view. Close it there before deleting it."
-      : "Open conversations were kept. Close them in their tabs or the VS Code view before clearing them.";
+      ? (cloud
+        ? "This conversation is open in another browser tab or on your phone. Close it there before deleting it."
+        : "This conversation is open in another tab or the VS Code view. Close it there before deleting it.")
+      : (cloud
+        ? "Open conversations were kept. Close them in their other browser tabs or on your phone before clearing them."
+        : "Open conversations were kept. Close them in their tabs or the VS Code view before clearing them.");
     if (origin === "remote" && clientId) {
       this.sendRemoteClient(clientId, { type: "error", text });
     } else {

@@ -18511,6 +18511,22 @@
   const remoteFileTails = new Map();
   const remoteFilePoisoned = new Set();
 
+  /*
+   * What to say when a request got no answer at all.
+   *
+   * On a cloud machine the overwhelmingly likely reason is that the machine is
+   * asleep — it suspends about a minute after the last frame, so reading the
+   * transcript for a couple of minutes is enough. Sending anything wakes it,
+   * and this panel re-reads on its own when the host dials back in, so telling
+   * the owner to refresh the page named the one remedy that was neither needed
+   * nor the real one. He hit exactly this and asked whether the machine sleeps.
+   */
+  function remoteFileSilenceReason() {
+    return IS_CLOUD_HOST
+      ? "Your cloud machine is asleep. This fills in when it wakes — send anything to wake it now."
+      : "That machine did not answer. It may be offline; this fills in when it reconnects.";
+  }
+
   function remoteFileRequestKey(kind, cwd, relPath) {
     return kind + "\0" + String(cwd || "") + "\0" + String(relPath || "");
   }
@@ -18542,8 +18558,19 @@
       const requestId = "file-" + (++remoteFileRequestSeq);
       const timer = setTimeout(() => {
         remoteFilePending.delete(requestId);
-        if (remoteFileRequestIdsSupported !== true) remoteFilePoisoned.add(key);
-        resolve({ ok: false, reason: "File request timed out. Refresh this page and try again." });
+        // Poison only a host PROVEN legacy, never one that merely went quiet.
+        //
+        // `null` means "no answer has arrived yet, so we do not know", and
+        // treating that as legacy was wrong in the case that actually happens:
+        // a cloud machine suspends about a minute after the last frame, so the
+        // FIRST request of a page load routinely lands on a sleeping host and
+        // times out. That poisoned the key, and every later read answered
+        // "Request state is stale. Refresh this page and try again." — the
+        // panel stayed dead after the machine woke, which is why a refresh
+        // looked like the only cure. Silence is not evidence of an old host;
+        // a reply without a requestId is, and that sets this to false.
+        if (remoteFileRequestIdsSupported === false) remoteFilePoisoned.add(key);
+        resolve({ ok: false, reason: remoteFileSilenceReason() });
       }, remoteFileTimeoutMs(kind));
       remoteFilePending.set(requestId, {
         requestId,
