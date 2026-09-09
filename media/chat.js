@@ -1204,7 +1204,7 @@
 
   // ---------- markdown ----------
 
-  const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, modelPickerLabel, modelDisplayName, nextMicState, trailingSendPhrase, versionedSiblingUrl, buildQuestionAnswers, isFreeTextOptionLabel, isSubagentToolCall, subagentLabel, cleanSubagentOutput, parseSubagentTaskResult, shouldStickToBottom, stickThresholdPx, splitMath, stripUnsupportedTex, toolFailureText, isMediaGenToolCall, mediaGenZeroRetentionHint, TOOL_LABEL_MAX, middleElide, isAdvertisedSkill, getSlashQuery, applySlashPick, filterCommands, appendHighlightedText, commandProgramLabel, commandTextPreview, extractToolResultOutput, commandOutputWasCancelled, commandOutputTruncationNote, computeLineDiff, aggregateTurnEdits, turnDiffSummaryTitle, parseShellDeletePaths, parseAttachmentContext, parseSelectionBlocks, parseImageTags, isKnownHostMessage, composerHasSendIntent, explicitVisibleChips, normalizeQueuedSends, queuedSendsText, queuedSendsChips, contextOverheadTokens, nextContextBreakdown, contextBreakdownIsCurrent, createPendingOverlay, getMentionQuery, applyMentionPick, orderPermissionOptions, defaultPermissionIndex, shouldFocusPermissionCard, isTypeThroughKey, isInterjectionText, stripInterjectionEnvelope, spokenTextFromMarkdown, isRelaySendRejection, wireFullscreenSafeReclamp, distributeSidePanelWidths, chatZoomFactor, unzoomClientPx, exportSessionMarkdown, exportSessionFilename, isExportableSessionEvent, replayedUserBubbleVerdict, truncateExportEvents, flattenHistoryMessages, splitHistoryWindow, countHistoryReplayCounters, partitionHistoryCards } = globalThis.GrokWebviewHelpers;
+  const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, modelPickerLabel, modelDisplayName, nextMicState, trailingSendPhrase, versionedSiblingUrl, buildQuestionAnswers, isFreeTextOptionLabel, isSubagentToolCall, subagentLabel, cleanSubagentOutput, parseSubagentTaskResult, shouldStickToBottom, stickThresholdPx, splitMath, stripUnsupportedTex, toolFailureText, isMediaGenToolCall, mediaGenZeroRetentionHint, TOOL_LABEL_MAX, middleElide, isAdvertisedSkill, getSlashQuery, applySlashPick, filterCommands, appendHighlightedText, commandProgramLabel, commandTextPreview, extractToolResultOutput, commandOutputWasCancelled, commandOutputTruncationNote, computeLineDiff, aggregateTurnEdits, turnDiffSummaryTitle, parseShellDeletePaths, normalizeTurnEditPathKey, parseAttachmentContext, parseSelectionBlocks, parseImageTags, isKnownHostMessage, composerHasSendIntent, explicitVisibleChips, normalizeQueuedSends, queuedSendsText, queuedSendsChips, contextOverheadTokens, nextContextBreakdown, contextBreakdownIsCurrent, createPendingOverlay, getMentionQuery, applyMentionPick, orderPermissionOptions, defaultPermissionIndex, shouldFocusPermissionCard, isTypeThroughKey, isInterjectionText, stripInterjectionEnvelope, spokenTextFromMarkdown, isRelaySendRejection, wireFullscreenSafeReclamp, distributeSidePanelWidths, chatZoomFactor, unzoomClientPx, exportSessionMarkdown, exportSessionFilename, isExportableSessionEvent, replayedUserBubbleVerdict, truncateExportEvents, flattenHistoryMessages, splitHistoryWindow, countHistoryReplayCounters, partitionHistoryCards } = globalThis.GrokWebviewHelpers;
 
   function escapeAttr(s) {
     return String(s == null ? "" : s)
@@ -2250,6 +2250,24 @@
   /** Knowledge work never pre-expands tool details; Coding honours the toggle. */
   function effectiveExpandCommandOutputs() {
     return isCodingPurpose() && !!state.expandCommandOutputs;
+  }
+
+  /** The turn's "Changed N files" card is a ROLL-UP: it earns its space only
+   *  where the diffs are not already open. Knowledge work never shows it (file
+   *  edits are not what that mode is about), and Coding hides it whenever tool
+   *  details expand by default — the card would then repeat, one line each,
+   *  what the rows above it are already showing in full. detailShouldExpand()
+   *  rather than the raw setting, so the session's Expand/Collapse All latch
+   *  moves it too. */
+  function turnDiffSummaryEnabled() {
+    return isCodingPurpose() && !detailShouldExpand();
+  }
+
+  /** One body class, not a DOM rebuild: a card the user hides by flipping a
+   *  setting comes back when they flip it again, including on turns whose
+   *  per-call edit map is long gone. */
+  function applyTurnDiffSummaryVisibility() {
+    document.body.classList.toggle("hide-turn-diff-summary", !turnDiffSummaryEnabled());
   }
 
   function setAppPurpose(value) {
@@ -8716,6 +8734,11 @@
       thoughtBuffer: state.thoughtBuffer,
       activeToolGroupEl: state.activeToolGroupEl,
       turnAgentActionsEl: state.turnAgentActionsEl,
+      // Replayed turns record their own edits and build their own cards inside
+      // the park; without this the live turn's tracker would absorb them and
+      // its card would be pinned into the history nodes.
+      turnEdits: [...state.turnEditsByToolCallId],
+      turnDiffSummaryEl: state.turnDiffSummaryEl,
       turnRating: state.turnRating,
       suppressReplayTurn: state.suppressReplayTurn,
       skipUserBubble: state.skipUserBubble,
@@ -8736,6 +8759,8 @@
     state.thoughtBuffer = "";
     state.activeToolGroupEl = null;
     state.turnAgentActionsEl = null;
+    state.turnEditsByToolCallId.clear();
+    state.turnDiffSummaryEl = null;
     state.suppressReplayTurn = false;
     state.skipUserBubble = false;
     state.userMsgCount = startUserCount;
@@ -8777,6 +8802,9 @@
     state.thoughtBuffer = saved.thoughtBuffer;
     state.activeToolGroupEl = saved.activeToolGroupEl;
     state.turnAgentActionsEl = saved.turnAgentActionsEl;
+    state.turnEditsByToolCallId.clear();
+    for (const [id, entry] of saved.turnEdits) state.turnEditsByToolCallId.set(id, entry);
+    state.turnDiffSummaryEl = saved.turnDiffSummaryEl;
     state.turnRating = saved.turnRating;
     state.suppressReplayTurn = saved.suppressReplayTurn;
     state.skipUserBubble = saved.skipUserBubble;
@@ -9912,7 +9940,7 @@
 
   function pinTurnDiffSummary() {
     const el = state.turnDiffSummaryEl;
-    if (el && el.isConnected) messagesEl.appendChild(el);
+    if (el && el.isConnected) appendTranscriptChild(el);
   }
 
   /** Workspace-relative path for the summary list (falls back to the raw path). */
@@ -9933,6 +9961,10 @@
     if (!toolCallId) return;
     state.turnEditsByToolCallId.set(toolCallId, {
       kind: "edit",
+      // The tool row this edit came from. A remote cannot open a native diff
+      // (openDiff is host-local in remote-policy.ts), so its only way to show
+      // one is to expand the row that already has it.
+      toolCallId,
       path: path || "",
       added: typeof added === "number" ? added : 0,
       removed: typeof removed === "number" ? removed : 0,
@@ -9977,6 +10009,35 @@
     }
   }
 
+  /** The row's path, split so the DIRECTORY is what gets cut.
+   *  A plain text-overflow ellipsis on the whole path eats the filename first,
+   *  which is the only part that identifies the row — on a phone a deep path
+   *  rendered as "packages/relay-transport/src/internal/handlers/ses…". The
+   *  leaf is a separate, non-shrinking span, so it survives every width and the
+   *  middle is what disappears. `title` keeps the original path reachable. */
+  function turnDiffFilePathEl(rawPath) {
+    const el = document.createElement("span");
+    el.className = "turn-diff-file-path";
+    const shown = turnEditDisplayPath(rawPath);
+    if (rawPath) el.title = rawPath;
+    const cut = shown.lastIndexOf("/");
+    if (cut < 0) {
+      el.textContent = shown;
+      return el;
+    }
+    const dir = document.createElement("span");
+    dir.className = "turn-diff-file-dir";
+    // The separator rides the LEAF, so the ellipsis reads ".../name.ts"
+    // rather than leaving the two halves floating apart.
+    dir.textContent = shown.slice(0, cut);
+    const leaf = document.createElement("span");
+    leaf.className = "turn-diff-file-name";
+    leaf.textContent = shown.slice(cut);
+    el.appendChild(dir);
+    el.appendChild(leaf);
+    return el;
+  }
+
   function refreshTurnDiffSummaryUi() {
     const agg = aggregateTurnEdits(state.turnEditsByToolCallId.values());
     if (!agg.files.length) {
@@ -10008,28 +10069,60 @@
     }
     el.appendChild(hdr);
 
+    // Path → the LAST tool call that touched it, for the remote reveal below.
+    // Same normalization aggregateTurnEdits merges on, so the lookup cannot
+    // miss on a case variant that the card itself folded into one row.
+    const lastCallByPath = new Map();
+    for (const entry of state.turnEditsByToolCallId.values()) {
+      if (entry && entry.kind === "edit" && entry.toolCallId) {
+        lastCallByPath.set(normalizeTurnEditPathKey(entry.path || ""), entry.toolCallId);
+      }
+    }
+
     const list = document.createElement("div");
     list.className = "turn-diff-summary-list";
     for (const f of agg.files) {
       const isDel = f.action === "deleted";
-      const row = document.createElement(f.openDiff && !isDel ? "button" : "div");
+      // On a remote the native diff is unreachable, so the row is a button only
+      // where the in-transcript row it would reveal is known. Better a plain
+      // line than a control that looks tappable and does nothing on a phone.
+      const revealId = IS_REMOTE ? lastCallByPath.get(normalizeTurnEditPathKey(f.path || "")) : null;
+      const clickable = !isDel && (IS_REMOTE ? !!revealId : !!f.openDiff);
+      const row = document.createElement(clickable ? "button" : "div");
       row.className = "turn-diff-file"
-        + (f.openDiff && !isDel ? " has-diff" : "")
+        + (clickable ? " has-diff" : "")
         + (isDel ? " is-deleted" : "");
-      if (f.openDiff && !isDel) {
+      if (clickable) {
         row.type = "button";
-        row.title = "Open diff";
+        row.title = IS_REMOTE ? "Show the diff" : "Open diff";
         const payload = f.openDiff;
         row.onclick = (e) => {
           e.stopPropagation();
+          if (IS_REMOTE) {
+            // Expands that file's inline diff in place and scrolls to it — the
+            // same answer the permission card gives a remote.
+            revealToolDiff(revealId);
+            return;
+          }
+          // Desktop routes a diff into its in-app overlay; VS Code opens the
+          // native editor. The payload is already a complete openDiff message,
+          // so it is posted as-is rather than rebuilt through openDiffMessage —
+          // that reader indexes diff.sites, which an aggregate need not carry.
+          if (hostPreviewsInApp()) {
+            openPreviewOverlay({
+              kind: "diff",
+              path: payload.path,
+              oldText: payload.oldText,
+              newText: payload.newText,
+              sites: payload.sites,
+              replaceAll: payload.replaceAll,
+            });
+            return;
+          }
           vscode.postMessage(payload);
         };
       }
-      const name = document.createElement("span");
-      name.className = "turn-diff-file-path";
-      name.textContent = turnEditDisplayPath(f.path);
-      if (f.path) name.title = f.path;
-      row.appendChild(name);
+      row.appendChild(turnDiffFilePathEl(f.path));
       if (isDel) {
         const tag = document.createElement("span");
         tag.className = "turn-diff-file-action deleted";
@@ -10041,7 +10134,7 @@
       list.appendChild(row);
     }
     el.appendChild(list);
-    messagesEl.appendChild(el); // live: always ride at the end of the turn
+    appendTranscriptChild(el); // live: always ride at the end of the turn
     scrollToBottom();
   }
 
@@ -10779,6 +10872,9 @@
     for (const group of liveTranscriptQueryAll(".tool-group")) {
       setGroupExpanded(group, groupShouldExpand(group));
     }
+    // Same inputs decide the roll-up card, and every purpose/setting/latch
+    // change already routes through here.
+    applyTurnDiffSummaryVisibility();
   }
 
   // Command Palette: Grok: Expand/Collapse All Tool Details (This Session). Sets
@@ -18659,6 +18755,10 @@
   // Hidden from the first paint: the chip has nothing to say until a `repos`
   // frame arrives, and in VS Code it never appears at all.
   applyRepoSwitcherVisibility();
+  // Likewise from the first paint. `initialState` re-applies it, but the
+  // default purpose is knowledge work, so the class has to be right before
+  // the host has said anything.
+  applyTurnDiffSummaryVisibility();
   donutEl.onclick = (e) => {
     e.stopPropagation();
     if (contextPopover.hidden) openContextPopover(); else closePopovers();

@@ -417,4 +417,140 @@ describe("turn-level file change summary", () => {
     dispatch(window, { type: "agentEnd" });
     expect(doc.querySelector(".turn-diff-summary")).toBeNull();
   });
+
+  // The card is a ROLL-UP of diffs the rows can already show in full, so it is
+  // worth its space only where they are collapsed. Asserted on the body class
+  // rather than the node: hiding it in CSS is what lets a card return when the
+  // user flips the setting back, on turns whose edit map is long gone.
+  // A plain ellipsis on the whole path eats the filename first, which is the
+  // only part that says which file the row is. The leaf is its own span so CSS
+  // can shrink the directory and never the name; the screens harness
+  // (scripts/turn-diff-screens.mjs) is what proves the pixels follow.
+  it("splits the path so the directory is the half that can be cut", () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, { type: "agentStart" });
+    dispatch(window, editCall("p1", "packages/relay/src/deep/reconnect-policy.ts"));
+    dispatch(window, editUpdate("p1", "packages/relay/src/deep/reconnect-policy.ts", "a", "b"));
+    dispatch(window, { type: "agentEnd" });
+
+    const path = doc.querySelector(".turn-diff-file-path") as HTMLElement;
+    expect(path.querySelector(".turn-diff-file-dir")!.textContent).toBe("packages/relay/src/deep");
+    // The separator rides the leaf, so a cut directory still reads ".../name".
+    expect(path.querySelector(".turn-diff-file-name")!.textContent).toBe("/reconnect-policy.ts");
+    expect(path.textContent).toBe("packages/relay/src/deep/reconnect-policy.ts");
+    expect(path.title).toBe("packages/relay/src/deep/reconnect-policy.ts");
+  });
+
+  it("leaves a bare filename in one piece", () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, { type: "agentStart" });
+    dispatch(window, editCall("p2", "README.md"));
+    dispatch(window, editUpdate("p2", "README.md", "a", "b"));
+    dispatch(window, { type: "agentEnd" });
+
+    const path = doc.querySelector(".turn-diff-file-path") as HTMLElement;
+    expect(path.querySelector(".turn-diff-file-dir")).toBeNull();
+    expect(path.textContent).toBe("README.md");
+  });
+
+  // openDiff is "host-local" in src/remote-policy.ts, so a phone posting it
+  // gets nothing back. A row that looks tappable and does nothing is worse than
+  // a row that does not; on a remote the click expands that file's own inline
+  // diff in the transcript instead — the same answer the permission card gives.
+  describe("on a remote, where the native diff is unreachable", () => {
+    function remoteEditTurn() {
+      const h = bootWebview({ remote: true });
+      dispatch(h.window, { type: "appPurpose", value: "coding" });
+      dispatch(h.window, { type: "agentStart" });
+      dispatch(h.window, editCall("r1", "src/a.ts"));
+      dispatch(h.window, editUpdate("r1", "src/a.ts", "x", "y"));
+      dispatch(h.window, { type: "agentEnd" });
+      return h;
+    }
+
+    it("reveals the file's inline diff rather than posting a message nothing answers", () => {
+      const { window, doc, posted } = remoteEditTurn();
+      const row = doc.querySelector(".turn-diff-file") as HTMLElement;
+      expect(row.tagName).toBe("BUTTON");
+      expect(row.title).toBe("Show the diff");
+
+      click(window, row);
+      expect(posted.filter((m: any) => m.type === "openDiff")).toHaveLength(0);
+      // revealToolDiff opens the row AND its group, so the diff is on screen.
+      const item = doc.querySelector(".tool-item.expanded, .tool-item-flat.expanded, .tool-item");
+      expect(item!.classList.contains("expanded")).toBe(true);
+    });
+
+    it("still posts openDiff on a host, where the native editor exists", () => {
+      const { window, doc, posted } = bootWebview();
+      dispatch(window, { type: "appPurpose", value: "coding" });
+      dispatch(window, { type: "agentStart" });
+      dispatch(window, editCall("h1", "src/a.ts"));
+      dispatch(window, editUpdate("h1", "src/a.ts", "x", "y"));
+      dispatch(window, { type: "agentEnd" });
+
+      click(window, doc.querySelector(".turn-diff-file") as HTMLElement);
+      expect(posted.filter((m: any) => m.type === "openDiff")).toHaveLength(1);
+    });
+  });
+
+  describe("when the roll-up earns its space", () => {
+    const HIDDEN = "hide-turn-diff-summary";
+
+    function editedTurn(window: any) {
+      dispatch(window, { type: "agentStart" });
+      dispatch(window, editCall("g1", "src/a.ts"));
+      dispatch(window, editUpdate("g1", "src/a.ts", "x", "y"));
+      dispatch(window, { type: "agentEnd" });
+    }
+
+    it("stays hidden in knowledge work, which is the default before the host speaks", () => {
+      const { window, doc } = bootWebview();
+      expect(doc.body.classList.contains(HIDDEN)).toBe(true);
+      editedTurn(window);
+      // Built, so it is there to reveal — but not shown.
+      expect(doc.querySelector(".turn-diff-summary")).not.toBeNull();
+      expect(doc.body.classList.contains(HIDDEN)).toBe(true);
+    });
+
+    it("shows in coding work while tool details stay collapsed", () => {
+      const { window, doc } = bootWebview();
+      dispatch(window, { type: "appPurpose", value: "coding" });
+      editedTurn(window);
+      expect(doc.body.classList.contains(HIDDEN)).toBe(false);
+      expect(doc.querySelector(".turn-diff-summary")).not.toBeNull();
+    });
+
+    it("hides again when Expand tool details opens every diff inline", () => {
+      const { window, doc } = bootWebview();
+      dispatch(window, { type: "appPurpose", value: "coding" });
+      editedTurn(window);
+      expect(doc.body.classList.contains(HIDDEN)).toBe(false);
+      dispatch(window, { type: "expandCommandOutputs", value: true });
+      expect(doc.body.classList.contains(HIDDEN)).toBe(true);
+      // Reversible, and the card that was already in the transcript comes back.
+      dispatch(window, { type: "expandCommandOutputs", value: false });
+      expect(doc.body.classList.contains(HIDDEN)).toBe(false);
+      expect(doc.querySelector(".turn-diff-summary")).not.toBeNull();
+    });
+
+    it("follows the session's Expand/Collapse All latch, not just the setting", () => {
+      const { window, doc } = bootWebview();
+      dispatch(window, { type: "appPurpose", value: "coding" });
+      editedTurn(window);
+      dispatch(window, { type: "setAllToolDetails", open: true });
+      expect(doc.body.classList.contains(HIDDEN)).toBe(true);
+      dispatch(window, { type: "setAllToolDetails", open: false });
+      expect(doc.body.classList.contains(HIDDEN)).toBe(false);
+    });
+
+    it("goes back to hidden when the user switches to knowledge work", () => {
+      const { window, doc } = bootWebview();
+      dispatch(window, { type: "appPurpose", value: "coding" });
+      editedTurn(window);
+      expect(doc.body.classList.contains(HIDDEN)).toBe(false);
+      dispatch(window, { type: "appPurpose", value: "knowledge" });
+      expect(doc.body.classList.contains(HIDDEN)).toBe(true);
+    });
+  });
 });

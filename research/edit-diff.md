@@ -83,6 +83,19 @@ in that turn. Pure client aggregation — no disk re-diff, no new ACP surface.
   region. A delete after edits wins; an edit after a delete recreates the row.
 - **Live / restore / click:** same as before (card pins at turn end; restore
   rebuilds from completed `tool_call`s; click posts `openDiff`).
+- **When it shows (#83 rebase).** The card repeats, one line per file, what an
+  expanded diff row already shows in full — so it is gated on
+  `isCodingPurpose() && !detailShouldExpand()`. Knowledge work never shows it;
+  Coding shows it while tool details are collapsed, and hides it the moment
+  *Expand tool details* or the Expand-All latch opens them. Hidden via a body
+  class, never removed: the reverse flip has to bring back cards whose
+  `turnEditsByToolCallId` entries are gone.
+- **Clicking a row (#83 rebase).** `openDiff` is `host-local`, so a remote
+  posting it gets silence. Entries carry their `toolCallId` and a remote
+  click calls `revealToolDiff` instead, expanding that file's inline diff in
+  the transcript. Residue, accepted: on a card whose tool rows have since
+  left the window the tap does nothing. It is one turn's own card and the
+  rows are right above it, so this is rare enough not to buy machinery for.
 - **Out of scope:** non-delete shell mutations (`sed`, `mv`, redirects),
   subagent child edits, LLM prose "what changed".
 
