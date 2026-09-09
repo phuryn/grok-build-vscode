@@ -409,6 +409,10 @@ body.desk-rail-collapsed .desk-rail-open-btn { display: inline-flex; }
   justify-content: center;
   padding: 0;
   border: 0;
+  /* A <button> does not inherit the page font: without this the Changes word
+     and both count badges render in the browser's own button font (Arial at
+     13.33px on Windows) beside a title in the host's font at 13px. */
+  font: inherit;
   background: transparent;
   color: var(--vscode-descriptionForeground, #999);
   cursor: pointer;
