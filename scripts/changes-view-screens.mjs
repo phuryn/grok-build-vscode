@@ -223,6 +223,17 @@ const CASES = {
       ],
     }),
   },
+  // The strip with real tabs in it, at both ends of the rule: the Changes list
+  // showing over three open files, and one of those files showing instead.
+  tabsInChanges: {
+    snapshot: snap({ files: [file("src/remote-uplink.ts", "M", 12, 3), file("media/chat.js", "M", 140, 26)] }),
+    openFiles: ["src/remote-uplink.ts", "media/chat.js", "docs/architecture.md"],
+  },
+  tabsViewingFile: {
+    snapshot: snap({ files: [file("src/remote-uplink.ts", "M", 12, 3)] }),
+    openFiles: ["src/remote-uplink.ts", "media/chat.js", "docs/architecture.md"],
+    viewFile: "media/chat.js",
+  },
   conflicts: {
     snapshot: snap({
       conflicted: true,
@@ -314,7 +325,10 @@ const VIEWPORTS = {
 // The cases where layout can genuinely break get the whole matrix; the rest are
 // one frame each. Photographing thirteen states at three widths twice over is
 // forty minutes of nobody looking at any of them.
-const WIDE_MATRIX = new Set(["dirty", "diff", "dirtyAndUnpushed", "noRemote", "longPaths", "typed"]);
+const WIDE_MATRIX = new Set([
+  "dirty", "diff", "dirtyAndUnpushed", "noRemote", "longPaths", "typed",
+  "tabsInChanges", "tabsViewingFile",
+]);
 
 function pageHtml(theme) {
   const palette = theme === "light" ? LIGHT : DARK;
@@ -360,7 +374,10 @@ async function mountCase(page, testCase, diffText) {
         id: "/home/pawel/afkpilot", label: "afkpilot", title: "/home/pawel/afkpilot",
       }),
       list: async () => ({ ok: true, cwd: "/home/pawel/afkpilot", relPath: "", entries: [] }),
-      read: async () => ({ ok: false, reason: "not used by this harness" }),
+      read: async (scopeId, relPath) => ({
+        ok: true, kind: "text", relPath, text: "one two three",
+        stamp: { mtimeMs: 1, size: 14 }, absPath: "/home/pawel/afkpilot/" + relPath,
+      }),
       gitStatus: async () => ({ ok: true, snapshot: c.snapshot }),
       gitDiff: async () => ({ ok: true, patch: c.patch, truncated: false, untracked: false }),
       gitRun: async (scopeId, request) => {
@@ -392,9 +409,22 @@ async function mountCase(page, testCase, diffText) {
   }, { snapshot: testCase.snapshot, patch: diffText, failPush: testCase.failPush || null });
 
   await page.waitForTimeout(150);
+  // Files open BEFORE entering Changes, because that is the order that used to
+  // leave two tabs looking selected at once.
+  for (const relPath of testCase.openFiles || []) {
+    await page.evaluate((p) => window.__panel.openPath(p), relPath);
+    await page.waitForTimeout(80);
+  }
   // Enter the view the way a person does — by pressing the button.
   await page.click(".gfp-changes-btn");
   await page.waitForTimeout(200);
+  if (testCase.viewFile) {
+    // Back out to a file, to photograph the other end of the same rule.
+    // Through the panel API rather than a tab click: at phone width the tab
+    // is in the overflow menu, and the route is the same `activateTab`.
+    await page.evaluate((p) => window.__panel.openPath(p), testCase.viewFile);
+    await page.waitForTimeout(200);
+  }
   if (testCase.message) {
     await page.fill(".gfp-changes-message", testCase.message);
     await page.waitForTimeout(80);
@@ -404,7 +434,7 @@ async function mountCase(page, testCase, diffText) {
     await page.waitForTimeout(280);
   }
   if (typeof testCase.nameBranch === "string") {
-    await page.click(".gfp-changes-secondary");
+    await page.click(".gfp-changes-move-branch");
     await page.waitForTimeout(120);
     await page.fill(".gfp-changes-branch-input", testCase.nameBranch);
     await page.waitForTimeout(80);
@@ -417,13 +447,38 @@ async function mountCase(page, testCase, diffText) {
 
 // The assertions. Each is a rule the product already holds itself to elsewhere,
 // applied to the new surface.
-async function audit(page, label, touch) {
-  return page.evaluate(({ label, touch }) => {
+async function audit(page, label, touch, viewer) {
+  return page.evaluate(({ label, touch, viewer }) => {
     const bad = [];
     const panel = document.getElementById("harness-panel");
     if (!panel) return [`${label}: the panel did not mount`];
+
+    // 0. ONE selected thing in the strip. The folder, the Changes button and
+    //    the open files share one row and used to answer "where am I" three
+    //    different ways — entering Changes underlined its button and left the
+    //    last file wearing the active treatment too. A count, not a look, so
+    //    it holds whatever the selected treatment becomes.
+    const header = panel.querySelector(".gfp-header");
+    if (!header) bad.push(`${label}: no header`);
+    else {
+      const lit = header.querySelectorAll(
+        ".gfp-title-selected, .gfp-changes-selected, .gfp-tab-active",
+      ).length;
+      if (lit !== 1) bad.push(`${label}: ${lit} selected things in the strip, expected exactly 1`);
+      // Every tab that shows its name offers its own close — the phone case,
+      // where opening a file to shut it is the whole cost.
+      for (const tab of header.querySelectorAll(".gfp-tab")) {
+        if (tab.hidden || tab.classList.contains("gfp-tab-icon-only")) continue;
+        const close = tab.querySelector(".gfp-tab-close");
+        if (!close || !close.offsetParent) {
+          bad.push(`${label}: a named tab (${tab.dataset.rel}) has no visible close`);
+        }
+      }
+    }
+
     const changes = panel.querySelector(".gfp-changes");
-    if (!changes || changes.hidden) return [`${label}: the Changes body is not showing`];
+    if (viewer) return bad;
+    if (!changes || changes.hidden) return bad.concat([`${label}: the Changes body is not showing`]);
 
     // 1. Nothing scrolls sideways. A phone that has to be dragged left to read
     //    a filename is the commonest way a panel like this fails.
@@ -498,7 +553,7 @@ async function audit(page, label, touch) {
       if (!named) bad.push(`${label}: an unnamed button (${btn.className})`);
     }
     return bad;
-  }, { label, touch });
+  }, { label, touch, viewer });
 }
 
 async function main() {
@@ -517,7 +572,7 @@ async function main() {
         await mountCase(page, testCase, DIFF);
         await page.screenshot({ path: path.join(OUT, `${name}.${theme}.${vp}.png`) });
         frames += 1;
-        failures.push(...await audit(page, `${name}/${theme}/${vp}`, vp !== "desk"));
+        failures.push(...await audit(page, `${name}/${theme}/${vp}`, vp !== "desk", !!testCase.viewFile));
         await page.close();
       }
     }

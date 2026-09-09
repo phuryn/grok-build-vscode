@@ -137,17 +137,18 @@ body.desk-rail-collapsed .desk-rail-open-btn { display: inline-flex; }
      overlay bumps this to match the central header's scale (asserted). */
   min-height: 44px;
   overflow: hidden;
-  /* The strip is its own surface so the ACTIVE tab can read as attached to
-     the content below by wearing the content's background (see .gfp-tab-active).
-     editorWidget-background is the header tone in both stock palettes; the
-     color-mix fallback tints toward foreground for pages defining neither. */
+  /* The strip is its own surface, one tone for the whole row: selection is an
+     underline on top of it, not a per-tab background (see the shared
+     ::after rule below). editorWidget-background is the header tone in both
+     stock palettes; the color-mix fallback tints toward foreground for pages
+     defining neither. */
   background: var(--vscode-editorGroupHeader-tabsBackground,
     var(--vscode-editorWidget-background,
       color-mix(in oklab, var(--vscode-foreground) 4%, var(--vscode-sideBar-background, #1e1e1e))));
-  /* The divider is an INSET line, not a border: children stretch over it, so
-     the opaque active tab covers its own segment and joins the content below
-     seamlessly — a border (or an escaping shadow) would be clipped by this
-     element's overflow:hidden and always show through. */
+  /* The divider is an INSET line, not a border, so it cannot be clipped away
+     by this element's overflow:hidden the way a border or an escaping shadow
+     would be. It runs unbroken under the whole strip; the selection underline
+     sits 2px above it. */
   box-shadow: inset 0 -1px 0 var(--gfp-border);
 }
 
@@ -156,6 +157,7 @@ body.desk-rail-collapsed .desk-rail-open-btn { display: inline-flex; }
    spacing shout. Idle tabs mix toward descriptionForeground; the title and
    the active tab keep the inherited foreground token. Theme tokens only. */
 .gfp-title {
+  position: relative;
   display: flex;
   flex: 0 1 auto;
   align-items: center;
@@ -215,11 +217,28 @@ body.desk-rail-collapsed .desk-rail-open-btn { display: inline-flex; }
   padding-inline: 12px;
 }
 .gfp-title.gfp-title-icon-only .gfp-title-label { display: none; }
-/* Tree showing: the folder is the selected "tab" — content background, no
-   blue top accent. A file tab takes that treatment (with the accent) instead. */
-.gfp-title.gfp-title-selected {
-  background: var(--vscode-tab-activeBackground,
-    var(--vscode-sideBar-background, var(--vscode-editor-background, #1e1e1e)));
+/* ONE selected treatment for the whole strip: an underline under whichever of
+   the folder, the Changes button and the open files is on screen.
+   Before this there were three answers to the same question and two of them
+   were on opposite edges — the folder wore the content background, a file tab
+   wore that background PLUS a blue top accent, and the Changes button had this
+   underline. The underline is the one that survives every theme, because it is
+   an accent ADDED to whatever ground the strip has rather than a fill whose
+   lighter-or-darker polarity has to be right in both. */
+.gfp-title.gfp-title-selected,
+.gfp-tab.gfp-tab-active,
+.gfp-changes-btn.gfp-changes-selected { color: var(--vscode-foreground, inherit); }
+.gfp-title.gfp-title-selected::after,
+.gfp-tab.gfp-tab-active::after,
+.gfp-changes-btn.gfp-changes-selected::after {
+  content: "";
+  position: absolute;
+  right: 6px;
+  bottom: 2px;
+  left: 6px;
+  height: 2px;
+  border-radius: 1px;
+  background: currentColor;
 }
 
 .gfp-tabs {
@@ -278,17 +297,10 @@ body.desk-rail-collapsed .desk-rail-open-btn { display: inline-flex; }
      ellipsis appears only when flex genuinely has nothing left to give.
      Icon and X survive regardless (min-width floor + flex-none children). */
   max-width: none;
-  color: inherit;
-  /* Selection reads as CONTINUITY with the content, not as a fill: the active
-     tab wears the panel content's own background (owner, 2026-08-14 — the old
-     foreground-mix fallback painted it DARKER than the strip in light themes,
-     which reads as unselected; raised elements are the lighter ones). The
-     accent moved to the TOP edge, and the 1px drop-shadow below covers the
-     header's border so tab and content join seamlessly — the editor-tab
-     pattern, polarity-correct in both themes by construction. */
-  background: var(--vscode-tab-activeBackground,
-    var(--vscode-sideBar-background, var(--vscode-editor-background, #1e1e1e)));
-  box-shadow: inset 0 1px 0 var(--vscode-focusBorder, #007acc);
+  /* Colour and the underline come from the shared selected rule above. The
+     background and the top accent that used to live here are gone: two tabs
+     could be lit at once (the folder or Changes selected while a file kept the
+     fill), and the fill's light-theme polarity had already needed one fix. */
 }
 /* No name cap in B/C: ~10ch is the planner's MINIMUM guarantee, never a
    ceiling — planStrip budgets the active tab at its full width, and capping
@@ -311,6 +323,10 @@ body.desk-rail-collapsed .desk-rail-open-btn { display: inline-flex; }
 }
 .gfp-tab-icon-only .gfp-tab-name { display: none; }
 .gfp-tab-icon-only .gfp-tab-dirty:empty { display: none; }
+/* No name, no X — an X alone on an icon-only tab is a control with nothing to
+   say what it would close. collectStripMeasurements budgets this mode from the
+   icon and the dirty dot, so hiding it here costs the planner nothing. */
+.gfp-tab-icon-only .gfp-tab-close { display: none; }
 /* Fingers need a wider target than a 16px glyph + padding gives (the relay's
    touch gate floors tappables at 36px). The planner measures the DOM, so the
    wider tabs feed straight back into the A/B/C decision on touch. */
@@ -355,6 +371,16 @@ body.desk-rail-collapsed .desk-rail-open-btn { display: inline-flex; }
   white-space: nowrap;
 }
 .gfp-overflow-dirty { flex: 0 0 auto; }
+/* The overflow menu is the tab strip on a phone, so its rows close files the
+   same way tabs do. The row is the flex container; the name button takes the
+   width and the X keeps its own tap target. */
+.gfp-overflow-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.gfp-overflow-row .gfp-overflow-item { flex: 1 1 auto; min-width: 0; }
+.gfp-overflow-close { flex: 0 0 auto; }
 .gfp-tab-close,
 .gfp-close,
 .gfp-icon-button,
@@ -1242,12 +1268,19 @@ body.vscode-light {
   text-align: left;
 }
 .gfp-change-stat {
+  display: inline-flex;
   flex: 0 0 auto;
+  gap: 6px;
   color: var(--vscode-descriptionForeground, #999);
   font-size: 0.86em;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+/* The same two numbers appear on a tool row and on the turn's Changed N files
+   card in Codex's green and red; grey here made the list read as a different
+   measurement. --tdiff-* is defined in chat.css and carries a light override. */
+.gfp-change-add { color: var(--tdiff-add-line, #40c977); }
+.gfp-change-del { color: var(--tdiff-del-line, #fa423e); }
 .gfp-change-stat-word { font-style: italic; }
 
 .gfp-changes-commits { display: flex; flex-direction: column; gap: 2px; }

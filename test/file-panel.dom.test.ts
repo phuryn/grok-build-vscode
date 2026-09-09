@@ -1646,6 +1646,53 @@ describe("planStrip three-state layout", () => {
     expect(squeezed.tabModes).toEqual(["icon", "full", "icon"]);
   });
 
+  it("skips B entirely on a touch screen, where an icon-only tab is anonymous", () => {
+    // Same widths that produced an all-icon B above. A finger gets the chip
+    // instead: three files became three identical glyphs, and the strip grew a
+    // second ✕ beside the one that closes the panel.
+    const base = {
+      titleWidth: 80,
+      titleIconWidth: 24,
+      trailingWidth: 32,
+      tabCount: 3,
+      activeIndex: 1,
+      ...widths(3, 120, 32),
+      chipWidth: 36,
+      stripWidth: 330,
+    };
+    expect(planStrip(base).state).toBe("b");
+
+    const touch = planStrip({ ...base, preferChip: true });
+    expect(touch.state).toBe("c");
+    expect(touch.visible).toEqual([1]);
+    expect(touch.overflow).toEqual([0, 2]);
+    // 80 + 120 + 36 = 236 <= 298, so the project keeps its name — C is now
+    // reached with room to spare and must not give the name up for nothing.
+    expect(touch.title).toBe("full");
+
+    // A fits on its own; preferChip is about B, not about hiding what fits.
+    expect(planStrip({ ...base, preferChip: true, stripWidth: 600 }).state).toBe("a");
+  });
+
+  it("hides every tab in C when nothing is active, rather than picking one", () => {
+    // The Changes list is showing: no file is being viewed, so the chip holds
+    // all of them and the strip has exactly one selected thing in it.
+    const plan = planStrip({
+      titleWidth: 80,
+      titleIconWidth: 24,
+      trailingWidth: 32,
+      tabCount: 3,
+      activeIndex: -1,
+      ...widths(3, 120, 32),
+      chipWidth: 36,
+      stripWidth: 330,
+      preferChip: true,
+    });
+    expect(plan.state).toBe("c");
+    expect(plan.visible).toEqual([]);
+    expect(plan.overflow).toEqual([0, 1, 2]);
+  });
+
   it("keeps the active tab visible when overflowing and updates membership as it changes", () => {
     const input = {
       stripWidth: 160,
@@ -1706,15 +1753,17 @@ describe("planStrip three-state layout", () => {
 });
 
 describe("tab strip structure follows the overflow design", () => {
-  it("renders a close button only on the active tab", async () => {
+  it("renders a close button on every named tab, active or not", async () => {
     const h = harness();
     await settle();
     await h.panel.openPath("src/a.ts");
     await h.panel.openPath("notes.md");
     const tabs = [...h.document.querySelectorAll(".gfp-tab")];
     expect(tabs).toHaveLength(2);
+    // Closing a file must not require opening it first — the phone case, where
+    // State C shows one tab and the rest live in the … menu.
     expect(tabs[0].classList.contains("gfp-tab-active")).toBe(false);
-    expect(tabs[0].querySelector(".gfp-tab-close")).toBeNull();
+    expect(tabs[0].querySelector(".gfp-tab-close")).toBeTruthy();
     expect(tabs[1].classList.contains("gfp-tab-active")).toBe(true);
     expect(tabs[1].querySelector(".gfp-tab-close")).toBeTruthy();
     expect(tabs.every((tab) => tab.querySelector(".gfp-tab-icon"))).toBe(true);
@@ -1778,6 +1827,41 @@ describe("tab strip structure follows the overflow design", () => {
     await settle();
     expect(h.document.querySelector(".gfp-tab-active .gfp-tab-name")?.textContent).toBe("notes.md");
     expect((h.document.querySelector(".gfp-editor") as HTMLTextAreaElement).value).toBe("draft");
+  });
+
+  it("closes a file from the overflow menu, which is the only strip a phone has", async () => {
+    // In State C every file but the active one lives in this menu. Without a
+    // close here, shutting five files meant opening five files first.
+    const h = harness();
+    await settle();
+    await h.panel.openPath("notes.md");
+    await h.panel.openPath("src/a.ts");
+    await h.panel.openPath("src/b.ts");
+    h.panel._forceStripPlan(planStrip({
+      stripWidth: 80,
+      titleWidth: 80,
+      titleIconWidth: 24,
+      trailingWidth: 0,
+      tabCount: 3,
+      activeIndex: 2,
+      tabFullWidths: [120, 120, 120],
+      tabIconWidths: [32, 32, 32],
+      chipWidth: 36,
+    }));
+    click(h.window, h.document.querySelector(".gfp-overflow-chip"));
+    await settle();
+    const rows = [...h.document.querySelectorAll(".gfp-overflow-row")];
+    expect(rows).toHaveLength(2);
+
+    click(h.window, rows[0].querySelector(".gfp-overflow-close"));
+    await settle();
+    await settle();
+    // The file is gone, the one that was open is still the one open, and the
+    // menu — a list of tabs, now stale — has dismissed itself.
+    const names = [...h.document.querySelectorAll(".gfp-tab-name")].map((el) => el.textContent);
+    expect(names).toEqual(["a.ts", "b.ts"]);
+    expect(h.document.querySelector(".gfp-tab-active .gfp-tab-name")?.textContent).toBe("b.ts");
+    expect(h.document.querySelector(".gfp-overflow-menu")).toBeNull();
   });
 
   it("marks the title as selected in treeMode and not while a file is showing", async () => {

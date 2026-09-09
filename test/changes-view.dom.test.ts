@@ -16,6 +16,7 @@ import { Window } from "happy-dom";
 import {
   changeCountLabel,
   changesBranchLine,
+  changesCommitOnlyAction,
   changesHeadline,
   changesPrimaryAction,
   createFilePanel,
@@ -73,7 +74,12 @@ function harness(options: {
   const access: Record<string, unknown> = {
     currentScope: async () => ({ id: "/work/app", label: "app", title: "/work/app" }),
     list: async () => ({ ok: true, entries: [], truncated: false }),
-    read: async () => ({ ok: false, reason: "not used here" }),
+    // Readable, because one test needs a FILE tab open while the Changes view
+    // is on screen — the state in which two tabs used to look selected.
+    read: async (_scopeId: string, relPath: string) => ({
+      ok: true, kind: "text", relPath, text: "hello",
+      stamp: { mtimeMs: 1, size: 5 }, absPath: "/work/app/" + relPath,
+    }),
   };
   if (!options.omitGit) {
     access.gitStatus = async () => {
@@ -342,7 +348,7 @@ describe("the panel", () => {
     // shown nothing at all and created no branch.
     const h = harness({ snapshot: snap({ files: [file("src/a.ts", "M")] }) });
     await h.open();
-    h.q(".gfp-changes-secondary")!.click();
+    h.q(".gfp-changes-move-branch")!.click();
     await settle();
 
     const input = h.q(".gfp-changes-branch-input") as HTMLInputElement;
@@ -363,7 +369,7 @@ describe("the panel", () => {
   it("will not create a branch whose name cannot work", async () => {
     const h = harness({ snapshot: snap({ files: [file("src/a.ts", "M")] }) });
     await h.open();
-    h.q(".gfp-changes-secondary")!.click();
+    h.q(".gfp-changes-move-branch")!.click();
     await settle();
     const input = h.q(".gfp-changes-branch-input") as HTMLInputElement;
     const create = () => h.q(".gfp-changes-branch-create") as HTMLButtonElement;
@@ -486,5 +492,90 @@ describe("the panel", () => {
     await settle();
     expect(h.q(".gfp-changes")?.hidden).toBe(true);
     expect(h.q(".gfp-changes-btn")?.getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("leaves no file tab looking selected while the Changes list is showing", async () => {
+    // One strip, one selected thing. With a file open, entering Changes used to
+    // underline the Changes button AND leave the file wearing the active
+    // treatment and its close — two tabs lit at once, which is what the strip
+    // looks like when it is lying about where you are.
+    const h = harness({ snapshot: snap({ files: [file("src/a.ts", "M")] }) });
+    h.panel.setOpen(true);
+    await settle();
+    await h.panel.openPath("notes.md");
+    await settle();
+    expect(h.qq(".gfp-tab-active")).toHaveLength(1);
+
+    (h.q(".gfp-changes-btn") as HTMLElement).click();
+    await settle();
+    expect(h.q(".gfp-changes")?.hidden).toBe(false);
+    expect(h.qq(".gfp-tab-active")).toHaveLength(0);
+    expect(h.q(".gfp-changes-btn")?.classList.contains("gfp-changes-selected")).toBe(true);
+
+    // And it comes back when the file does, so nothing was lost by hiding it.
+    (h.q(".gfp-tab") as HTMLElement).click();
+    await settle();
+    expect(h.qq(".gfp-tab-active")).toHaveLength(1);
+  });
+
+  it("commits without pushing when the second button is used", async () => {
+    // The whole point of the second button: same commit, no push. If this ever
+    // sends push:true the two controls are one control wearing two labels.
+    const h = harness({ snapshot: snap({ files: [file("src/a.ts", "M")] }) });
+    await h.open();
+    const box = h.q(".gfp-changes-message") as HTMLTextAreaElement;
+    box.value = "Write it down";
+    box.dispatchEvent(new h.window.Event("input", { bubbles: true }));
+    await settle();
+
+    const only = h.q(".gfp-changes-commit-only") as HTMLButtonElement;
+    expect(only).toBeTruthy();
+    expect(only.disabled).toBe(false);
+    only.click();
+    await settle();
+    await settle();
+    expect(h.runs).toEqual([{ op: "commit", message: "Write it down", push: false }]);
+  });
+
+  it("does not offer a second commit button when the primary already only commits", async () => {
+    // No remote to push to: "Commit" and "Commit without pushing" would be the
+    // same press, and a choice with one outcome is not a choice.
+    const h = harness({ snapshot: snap({ hasRemote: false, hasUpstream: false, files: [file("src/a.ts", "M")] }) });
+    await h.open();
+    expect((h.q(".gfp-changes-primary") as HTMLButtonElement).textContent).toBe("Commit");
+    expect(h.q(".gfp-changes-commit-only")).toBeNull();
+  });
+
+  it("paints the two numbers in the two colours the rest of the UI uses", async () => {
+    // The same +N −M appears on a tool row and on the turn's Changed N files
+    // card in green and red. One grey blob here read as a different quantity.
+    const h = harness({ snapshot: snap({ files: [file("src/a.ts", "M", 12, 3)] }) });
+    await h.open();
+    const stat = h.q(".gfp-change-stat")!;
+    expect(stat.querySelector(".gfp-change-add")?.textContent).toBe("+12");
+    expect(stat.querySelector(".gfp-change-del")?.textContent).toBe("−3");
+  });
+});
+
+describe("the second commit button, as a decision", () => {
+  it("appears only when the primary would also push", () => {
+    const opts = { message: "msg" };
+    const withRemote = changesCommitOnlyAction(snap({ files: [file("a.ts", "M")] }), opts);
+    expect(withRemote.show).toBe(true);
+    expect(withRemote.label).toBe("Commit without pushing");
+    expect(changesCommitOnlyAction(snap({ hasRemote: false, files: [file("a.ts", "M")] }), opts).show).toBe(false);
+    expect(changesCommitOnlyAction(snap({ detached: true, branch: null, files: [file("a.ts", "M")] }), opts).show).toBe(false);
+  });
+
+  it("is absent where there is nothing to commit, and disabled without a message", () => {
+    expect(changesCommitOnlyAction(snap({ ahead: 2 }), { message: "msg" }).show).toBe(false);
+    expect(changesCommitOnlyAction(snap({ files: [] }), { message: "msg" }).show).toBe(false);
+    expect(changesCommitOnlyAction(snap({ files: [file("a.ts", "M")] }), { message: "  " }).disabled).toBe(true);
+  });
+
+  it("refuses alongside the primary while a file is conflicted", () => {
+    // The primary is disabled with "Resolve the conflicts first"; a second
+    // button that still committed would be a way around that sentence.
+    expect(changesCommitOnlyAction(snap({ files: [file("a.ts", "U")] }), { message: "msg" }).show).toBe(false);
   });
 });

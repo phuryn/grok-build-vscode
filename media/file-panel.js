@@ -290,10 +290,17 @@
   /**
    * Pure layout planner for the file-panel tab strip.
    *
-   * State A (fits): folder+name title, every tab is icon+name, X only on active.
+   * State A (fits): folder+name title, every tab is icon+name and its own X.
    * State B (tight): inactive tabs demote to icon-only (dirty dot kept) BEFORE
    *   any tab is hidden; active keeps icon+name+X; title may drop to icon-only.
    * State C (minimal): folder icon + the active tab + one "…" chip of the rest.
+   *
+   * `preferChip` SKIPS B. On a touch screen an icon-only tab is an anonymous
+   * square — three open files became three identical glyphs, and the strip
+   * grew a second ✕ a thumb's width from the one that closes the whole panel.
+   * A phone gets the named tab it is on and a menu for the rest, which is also
+   * the only place the other files can be closed from. On a desk B still earns
+   * its keep: a mouse has hover titles and the row has room for real names.
    *
    * No layout: stripWidth<=0 (happy-dom) always returns A so DOM tests see every
    * tab. The renderer measures real widths and applies this plan in at most two
@@ -311,6 +318,7 @@
     const tabIconWidths = Array.isArray(src.tabIconWidths) ? src.tabIconWidths : [];
     const chipWidth = Math.max(0, Number(src.chipWidth) || STRIP_CHIP_WIDTH);
     const slack = Math.max(0, Number(src.slack) || 0);
+    const preferChip = !!src.preferChip;
     const all = stripRange(tabCount);
     const fullModes = all.map(() => "full");
 
@@ -348,17 +356,25 @@
       }
       return out;
     };
-    if (titleWidth + bTabs <= avail) {
-      return result("b", "full", all, [], promoteIdles(bModes, avail - titleWidth - bTabs));
-    }
-    if (titleIconWidth + bTabs <= avail) {
-      return result("b", "icon", all, [], promoteIdles(bModes, avail - titleIconWidth - bTabs));
+    if (!preferChip) {
+      if (titleWidth + bTabs <= avail) {
+        return result("b", "full", all, [], promoteIdles(bModes, avail - titleWidth - bTabs));
+      }
+      if (titleIconWidth + bTabs <= avail) {
+        return result("b", "icon", all, [], promoteIdles(bModes, avail - titleIconWidth - bTabs));
+      }
     }
 
     const visible = activeIndex >= 0 && activeIndex < tabCount ? [activeIndex] : [];
     const overflow = all.filter((i) => i !== activeIndex);
     const cModes = all.map((i) => (i === activeIndex ? "full" : "icon"));
-    return result("c", "icon", visible, overflow, cModes);
+    // C used to give up the project name unconditionally, which was right when
+    // C only ever happened under real pressure. `preferChip` reaches it with
+    // room to spare — one tab and a chip on a phone — and dropping the name
+    // there left a folder glyph beside an empty strip. Ask instead.
+    const cTabs = (visible.length ? fullAt(activeIndex) : 0) + (overflow.length ? chipWidth : 0);
+    const cTitle = titleWidth + cTabs <= avail ? "full" : "icon";
+    return result("c", cTitle, visible, overflow, cModes);
   }
 
   /* ------------------------------------------------------------------ *
@@ -446,10 +462,10 @@
   /**
    * What the primary button does and says.
    *
-   * One button, and its label is the whole promise — which is why there is no
-   * confirmation dialog repeating it back. The cases that DO get a dialog are
-   * the ones the label cannot make safe: discarding a file, and pushing the
-   * branch everyone else builds on.
+   * Its label is the whole promise — which is why there is no confirmation
+   * dialog repeating it back. The cases that DO get a dialog are the ones the
+   * label cannot make safe: discarding a file, and pushing the branch everyone
+   * else builds on.
    */
   function changesPrimaryAction(snapshot, opts) {
     const snap = snapshot || {};
@@ -480,6 +496,30 @@
       return { op: null, label: "Push", disabled: true, hint: hint };
     }
     return { op: null, label: "Commit", disabled: true, hint: "" };
+  }
+
+  /**
+   * The second commit button.
+   *
+   * The primary promises the safe thing — recorded AND somewhere other than
+   * this machine — and on a cloud box that is the right default nearly every
+   * time. But "write this down, I am not ready to publish it" is a real
+   * intention, and until now the only way to express it was to press nothing.
+   *
+   * It appears ONLY when the primary would also push. Where there is no remote
+   * or no branch the primary already says just "Commit", and a second button
+   * saying the same thing is a choice with one outcome.
+   *
+   * The label spells the difference out rather than relying on the reader to
+   * diff two button captions: beside "Commit and push", a bare "Commit" is
+   * distinguished only by what it does NOT say.
+   */
+  function changesCommitOnlyAction(snapshot, opts) {
+    const primary = changesPrimaryAction(snapshot, opts);
+    if (primary.op !== "commit" || !primary.push) {
+      return { show: false, label: "Commit without pushing", disabled: true };
+    }
+    return { show: true, label: "Commit without pushing", disabled: primary.disabled };
   }
 
   /**
@@ -1115,6 +1155,16 @@
       };
     }
 
+    /** A finger, not a mouse. Asked at plan time, not cached: a tablet with a
+     *  keyboard attached can change its answer, and the query is free. */
+    function coarsePointer() {
+      try {
+        return !!(win.matchMedia && win.matchMedia("(pointer: coarse)").matches);
+      } catch {
+        return false;
+      }
+    }
+
     function forceTighterPlan(plan) {
       const tabs = [...tabsEl.querySelectorAll(".gfp-tab")];
       const n = tabs.length;
@@ -1148,6 +1198,7 @@
         let plan = forcedStripPlan || planStrip({
           ...collectStripMeasurements(),
           slack: 12,
+          preferChip: coarsePointer(),
         });
         applyPlanToDom(plan);
         // Promotions are speculative: verify against the RENDERED truth and
@@ -1657,6 +1708,7 @@
         if (!state.order.includes(relPath)) state.order.push(relPath);
         state.activeRelPath = relPath;
         treeMode = false;
+        leaveChanges();
         renderTabs();
         renderViewer();
         setOpen(true);
@@ -1667,6 +1719,7 @@
       if (!state.order.includes(relPath)) state.order.push(relPath);
       state.activeRelPath = relPath;
       treeMode = false;
+      leaveChanges();
       renderTabs();
       renderViewer();
       setOpen(true);
@@ -1677,6 +1730,10 @@
       if (!currentState || !currentState.tabs.has(relPath)) return;
       currentState.activeRelPath = relPath;
       treeMode = false;
+      // Before renderTabs, not after: the strip asks whether the Changes list
+      // is showing when it decides which tab is selected, and renderViewer's
+      // own call comes too late to answer it.
+      leaveChanges();
       renderTabs();
       renderViewer();
     }
@@ -1725,7 +1782,12 @@
       for (const relPath of currentState.order) {
         const tab = currentState.tabs.get(relPath);
         if (!tab) continue;
-        const isActive = !treeMode && currentState.activeRelPath === relPath;
+        // `changesMode` counts as "no file is being viewed". Leaving it out
+        // drew TWO selected tabs at once — the Changes button underlined and
+        // the last-opened file still wearing the active treatment and its X.
+        // The flag was kept separate from `treeMode` for exactly this reason
+        // (see its declaration) and then never consulted here.
+        const isActive = !treeMode && !changesMode && currentState.activeRelPath === relPath;
         const item = doc.createElement("div");
         item.className = "gfp-tab desk-ft-tab" + (isActive ? " gfp-tab-active desk-ft-tab-active" : "");
         item.setAttribute("role", "tab");
@@ -1742,21 +1804,25 @@
         dirty.className = "gfp-tab-dirty desk-ft-tab-dirty";
         dirty.textContent = tab.dirty ? "•" : "";
         item.append(icon, name, dirty);
-        // Inactive tabs never render an X. The active tab's close is structural
-        // (not CSS-hidden) so it cannot be clipped away by a shrink rule.
-        if (isActive) {
-          const close = doc.createElement("button");
-          close.type = "button";
-          close.className = "gfp-tab-close desk-ft-tab-close";
-          close.innerHTML = ICON.close;
-          close.title = "Close";
-          close.setAttribute("aria-label", "Close " + fileName(relPath));
-          close.addEventListener("click", (event) => {
-            event.stopPropagation();
-            void closeTab(relPath);
-          });
-          item.appendChild(close);
-        }
+        // Every tab that shows a name carries its own X, active or not.
+        // Closing used to require opening the file first, which is worst
+        // exactly where tabs are scarcest: in State C a phone shows one tab,
+        // so shutting five files meant activating five files.
+        // Icon-only tabs hide the X along with the name in CSS, and the
+        // planner budgets that mode from icon + dirty dot alone, so a hidden
+        // X costs no width. The active tab is never icon-only, so its close
+        // is still effectively structural.
+        const close = doc.createElement("button");
+        close.type = "button";
+        close.className = "gfp-tab-close desk-ft-tab-close";
+        close.innerHTML = ICON.close;
+        close.title = "Close";
+        close.setAttribute("aria-label", "Close " + fileName(relPath));
+        close.addEventListener("click", (event) => {
+          event.stopPropagation();
+          void closeTab(relPath);
+        });
+        item.appendChild(close);
         item.addEventListener("click", () => activateTab(relPath));
         tabsEl.appendChild(item);
       }
@@ -2162,7 +2228,16 @@
       if (counts) {
         const stat = doc.createElement("span");
         stat.className = "gfp-change-stat";
-        stat.textContent = counts;
+        // Split so + and − can take the shared --tdiff-* palette — the same
+        // green and red the tool rows and the turn card already use for these
+        // same two numbers. One grey blob made the list look like it was
+        // measuring something other than added and removed lines.
+        for (const part of counts.split(" ")) {
+          const span = doc.createElement("span");
+          span.className = part.charAt(0) === "+" ? "gfp-change-add" : "gfp-change-del";
+          span.textContent = part;
+          stat.appendChild(span);
+        }
         row.appendChild(stat);
       } else if (file.status === "?") {
         const stat = doc.createElement("span");
@@ -2176,16 +2251,21 @@
     }
 
     /**
-     * The commit box and the one primary button.
+     * The commit box and its buttons.
      *
-     * Deliberately one button. Every extra control here is a decision somebody
-     * has to make before their work is safe, and the common case — "save this
-     * somewhere I will not lose it" — is one press.
+     * The common case — "put this somewhere I will not lose it" — stays one
+     * press on the primary, and everything else is deliberately quieter than
+     * it: a second commit that does not push, and the branch escape hatch.
+     * Every control here is a decision somebody has to make before their work
+     * is safe, so the order is the order of how often the answer is "yes".
      */
     function changesActions(state, snapshot, files) {
       const wrap = doc.createElement("div");
       wrap.className = "gfp-changes-actions";
       const primary = changesPrimaryAction(snapshot, { message: state.message });
+      // Declared up here because the message box's listener, built below,
+      // has to keep it in step and closes over the binding.
+      let onlyBtn = null;
 
       if (files.length) {
         const box = doc.createElement("textarea");
@@ -2199,6 +2279,10 @@
           const next = changesPrimaryAction(snapshot, { message: state.message });
           runBtn.disabled = next.disabled || state.running;
           hint.textContent = next.hint;
+          if (onlyBtn) {
+            onlyBtn.disabled = changesCommitOnlyAction(snapshot, { message: state.message }).disabled
+              || state.running;
+          }
         });
         wrap.appendChild(box);
       }
@@ -2225,6 +2309,19 @@
       hint.textContent = primary.hint;
       wrap.appendChild(hint);
 
+      const commitOnly = changesCommitOnlyAction(snapshot, { message: state.message });
+      if (commitOnly.show) {
+        onlyBtn = doc.createElement("button");
+        onlyBtn.type = "button";
+        onlyBtn.className = "gfp-changes-secondary gfp-changes-commit-only";
+        onlyBtn.textContent = commitOnly.label;
+        onlyBtn.disabled = commitOnly.disabled || state.running || typeof state.branchDraft === "string";
+        onlyBtn.addEventListener("click", () => {
+          void runChangesOp({ op: "commit", message: state.message, push: false });
+        });
+        wrap.appendChild(onlyBtn);
+      }
+
       // The escape hatch, and the reason the primary button can stay a single
       // promise: anybody who does not want to commit onto this branch can move
       // the work first, and that is one line rather than a second mode.
@@ -2234,7 +2331,7 @@
         } else {
           const move = doc.createElement("button");
           move.type = "button";
-          move.className = "gfp-changes-secondary";
+          move.className = "gfp-changes-secondary gfp-changes-move-branch";
           move.textContent = "Move to a new branch\u2026";
           move.disabled = state.running;
           move.addEventListener("click", () => {
@@ -3133,6 +3230,13 @@
     }
 
     function overflowMenuItem(relPath, tab) {
+      // A row rather than a bare button, because the X is its own control and
+      // interactive content cannot nest inside a <button>. This menu IS the
+      // tab strip on a phone (State C lists every file but the active one
+      // here), so a close that exists only on tabs is a close a phone cannot
+      // reach.
+      const row = doc.createElement("div");
+      row.className = "gfp-overflow-row";
       const button = doc.createElement("button");
       button.type = "button";
       button.className = "gfp-menu-item gfp-overflow-item desk-ft-overflow-item";
@@ -3154,7 +3258,24 @@
         closeMenu();
         activateTab(relPath);
       });
-      return button;
+
+      const close = doc.createElement("button");
+      close.type = "button";
+      close.className = "gfp-tab-close gfp-overflow-close";
+      close.innerHTML = ICON.close;
+      close.title = "Close";
+      close.setAttribute("aria-label", "Close " + fileName(relPath));
+      close.addEventListener("click", (event) => {
+        event.stopPropagation();
+        // Await, then dismiss: a dirty file asks before it closes, and the
+        // menu lists tabs, so it is stale the moment one goes. Cancelling
+        // leaves the menu as it was.
+        void closeTab(relPath).then((closed) => {
+          if (closed) closeMenu();
+        });
+      });
+      row.append(button, close);
+      return row;
     }
 
     function menuItem(label, listener) {
@@ -3429,6 +3550,7 @@
     changesHeadline,
     changesBranchLine,
     changesPrimaryAction,
+    changesCommitOnlyAction,
     changeCountLabel,
     parseUnifiedDiff,
   };
