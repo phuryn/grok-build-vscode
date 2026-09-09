@@ -961,6 +961,7 @@ export class GrokSidebar {
     "setExpandCommandOutputs",
     "setSteerByDefault",
     "setPromptNav",
+    "setExpandDiffCard",
     "setSoundNotifications",
     "setProcessingSound",
     "setReadRepliesAloud",
@@ -2684,8 +2685,14 @@ export class GrokSidebar {
         });
       }
       // The only path by which the VS Code settings TAB reaches the chat
-      // webview: it posts setPromptNav, the config changes, and this
-      // re-broadcasts to the panel that actually owns the button.
+      // webview: these toggles post a setter, config changes, and the host
+      // re-broadcasts to the panel that owns the transcript controls.
+      if (e.affectsConfiguration("grok.expandDiffCard")) {
+        this.post({
+          type: "expandDiffCard",
+          value: this.host.getConfiguration("grok").get<boolean>("expandDiffCard", false),
+        });
+      }
       if (e.affectsConfiguration("grok.promptNav")) {
         this.post({
           type: "promptNav",
@@ -11231,6 +11238,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         await this.host.getConfiguration("grok")
           .update("steerByDefault", !!msg.value, "global");
         break;
+      case "setExpandDiffCard":
+        await this.host.getConfiguration("grok")
+          .update("expandDiffCard", !!msg.value, "global");
+        break;
       case "setPromptNav":
         await this.host.getConfiguration("grok")
           .update("promptNav", !!msg.value, "global");
@@ -11946,13 +11957,13 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           const after = await readGitStatus(root);
           const snapshot = after.ok ? after.snapshot : undefined;
           if (!outcome.ok) {
-            fail(describeGitFailure(op, outcome.stderr) || "That git command failed.", outcome.stderr, snapshot);
+            fail(describeGitFailure(op, outcome.stderr, plan.steps[outcome.failedStep]?.args[0]) || "That git command failed.", outcome.stderr, snapshot);
             break;
           }
           if (!snapshot) {
             // The command succeeded and the follow-up read did not. Saying so
             // beats reporting a failure that did not happen.
-            fail("The command ran, but the status could not be read afterwards. Refresh to see where things stand.");
+            fail("The command ran, but the status could not be read afterwards. Reopen Changes to see where things stand.");
             break;
           }
           reply({ type: "gitRunResult", ...correlation, cwd: msg.cwd, op, ok: true, snapshot });
@@ -16070,6 +16081,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       showThinking: cfg.get("showThinking", false),
       expandCommandOutputs: cfg.get("expandCommandOutputs", false),
       steerByDefault: cfg.get("steerByDefault", false),
+      expandDiffCard: cfg.get("expandDiffCard", false),
       promptNav: cfg.get("promptNav", false),
       soundNotifications: cfg.get("soundNotifications", false),
       processingSound: cfg.get("processingSound", false),
@@ -19968,6 +19980,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         showThinking: cfg.get("showThinking", false),
         expandCommandOutputs: cfg.get("expandCommandOutputs", false),
         steerByDefault: cfg.get("steerByDefault", false),
+        expandDiffCard: cfg.get("expandDiffCard", false),
         promptNav: cfg.get("promptNav", false),
         fontScale: this.chatFontScale(),
         soundNotifications: cfg.get("soundNotifications", false),

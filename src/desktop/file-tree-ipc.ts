@@ -352,7 +352,7 @@ export function registerFileTreeIpc(opts: FileTreeIpcOptions): void {
       if (!outcome.ok) {
         return {
           ok: false as const,
-          reason: describeGitFailure(op, outcome.stderr) || "That git command failed.",
+          reason: describeGitFailure(op, outcome.stderr, plan.steps[outcome.failedStep]?.args[0]) || "That git command failed.",
           detail: outcome.stderr,
           snapshot,
         };
@@ -360,7 +360,7 @@ export function registerFileTreeIpc(opts: FileTreeIpcOptions): void {
       if (!snapshot) {
         return {
           ok: false as const,
-          reason: "The command ran, but the status could not be read afterwards. Refresh to see where things stand.",
+          reason: "The command ran, but the status could not be read afterwards. Reopen Changes to see where things stand.",
         };
       }
       return { ok: true as const, snapshot };

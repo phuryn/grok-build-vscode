@@ -1476,3 +1476,13 @@ describe("a cloud environment is its own desk", () => {
     ]);
   });
 });
+
+
+describe("the diff-card preference belongs to each device", () => {
+  it("keeps both directions host-local and needs no remote session binding", () => {
+    expect(INBOUND_DISPOSITION.setExpandDiffCard).toBe(INBOUND_DISPOSITION.setPromptNav);
+    expect(REMOTE_REQUIRES_BOUND_SESSION.setExpandDiffCard).toBe(false);
+    expect(OUTBOUND_DISPOSITION.expandDiffCard).toBe("host-local");
+    expect(transformHostMsgForRemote({ type: "expandDiffCard", value: true })).toBeNull();
+  });
+});

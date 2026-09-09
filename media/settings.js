@@ -583,6 +583,19 @@
       message: (value) => ({ type: "setExpandCommandOutputs", value }),
     },
     {
+      id: "expandDiffCard",
+      category: "general",
+      title: "Expand diff card",
+      description: "Open each turn's Changed-files card by default instead of showing only its header.",
+      kind: "toggle",
+      defaultValue: false,
+      visible: (s) => purposeOf(s) === "coding",
+      get: (s) => !!(s && s.expandDiffCard),
+      // VS Code Settings is a separate webview; only a remote applies locally.
+      localOnly: (s, env) => !!(env && env.isRemote),
+      message: (value) => ({ type: "setExpandDiffCard", value }),
+    },
+    {
       id: "steerByDefault",
       category: "general",
       title: "Steer by default",
@@ -1526,6 +1539,9 @@
       case "steerByDefault":
         next.steerByDefault = !!value;
         break;
+      case "expandDiffCard":
+        next.expandDiffCard = !!value;
+        break;
       case "promptNav":
         next.promptNav = !!value;
         break;
@@ -1591,6 +1607,7 @@
       voiceKeyterms: [],
       telemetryEnabled: true,
       thumbsFeedback: false,
+      expandDiffCard: false,
       promptNav: false,
       providers: [],
       // Host-owned, never latched locally: an older host that ignores

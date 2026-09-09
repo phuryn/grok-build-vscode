@@ -13,8 +13,7 @@
 // Frames land in .screens/turn-diff/ for a person to look at. The assertions
 // are the part that fails the build: the touch floor on a file row, no
 // horizontal overflow at any width, the card using the product's own --tdiff-*
-// palette rather than a second one, and the roll-up disappearing exactly where
-// the rows already show the diffs in full.
+// palette rather than a second one, and card expansion independent of tool details.
 import { chromium } from "playwright";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -44,6 +43,9 @@ const chatJs = read("media", "chat.js");
 
 // VS Code's own defaults, trimmed to what this card and its neighbours read.
 const DARK = {
+  "font-family": '"Segoe UI", system-ui, sans-serif',
+  "font-size": "13px",
+  "editor-font-family": "Consolas, monospace",
   foreground: "#CCCCCC",
   descriptionForeground: "rgba(204,204,204,0.7)",
   "editor-background": "#1F1F1F",
@@ -99,7 +101,7 @@ const vars = (theme) =>
     .map(([k, v]) => `--vscode-${k}: ${v};`)
     .join("\n");
 
-function page(theme, themeClass, remote) {
+function page(theme, themeClass, remote, expand) {
   // The relay's chat.html carries this, and without it Chromium's mobile
   // emulation lays the page out at 980px and scales the result down — every
   // measurement then reads correct while the pixels a thumb meets are half the
@@ -121,6 +123,7 @@ html, body {
 ${chatCss}</style></head>
 <body class="${themeClass}">${BODY}
 <script>
+  Object.defineProperty(window, "localStorage", { value: { getItem: (key) => key === "grok.remote.expandDiffCard" ? "${!!expand}" : null, setItem: () => {} } });
   window.acquireVsCodeApi = () => ({
     postMessage: (m) => { (window.__posted ||= []).push(m); },
     setState: () => {}, getState: () => undefined,
@@ -210,19 +213,21 @@ const LONG_PATH_TURN = [
 
 const CASES = {
   turn: { messages: TURN, expectCard: true },
-  longPath: { messages: LONG_PATH_TURN, expectCard: true },
-  // The roll-up would repeat what the open rows already say in full.
-  expanded: { messages: [...TURN, { type: "expandCommandOutputs", value: true }], expectCard: false },
+  longPath: { messages: LONG_PATH_TURN, expectCard: true, expand: true },
+  // Tool expansion is independent of the card's own default.
+  expanded: { messages: [...TURN, { type: "expandCommandOutputs", value: true }], expectCard: true },
+  expandedCard: { messages: [...TURN, { type: "expandCommandOutputs", value: true }], expectCard: true, expand: true },
   // Knowledge work is not about files being edited.
   knowledge: { messages: [...TURN, { type: "appPurpose", value: "knowledge" }], expectCard: false },
   // The same turn on a phone. The rows behave identically here — they reveal
   // the file's own tool row — and the frame is the only place to SEE that they
   // still read as rows you can press at thumb size.
-  remote: { messages: TURN, expectCard: true, remote: true },
+  remote: { messages: TURN, expectCard: true, remote: true, expand: true },
   // The way out of the card. The link is offered only where a file panel is
   // mounted AND has a repository to talk about, so it needs a panel on the
   // page to exist at all — every other case here is the negative frame.
-  withPanel: { messages: TURN, expectCard: true, panel: true },
+  withPanel: { messages: TURN, expectCard: true, panel: true, expand: true },
+  collapsedWithPanel: { messages: TURN, expectCard: true, panel: true },
   // A panel that says no. A knowledge-work session and a folder that is not a
   // repository both land here, and both are ordinary rather than exotic: the
   // card must simply not offer the link.
@@ -262,7 +267,7 @@ try {
       });
       for (const [caseName, spec] of Object.entries(CASES)) {
         const p = await context.newPage();
-        await p.setContent(page(th.theme, th.cls, spec.remote), { waitUntil: "load" });
+        await p.setContent(page(th.theme, th.cls, spec.remote, spec.expand), { waitUntil: "load" });
         if (spec.panel) {
           // The smallest thing chat.js will accept as a panel: the two methods
           // it capability-detects, and nothing else. Standing in for the real
@@ -273,6 +278,11 @@ try {
               showChanges: () => { window.__openedChanges = true; return true; },
             };
           }, spec.panel !== "no");
+        }
+        if (!spec.remote) {
+          await p.evaluate((expand) => window.dispatchEvent(new MessageEvent("message", {
+            data: { type: "initialState", appPurpose: "coding", expandDiffCard: !!expand },
+          })), spec.expand);
         }
         for (const m of spec.messages) {
           await p.evaluate((data) => window.dispatchEvent(new MessageEvent("message", { data })), m);
@@ -285,13 +295,20 @@ try {
         const seen = await p.evaluate((minPx) => {
           const card = document.querySelector(".turn-diff-summary");
           const shown = !!card && getComputedStyle(card).display !== "none";
-          const rows = card ? [...card.querySelectorAll(".turn-diff-file")] : [];
+          const allRows = card ? [...card.querySelectorAll(".turn-diff-file")] : [];
+          const rows = allRows.filter((r) => r.getBoundingClientRect().height > 0);
+          const header = card?.querySelector(".turn-diff-summary-header");
           const px = (v) => Number.parseFloat(v) || 0;
           return {
             present: !!card,
             shown,
             title: card?.querySelector(".turn-diff-summary-title")?.textContent || "",
-            rowCount: rows.length,
+            rowCount: allRows.length,
+            visibleRows: rows.length,
+            expanded: header?.getAttribute("aria-expanded") === "true",
+            headerHeight: header?.getBoundingClientRect().height || 0,
+            headerOnly: !!card && [...card.children].filter((el) => el.getBoundingClientRect().height > 0).length === 1,
+            chevron: !!card?.querySelector(".turn-diff-summary-chevron svg"),
             // The filename is what identifies a row; only the directory may be
             // cut. Any leaf whose text does not fully fit is a defect.
             clippedNames: rows
@@ -327,7 +344,7 @@ try {
             ),
             // A row is either a control with a promise in its tooltip, or a
             // plain line. Nothing in between, on any surface.
-            rowKinds: rows.map((r) => `${r.tagName}:${r.title || ""}`),
+            rowKinds: allRows.map((r) => `${r.tagName}:${r.title || ""}`),
             // The ground the card is actually drawn on. A themed card floating
             // on an unthemed page is a frame nobody should trust.
             pageGround: getComputedStyle(document.body).backgroundColor,
@@ -353,6 +370,7 @@ try {
               if (!link) return null;
               const box = link.getBoundingClientRect();
               return {
+                shown: box.height > 0,
                 text: link.textContent,
                 height: Math.round(box.height),
                 inside: !!card && box.right <= card.getBoundingClientRect().right + 1,
@@ -366,6 +384,11 @@ try {
         if (spec.expectCard) {
           if (!seen.shown) fail(`${id}: expected the roll-up card, none visible`);
           if (!seen.rowCount) fail(`${id}: card has no file rows`);
+          if (seen.expanded !== !!spec.expand) fail(`${id}: card ignores its own default`);
+          if (!spec.expand && (!seen.headerOnly || seen.visibleRows)) fail(`${id}: collapsed card is not header-only`);
+          if (spec.expand && !seen.visibleRows) fail(`${id}: expanded card has no visible rows`);
+          if (!seen.chevron) fail(`${id}: no chevron on the header`);
+          if (vp.touch && seen.headerHeight < MIN_TOUCH_PX) fail(`${id}: header below touch floor`);
         } else {
           if (seen.shown) fail(`${id}: the roll-up should be hidden here, it is visible`);
           // Built but hidden, so flipping the preference back restores it.
@@ -379,13 +402,13 @@ try {
         if (seen.openChanges) {
           if (!/changes/i.test(seen.openChanges.text)) fail(`${id}: the link does not name Changes: "${seen.openChanges.text}"`);
           if (!seen.openChanges.last) fail(`${id}: the link is not the last thing in the card`);
-          if (!seen.openChanges.inside) fail(`${id}: the link overflows the card`);
-          if (vp.touch && seen.openChanges.height < MIN_TOUCH_PX) {
+          if (seen.openChanges.shown && !seen.openChanges.inside) fail(`${id}: the link overflows the card`);
+          if (vp.touch && seen.openChanges.shown && seen.openChanges.height < MIN_TOUCH_PX) {
             fail(`${id}: the link is ${seen.openChanges.height}px tall on a touch surface`);
           }
         }
         // Pressing it has to reach the panel, not merely look like it would.
-        if (wantsLink) {
+        if (wantsLink && spec.expand) {
           await p.click(".turn-diff-open-changes");
           if (!(await p.evaluate(() => window.__openedChanges === true))) {
             fail(`${id}: pressing the link did not open Changes`);
@@ -437,6 +460,18 @@ try {
           const ground = seen.pageGround.replace(/\s+/g, "");
           const want = th.name === "dark" ? "rgb(24,24,24)" : "rgb(248,248,248)";
           if (ground !== want) fail(`${id}: page ground is ${seen.pageGround}, expected ${want}`);
+        }
+        if (spec.expectCard) {
+          if (seen.openChanges && seen.openChanges.shown !== !!spec.expand) fail(`${id}: footer ignores collapse`);
+          // Native button keyboard activation must toggle just like a pointer.
+          await p.focus(".turn-diff-summary-header");
+          await p.keyboard.press("Enter");
+          const open = await p.locator(".turn-diff-summary-header").getAttribute("aria-expanded");
+          if ((open === "true") === !!spec.expand) fail(`${id}: Enter did not toggle the card`);
+          await p.screenshot({ path: path.join(OUT, `${id}-toggled.png`), fullPage: false });
+          await p.keyboard.press("Space");
+          const restored = await p.locator(".turn-diff-summary-header").getAttribute("aria-expanded");
+          if ((restored === "true") !== !!spec.expand) fail(`${id}: Space did not toggle the card back`);
         }
         await p.close();
       }

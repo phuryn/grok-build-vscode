@@ -101,6 +101,25 @@ function loadSessions(
   });
 }
 
+it("uses open and closed outline project marks that inherit their tint", () => {
+  const { window, doc } = bootRail();
+  const api = railApi(window);
+  loadCatalog(api);
+  loadSessions(api, [row("a1", "/work/alpha", "First conversation")]);
+  const alpha = () => [...doc.querySelectorAll(".rail-repo")].find(
+    (el) => el.querySelector(".rail-repo-label")?.textContent === "alpha",
+  )!;
+  const mark = () => alpha().querySelector(".rail-twisty svg")!;
+  expect(mark().getAttribute("viewBox")).toBe("0 0 24 24");
+  expect(mark().getAttribute("fill")).toBe("none");
+  expect(mark().getAttribute("stroke")).toBe("currentColor");
+  expect(mark().querySelector("path")?.getAttribute("d")).toMatch(/^m6 14 1\.5-2\.9/);
+  (alpha().querySelector(".rail-repo-head") as HTMLElement).click();
+  expect(mark().querySelector("path")?.getAttribute("d")).toMatch(/^M20 20a2 2/);
+  expect(alpha().querySelector(".rail-sessions")).toBeNull();
+  window.happyDOM.abort();
+});
+
 it("removes abandoned sessions from selected rows, previews, pins and Recent without changing focus", () => {
   const { window, doc, posted } = bootRail();
   const api = railApi(window);

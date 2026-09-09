@@ -755,9 +755,10 @@ describe("desktop Electron app (real window + fake CLI)", () => {
     // Shared CSS: sticky uppercase group heads + non-zero twisty box.
     expect(style.headLetter).toBe("uppercase");
     expect(style.twistyW).not.toBe("0px");
-    // Expanded project uses the owner's solid, theme-tinted open-folder asset.
-    expect(style.twistyHtml).toContain('viewBox="0 -57 511.99973 511"');
-    expect(style.twistyHtml).toContain('fill="currentColor"');
+    // Expanded project uses the theme-tinted lucide open-folder outline.
+    expect(style.twistyHtml).toContain('d="m6 14 1.5-2.9');
+    expect(style.twistyHtml).toContain('stroke="currentColor"');
+    expect(style.twistyHtml).toContain('fill="none"');
   });
 
   it("rail header chrome has brand + toggle above search (not crammed in one row)", async () => {

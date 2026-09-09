@@ -10,8 +10,11 @@
 // What lives elsewhere: `test/git-status.test.ts` owns parsing and planning,
 // `test/git-run.test.ts` owns real repositories, and
 // `scripts/changes-view-screens.mjs` owns how it looks at three viewports.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { Window } from "happy-dom";
+import { describeGitFailure } from "../src/git-status";
+import { bootWebview, dispatch } from "./webview-harness";
+import { fileTreePanelBootSource } from "../src/desktop/file-tree-panel";
 // @ts-expect-error Plain-JS webview module intentionally has no TS build step.
 import {
   changeCountLabel,
@@ -65,10 +68,17 @@ function harness(options: {
   run?: (request: Record<string, unknown>) => Promise<unknown>;
   gitEnabled?: () => boolean;
   omitGit?: boolean;
+  askAgent?: (text: string) => void;
+  openSettings?: () => void;
+  presentation?: "overlay" | "dock";
+  write?: () => Promise<unknown>;
   list?: (scopeId: string, relPath: string) => Promise<unknown>;
 } = {}) {
   const window = new Window({ url: "https://example.test/" });
   const document = window.document;
+  const composer = document.createElement("textarea");
+  composer.value = "Keep my draft";
+  document.body.appendChild(composer);
   const runs: Array<Record<string, unknown>> = [];
   const diffs: string[] = [];
   let statusCalls = 0;
@@ -83,6 +93,7 @@ function harness(options: {
       stamp: { mtimeMs: 1, size: 5 }, absPath: "/work/app/" + relPath,
     }),
   };
+  if (options.write) access.write = options.write;
   if (!options.omitGit) {
     access.gitStatus = async () => {
       statusCalls += 1;
@@ -105,11 +116,13 @@ function harness(options: {
     access,
     document,
     window,
-    mount: { panelHost: document.body, toggleHost: document.body, presentation: "overlay" },
+    mount: { panelHost: document.body, toggleHost: document.body, presentation: options.presentation || "overlay" },
     ui: {
       confirm: async (request: { actions?: Array<{ id: string }> }) =>
         (request.actions && request.actions[0] ? request.actions[0].id : "cancel"),
       renderMarkdown: (source: string) => `<p>${source}</p>`,
+      askAgent: options.askAgent,
+      openSettings: options.openSettings,
     },
     gitEnabled: options.gitEnabled,
   });
@@ -118,11 +131,12 @@ function harness(options: {
   const qq = (selector: string) => [...document.querySelectorAll(selector)] as HTMLElement[];
 
   return {
-    window, document, panel, runs, diffs, q, qq,
+    window, document, panel, runs, diffs, q, qq, composer,
     statusCalls: () => statusCalls,
     async open() {
       panel.setOpen(true);
       await settle();
+      (q(".gfp-title") as HTMLElement).click();
       (q(".gfp-changes-btn") as HTMLElement).click();
       await settle();
       await settle();
@@ -272,6 +286,71 @@ describe("counts and diffs", () => {
 });
 
 describe("the panel", () => {
+  it("keeps the one refresh in the tree filter, absent from every Changes subview", async () => {
+    const h = harness({ snapshot: snap({ files: [file("a.ts", "M")] }) });
+    h.panel.setOpen(true);
+    await settle();
+    const refresh = h.q(".gfp-filter-row > .gfp-refresh")!;
+    expect(refresh.hidden).toBe(false);
+    await h.open();
+    expect(h.q(".gfp-changes .gfp-refresh")).toBeNull();
+    expect(h.q(".gfp-header .gfp-refresh")).toBeNull();
+    expect(refresh.hidden).toBe(true);
+    expect(h.qq(".gfp-refresh")).toHaveLength(1);
+    h.q('.gfp-change-row[data-path="a.ts"]')!.click();
+    await settle();
+    expect(h.q(".gfp-changes .gfp-refresh")).toBeNull();
+    h.q(".gfp-title")!.click();
+    await settle();
+    expect(h.q(".gfp-filter-row > .gfp-refresh")).toBe(refresh);
+    expect(refresh.hidden).toBe(false);
+    h.panel.destroy();
+  });
+
+  it.each([true, false])("re-reads git status exactly once after a successful editor save (ok=%s)", async (ok) => {
+    let saved = false;
+    const h = harness({
+      status: async () => ({ ok: true, snapshot: snap({ files: saved ? [file("a.ts", "M")] : [] }) }),
+      write: async () => {
+        saved = ok;
+        return ok ? { ok: true, stamp: { mtimeMs: 2, size: 6 } } : { ok: false, reason: "Save refused." };
+      },
+    });
+    await h.open();
+    await h.panel.openPath("a.ts");
+    await settle();
+    h.q(".gfp-edit")!.click();
+    await settle();
+    const editor = h.q(".gfp-editor") as HTMLTextAreaElement;
+    editor.value = "edited";
+    editor.dispatchEvent(new h.window.Event("input", { bubbles: true }));
+    const before = h.statusCalls();
+    h.qq(".gfp-action").find((el) => el.textContent === "Save")!.click();
+    await settle();
+    await settle();
+    expect(h.statusCalls()).toBe(before + (ok ? 1 : 0));
+    expect(h.q(".gfp-changes-notice")).toBeNull();
+    expect(h.q(".gfp-header .gfp-busy")).toBeNull();
+    if (ok) expect(h.q(".gfp-toggle-count")?.textContent).toBe("1");
+    h.panel.destroy();
+  });
+
+  it("labels exactly one section: uncommitted files win over unpushed commits", async () => {
+    for (const dirty of [true, false]) {
+      const h = harness({ snapshot: snap({
+        files: dirty ? [file("a.ts", "M"), file("b.ts", "A")] : [],
+        ahead: 12, unpushedTruncated: true,
+        unpushed: [{ sha: "abc123", subject: "Saved work" }],
+      }) });
+      await h.open();
+      expect(h.qq(".gfp-changes-section")).toHaveLength(1);
+      const section = h.q(".gfp-changes-section")!;
+      expect(section.textContent).toBe(dirty ? "Not committed" : "Not pushed");
+      expect(section.nextElementSibling?.className).toBe(dirty ? "gfp-changes-list" : "gfp-changes-commits");
+      expect(h.qq(dirty ? ".gfp-changes-commits" : ".gfp-changes-list")).toHaveLength(0);
+    }
+  });
+
   it("hides itself entirely when the host cannot answer git", async () => {
     // Every extension released before this one DROPS the three messages in
     // silence, so the adapter is simply absent rather than failing.
@@ -482,27 +561,6 @@ describe("the panel", () => {
     expect(h.qq(".tdl-del").length).toBe(1);
   });
 
-  it("shows what git said, and a next move, when an operation fails", async () => {
-    const h = harness({
-      snapshot: snap({ ahead: 1 }),
-      run: async () => ({
-        ok: false,
-        reason: "The push was rejected because the branch moved on the remote. Pull, then push again.",
-        detail: "! [rejected] main -> main (fetch first)",
-        snapshot: snap({ ahead: 1 }),
-      }),
-    });
-    await h.open();
-    h.q(".gfp-changes-primary")!.click();
-    await settle();
-    await settle();
-    const notice = h.q(".gfp-changes-notice");
-    expect(notice?.textContent).toContain("Pull, then push again.");
-    // Both, never one: the sentence alone hides what happened, and stderr alone
-    // tells a person nothing to do.
-    expect(notice?.textContent).toContain("[rejected]");
-  });
-
   it("spends the commit message once", async () => {
     // Leaving it in the box invites the same commit twice, and the second one
     // would be empty and confusing.
@@ -554,34 +612,6 @@ describe("the panel", () => {
     expect(h.qq(".gfp-tab-active")).toHaveLength(1);
   });
 
-  it("commits without pushing when the second button is used", async () => {
-    // The whole point of the second button: same commit, no push. If this ever
-    // sends push:true the two controls are one control wearing two labels.
-    const h = harness({ snapshot: snap({ files: [file("src/a.ts", "M")] }) });
-    await h.open();
-    const box = h.q(".gfp-changes-message") as HTMLTextAreaElement;
-    box.value = "Write it down";
-    box.dispatchEvent(new h.window.Event("input", { bubbles: true }));
-    await settle();
-
-    const only = h.q(".gfp-changes-commit-only") as HTMLButtonElement;
-    expect(only).toBeTruthy();
-    expect(only.disabled).toBe(false);
-    only.click();
-    await settle();
-    await settle();
-    expect(h.runs).toEqual([{ op: "commit", message: "Write it down", push: false }]);
-  });
-
-  it("does not offer a second commit button when the primary already only commits", async () => {
-    // No remote to push to: "Commit" and "Commit without pushing" would be the
-    // same press, and a choice with one outcome is not a choice.
-    const h = harness({ snapshot: snap({ hasRemote: false, hasUpstream: false, files: [file("src/a.ts", "M")] }) });
-    await h.open();
-    expect((h.q(".gfp-changes-primary") as HTMLButtonElement).textContent).toBe("Commit");
-    expect(h.q(".gfp-changes-commit-only")).toBeNull();
-  });
-
   it("paints the two numbers in the two colours the rest of the UI uses", async () => {
     // The same +N −M appears on a tool row and on the turn's Changed N files
     // card in green and red. One grey blob here read as a different quantity.
@@ -624,7 +654,7 @@ describe("the second commit button, as a decision", () => {
     const opts = { message: "msg" };
     const withRemote = changesCommitOnlyAction(snap({ files: [file("a.ts", "M")] }), opts);
     expect(withRemote.show).toBe(true);
-    expect(withRemote.label).toBe("Commit without pushing");
+    expect(withRemote.label).toBe("Commit");
     expect(changesCommitOnlyAction(snap({ hasRemote: false, files: [file("a.ts", "M")] }), opts).show).toBe(false);
     expect(changesCommitOnlyAction(snap({ detached: true, branch: null, files: [file("a.ts", "M")] }), opts).show).toBe(false);
   });
@@ -639,5 +669,243 @@ describe("the second commit button, as a decision", () => {
     // The primary is disabled with "Resolve the conflicts first"; a second
     // button that still committed would be a way around that sentence.
     expect(changesCommitOnlyAction(snap({ files: [file("a.ts", "U")] }), { message: "msg" }).show).toBe(false);
+  });
+});
+
+const pullMessage = "Pull the latest changes for this branch from the remote, resolve any conflicts, and tell me what changed.";
+const githubReason = "Push needs GitHub. Connect it in Settings.";
+const rejectedReason = "The remote has commits you do not have. Pull before pushing.";
+const githubDetail = "fatal: could not read Username for 'https://github.com': terminal prompts disabled";
+const rejectedDetail = "! [rejected] main -> main (fetch first)";
+
+async function typeCommit(h: ReturnType<typeof harness>, text = "Save the work") {
+  const box = h.q(".gfp-changes-message") as HTMLTextAreaElement;
+  box.value = text;
+  box.dispatchEvent(new h.window.Event("input", { bubbles: true }));
+  await settle();
+}
+
+async function runPrimary(h: ReturnType<typeof harness>) {
+  h.q(".gfp-changes-primary")!.click();
+  await settle();
+  await settle();
+}
+
+describe("GitHub disconnected, GitHub remote", () => {
+  it.each(["overlay", "dock"] as const)("keeps the commit after push fails and opens Settings (%s)", async (presentation) => {
+    let current = snap({ files: [file("a.ts", "M")] });
+    const openSettings = vi.fn(() => expect(h.panel.isOpen()).toBe(presentation === "dock"));
+    const h = harness({
+      presentation, openSettings,
+      status: async () => ({ ok: true, snapshot: current }),
+      run: async () => {
+        current = snap({ ahead: 1 });
+        return { ok: false, snapshot: current, reason: githubReason, detail: githubDetail };
+      },
+    });
+    await h.open();
+    await typeCommit(h);
+    await runPrimary(h);
+    expect(h.runs).toEqual([{ op: "commit", message: "Save the work", push: true }]);
+    expect(h.q(".gfp-changes-headline")?.textContent).toBe("1 commit saved here but not pushed");
+    expect(h.q(".gfp-changes-primary")?.textContent).toBe("Push 1 commit");
+    expect(h.q(".gfp-changes-notice-text")?.textContent).toBe(githubReason);
+    expect(h.q(".gfp-changes-notice-detail")?.textContent).toBe(githubDetail);
+    expect(h.q(".gfp-changes-notice-action")?.textContent).toBe("Connect GitHub");
+    h.q(".gfp-changes-notice-action")!.click();
+    expect(openSettings).toHaveBeenCalledTimes(1);
+    expect(h.runs).toHaveLength(1);
+    expect(h.composer.value).toBe("Keep my draft");
+    // Reveal the internal draft again: absence of a textarea after committing
+    // alone would not prove the spent message had actually been cleared.
+    current = snap({ ahead: 1, files: [file("next.ts", "M")] });
+    await h.open();
+    expect((h.q(".gfp-changes-message") as HTMLTextAreaElement).value).toBe("");
+    h.panel.destroy();
+  });
+
+  it("commits locally without needing GitHub when Commit is chosen", async () => {
+    const openSettings = vi.fn();
+    const h = harness({
+      snapshot: snap({ files: [file("a.ts", "M")] }), openSettings,
+      run: async () => ({ ok: true, snapshot: snap({ ahead: 1 }) }),
+    });
+    await h.open();
+    await typeCommit(h);
+    const only = h.q(".gfp-changes-commit-only")!;
+    expect(only.textContent).toBe("Commit");
+    expect(only.parentElement?.classList.contains("gfp-changes-action-row")).toBe(true);
+    expect(only.nextElementSibling).toBe(h.q(".gfp-changes-primary"));
+    expect(only.parentElement?.nextElementSibling).toBe(h.q(".gfp-changes-hint"));
+    only.click();
+    await settle();
+    expect(h.runs).toEqual([{ op: "commit", message: "Save the work", push: false }]);
+    expect(h.q(".gfp-changes")?.textContent).not.toContain("GitHub");
+    expect(openSettings).not.toHaveBeenCalled();
+    h.panel.destroy();
+  });
+
+  it("retains an unspent message when the commit itself fails", async () => {
+    const current = snap({ files: [file("a.ts", "M")] });
+    const h = harness({ snapshot: current,
+      run: async () => ({ ok: false, snapshot: current, reason: "A git hook refused this commit." }),
+    });
+    await h.open();
+    await typeCommit(h);
+    await runPrimary(h);
+    expect((h.q(".gfp-changes-message") as HTMLTextAreaElement).value).toBe("Save the work");
+    expect(h.q(".gfp-changes-notice-action")).toBeNull();
+    h.panel.destroy();
+  });
+});
+
+describe("Project without GitHub", () => {
+  it("offers one local Commit and explains the missing remote without push wording", async () => {
+    const h = harness({
+      snapshot: snap({ hasRemote: false, hasUpstream: false, files: [file("a.ts", "M")] }),
+      askAgent: vi.fn(), openSettings: vi.fn(),
+    });
+    await h.open();
+    expect(h.q(".gfp-changes-primary")?.textContent).toBe("Commit");
+    expect(h.q(".gfp-changes-commit-only")).toBeNull();
+    expect(h.q(".gfp-changes-action-row")?.children).toHaveLength(1);
+    expect(h.q(".gfp-changes-hint")?.textContent).toContain("no remote");
+    expect(h.q(".gfp-changes-ask-pull")).toBeNull();
+    expect(h.q(".gfp-changes")?.textContent).not.toMatch(/push/i);
+    h.panel.destroy();
+  });
+
+  it("names gitlab.com without offering the GitHub connection", async () => {
+    const detail = "fatal: Authentication failed for 'https://gitlab.com/team/app.git/'";
+    const h = harness({ snapshot: snap({ ahead: 1 }), openSettings: vi.fn(),
+      run: async () => ({ ok: false, reason: describeGitFailure("push", detail), detail, snapshot: snap({ ahead: 1 }) }),
+    });
+    await h.open();
+    await runPrimary(h);
+    expect(h.q(".gfp-changes-notice-text")?.textContent).toBe("Git could not sign in to gitlab.com.");
+    expect(h.q(".gfp-changes-notice-detail")?.textContent).toBe(detail);
+    expect(h.q(".gfp-changes-notice-action")).toBeNull();
+    h.panel.destroy();
+  });
+});
+
+describe("Origin conflict", () => {
+  it.each(["overlay", "dock"] as const)("offers the exact pull draft in the notice and branch line (%s)", async (presentation) => {
+    const askAgent = vi.fn(() => expect(h.panel.isOpen()).toBe(presentation === "dock"));
+    const h = harness({ presentation, askAgent, snapshot: snap({ ahead: 1 }),
+      run: async () => ({ ok: false, reason: describeGitFailure("push", rejectedDetail), detail: rejectedDetail, snapshot: snap({ ahead: 1 }) }),
+    });
+    await h.open();
+    expect(h.q(".gfp-changes-ask-pull")?.textContent).toBe("Ask agent to pull");
+    expect(h.q(".gfp-changes-ask-pull")?.title).toBe("Puts a pull request for this branch into the message box");
+    await runPrimary(h);
+    expect(h.q(".gfp-changes-notice-text")?.textContent).toBe(rejectedReason);
+    expect(h.q(".gfp-changes-notice-detail")?.textContent).toBe(rejectedDetail);
+    expect(h.q(".gfp-changes-notice-action")?.textContent).toBe("Ask the agent to pull");
+    h.q(".gfp-changes-notice-action")!.click();
+    expect(askAgent).toHaveBeenNthCalledWith(1, pullMessage);
+    await h.open();
+    h.q(".gfp-changes-ask-pull")!.click();
+    expect(askAgent).toHaveBeenNthCalledWith(2, pullMessage);
+    expect(h.runs).toEqual([{ op: "push" }]);
+    expect(h.composer.value).toBe("Keep my draft");
+    h.panel.destroy();
+  });
+
+  it.each([githubReason, rejectedReason])("offers no actions when the mount supplies no hooks: %s", async (reason) => {
+    const h = harness({ snapshot: snap({ ahead: 1 }), run: async () => ({ ok: false, reason }) });
+    await h.open();
+    await runPrimary(h);
+    expect(h.q(".gfp-changes-notice-action")).toBeNull();
+    expect(h.q(".gfp-changes-ask-pull")).toBeNull();
+    h.panel.destroy();
+  });
+
+  it.each([{ detached: true }, { branch: null }])("offers no branch pull without a usable branch: %s", async (fields) => {
+    const askAgent = vi.fn();
+    const h = harness({ snapshot: snap(fields), askAgent });
+    await h.open();
+    expect(h.q(".gfp-changes-ask-pull")).toBeNull();
+    expect(askAgent).not.toHaveBeenCalled();
+    h.panel.destroy();
+  });
+});
+
+describe("Changes actions in the chat mounts", () => {
+  it.each(["remote", "desktop"])("appends a pull draft without sending and opens GitHub Settings on %s", async (surface) => {
+    const remote = surface === "remote";
+    const current = snap({ ahead: 1 });
+    const failure = { ok: false, snapshot: current, reason: githubReason, detail: githubDetail };
+    const gitRun = vi.fn(async () => failure);
+    const h = bootWebview({ remote, postMessage: (msg) => {
+      const responses: Record<string, Record<string, unknown>> = {
+        listProjectDir: { type: "projectDirListing", ok: true, entries: [], truncated: false },
+        gitStatus: { type: "gitStatusResult", ok: true, snapshot: current },
+        gitRun: { type: "gitRunResult", ...failure },
+      };
+      const reply = responses[msg.type];
+      if (reply) queueMicrotask(() => dispatch(h.window, { ...msg, ...reply }));
+    } });
+    dispatch(h.window, { type: "initialState", cwd: "/work/app", appPurpose: "coding",
+      capabilities: { browseProjectFiles: remote, gitChanges: true },
+    });
+    dispatch(h.window, { type: "githubState", github: { connected: false, cliPresent: true } });
+    if (!remote) {
+      Object.assign(h.window, { grokDesktopFileTree: {
+        root: async () => ({ root: "/work/app", name: "app" }),
+        onRootChanged: () => () => {},
+        list: async () => ({ ok: true, entries: [], truncated: false }),
+        gitStatus: async () => ({ ok: true, snapshot: current }),
+        gitRun,
+      } });
+      h.window.eval(fileTreePanelBootSource());
+    }
+    await settle();
+    const q = (selector: string) => h.doc.querySelector(selector) as HTMLElement;
+    const toggle = q(".gfp-toggle");
+    toggle.click();
+    await settle();
+    q(".gfp-changes-btn").click();
+    await settle();
+    const input = q("#input") as HTMLTextAreaElement;
+    input.value = "Please keep my draft.";
+    h.posted.length = 0;
+    q(".gfp-changes-ask-pull").click();
+    expect(input.value).toBe("Please keep my draft. " + pullMessage);
+    expect(h.doc.activeElement).toBe(input);
+    expect(q(".gfp-panel").hidden).toBe(remote);
+    expect(h.posted.filter((msg) => msg.type !== "composerFocus")).toEqual([]);
+    expect(gitRun).not.toHaveBeenCalled();
+    // Existing whitespace supplies the separator; a second click still appends.
+    input.value = "Keep this line.\n";
+    if (remote) toggle.click();
+    q(".gfp-changes-ask-pull").click();
+    expect(input.value).toBe("Keep this line.\n" + pullMessage);
+    if (remote) toggle.click();
+    q(".gfp-changes-primary").click();
+    await settle();
+    // The existing push confirmation is deliberately kept intact.
+    const confirm = h.doc.querySelector(".confirm-primary") as HTMLElement | null;
+    if (confirm) { confirm.click(); await settle(); }
+    await settle();
+    expect(q(".gfp-changes-notice-action")?.textContent).toBe("Connect GitHub");
+    h.posted.length = 0;
+    q(".gfp-changes-notice-action").click();
+    expect(q(".gfp-panel").hidden).toBe(remote);
+    expect(q("#settings-overlay")).toBeTruthy();
+    expect(h.doc.querySelector('[data-id="githubConnection"], [data-id="githubConnectionStatus"], [data-id="githubConnectionRemote"]')).toBeTruthy();
+    expect(input.value).toBe("Keep this line.\n" + pullMessage);
+    expect(h.posted.some((msg) => /send|prompt|gitRun|githubConnect/i.test(msg.type))).toBe(false);
+    await h.window.happyDOM.abort();
+  });
+
+  it("routes Settings to the IDE editor's Providers category", async () => {
+    const h = bootWebview({ vscode: true });
+    dispatch(h.window, { type: "initialState", capabilities: { settingsEditor: true } });
+    h.posted.length = 0;
+    (h.window as unknown as { __grokFilePanelOpenSettings: () => void }).__grokFilePanelOpenSettings();
+    expect(h.posted).toEqual([{ type: "openSettingsSurface", category: "providers" }]);
+    expect(h.doc.getElementById("settings-overlay")).toBeNull();
+    await h.window.happyDOM.abort();
   });
 });

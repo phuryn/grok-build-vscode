@@ -6,6 +6,7 @@
   const MIN_CHAT_WIDTH = 280;
   const MOBILE_BREAKPOINT = 640;
   const EDITABLE_KINDS = new Set(["markdown", "json", "text"]);
+  const PULL_AGENT_MESSAGE = "Pull the latest changes for this branch from the remote, resolve any conflicts, and tell me what changed.";
   // Shared Seti lookup data. Hosts provide only a URL rooted in their own
   // scheme; the component chooses the asset and the browser lazily loads icons
   // that actually appear on screen. This keeps Node work and SVG/data-URL
@@ -490,7 +491,8 @@
         push: canPush,
         label: canPush ? "Commit and push" : "Commit",
         disabled: !message,
-        hint: message ? "" : "Describe what changed, then commit.",
+        hint: !snap.hasRemote ? "This project has no remote. Commit saves your work here."
+          : message ? "" : "Describe what changed, then commit.",
       };
     }
     const ahead = Number(snap.ahead) || 0;
@@ -518,16 +520,15 @@
    * or no branch the primary already says just "Commit", and a second button
    * saying the same thing is a choice with one outcome.
    *
-   * The label spells the difference out rather than relying on the reader to
-   * diff two button captions: beside "Commit and push", a bare "Commit" is
-   * distinguished only by what it does NOT say.
+   * Side by side, "Commit" and "Commit and push" name the two outcomes
+   * directly. The short caption keeps both choices readable on a phone.
    */
   function changesCommitOnlyAction(snapshot, opts) {
     const primary = changesPrimaryAction(snapshot, opts);
     if (primary.op !== "commit" || !primary.push) {
-      return { show: false, label: "Commit without pushing", disabled: true };
+      return { show: false, label: "Commit", disabled: true };
     }
-    return { show: true, label: "Commit without pushing", disabled: primary.disabled };
+    return { show: true, label: "Commit", disabled: primary.disabled };
   }
 
   /**
@@ -631,7 +632,7 @@
     chevronDown: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>',
     file: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>',
     folder: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>',
-    // lucide `folder-open` — an expanded folder in the tree. Outline like its
+    // lucide `folder-open` — the current project. Outline like its
     // closed twin; the open state is the shape, never a fill.
     folderOpen: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></svg>',
     // lucide maximize-2 / minimize-2 — expand the panel over chat, then restore.
@@ -773,8 +774,7 @@
 
     // Re-list the tree. Present on every mount — the phone needs it most, since
     // it is the surface watching an agent write files it did not open itself.
-    // It is also the control that pins the trailing group to the right edge
-    // when no tabs are open; see .gfp-refresh in file-panel.css.
+    // The control lives beside the tree filter for its entire lifetime.
     const refreshBtn = doc.createElement("button");
     refreshBtn.type = "button";
     refreshBtn.className = "gfp-icon-button gfp-refresh desk-ft-refresh";
@@ -782,8 +782,7 @@
     refreshBtn.title = "Refresh";
     refreshBtn.setAttribute("aria-label", "Refresh file tree");
     refreshBtn.addEventListener("click", () => {
-      if (changesMode) void loadChanges({ force: true });
-      else void refreshTree();
+      void refreshTree();
     });
 
     // Content-area maximize. The mount opts in (desktop and the wide browser);
@@ -798,9 +797,9 @@
       maximizeBtn.type = "button";
       maximizeBtn.className = "gfp-icon-button gfp-maximize desk-ft-maximize";
       maximizeBtn.setAttribute("aria-pressed", "false");
-      header.append(title, changesBtn, tabsEl, refreshBtn, maximizeBtn, closePanel);
+      header.append(title, changesBtn, tabsEl, maximizeBtn, closePanel);
     } else {
-      header.append(title, changesBtn, tabsEl, refreshBtn, closePanel);
+      header.append(title, changesBtn, tabsEl, closePanel);
     }
 
     const filter = doc.createElement("input");
@@ -809,6 +808,9 @@
     filter.placeholder = "Filter…";
     filter.autocomplete = "off";
     filter.spellcheck = false;
+    const filterRow = doc.createElement("div");
+    filterRow.className = "gfp-filter-row";
+    filterRow.append(filter, refreshBtn);
 
     const tree = doc.createElement("div");
     tree.className = "gfp-tree desk-ft-body files-browse-body";
@@ -826,7 +828,7 @@
     if (elementIds.viewer) viewer.id = elementIds.viewer;
     if (maximizeBtn && elementIds.maximize) maximizeBtn.id = elementIds.maximize;
 
-    rootEl.append(header, filter, tree, changesEl, viewer);
+    rootEl.append(header, filterRow, tree, changesEl, viewer);
     panelHost.appendChild(resizer);
     panelHost.appendChild(rootEl);
 
@@ -950,22 +952,14 @@
      * viewer's own Reload already covers the open file — a second button there
      * would either do nothing visible or reload something you cannot see.
      *
-     * Hiding it is safe for the strip layout because it is only ever hidden
-     * while a file is open, and an open file means a tab, and `.gfp-tabs` grows
-     * to hold the trailing controls against the right edge.
+     * Its home is inside the body it refreshes; the strip budgets only its
+     * own controls, regardless of which body is showing.
      */
     function paintRefresh() {
-      const wasHidden = refreshBtn.hidden;
-      // One refresh control for both list modes. A second button that also
-      // said "refresh" would be the duplication this panel keeps avoiding.
-      refreshBtn.hidden = !treeMode && !changesMode;
-      // In flight covers both loads: pressing refresh during the first listing
-      // would ask for the same thing twice.
-      const changesBusy = !!(currentState && changesMode && currentState.changes.loading);
-      refreshBtn.disabled = !currentState || (changesMode ? changesBusy : !!currentState.rootLoad);
-      refreshBtn.classList.toggle("gfp-busy", !!(currentState && (changesMode ? changesBusy : !!currentState.rootLoad)));
-      refreshBtn.title = changesMode ? "Refresh changes" : "Refresh";
-      refreshBtn.setAttribute("aria-label", changesMode ? "Refresh changes" : "Refresh file tree");
+      refreshBtn.hidden = !treeMode;
+      // A first listing and a refresh both own the tree until they finish.
+      refreshBtn.disabled = !currentState || !!currentState.rootLoad;
+      refreshBtn.classList.toggle("gfp-busy", !!(currentState && currentState.rootLoad));
       // Read from the scope on screen, never left behind by the one that
       // started it. `rootEl` is shared, and a refresh whose requests are still
       // outstanding on a project you have left would otherwise dim — and, via
@@ -973,7 +967,6 @@
       // the abort signal, so that wait is 30s on a remote and open-ended on
       // the desk.
       rootEl.classList.toggle("gfp-refreshing", !!(currentState && currentState.refreshing));
-      if (refreshBtn.hidden !== wasHidden) applyStripShrink();
     }
 
     function applyMaximizedBodyClass() {
@@ -1047,7 +1040,6 @@
           + (cs ? (parseFloat(cs.marginLeft) || 0) + (parseFloat(cs.marginRight) || 0) : 0);
       }
       addTrailing(changesBtn);
-      addTrailing(refreshBtn);
       addTrailing(maximizeBtn);
       addTrailing(closePanel);
       // Gap floor on the tab row (padding-right on .gfp-tabs) is measured
@@ -1670,15 +1662,10 @@
       row.style.setProperty("--gfp-depth", String(depth));
       const lead = doc.createElement("span");
       lead.className = "gfp-lead desk-ft-lead files-browse-row-icon";
-      // A folder row is chevron AND folder — the chevron is the twist, the
-      // folder is the noun. Files get their icon in the lead itself.
-      let dirIcon = null;
+      // Directory rows use a chevron; the folder mark belongs to the project.
       if (entry.kind === "dir") {
         lead.classList.add("desk-ft-twist");
         lead.innerHTML = ICON.chevronRight;
-        dirIcon = doc.createElement("span");
-        dirIcon.className = "gfp-dir-icon";
-        dirIcon.innerHTML = ICON.folder;
       }
       else renderFileIcon(lead, entry.name, entry.kind);
       const name = doc.createElement("span");
@@ -1705,8 +1692,7 @@
         openRowMenu(more, entry);
       });
       actions.appendChild(more);
-      if (dirIcon) row.append(lead, dirIcon, name, dot, actions);
-      else row.append(lead, name, dot, actions);
+      row.append(lead, name, dot, actions);
       node.appendChild(row);
       if (entry.kind === "dir") {
         const children = doc.createElement("div");
@@ -1719,7 +1705,6 @@
         if (reopened) {
           node.classList.add("gfp-expanded", "desk-ft-open");
           lead.innerHTML = ICON.chevronDown;
-          dirIcon.innerHTML = ICON.folderOpen;
           children.dataset.loaded = "1";
           renderDirectory(children, reopened, entry.relPath, listings);
         }
@@ -1749,8 +1734,6 @@
       node.classList.toggle("gfp-expanded", opening);
       node.classList.toggle("desk-ft-open", opening);
       lead.innerHTML = opening ? ICON.chevronDown : ICON.chevronRight;
-      const dirIcon = node.querySelector(":scope > .gfp-row > .gfp-dir-icon");
-      if (dirIcon) dirIcon.innerHTML = opening ? ICON.folderOpen : ICON.folder;
       if (!opening) return;
       if (children.dataset.loaded === "1") return;
       appendStatus(children, "Loading…");
@@ -1774,16 +1757,14 @@
     }
 
     function renderFileIcon(host, name, kind) {
-      // Folders are always the outline glyph, whatever icon theme the files
-      // wear. The theme's folder is a filled block that reads heavier than
-      // every file beside it, and the owner asked for the unfilled one.
+      // The current project uses the open outline folder across icon themes.
       if (kind === "dir") {
-        host.innerHTML = ICON.folder;
+        host.innerHTML = ICON.folderOpen;
         return;
       }
       const icons = ui.fileIcons;
       if (!icons || !icons.baseUrl) {
-        host.innerHTML = kind === "dir" ? ICON.folder : ICON.file;
+        host.innerHTML = ICON.file;
         return;
       }
       const id = typeof icons.idFor === "function"
@@ -2152,6 +2133,7 @@
       const state = currentState;
       const scopeId = currentScope.id;
       if (state.changes.running) return;
+      const before = state.changes.snapshot;
       state.changes.running = true;
       state.changes.notice = null;
       renderChanges();
@@ -2164,11 +2146,15 @@
       if (destroyed || currentState !== state) return;
       state.changes.running = false;
       if (result && result.snapshot) state.changes.snapshot = result.snapshot;
+      // A push can fail after its commit succeeded. An advanced local history
+      // with no remaining files proves the message was spent in that case too.
+      if (request.op === "commit" && result && (result.ok || (request.push && result.snapshot
+        && result.snapshot.ahead > ((before && before.ahead) || 0)
+        && Array.isArray(result.snapshot.files) && !result.snapshot.files.length))) {
+        state.changes.message = "";
+      }
       if (result && result.ok) {
         state.changes.notice = { tone: "ok", text: successLine(request, result.snapshot) };
-        // The message has been spent. Leaving it in the box invites the same
-        // commit twice, and the second one would be empty and confusing.
-        if (request.op === "commit") state.changes.message = "";
         state.changes.diffPath = null;
         state.changes.diffPatch = "";
       } else {
@@ -2177,9 +2163,26 @@
           text: (result && result.reason) || "That git command failed.",
           detail: (result && result.detail) || "",
         };
+        if (state.changes.notice.text === "The remote has commits you do not have. Pull before pushing."
+          && typeof ui.askAgent === "function") {
+          state.changes.notice.action = { label: "Ask the agent to pull", run: askAgentToPull };
+        } else if (state.changes.notice.text === "Push needs GitHub. Connect it in Settings."
+          && typeof ui.openSettings === "function") {
+          state.changes.notice.action = { label: "Connect GitHub", run: () => leavePanelFor(ui.openSettings) };
+        }
       }
       paintChangesButton();
       renderChanges();
+    }
+
+    function leavePanelFor(run) {
+      // Reveal the destination before it takes focus. Docked panels stay open.
+      if (isOverlay()) setOpen(false);
+      run();
+    }
+
+    function askAgentToPull() {
+      leavePanelFor(() => ui.askAgent(PULL_AGENT_MESSAGE));
     }
 
     /** What happened, in the person's terms rather than git's. */
@@ -2295,6 +2298,15 @@
         note.textContent = branchInfo.note;
         branchRow.appendChild(note);
       }
+      if (typeof ui.askAgent === "function" && snapshot.hasRemote && !snapshot.detached && snapshot.branch) {
+        const pull = doc.createElement("button");
+        pull.type = "button";
+        pull.className = "gfp-changes-ask-pull";
+        pull.textContent = "Ask agent to pull";
+        pull.title = "Puts a pull request for this branch into the message box";
+        pull.addEventListener("click", askAgentToPull);
+        branchRow.appendChild(pull);
+      }
       changesEl.appendChild(branchRow);
 
       // 2. The answer to "is it safe to walk away", in one line.
@@ -2333,12 +2345,21 @@
           detail.textContent = state.notice.detail.trim();
           notice.appendChild(detail);
         }
+        if (state.notice.action) {
+          const action = doc.createElement("button");
+          action.type = "button";
+          action.className = "gfp-changes-secondary gfp-changes-notice-action";
+          action.textContent = state.notice.action.label;
+          action.addEventListener("click", state.notice.action.run);
+          notice.appendChild(action);
+        }
         changesEl.appendChild(notice);
       }
 
       // 4. The files. Each row is a link to its own diff and nothing else —
       //    the destructive action lives one level in, behind having looked.
       if (files.length) {
+        changesEl.appendChild(changesSectionHeader("Not committed"));
         const list = doc.createElement("div");
         list.className = "gfp-changes-list";
         for (const file of files) {
@@ -2352,6 +2373,7 @@
       //    specifically asked not to have.
       const unpushed = Array.isArray(snapshot.unpushed) ? snapshot.unpushed : [];
       if (unpushed.length && !files.length) {
+        changesEl.appendChild(changesSectionHeader("Not pushed"));
         const list = doc.createElement("div");
         list.className = "gfp-changes-commits";
         for (const commit of unpushed.slice(0, 8)) {
@@ -2378,6 +2400,13 @@
       }
 
       changesEl.appendChild(changesActions(state, snapshot, files));
+    }
+
+    function changesSectionHeader(label) {
+      const heading = doc.createElement("div");
+      heading.className = "gfp-changes-section";
+      heading.textContent = label;
+      return heading;
     }
 
     function changeRow(file) {
@@ -2432,8 +2461,7 @@
      * The common case — "put this somewhere I will not lose it" — stays one
      * press on the primary, and everything else is deliberately quieter than
      * it: a second commit that does not push, and the branch escape hatch.
-     * Every control here is a decision somebody has to make before their work
-     * is safe, so the order is the order of how often the answer is "yes".
+     * Both commit choices share a row, followed by their hint and scope rule.
      */
     function changesActions(state, snapshot, files) {
       const wrap = doc.createElement("div");
@@ -2478,7 +2506,10 @@
         }
         void confirmedPush(snapshot);
       });
-      wrap.appendChild(runBtn);
+      const actionRow = doc.createElement("div");
+      actionRow.className = "gfp-changes-action-row";
+      actionRow.appendChild(runBtn);
+      wrap.appendChild(actionRow);
 
       const hint = doc.createElement("p");
       hint.className = "gfp-changes-hint";
@@ -2507,7 +2538,8 @@
         onlyBtn.addEventListener("click", () => {
           void runChangesOp({ op: "commit", message: state.message, push: false });
         });
-        wrap.appendChild(onlyBtn);
+        actionRow.classList.add("has-commit-only");
+        actionRow.prepend(onlyBtn);
       }
 
       // The escape hatch, and the reason the primary button can stay a single
@@ -3141,6 +3173,9 @@
       if (destroyed || tab.saveSeq !== seq) return false;
       if (result && result.ok) {
         applySaveSuccess(tab, sentText, result);
+        // Editor writes bypass agentEnd and git operations. Keep the current
+        // project's badge and next Changes list in step with this save too.
+        if (currentScope && currentScope.id === tab.scopeId) refreshChangesQuietly();
         repaintFor(tab);
         return true;
       }

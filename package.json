@@ -378,6 +378,11 @@
           "default": false,
           "markdownDescription": "Expand tool details by default — each shell command's IN/OUT block (full command text + captured output) and each edit's inline diff (useful for auditing Auto-accept sessions). With this setting on, groups containing command or edit details (such as \"Ran N commands\" or \"Edited N files\") open too; read/explore-only groups stay collapsed, and a lone command outside a group opens its details. Off: click a row or group header (›) to expand it — edit rows always show a `+N −M` change count, even when their diff is closed. Also toggleable live from the gear menu → **Config & debug → Expand tool details**."
         },
+        "grok.expandDiffCard": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Open each turn's Changed-files card by default instead of showing only its header. Independent of Expand tool details. On a phone or browser this is a per-device preference."
+        },
         "grok.steerByDefault": {
           "type": "boolean",
           "default": false,

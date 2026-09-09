@@ -180,6 +180,12 @@ export function fileTreePanelBootSource(_iconsDir?: string): string {
         confirm: typeof window.__grokFilePanelConfirm === "function"
           ? window.__grokFilePanelConfirm
           : undefined,
+        askAgent: typeof window.__grokFilePanelAskAgent === "function"
+          ? window.__grokFilePanelAskAgent
+          : undefined,
+        openSettings: typeof window.__grokFilePanelOpenSettings === "function"
+          ? window.__grokFilePanelOpenSettings
+          : undefined,
         renderMarkdown: typeof window.__grokRenderMarkdown === "function"
           ? window.__grokRenderMarkdown
           : undefined,

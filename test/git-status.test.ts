@@ -619,11 +619,54 @@ describe("describeGitFailure", () => {
     );
   });
 
-  it("recognises an authentication failure", () => {
-    expect(describeGitFailure("push", "fatal: Authentication failed for 'https://github.com/x/y.git/'")).toBe(
-      "Git could not authenticate with the remote.",
-    );
+  it.each([
+    ["fatal: could not read Username for 'https://github.com': terminal prompts disabled", "github"],
+    ["fatal: Authentication failed for 'https://gitlab.com/team/app.git/'", "gitlab.com"],
+    ["git@github.com: Permission denied (publickey).", "github"],
+    ["git@bitbucket.org: Permission denied (publickey).", "bitbucket.org"],
+    ["Authentication failed for 'ssh://git@SSH.GITHUB.COM:443/team/app.git'", "github"],
+    ["fatal: terminal prompts disabled", "the remote"],
+    ["remote: Invalid username or password for 'https://dev.azure.com/team/app'", "dev.azure.com"],
+    ["remote: error 403 for 'https://git.example.test:8443/team/app'", "git.example.test"],
+    ["push failed: HTTP 403", "the remote"],
+    ["remote: Support for password authentication was removed.\nfatal: Authentication failed for 'https://github.com/team/app'", "github"],
+    ["remote: Support for password authentication was removed", "the remote"],
+    ["Authentication failed for 'https://github.com.example.test/app'", "github.com.example.test"],
+    ["Authentication failed for 'https://notgithub.com/app'", "notgithub.com"],
+    ["Authentication failed for 'https://gitlab.com/github.com/app'", "gitlab.com"],
+    ["Authentication failed for 'https://user:secret@gitlab.com/app'", "gitlab.com"],
+    ["Authentication failed for 'https://'", "the remote"],
+  ])("recognises credentials and their actual host: %s", (stderr, host) => {
+    const expected = host === "github" ? "Push needs GitHub. Connect it in Settings."
+      : `Git could not sign in to ${host}.`;
+    expect(describeGitFailure("push", stderr)).toBe(expected);
+    expect(describeGitFailure("push", stderr.toUpperCase())).toBe(expected);
+    expect(describeGitFailure("commit", stderr, "push")).toBe(expected);
+    expect(describeGitFailure("commit", stderr, "commit")).not.toBe(expected);
   });
+
+  it.each([
+    ["remote: Repository not found.\nfatal: repository 'https://github.com/team/private.git/' not found", "Push needs GitHub. Connect it in Settings."],
+    ["remote: Repository not found.\nfatal: repository 'https://gitlab.com/team/app.git/' not found", "The remote repository was not found, or you do not have access to it."],
+    ["remote: Repository not found.", "The remote repository was not found, or you do not have access to it."],
+  ])("explains a missing or inaccessible repository: %s", (stderr, expected) => {
+    expect(describeGitFailure("push", stderr)).toBe(expected);
+    expect(describeGitFailure("push", stderr.toUpperCase())).toBe(expected);
+  });
+
+  it.each(["protected branch", "GH006: Protected branch update failed", "pre-receive hook declined"])(
+    "recognises branch restrictions before generic rejection: %s", (reason) => {
+      const stderr = `remote: ${reason}\n! [rejected] main -> main`;
+      expect(describeGitFailure("push", stderr)).toBe("The remote refuses pushes to this branch.");
+      expect(describeGitFailure("commit", stderr.toUpperCase(), "push")).toBe("The remote refuses pushes to this branch.");
+    },
+  );
+
+  it.each(["Permission denied", "error 403", "remote returned 1403", "remote rejected by policy"])(
+    "keeps unrelated failures as git's first line: %s", (stderr) => {
+      expect(describeGitFailure("push", stderr + "\nmore detail")).toBe(stderr);
+    },
+  );
 
   it("recognises an unset git identity", () => {
     expect(describeGitFailure("commit", "*** Please tell me who you are.")).toBe(
@@ -635,8 +678,8 @@ describe("describeGitFailure", () => {
     expect(describeGitFailure("commit", "pre-commit hook failed")).toBe("A git hook refused this commit.");
   });
 
-  it("says nothing it cannot improve on", () => {
-    expect(describeGitFailure("push", "some other failure")).toBe("");
+  it("keeps unknown failures as git's first line", () => {
+    expect(describeGitFailure("push", "some other failure")).toBe("some other failure");
     expect(describeGitFailure("commit", "")).toBe("");
   });
 });

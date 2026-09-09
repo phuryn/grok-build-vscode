@@ -135,6 +135,7 @@ const FLOWS = {
       step("3-close-from-changes", 'await closeTabNamed("package.json")'),
       step("4-back-to-a-file", 'await open("src/remote-uplink.ts")'),
       step("5-tree", 'await click(".gfp-title")'),
+      step("5b-refresh-tree", 'await click(".gfp-filter-row > .gfp-refresh")'),
       step("6-close-from-tree", 'await closeTabNamed("README.md")'),
       step("7-back-to-the-file", 'await open("src/remote-uplink.ts")'),
       step("8-close-the-one-on-screen", 'await closeTabNamed("src/remote-uplink.ts")'),
@@ -314,6 +315,31 @@ async function audit(page, label, touch) {
       : header.querySelector(".gfp-tab-active") ? "viewer"
       : "tree";
     if (says !== shows) bad.push(label + ": the strip says " + says + ", the body shows " + shows);
+
+    const refreshes = panel.querySelectorAll(".gfp-refresh");
+    if (refreshes.length !== 1 || header.querySelector(".gfp-refresh")) {
+      bad.push(label + ": refresh must be one body control, never in the strip");
+    }
+    if (shows === "tree") {
+      const row = panel.querySelector(".gfp-filter-row");
+      const refresh = row?.querySelector(".gfp-refresh");
+      const filter = row?.querySelector(".gfp-filter");
+      if (!refresh?.offsetParent || !filter?.offsetParent) bad.push(label + ": tree filter/refresh missing");
+      else {
+        const r = refresh.getBoundingClientRect(), f = filter.getBoundingClientRect();
+        if (r.left < f.right || Math.abs(r.right - row.getBoundingClientRect().right) > 1) {
+          bad.push(label + ": refresh is not beside the filter at the right edge");
+        }
+      }
+    } else if (refreshes[0]?.offsetParent) {
+      bad.push(label + ": tree refresh is visible outside the tree");
+    }
+    const trailing = [...header.querySelectorAll(".gfp-maximize, .gfp-close")].filter((el) => el.offsetParent).at(-1);
+    const edge = trailing?.getBoundingClientRect();
+    const strip = header.getBoundingClientRect();
+    if (!edge || edge.right > strip.right || strip.right - edge.right > 10) {
+      bad.push(label + ": trailing controls are not pinned inside the strip");
+    }
 
     // 3. Every tab that shows a name offers its own close, and that close sits
     //    beside the NAME rather than a slot away from it. 14px is the tab's own

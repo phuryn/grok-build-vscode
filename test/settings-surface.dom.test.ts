@@ -426,7 +426,7 @@ describe("settings overlay (chat.js)", () => {
     });
     const ids = api.visibleRows(snapshot, vscodeEnv).map((row: { id: string }) => row.id);
     expect(ids).toEqual(expect.arrayContaining([
-      "showThinking", "expandCommandOutputs", "steerByDefault",
+      "showThinking", "expandCommandOutputs", "expandDiffCard", "steerByDefault",
       "soundNotifications", "processingSound",
       "readRepliesAloud", "summarizeRepliesAloud",
       "openGlobalConfig", "openProjectConfig", "showLogs",
@@ -1289,15 +1289,15 @@ describe("settings overlay (chat.js)", () => {
         .filter((row) => row.category === "general")
         .map((row) => row.id);
     expect(generalIds(fullEnv({ isDesktop: true, isRemote: false }))).toEqual([
-      "appPurpose", "chatFontScale", "showThinking", "expandCommandOutputs", "steerByDefault",
+      "appPurpose", "chatFontScale", "showThinking", "expandCommandOutputs", "expandDiffCard", "steerByDefault",
       "telemetryDesktop", "thumbsFeedback",
     ]);
     expect(generalIds(fullEnv({ isDesktop: false, isRemote: false, clientOwnsFontScale: false }))).toEqual([
-      "appPurpose", "openChatFontScale", "showThinking", "expandCommandOutputs", "steerByDefault",
+      "appPurpose", "openChatFontScale", "showThinking", "expandCommandOutputs", "expandDiffCard", "steerByDefault",
       "telemetryVsCode", "thumbsFeedback",
     ]);
     expect(generalIds(fullEnv({ isDesktop: true, isRemote: true }))).toEqual([
-      "appPurpose", "chatFontScale", "showThinking", "expandCommandOutputs", "steerByDefault",
+      "appPurpose", "chatFontScale", "showThinking", "expandCommandOutputs", "expandDiffCard", "steerByDefault",
       "telemetryRemote", "thumbsFeedbackRemote",
     ]);
   });
@@ -2547,5 +2547,59 @@ describe("the experimental Previous-prompt row (#150)", () => {
     // to make this consistent, and the wrong one: the IDEs are where it is
     // actually tested.
     expect(row.visible).toBeUndefined();
+  });
+});
+
+
+describe("Expand diff card across settings surfaces", () => {
+  it("is a coding-only General row directly after tool details on every surface", () => {
+    const api = loadSettings() as any;
+    const row = api.ROWS.find((r: { id: string }) => r.id === "expandDiffCard");
+    expect(row).toMatchObject({ category: "general", title: "Expand diff card", defaultValue: false });
+    expect(api.defaultSnapshot().expandDiffCard).toBe(false);
+    for (const env of [
+      { isRemote: true }, { isRemote: false, isDesktop: true },
+      ...["VS Code", "Cursor", "Antigravity"].map((hostName) => ({ isRemote: false, isDesktop: false, hostName })),
+    ]) {
+      const surface = api.defaultEnv(env);
+      expect(row.localOnly(undefined, surface)).toBe(env.isRemote);
+      const ids = api.visibleRows(api.defaultSnapshot({ appPurpose: "coding" }), surface).map((r: any) => r.id);
+      expect(ids.indexOf("expandDiffCard")).toBe(ids.indexOf("expandCommandOutputs") + 1);
+      expect(api.visibleRows(api.defaultSnapshot(), surface).map((r: any) => r.id)).not.toContain("expandDiffCard");
+    }
+    expect(row.message(true)).toEqual({ type: "setExpandDiffCard", value: true });
+  });
+
+  it("posts from a standalone IDE settings page with no chat apply callback", () => {
+    const api = loadSettings();
+    const w = new Window({ url: "https://localhost/" });
+    const sent: unknown[] = [];
+    const surface = api.mount(w.document.body as unknown as Element, {
+      snapshot: api.defaultSnapshot({ appPurpose: "coding" }),
+      env: api.defaultEnv({ isRemote: false, isDesktop: false }),
+      post: (m: unknown) => sent.push(m),
+    });
+    (w.document.querySelector('[data-id="expandDiffCard"] .settings-switch') as any)?.click();
+    expect(sent).toContainEqual({ type: "setExpandDiffCard", value: true });
+    surface.dispose();
+  });
+
+  it("applies locally on a remote and keeps the preference when the host reconnects", () => {
+    const h = bootWebview({ remote: true });
+    seedChat(h);
+    dispatch(h.window, { type: "agentStart" });
+    dispatch(h.window, { type: "toolCall", call: { toolCallId: "diff-pref", kind: "edit", title: "Edit a.ts", content: [
+      { type: "diff", path: "a.ts", oldText: "a", newText: "b" },
+    ] } });
+    dispatch(h.window, { type: "agentEnd" });
+    openSettings(h);
+    const row = h.doc.querySelector('[data-id="expandDiffCard"]')!;
+    click(h.window, row.querySelector('.settings-switch')!);
+    expect(h.posted.some((m) => m.type === "setExpandDiffCard")).toBe(false);
+    expect(h.window.localStorage.getItem("grok.remote.expandDiffCard")).toBe("true");
+    expect(h.doc.querySelector('.turn-diff-summary-header')?.getAttribute('aria-expanded')).toBe('true');
+    seedChat(h, { expandDiffCard: false });
+    dispatch(h.window, { type: "expandDiffCard", value: false });
+    expect(h.doc.querySelector('.turn-diff-summary-header')?.getAttribute('aria-expanded')).toBe('true');
   });
 });

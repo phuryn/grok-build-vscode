@@ -29,6 +29,7 @@
    * free - every display-preference setter is host-local, so a remote could not
    * have sent one anyway.
    */
+  const EXPAND_DIFF_CARD_KEY = "grok.remote.expandDiffCard";
   const PROMPT_NAV_KEY = IS_REMOTE ? "grok.remote.promptNav" : "grok.promptNav";
   const REMOTE_TTS_KEY = "grok.remote.tts";
   const REMOTE_TTS_SUMMARY_KEY = "grok.remote.ttsSummary";
@@ -800,6 +801,8 @@
     // Code renders Settings in a SEPARATE webview from the chat and a
     // client-local toggle there can reach nothing at all.
     promptNav: IS_REMOTE ? storedBool(PROMPT_NAV_KEY, false) : false,
+    // Independent of tool expansion; a remote owns its per-device default.
+    expandDiffCard: IS_REMOTE ? storedBool(EXPAND_DIFF_CARD_KEY, false) : false,
     // grok.steerByDefault (persisted, global): when true a message sent while
     // grok is working SKIPS the queue and is interjected into the running turn.
     // False = today's behavior (queue, with an on-demand Steer button).
@@ -902,13 +905,11 @@
     trash: `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>`,
     pencil: `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/></svg>`,
     folder: `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h5l2 3h9a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"/></svg>`,
-    // Lucide folder-closed / folder-open — project expand/collapse (replaces chevron).
-    // Solid folder marks supplied by the owner (media/icons/folder-*.svg),
-    // inlined because the rail sets them with innerHTML. `fill:currentColor`
-    // is the change from the originals — it is what lets a project's colour
-    // tint them, and what keeps them legible in a light theme.
-    folderClosed: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 408 408" fill="currentColor" aria-hidden="true"><path d="M372,88.661H206.32l-33-39.24c-0.985-1.184-2.461-1.848-4-1.8H36c-19.956,0.198-36.023,16.443-36,36.4v240c-0.001,19.941,16.06,36.163,36,36.36h336c19.94-0.197,36.001-16.419,36-36.36v-199C408.001,105.08,391.94,88.859,372,88.661z"/></svg>`,
-    folderOpen: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -57 511.99973 511" fill="currentColor" aria-hidden="true"><path d="m506.039062 180.988281c-7.78125-12.546875-21.53125-20.046875-36.78125-20.046875h-339.5625c-16.832031 0-32.140624 9.488282-39.011718 24.179688l-89.8125 188.308594c3.390625 13.789062 16.269531 24.089843 31.609375 24.089843h361.269531c15.445312 0 29.5625-8.734375 36.460938-22.554687l77.628906-155.59375c6.128906-12.3125 5.449218-26.660156-1.800782-38.382813zm0 0"/><path d="m72.402344 156.15625c6.863281-14.6875 22.175781-24.179688 39.011718-24.179688h319.753907v-40.898437c0-16.859375-14.222657-30.578125-31.703125-30.578125h-186.445313c-.273437 0-.460937-.070312-.53125-.121094l-33.371093-46.660156c-5.910157-8.277344-15.671876-13.21875-26.101563-13.21875h-121.304687c-17.488282 0-31.710938 13.71875-31.710938 30.578125v276.875zm0 0"/></svg>`,
+    // Lucide folder / folder-open — project expand/collapse (replaces chevron).
+    // Lucide project marks. The outline inherits the project tint through
+    // currentColor, just like the other rail glyphs.
+    folderClosed: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>`,
+    folderOpen: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></svg>`,
     // Palette glyph for "Set color" — stroke-only so it inherits menu icon tint.
     palette: `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r="0.5" fill="currentColor"/><circle cx="17.5" cy="10.5" r="0.5" fill="currentColor"/><circle cx="8.5" cy="7.5" r="0.5" fill="currentColor"/><circle cx="6.5" cy="12.5" r="0.5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg>`,
     pin: `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="m5 17 2-7V5l-2-2h14l-2 2v5l2 7Z"/></svg>`,
@@ -2252,20 +2253,13 @@
     return isCodingPurpose() && !!state.expandCommandOutputs;
   }
 
-  /** The turn's "Changed N files" card is a ROLL-UP: it earns its space only
-   *  where the diffs are not already open. Knowledge work never shows it (file
-   *  edits are not what that mode is about), and Coding hides it whenever tool
-   *  details expand by default — the card would then repeat, one line each,
-   *  what the rows above it are already showing in full. detailShouldExpand()
-   *  rather than the raw setting, so the session's Expand/Collapse All latch
-   *  moves it too. */
+  /** Coding keeps the turn summary regardless of tool details or their session
+   *  latch. The card's own preference decides whether its file list is open. */
   function turnDiffSummaryEnabled() {
-    return isCodingPurpose() && !detailShouldExpand();
+    return isCodingPurpose();
   }
 
-  /** One body class, not a DOM rebuild: a card the user hides by flipping a
-   *  setting comes back when they flip it again, including on turns whose
-   *  per-call edit map is long gone. */
+  /** Hide by purpose without losing cards from completed turns. */
   function applyTurnDiffSummaryVisibility() {
     document.body.classList.toggle("hide-turn-diff-summary", !turnDiffSummaryEnabled());
   }
@@ -2878,6 +2872,7 @@
       telemetryEnabled: state.telemetryEnabled,
       thumbsFeedback: !!state.thumbsFeedback,
       promptNav: !!state.promptNav,
+      expandDiffCard: !!state.expandDiffCard,
       providers: state.providers || [],
       providersChecking: !!state.providersChecking,
       githubState: state.githubState || undefined,
@@ -2922,6 +2917,12 @@
         break;
       case "chatFontScale":
         if (CLIENT_OWNS_FONT_SCALE) setClientFontScale(Number(value) / 100);
+        return;
+      case "expandDiffCard":
+        if (!IS_REMOTE) break;
+        state.expandDiffCard = !!value;
+        storeRemotePref(EXPAND_DIFF_CARD_KEY, state.expandDiffCard);
+        applyExpandDiffCard();
         return;
       case "promptNav":
         // Remote only. A desk lets the message through to the host and gets
@@ -3071,6 +3072,8 @@
 
   // Public UI service consumed by media/file-panel.js in both renderer hosts.
   window.__grokFilePanelConfirm = uiChoice;
+  window.__grokFilePanelAskAgent = appendComposerText;
+  window.__grokFilePanelOpenSettings = () => openSettingsCategory("providers");
   // Read live by the desktop file panel's bootstrap; a captured boolean would
   // freeze the Changes button in whichever mode the app booted in.
   window.__grokCodingPurpose = () => isCodingPurpose();
@@ -10055,6 +10058,25 @@
     return el;
   }
 
+  function setTurnDiffSummaryExpanded(el, open) {
+    el.classList.toggle("expanded", !!open);
+    const header = el.querySelector(".turn-diff-summary-header");
+    if (header) header.setAttribute("aria-expanded", String(!!open));
+    for (const body of el.querySelectorAll(".turn-diff-summary-list, .turn-diff-summary-foot")) {
+      body.hidden = !open;
+    }
+  }
+
+  // Explicit preference changes override manual toggles on every loaded turn,
+  // including transcript nodes parked while history is being hydrated.
+  function applyExpandDiffCard() {
+    const cards = liveTranscriptQueryAll(".turn-diff-summary");
+    if (historyPark) cards.push(...historyPark.querySelectorAll(".turn-diff-summary"));
+    for (const card of cards) {
+      setTurnDiffSummaryExpanded(card, state.expandDiffCard);
+    }
+  }
+
   function refreshTurnDiffSummaryUi() {
     const agg = aggregateTurnEdits(state.turnEditsByToolCallId.values());
     if (!agg.files.length) {
@@ -10067,15 +10089,22 @@
     let el = state.turnDiffSummaryEl;
     if (!el || !el.isConnected) {
       el = document.createElement("div");
-      el.className = "turn-diff-summary";
+      el.className = "turn-diff-summary" + (state.expandDiffCard ? " expanded" : "");
       el.setAttribute("role", "region");
       el.setAttribute("aria-label", "Files changed this turn");
       state.turnDiffSummaryEl = el;
     }
     while (el.firstChild) el.removeChild(el.firstChild);
 
-    const hdr = document.createElement("div");
+    const hdr = document.createElement("button");
+    hdr.type = "button";
     hdr.className = "turn-diff-summary-header";
+    hdr.onclick = () => setTurnDiffSummaryExpanded(el, !el.classList.contains("expanded"));
+    const chevron = document.createElement("span");
+    chevron.className = "turn-diff-summary-chevron";
+    chevron.setAttribute("aria-hidden", "true");
+    chevron.innerHTML = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="m6 3 5 5-5 5"/></svg>';
+    hdr.appendChild(chevron);
     const title = document.createElement("span");
     title.className = "turn-diff-summary-title";
     title.textContent = turnDiffSummaryTitle(agg);
@@ -10161,6 +10190,7 @@
       el.appendChild(foot);
     }
 
+    setTurnDiffSummaryExpanded(el, el.classList.contains("expanded"));
     appendTranscriptChild(el); // live: always ride at the end of the turn
     scrollToBottom();
   }
@@ -10899,8 +10929,8 @@
     for (const group of liveTranscriptQueryAll(".tool-group")) {
       setGroupExpanded(group, groupShouldExpand(group));
     }
-    // Same inputs decide the roll-up card, and every purpose/setting/latch
-    // change already routes through here.
+    // Purpose changes also route here. Visibility depends only on purpose;
+    // tool settings and the session latch leave each card's open state alone.
     applyTurnDiffSummaryVisibility();
   }
 
@@ -15266,6 +15296,11 @@
 
   // Append a transcript to whatever's typed (batch mode — one-shot result).
   function insertTranscript(text) {
+    appendComposerText(text);
+  }
+
+  // Voice and panel suggestions share insertion; sending remains a user action.
+  function appendComposerText(text) {
     const t = (text || "").trim();
     if (!t) return;
     const cur = input.value;
@@ -16448,7 +16483,7 @@
 
   const SETTINGS_LIVE_MSGS = new Set([
     "initialState", "showThinking", "appPurpose", "expandCommandOutputs",
-    "steerByDefault", "promptNav", "steerUnavailable", "soundNotifications", "processingSound",
+    "steerByDefault", "promptNav", "expandDiffCard", "steerUnavailable", "soundNotifications", "processingSound",
     "readRepliesAloud", "summarizeRepliesAloud", "fontScale", "voiceConfigured",
     "providerState", "githubState", "mcpServers", "mcpConnectors", "remoteStatus", "telemetryEnabled", "thumbsFeedback", "grokUpdateStatus", "initialized",
   ]);
@@ -16491,6 +16526,10 @@
         // A remote ignores the desk's value and keeps its own: the frame is
         // suppressed on the way out, but initialState is mirrored wholesale.
         if (!IS_REMOTE && typeof msg.promptNav === "boolean") state.promptNav = msg.promptNav;
+        if (!IS_REMOTE) {
+          state.expandDiffCard = msg.expandDiffCard === true;
+          applyExpandDiffCard();
+        }
         if (typeof msg.soundNotifications === "boolean") state.soundNotifications = msg.soundNotifications;
         if (typeof msg.processingSound === "boolean") state.processingSound = msg.processingSound;
         releaseAudioIfSilent();
@@ -16701,6 +16740,14 @@
         // Live toggle (grok.steerByDefault). Pure policy for the next send —
         // the queued block's Steer button is unaffected.
         state.steerByDefault = !!msg.value;
+        break;
+      case "expandDiffCard":
+        // Settings in a separate IDE webview reaches the transcript via host.
+        // A remote keeps its own value even if an older relay mirrors this.
+        if (!IS_REMOTE) {
+          state.expandDiffCard = !!msg.value;
+          applyExpandDiffCard();
+        }
         break;
       case "promptNav":
         // Arrives after the host writes grok.promptNav, which is how a
@@ -18661,6 +18708,8 @@
           confirm: uiChoice,
           renderMarkdown,
           fileIcons: { baseUrl: iconBase },
+          askAgent: appendComposerText,
+          openSettings: window.__grokFilePanelOpenSettings,
         },
         // Same progressive disclosure as thinking traces and tool detail:
         // somebody writing prose does not get a git panel. Read live, not

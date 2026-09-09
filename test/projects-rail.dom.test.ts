@@ -1744,25 +1744,26 @@ describe("projects rail", () => {
       const twisty = () => alpha().querySelector(".rail-twisty") as HTMLElement;
       // Expanded: ONE flag drives icon + session list (data-expanded + folder-open).
       expect(alpha().getAttribute("data-expanded")).toBe("1");
-      // The two marks are told apart by viewBox — they are the owner's solid
-      // folder artwork (media/icons/folder-*.svg), not a shared 24x24 grid.
-      expect(twisty().innerHTML).toMatch(/viewBox="0 -57 511/);
-      expect(twisty().innerHTML).not.toMatch(/viewBox="0 0 408 408"/);
+      // Shared 24px outline marks are distinguished by their lucide paths.
+      expect(twisty().querySelector("svg")?.getAttribute("fill")).toBe("none");
+      expect(twisty().querySelector("svg")?.getAttribute("stroke")).toBe("currentColor");
+      expect(twisty().innerHTML).toMatch(/m6 14 1\.5-2\.9/);
+      expect(twisty().innerHTML).not.toMatch(/M20 20a2 2/);
       expect(alpha().querySelector(".rail-sessions")).not.toBe(null);
       // Icon and list cannot disagree: sessions present ⇒ open icon path.
       expect(!!alpha().querySelector(".rail-sessions")).toBe(
-        /viewBox="0 -57 511/.test(twisty().innerHTML),
+        /m6 14 1\.5-2\.9/.test(twisty().innerHTML),
       );
       // Folder is an indicator (not a button); the whole head toggles.
       expect(twisty().tagName).toBe("SPAN");
       click(window, alpha().querySelector(".rail-repo-head") as HTMLElement);
       // Collapsed: the closed mark, no sessions, data-expanded=0.
       expect(alpha().getAttribute("data-expanded")).toBe("0");
-      expect(twisty().innerHTML).toMatch(/viewBox="0 0 408 408"/);
-      expect(twisty().innerHTML).not.toMatch(/viewBox="0 -57 511/);
+      expect(twisty().innerHTML).toMatch(/M20 20a2 2/);
+      expect(twisty().innerHTML).not.toMatch(/m6 14 1\.5-2\.9/);
       expect(alpha().querySelector(".rail-sessions")).toBe(null);
       expect(!!alpha().querySelector(".rail-sessions")).toBe(
-        /viewBox="0 -57 511/.test(twisty().innerHTML),
+        /m6 14 1\.5-2\.9/.test(twisty().innerHTML),
       );
     });
 

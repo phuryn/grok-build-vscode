@@ -27,6 +27,10 @@ void DARK; void LIGHT;
 const OUT = outDir("changes");
 const log = (m) => console.log(`[changes-screens] ${m}`);
 const panelJs = readMedia("file-panel.js");
+const CHANGES_VIEWPORTS = {
+  ...VIEWPORTS,
+  narrowPhone: { viewport: { width: 320, height: 740 }, isMobile: true, hasTouch: true },
+};
 
 // Mirrors GitStatusSnapshot in src/git-status.ts. Every field, spelled the way
 // the type spells it — see the note above about what drift costs.
@@ -206,13 +210,29 @@ const CASES = {
     message: "Reconnect the uplink with a bounded retry",
     nameBranch: "feature/bounded-retry",
   },
+  badges: {
+    snapshot: snap({ files: Array.from({ length: 12 }, (_, i) => file(`src/file-${i + 1}.ts`, "M", 1, 0)) }),
+  },
+  manyFiles: {
+    snapshot: snap({ files: Array.from({ length: 100 }, (_, i) => file(`src/file-${i + 1}.ts`, "M", 1, 0)) }),
+  },
+  authFailure: {
+    snapshot: snap({ ahead: 1 }),
+    failPush: {
+      reason: "Push needs GitHub. Connect it in Settings.",
+      detail: "fatal: Authentication failed for 'https://github.com/example/project.git/'",
+    },
+  },
+  branchPull: {
+    snapshot: snap({ branch: "feature/reconcile-the-latest-remote-changes-with-local-work" }),
+  },
   failure: {
     snapshot: snap({
       ahead: 1,
       unpushed: [{ sha: "9f2c1ab", subject: "Read git status without taking the index lock" }],
     }),
     failPush: {
-      reason: "The push was rejected because the branch moved on the remote. Pull, then push again.",
+      reason: "The remote has commits you do not have. Pull before pushing.",
       detail: "! [rejected]        main -> main (fetch first)\nerror: failed to push some refs",
     },
   },
@@ -223,7 +243,7 @@ const CASES = {
 // forty minutes of nobody looking at any of them.
 const WIDE_MATRIX = new Set([
   "dirty", "diff", "dirtyAndUnpushed", "noRemote", "longPaths", "typed",
-  "tabsInChanges", "tabsViewingFile",
+  "tabsInChanges", "tabsViewingFile", "badges", "authFailure", "failure", "branchPull",
 ]);
 
 async function mountCase(page, testCase, diffText) {
@@ -263,6 +283,8 @@ async function mountCase(page, testCase, diffText) {
       ui: {
         confirm: async (request) => (request.actions && request.actions[0] ? request.actions[0].id : "cancel"),
         renderMarkdown: (s) => "<pre>" + s + "</pre>",
+        askAgent: (text) => { window.__askedAgent = text; },
+        openSettings: () => { window.__openedSettings = true; },
       },
       gitEnabled: () => true,
       initialOpen: true,
@@ -352,6 +374,72 @@ async function audit(page, label, touch, viewer) {
       }
     }
 
+    // Commit choices stay side by side, inside their row, at 320px too.
+    const actionRow = changes.querySelector(".gfp-changes-action-row");
+    if (actionRow) {
+      const r = actionRow.getBoundingClientRect();
+      const buttons = [...actionRow.querySelectorAll("button")];
+      const primary = actionRow.querySelector(".gfp-changes-primary").getBoundingClientRect();
+      const only = actionRow.querySelector(".gfp-changes-commit-only");
+      for (const btn of buttons) {
+        const b = btn.getBoundingClientRect();
+        if (b.left < r.left - 1 || b.right > r.right + 1 || btn.scrollWidth > btn.clientWidth + 1) {
+          bad.push(`${label}: ${btn.className} is clipped in its action row`);
+        }
+      }
+      if (only) {
+        const secondary = only.getBoundingClientRect();
+        if (buttons.length !== 2 || Math.abs(primary.top - secondary.top) > 1 || secondary.right > primary.left) {
+          bad.push(`${label}: commit choices are not side by side`);
+        }
+        if (primary.width + 1 < secondary.width) bad.push(`${label}: primary is narrower than Commit`);
+      } else if (Math.abs(primary.width - r.width) > 1) {
+        bad.push(`${label}: lone primary does not fill the row`);
+      }
+    }
+    if (header.querySelector(".gfp-refresh") || changes.querySelector(".gfp-refresh")) {
+      bad.push(`${label}: refresh must stay in the tree filter`);
+    }
+    const title = header.querySelector(".gfp-title");
+    const branchName = changes.querySelector(".gfp-changes-branch-name");
+    if (title && branchName && getComputedStyle(title).color !== getComputedStyle(branchName).color) {
+      bad.push(`${label}: idle project title is not muted like the branch context`);
+    }
+    if (title && getComputedStyle(title).fontWeight !== "400") bad.push(`${label}: project title is bold`);
+    // Badge dimensions are real layout, including the smaller toggle corner.
+    for (const [selector, size] of [[".gfp-changes-count", 18], [".gfp-toggle-count", 14]]) {
+      const badge = document.querySelector(selector);
+      if (!badge || badge.hidden) continue;
+      const r = badge.getBoundingClientRect();
+      if (Math.abs(r.height - size) > 0.5 || (badge.textContent.length <= 2 && Math.abs(r.width - size) > 0.5)) {
+        bad.push(`${label}: ${selector} is not a ${size}px circle (${r.width}x${r.height})`);
+      }
+      if (badge.scrollWidth > badge.clientWidth + 1) bad.push(`${label}: badge text is clipped`);
+      if (selector === ".gfp-toggle-count") {
+        const glyph = badge.parentElement.querySelector("svg").getBoundingClientRect();
+        if (r.top >= glyph.top || r.right <= glyph.right) bad.push(`${label}: toggle badge does not overhang its glyph`);
+        if (getComputedStyle(badge.parentElement).overflow !== "visible") bad.push(`${label}: toggle clips its badge`);
+      }
+    }
+
+    const branchPull = changes.querySelector(".gfp-changes-ask-pull");
+    if (branchPull) {
+      const b = branchPull.getBoundingClientRect();
+      const row = branchPull.parentElement.getBoundingClientRect();
+      const name = changes.querySelector(".gfp-changes-branch-name").getBoundingClientRect();
+      if (b.left < row.left || b.right > row.right + 1 || name.right > b.left || branchPull.scrollWidth > branchPull.clientWidth + 1) {
+        bad.push(`${label}: branch pull button is clipped or overlaps the branch name`);
+      }
+      if (Math.abs(b.right - row.right) > 1) bad.push(`${label}: branch pull button is not at the right edge`);
+    }
+    const noticeText = changes.querySelector(".gfp-changes-notice-text")?.textContent;
+    const action = changes.querySelector(".gfp-changes-notice-action");
+    if (noticeText === "The remote has commits you do not have. Pull before pushing."
+      && action?.textContent !== "Ask the agent to pull") bad.push(`${label}: rejected push has no pull action`);
+    if (noticeText === "Push needs GitHub. Connect it in Settings."
+      && action?.textContent !== "Connect GitHub") bad.push(`${label}: GitHub notice has no Settings action`);
+    if (action && action.scrollWidth > action.clientWidth + 1) bad.push(`${label}: notice action is clipped`);
+
     // 2. Every control a finger has to hit clears 36px on a touch viewport.
     if (touch) {
       for (const btn of changes.querySelectorAll("button")) {
@@ -424,13 +512,32 @@ async function main() {
 
   for (const [name, testCase] of Object.entries(CASES)) {
     for (const theme of ["dark", "light"]) {
-      const viewports = WIDE_MATRIX.has(name) ? Object.keys(VIEWPORTS) : ["desk"];
+      const viewports = WIDE_MATRIX.has(name) ? Object.keys(CHANGES_VIEWPORTS) : ["desk"];
       for (const vp of viewports) {
-        const page = await browser.newPage(VIEWPORTS[vp]);
+        const page = await browser.newPage(CHANGES_VIEWPORTS[vp]);
         await page.setContent(pageHtml(theme));
         await page.addScriptTag({ content: panelJs });
         await page.evaluate((v) => { window.__expectNotice = v; }, !!testCase.failPush);
         await mountCase(page, testCase, DIFF);
+        // Mode changes can move the title under the pointer that clicked
+        // Changes. Photograph idle treatment, not an accidental hover.
+        await page.mouse.move(0, CHANGES_VIEWPORTS[vp].viewport.height - 1);
+        if (name === "badges" && vp === "desk") {
+          // Place the real toggle beside the dock for a review frame containing
+          // both badge sizes. The harness's otherwise empty chat has no toolbar.
+          await page.evaluate(() => {
+            const panel = document.getElementById("harness-panel").getBoundingClientRect();
+            Object.assign(document.querySelector(".harness-toggles").style, {
+              left: `${panel.left - 48}px`, top: "12px",
+            });
+          });
+          const panel = await page.locator("#harness-panel").boundingBox();
+          await page.screenshot({
+            path: path.join(OUT, `badges.${theme}.desk.controls.png`),
+            clip: { x: panel.x - 52, y: 0, width: panel.width + 52, height: 80 },
+          });
+          frames += 1;
+        }
         await page.screenshot({ path: path.join(OUT, `${name}.${theme}.${vp}.png`) });
         frames += 1;
         failures.push(...await audit(page, `${name}/${theme}/${vp}`, vp !== "desk", !!testCase.viewFile));
@@ -439,6 +546,54 @@ async function main() {
     }
   }
 
+  // The project marks use a separate renderer in the IDE sidebar. Photograph
+  // its shipped markup/CSS together so open and closed read at the same scale.
+  for (const theme of ["dark", "light"]) {
+    const page = await browser.newPage({ viewport: { width: 340, height: 360 }, deviceScaleFactor: 2 });
+    const palette = theme === "light" ? LIGHT : DARK;
+    const vars = Object.entries(palette).map(([k, v]) => `--vscode-${k}:${v};`).join("\n");
+    await page.setContent(`<!doctype html><html><head><style>:root { ${vars} }
+      ${readMedia("projects-rail.css")}</style></head><body class="vscode-${theme}">
+      <aside id="projects-rail" class="projects-rail" aria-label="Projects">
+        <div class="rail-search-wrap"><input id="rail-search" class="rail-search" type="search" placeholder="Search conversations" /></div>
+        <div id="rail-scroll" class="rail-scroll"></div>
+      </aside></body></html>`);
+    await page.evaluate(() => {
+      window.acquireVsCodeApi = () => ({ postMessage: () => {}, getState: () => ({}), setState: () => {} });
+    });
+    await page.addScriptTag({ content: readMedia("projects-rail.js") });
+    await page.evaluate(() => {
+      const send = (data) => window.dispatchEvent(new MessageEvent("message", { data }));
+      send({ type: "repos", selectedCwd: "/work/alpha", activeCwd: "/work/alpha", entries: [
+        { cwd: "/work/alpha", label: "alpha", available: true, updatedAt: 2, color: "blue" },
+        { cwd: "/work/beta", label: "beta", available: true, updatedAt: 1, color: "amber" },
+      ] });
+      send({ type: "sessions", entries: [
+        { id: "one", cwd: "/work/alpha", displayName: "Refine the Changes view", updatedAt: 2, createdAt: 1, numMessages: 2 },
+      ], activeId: "one", dots: {}, offset: 0, total: 1, hasMore: false, nextOffset: 1, query: "" });
+      const beta = [...document.querySelectorAll(".rail-repo")].find(
+        (el) => el.querySelector(".rail-repo-label")?.textContent === "beta",
+      );
+      if (beta?.dataset.expanded === "1") beta.querySelector(".rail-repo-head").click();
+    });
+    failures.push(...await page.evaluate((theme) => {
+      const bad = [];
+      const marks = [...document.querySelectorAll(".rail-repo .rail-twisty svg")];
+      const open = marks.find((m) => m.querySelector("path")?.getAttribute("d").startsWith("m6 14 1.5-2.9"));
+      const closed = marks.find((m) => m.querySelector("path")?.getAttribute("d").startsWith("M20 20a2 2"));
+      if (!open || !closed) return [`projects/${theme}: missing open/closed project pair`];
+      for (const mark of [open, closed]) {
+        const r = mark.getBoundingClientRect();
+        if (r.width < 14 || r.height < 14 || mark.getAttribute("fill") !== "none" || mark.getAttribute("stroke") !== "currentColor") {
+          bad.push(`projects/${theme}: project mark is not a visible outline at rail scale`);
+        }
+      }
+      return bad;
+    }, theme));
+    await page.screenshot({ path: path.join(OUT, `projects.${theme}.desk.png`) });
+    frames += 1;
+    await page.close();
+  }
   await browser.close();
   log(`${frames} frames in ${OUT}`);
   if (failures.length) {

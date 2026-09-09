@@ -29,6 +29,9 @@ export function outDir(leaf) {
 // A trimmed VS Code palette plus the git decoration colours the change badges
 // use. Values are VS Code's own defaults, not invented ones.
 export const DARK = {
+  "font-family": '"Segoe UI", system-ui, sans-serif',
+  "font-size": "13px",
+  "editor-font-family": "Consolas, monospace",
   foreground: "#CCCCCC",
   descriptionForeground: "rgba(204,204,204,0.7)",
   "editor-background": "#1F1F1F",

@@ -2802,8 +2802,8 @@ body.vscode-light {
 .diff-stat-add { color: var(--tdiff-add-line); }
 .diff-stat-del { color: var(--tdiff-del-line); }
 
-/* Turn-level file change summary — one card per agent turn listing every file
-   touched by edit tools (path-deduped +/−), with click → native openDiff. */
+/* Turn-level file change summary — one collapsible card per coding turn.
+   A file row reveals its own tool diff on every surface. */
 .turn-diff-summary {
   margin: 8px 0 4px;
   padding: 8px 10px;
@@ -2815,10 +2815,28 @@ body.vscode-light {
 .turn-diff-summary-header {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
+  align-items: center;
   gap: 0 4px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
   color: var(--vscode-descriptionForeground);
-  margin-bottom: 6px;
+}
+.turn-diff-summary.expanded .turn-diff-summary-header { margin-bottom: 6px; }
+.turn-diff-summary-header:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder, #007fd4);
+  outline-offset: 2px;
+}
+.turn-diff-summary-chevron { display: inline-flex; flex: 0 0 12px; }
+.turn-diff-summary-chevron svg { width: 12px; height: 12px; }
+.turn-diff-summary.expanded .turn-diff-summary-chevron { transform: rotate(90deg); }
+.turn-diff-summary-list[hidden],
+.turn-diff-summary-foot[hidden] {
+  display: none;
 }
 .turn-diff-summary-title {
   font-weight: 600;
@@ -2893,10 +2911,6 @@ button.turn-diff-file.has-diff:focus-visible {
 .turn-diff-file-status.is-m { color: var(--tdiff-mod-line); }
 .turn-diff-file-status.is-a { color: var(--tdiff-add-line); }
 .turn-diff-file-status.is-d { color: var(--tdiff-del-line); }
-/* Knowledge work, or "Expand tool details" on: the rows already carry the
-   diffs, so the roll-up would only repeat them. Hidden rather than never
-   built, so flipping the setting back restores the cards already in the
-   transcript. */
 /* The way out of the card, into the Changes view. It shipped first as a text
    link so as not to compete with the rows; the owner wanted a button, and he
    is right — it is the card's one action that leaves the card, and the rows
@@ -2925,8 +2939,10 @@ button.turn-diff-file.has-diff:focus-visible {
 }
 /* A button is still a target on a phone. */
 @media (hover: none), (pointer: coarse) {
+  .turn-diff-summary-header { min-height: 36px; }
   .turn-diff-open-changes { min-height: 36px; padding: 6px 12px; }
 }
+/* Knowledge work hides the card; tool expansion never does. */
 body.hide-turn-diff-summary .turn-diff-summary { display: none; }
 /* A file row opens a diff, so on a phone it is a real target. */
 @media (hover: none), (pointer: coarse) {

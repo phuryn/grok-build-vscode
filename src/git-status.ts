@@ -678,17 +678,33 @@ function normalizePath(value: string): string {
  * Turn a failed push into a sentence with an action in it.
  *
  * Git's own stderr is kept and shown underneath; this is the line above it.
- * The three cases here are the ones a person actually meets, and each has a
- * different next move, which is the only reason to distinguish them.
+ * The failed command matters for a commit-and-push plan: a commit failure
+ * must never be described as a push failure. Unknown failures keep git's line.
  */
-export function describeGitFailure(op: GitOpName, stderr: string): string {
+export function describeGitFailure(op: GitOpName, stderr: string, failedCommand: string = op): string {
   const text = String(stderr || "");
-  if (op === "push") {
+  if (failedCommand === "push") {
+    // Read only the diagnostic: a Settings connection is not evidence about
+    // the SSH key or credential manager used by this remote.
+    const hosts: string[] = [];
+    for (const match of text.matchAll(/\b(?:https?|ssh|git):\/\/[^\s'"<>]+/gi)) {
+      try { hosts.push(new URL(match[0]).hostname.toLowerCase()); } catch { /* incomplete diagnostic URL */ }
+    }
+    for (const match of text.matchAll(/\bgit@([a-z0-9.-]+):/gi)) hosts.push(match[1].toLowerCase());
+    const github = hosts.some((host) => host === "github.com" || host.endsWith(".github.com"));
+    const githubAdvice = "Push needs GitHub. Connect it in Settings.";
+    if (/protected branch|GH006|pre-receive hook declined/i.test(text)) {
+      return "The remote refuses pushes to this branch.";
+    }
+    if (/repository\b[^\r\n]*\bnot found/i.test(text)) {
+      return github ? githubAdvice : "The remote repository was not found, or you do not have access to it.";
+    }
+    if (/could not read Username|Authentication failed|Permission denied \(publickey\)|terminal prompts disabled|Invalid username or password|Support for password authentication was removed/i.test(text)
+      || (/\b403\b/.test(text) && /push|remote/i.test(text))) {
+      return github ? githubAdvice : `Git could not sign in to ${hosts[0] || "the remote"}.`;
+    }
     if (/\[rejected\]|non-fast-forward|fetch first|behind its remote/i.test(text)) {
       return "The remote has commits you do not have. Pull before pushing.";
-    }
-    if (/could not read Username|Authentication failed|Permission denied|403/i.test(text)) {
-      return "Git could not authenticate with the remote.";
     }
     if (/does not appear to be a git repository|Could not resolve host|unable to access/i.test(text)) {
       return "The remote could not be reached.";
@@ -702,5 +718,5 @@ export function describeGitFailure(op: GitOpName, stderr: string): string {
     if (/pre-commit|hook declined|hook failed/i.test(text)) return "A git hook refused this commit.";
   }
   if (op === "newBranch" && /already exists/i.test(text)) return "A branch with that name already exists.";
-  return "";
+  return text.trim().split(/\r?\n/, 1)[0];
 }

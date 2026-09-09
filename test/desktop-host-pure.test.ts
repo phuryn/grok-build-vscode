@@ -177,12 +177,15 @@ describe("desktop ConfigStore", () => {
     const store = new ConfigStore(file);
     expect(store.getConfiguration("grok").get("cliPath", "")).toBe("");
     expect(store.getConfiguration("grok").get("showThinking", false)).toBe(false);
+    expect(store.getConfiguration("grok").get("expandDiffCard", true)).toBe(false);
 
     await store.getConfiguration("grok").update("cliPath", "/bin/fake-grok");
     expect(store.getConfiguration("grok").get("cliPath")).toBe("/bin/fake-grok");
+    await store.getConfiguration("grok").update("expandDiffCard", true, "global");
 
     const again = new ConfigStore(file);
     expect(again.getConfiguration("grok").get("cliPath")).toBe("/bin/fake-grok");
+    expect(again.getConfiguration("grok").get("expandDiffCard")).toBe(true);
   });
 
   it("persists the Codex CLI override through the desktop config store", async () => {

@@ -1,6 +1,6 @@
 // Turn-level "Changed N files" summary: path-deduped +/− across every edit in
 // the open agent turn, live as diffs land and pinned at turn end. Reuses the
-// same openDiff payload as each row's "open diff →".
+// same per-file tool diff on every surface, with independent card expansion.
 import { describe, it, expect } from "vitest";
 import { bootWebview, dispatch, click } from "./webview-harness";
 
@@ -452,10 +452,6 @@ describe("turn-level file change summary", () => {
     expect(doc.querySelector(".turn-diff-summary")).toBeNull();
   });
 
-  // The card is a ROLL-UP of diffs the rows can already show in full, so it is
-  // worth its space only where they are collapsed. Asserted on the body class
-  // rather than the node: hiding it in CSS is what lets a card return when the
-  // user flips the setting back, on turns whose edit map is long gone.
   // A plain ellipsis on the whole path eats the filename first, which is the
   // only part that says which file the row is. The leaf is its own span so CSS
   // can shrink the directory and never the name; the screens harness
@@ -609,27 +605,30 @@ describe("turn-level file change summary", () => {
       expect(doc.querySelector(".turn-diff-summary")).not.toBeNull();
     });
 
-    it("hides again when Expand tool details opens every diff inline", () => {
+    it("stays visible when Expand tool details opens every diff inline", () => {
       const { window, doc } = bootWebview();
       dispatch(window, { type: "appPurpose", value: "coding" });
       editedTurn(window);
       expect(doc.body.classList.contains(HIDDEN)).toBe(false);
       dispatch(window, { type: "expandCommandOutputs", value: true });
-      expect(doc.body.classList.contains(HIDDEN)).toBe(true);
-      // Reversible, and the card that was already in the transcript comes back.
+      expect(doc.body.classList.contains(HIDDEN)).toBe(false);
+      expect(doc.querySelector(".turn-diff-summary-header")?.getAttribute("aria-expanded")).toBe("false");
+      // Tool preferences never change the independent card default.
       dispatch(window, { type: "expandCommandOutputs", value: false });
       expect(doc.body.classList.contains(HIDDEN)).toBe(false);
       expect(doc.querySelector(".turn-diff-summary")).not.toBeNull();
     });
 
-    it("follows the session's Expand/Collapse All latch, not just the setting", () => {
+    it("ignores the session's Expand/Collapse All latch", () => {
       const { window, doc } = bootWebview();
       dispatch(window, { type: "appPurpose", value: "coding" });
       editedTurn(window);
+      dispatch(window, { type: "expandDiffCard", value: true });
       dispatch(window, { type: "setAllToolDetails", open: true });
-      expect(doc.body.classList.contains(HIDDEN)).toBe(true);
+      expect(doc.body.classList.contains(HIDDEN)).toBe(false);
       dispatch(window, { type: "setAllToolDetails", open: false });
       expect(doc.body.classList.contains(HIDDEN)).toBe(false);
+      expect(doc.querySelector(".turn-diff-summary-header")?.getAttribute("aria-expanded")).toBe("true");
     });
 
     it("goes back to hidden when the user switches to knowledge work", () => {
@@ -640,5 +639,78 @@ describe("turn-level file change summary", () => {
       dispatch(window, { type: "appPurpose", value: "knowledge" });
       expect(doc.body.classList.contains(HIDDEN)).toBe(true);
     });
+  });
+});
+
+
+describe("independent diff-card expansion", () => {
+  function turn(h: ReturnType<typeof bootWebview>, id: string) {
+    dispatch(h.window, { type: "agentStart" });
+    dispatch(h.window, editCall(id, id + ".ts"));
+    dispatch(h.window, editUpdate(id, id + ".ts", "a", "b"));
+  }
+  function header(card: Element) { return card.querySelector(".turn-diff-summary-header") as HTMLButtonElement; }
+  function expectOpen(card: Element, open: boolean) {
+    expect(header(card).tagName).toBe("BUTTON");
+    expect(header(card).getAttribute("aria-expanded")).toBe(String(open));
+    expect((card.querySelector(".turn-diff-summary-list") as HTMLElement).hidden).toBe(!open);
+    const foot = card.querySelector(".turn-diff-summary-foot") as HTMLElement;
+    if (foot) expect(foot.hidden).toBe(!open);
+  }
+
+  it("starts header-only and preserves a manual toggle through live repaint and turn end", () => {
+    const h = bootWebview();
+    (h.window as any).__grokDeskFilePanel = { canShowChanges: () => true, showChanges: () => true };
+    dispatch(h.window, { type: "appPurpose", value: "coding" });
+    turn(h, "first");
+    const card = h.doc.querySelector(".turn-diff-summary")!;
+    expectOpen(card, false);
+    expect(card.querySelector(".turn-diff-summary-chevron")).toBeTruthy();
+    click(h.window, header(card));
+    expectOpen(card, true);
+    dispatch(h.window, editUpdate("first", "first.ts", "a", "b\nc"));
+    expectOpen(card, true);
+    dispatch(h.window, { type: "agentEnd" });
+    expectOpen(card, true);
+    turn(h, "second");
+    const second = h.doc.querySelectorAll(".turn-diff-summary")[1];
+    expectOpen(second, false);
+    click(h.window, header(second));
+    click(h.window, header(card));
+    expectOpen(card, false);
+    expectOpen(second, true);
+  });
+
+  it("live preference overrides every existing card and becomes the next turn's default", () => {
+    const h = bootWebview();
+    dispatch(h.window, { type: "appPurpose", value: "coding" });
+    turn(h, "one"); dispatch(h.window, { type: "agentEnd" });
+    turn(h, "two"); dispatch(h.window, { type: "agentEnd" });
+    dispatch(h.window, { type: "expandDiffCard", value: true });
+    for (const card of h.doc.querySelectorAll(".turn-diff-summary")) expectOpen(card, true);
+    turn(h, "three"); dispatch(h.window, { type: "agentEnd" });
+    for (const card of h.doc.querySelectorAll(".turn-diff-summary")) expectOpen(card, true);
+    dispatch(h.window, { type: "expandDiffCard", value: false });
+    for (const card of h.doc.querySelectorAll(".turn-diff-summary")) expectOpen(card, false);
+  });
+
+  it("reads the host default and falls back to collapsed when an old host omits it", () => {
+    const h = bootWebview();
+    dispatch(h.window, { type: "initialState", appPurpose: "coding", expandDiffCard: true });
+    turn(h, "host"); dispatch(h.window, { type: "agentEnd" });
+    expectOpen(h.doc.querySelector(".turn-diff-summary")!, true);
+    dispatch(h.window, { type: "initialState", appPurpose: "coding" });
+    expectOpen(h.doc.querySelector(".turn-diff-summary")!, false);
+    turn(h, "old");
+    for (const card of h.doc.querySelectorAll(".turn-diff-summary")) expectOpen(card, false);
+  });
+
+  it("starts from the remote's stored choice, ignoring the desk's initial state and live frames", () => {
+    const h = bootWebview({ remote: true, beforeScripts: (w) => w.localStorage.setItem("grok.remote.expandDiffCard", "true") });
+    dispatch(h.window, { type: "initialState", appPurpose: "coding", expandDiffCard: false });
+    turn(h, "remote");
+    expectOpen(h.doc.querySelector(".turn-diff-summary")!, true);
+    dispatch(h.window, { type: "expandDiffCard", value: false });
+    expectOpen(h.doc.querySelector(".turn-diff-summary")!, true);
   });
 });

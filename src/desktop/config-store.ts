@@ -36,6 +36,7 @@ export const CONFIG_DEFAULTS: Readonly<Record<string, unknown>> = {
   "grok.terminalShell": "auto",
   "grok.showThinking": false,
   "grok.expandCommandOutputs": false,
+  "grok.expandDiffCard": false,
   "grok.steerByDefault": false,
   "grok.promptNav": false,
   "grok.soundNotifications": false,

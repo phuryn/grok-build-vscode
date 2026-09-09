@@ -1474,7 +1474,7 @@ describe("title strip is a folder label plus file-type tabs", () => {
     expect(srcs[1]).toMatch(/markdown\.svg/);
     // The folder never comes from the theme: it is the outline glyph whatever
     // the files beside it wear, so the title stays lighter than its tabs.
-    expect(h.document.querySelector(".gfp-title-icon svg")).toBeTruthy();
+    expect(h.document.querySelector(".gfp-title-icon svg path")?.getAttribute("d")).toMatch(/^m6 14 1\.5-2\.9/);
     expect(h.document.querySelector(".gfp-title-icon img, .gfp-title-icon .gfp-file-icon-mono")).toBeNull();
   });
 
@@ -1981,8 +1981,10 @@ describe("file-tree row actions stay on hover / keyboard / open menu, not a mous
  * asks for the folder again (#134). These cover the asking.
  */
 function refreshButton(document: Document): HTMLButtonElement {
-  const button = document.querySelector(".gfp-refresh") as HTMLButtonElement | null;
+  const button = document.querySelector(".gfp-filter-row > .gfp-refresh") as HTMLButtonElement | null;
   expect(button).toBeTruthy();
+  expect(document.querySelector(".gfp-header .gfp-refresh")).toBeNull();
+  expect(document.querySelectorAll(".gfp-refresh")).toHaveLength(1);
   return button!;
 }
 
@@ -2152,21 +2154,18 @@ describe("refreshing the file tree", () => {
     h.panel.destroy();
   });
 
-  it("draws a folder beside the chevron, and opens it with the folder", async () => {
+  it("uses only the chevron on directory rows, keeping the change-dot slot", async () => {
     const h = listingHarness();
     h.panel.setOpen(true);
     await settle();
-    const icon = () => h.document.querySelector('.gfp-node[data-rel="src"] > .gfp-row > .gfp-dir-icon')!.innerHTML;
-    const closed = icon();
-    expect(closed).toContain("<svg");
-    // Files carry their icon in the lead; only folders get the second glyph.
-    expect(treeRow(h.document, "notes.md")!.querySelector(".gfp-dir-icon")).toBeNull();
-    click(h.window, treeRow(h.document, "src"));
-    await settle();
-    expect(icon()).not.toBe(closed);
-    click(h.window, treeRow(h.document, "src"));
-    await settle();
-    expect(icon()).toBe(closed);
+    for (let i = 0; i < 3; i++) {
+      const row = treeRow(h.document, "src")!;
+      expect(row.querySelector(".gfp-dir-icon")).toBeNull();
+      expect(row.querySelector(".gfp-lead svg")).toBeTruthy();
+      expect(row.querySelector(".gfp-node-dot")).toBeTruthy();
+      click(h.window, row);
+      await settle();
+    }
     h.panel.destroy();
   });
 

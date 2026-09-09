@@ -152,10 +152,8 @@ body.desk-rail-collapsed .desk-rail-open-btn { display: inline-flex; }
   box-shadow: inset 0 -1px 0 var(--gfp-border);
 }
 
-/* Project root: a folder glyph + the repo name at the same weight the rail
-   uses for project rows. Not a heading — no uppercase, no 700, no letter-
-   spacing shout. Idle tabs mix toward descriptionForeground; the title and
-   the active tab keep the inherited foreground token. Theme tokens only. */
+/* Project root is context until selected, matching the Changes button.
+   Keep its weight constant so selecting it cannot change the cached width. */
 .gfp-title {
   position: relative;
   display: flex;
@@ -167,15 +165,16 @@ body.desk-rail-collapsed .desk-rail-open-btn { display: inline-flex; }
   padding: 0 12px;
   border: 0;
   background: transparent;
-  color: inherit;
+  color: var(--vscode-descriptionForeground, #999);
   font: inherit;
-  font-weight: var(--rail-repo-font-weight, 600);
+  font-weight: normal;
   text-align: start;
   text-transform: none;
   letter-spacing: normal;
   white-space: nowrap;
   cursor: pointer;
 }
+.gfp-title:hover { color: var(--vscode-foreground, inherit); }
 .gfp-title-icon,
 .gfp-tab-icon {
   display: inline-flex;
@@ -456,16 +455,15 @@ body.desk-rail-collapsed .desk-rail-open-btn { display: inline-flex; }
 .gfp-close { align-self: center; margin: 0 8px 0 0; }
 .gfp-close[hidden] { display: none !important; }
 
-/* Re-list the tree (#134). First of the trailing controls, and the one that
-   carries the auto margin pinning the whole group to the strip's RIGHT edge —
-   .gfp-tabs is display:none while empty, so nothing else grows to do it.
-   Exactly one auto margin may be live or the free space splits between them,
-   which is why maximize and close no longer carry their own. That is safe
-   because this control is hidden ONLY in the viewer, and the viewer always has
-   a tab open, so .gfp-tabs is there to grow instead. */
+/* Pin the strip controls even when the tab list is empty. Only one auto margin
+   is live: maximize when shown, otherwise close. Refresh belongs to the body. */
+.gfp-header > .gfp-maximize:not([hidden]),
+.gfp-header > .gfp-maximize[hidden] + .gfp-close,
+.gfp-header > .gfp-tabs + .gfp-close { margin-left: auto; }
 .gfp-refresh {
   align-self: center;
-  margin: 0 4px 0 auto;
+  flex: 0 0 auto;
+  margin: 0 0 0 auto;
 }
 .gfp-refresh[hidden] { display: none !important; }
 .gfp-refresh[disabled] { opacity: 0.5; cursor: default; }
@@ -512,12 +510,21 @@ body.desk-ft-maximized .gfp-panel {
   min-width: 0;
 }
 
-.gfp-filter {
+.gfp-filter-row {
+  display: flex;
   flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  margin: 7px 8px 4px;
+  min-width: 0;
+}
+.gfp-filter {
+  flex: 1 1 auto;
+  min-width: 0;
   box-sizing: border-box;
   width: auto;
   height: 28px;
-  margin: 7px 8px 4px;
+  margin: 0;
   padding: 3px 8px;
   border: 1px solid var(--vscode-input-border, var(--gfp-border));
   border-radius: 5px;
@@ -567,19 +574,6 @@ body.desk-ft-maximized .gfp-panel {
 }
 .gfp-lead svg,
 .gfp-lead img { display: block; width: 16px; height: 16px; }
-/* A folder row is chevron + folder, the way the prototype draws it: the
-   chevron says "opens", the folder says what it is. Outline closed, outline
-   open — the same weight as the file icons beside it, with nothing filled. */
-.gfp-dir-icon {
-  display: inline-flex;
-  flex: 0 0 16px;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  color: var(--vscode-descriptionForeground, #999);
-}
-.gfp-dir-icon svg { display: block; width: 16px; height: 16px; }
 /* The "there is uncommitted work here" mark, on the file and on every folder
    above it, so a collapsed tree still shows where the changes are. A slot
    that collapses when empty — the row's name gets the width back. */
@@ -994,7 +988,7 @@ body.vscode-light {
 
 /* The filter searches the TREE. With a file open there is no tree to filter, so
    the box is not merely useless there — it invites typing that does nothing. */
-.gfp-panel.gfp-viewing .gfp-filter { display: none; }
+.gfp-panel.gfp-viewing .gfp-filter-row { display: none; }
 
 /* 899, not 640, and the number is not arbitrary: it is the width at which the
    browser client stops giving the panel a third column to dock into
@@ -1177,19 +1171,27 @@ body.vscode-light {
   position: absolute;
   top: -1px;
   right: -2px;
-  min-width: 16px;
-  padding: 0 5px;
-  border-radius: 8px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0;
+  border-radius: 9px;
   /* The "modified" hue, not the theme's badge blue: this number IS the count
      of modified files, and the same colour marks each of them in the tree. */
   background: var(--tdiff-mod-line, #d7ba7d);
   color: var(--tdiff-mod-ink, #2a2000);
-  font-size: 10.5px;
+  font-size: 10px;
   font-weight: 700;
-  line-height: 16px;
+  line-height: 18px;
   text-align: center;
   font-variant-numeric: tabular-nums;
   pointer-events: none;
+}
+.gfp-toggle-count {
+  min-width: 14px;
+  height: 14px;
+  line-height: 14px;
+  border-radius: 7px;
+  font-size: 9px;
 }
 .gfp-changes-count[hidden],
 .gfp-toggle-count[hidden] { display: none !important; }
@@ -1210,7 +1212,7 @@ body.vscode-light {
 /* The tree's filter box belongs to the tree. Hidden the same way `.gfp-viewing`
    hides it, rather than by toggling `hidden` from script, so there is one
    mechanism for "this body mode does not use the filter". */
-.gfp-panel.gfp-changes-mode .gfp-filter { display: none; }
+.gfp-panel.gfp-changes-mode .gfp-filter-row { display: none; }
 
 /* Where the work is. Quiet, because the branch is context and not news. */
 .gfp-changes-branch {
@@ -1226,8 +1228,9 @@ body.vscode-light {
 .gfp-changes-branch-name {
   flex: 0 1 auto;
   overflow: hidden;
-  color: var(--vscode-foreground, inherit);
-  font-weight: 600;
+  color: var(--vscode-descriptionForeground, #999);
+  font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
+  font-weight: normal;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1239,6 +1242,27 @@ body.vscode-light {
   white-space: nowrap;
 }
 .gfp-changes-branch-note::before { content: "· "; }
+.gfp-changes-ask-pull {
+  flex: 0 0 auto;
+  margin-left: auto;
+  min-height: 28px;
+  padding: 0 2px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.gfp-changes-ask-pull:hover { color: var(--vscode-foreground, inherit); }
+.gfp-changes-ask-pull:focus-visible,
+.gfp-changes-notice-action:focus-visible { outline: 2px solid var(--vscode-focusBorder); outline-offset: 1px; }
+.gfp-changes-notice-action { margin-top: 8px; }
+@media (hover: none), (pointer: coarse) {
+  .gfp-changes-ask-pull,
+  .gfp-changes-notice .gfp-changes-notice-action { min-height: 36px; }
+}
 
 /* The answer to "is it safe to walk away", said once. */
 .gfp-changes-headline {
@@ -1273,6 +1297,8 @@ body.vscode-light {
   font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
   font-size: 0.86em;
   white-space: pre-wrap;
+  /* A remote URL has no break opportunity; without this it scrolls sideways. */
+  overflow-wrap: anywhere;
 }
 
 /* One row per changed file. The row is a link to its own diff and nothing
@@ -1392,8 +1418,34 @@ body.vscode-light {
   font-size: 0.9em;
 }
 
-/* One commit box and one button. Every extra control here is a decision
-   somebody has to make before their work is safe. */
+.gfp-changes-section {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--vscode-descriptionForeground, #999);
+  font-size: 0.85em;
+}
+.gfp-changes-section::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--gfp-border);
+}
+
+/* The commit choices share a row; the primary gets at least half its width. */
+.gfp-changes-action-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+}
+.gfp-changes-action-row.has-commit-only {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+}
+.gfp-changes-action-row > button { min-width: 0; }
+@media (hover: none), (pointer: coarse) {
+  .gfp-changes-action-row > button,
+  .gfp-refresh { min-height: 36px; }
+}
+
 .gfp-changes-actions {
   display: flex;
   flex-direction: column;
