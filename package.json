@@ -531,7 +531,7 @@
   },
   "dependencies": {
     "@agentclientprotocol/claude-agent-acp": "0.69.0",
-    "@agentclientprotocol/codex-acp": "1.1.14",
+    "@agentclientprotocol/codex-acp": "1.11.0",
     "electron-updater": "^6.6.4",
     "jpeg-js": "^0.4.4",
     "ws": "^8.21.0"

@@ -226,7 +226,7 @@ describe("VSIX excludes desktop app", () => {
   it("packages the pinned Codex ACP runtime in the desktop artifact", () => {
     const builder = read("electron-builder.yml");
     const full = JSON.parse(read("package.json")) as { dependencies?: Record<string, string> };
-    expect(full.dependencies?.["@agentclientprotocol/codex-acp"]).toBe("1.1.14");
+    expect(full.dependencies?.["@agentclientprotocol/codex-acp"]).toBe("1.11.0");
     // The adapter's asar payload is package.json / dist / LICENSE only; the
     // broad `codex-acp/**/*` include is banned so nobody reverts to shipping
     // the whole package directory.
@@ -260,10 +260,10 @@ describe("VSIX excludes desktop app", () => {
       packages: Record<string, { dependencies?: Record<string, string> }>;
     };
     expect(lock.packages["node_modules/@agentclientprotocol/codex-acp"]?.dependencies).toEqual({
-      "@agentclientprotocol/sdk": "^1.3.0",
-      "@openai/codex": "^0.147.0",
+      "@agentclientprotocol/sdk": "^1.4.0",
+      "@openai/codex": "^0.153.4",
       diff: "^9.0.0",
-      open: "^11.0.0",
+      open: "^11.0.1",
       "vscode-jsonrpc": "^9.0.1",
       zod: "^4.0.0",
     });
