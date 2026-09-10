@@ -1,5 +1,37 @@
 # Changelog
 
+## 4.5.0 — 2026-09-11
+
+**Steer stops being a Grok feature, and every installer starts aiming at the version this app tells you to be on.** Codex hears a mid-turn correction now, attachments and all. Both ACP adapters moved — Codex ten minors, Claude seven — behind a new gate that drives the real adapters against your own CLIs instead of a stand-in. And a chain of small dishonesty around CLI versions is gone: the Providers row named a version, every installer fetched whatever was newest instead, and pressing **Update** stopped every session on that provider to install something already on disk.
+
+### Added
+
+- **Steer works with OpenAI Codex.** A message sent while an agent is working has always had two outcomes — queue it, or **Steer** it into the running turn without cancelling anything or losing the tool work in flight. That second one was Grok-only, and not because Codex could not do it: its adapter registers mid-turn steering and advertises it at startup, and the button was being drawn off a provider name instead. Your correction now reaches the turn you are watching, with attached files and images along with it. Claude Code has no mid-turn interject at any version, so there the button stays absent and a message you send while it works queues, which is what it always did.
+
+- **Edit the config file each CLI actually reads.** Gear → **Provider config files** opens `~/.grok/config.toml`, `~/.codex/config.toml` and `~/.claude/settings.json` in the same editor the file panel already uses — from a phone as readily as at the desk. Those three files are the whole list; the credentials that sit beside them are not reachable from here. A CLI reads its config at startup, so the panel offers to restart the conversation you have open once you save, and says plainly that other running sessions keep the settings they started with.
+
+- **Changes wherever there is a repository.** The Changes view and the Changed-files card were gated on Coding purpose. They now appear whenever the conversation has a repository, because cloning one and reading what changed in it is not a coding-only thing to do.
+
+### Changed
+
+- **The Codex and Claude adapters moved to the versions people actually run** — `@agentclientprotocol/codex-acp` to 1.11.0 (ten minors) and `claude-agent-acp` to 0.76.0 (seven). An adapter bump moves streaming shape, tool-call framing, permission parameters and session resume at once, and until now nothing in the test suite drove a real one. `npm run smoke:acp` does: it takes both real adapters against your own Codex and Claude CLIs and reports pass or fail per capability — initialize, session, streaming, a tool call, a permission request, mid-turn cancellation, resume, and steering — so a bump that breaks one provider is dropped alone instead of shipping.
+
+- **Update installs the version the app names.** The Providers row reports the version this release is built against and offers to move you to it, and then every installer fetched "latest" instead — so a machine that had just been updated could still be told it was behind. npm installs, the CLIs' own updaters and the cloud machines' boot script now all take the exact version. Codex's own updater is the one deliberate exception: we never measured a version-capable form of it, and guessing one turns a working update into a failing one.
+
+- **Update stops tearing your sessions down for nothing.** The row that enables the button can be minutes old, and you may have updated in a terminal since — or another window may have done it already. The version is re-read at the moment you press, and a CLI that is already current simply says so, instead of stopping every conversation on that provider for a few minutes to install what was already there. A version that cannot be read is not treated as current: that is not evidence of anything, and refusing on it would strand you on a broken binary.
+
+### Fixed
+
+- **A returning machine reconnects in seconds instead of half a minute.** A laptop or cloud machine that suspends leaves its connection frozen open at the relay, so the same host coming back was told the device was taken — and then doubled its own retry delay on every refusal: 2, 4, 8, 16, 30 seconds. Measured on a real machine rather than reasoned about, eight of those ladders over three days. The service now asks the connection it is holding whether it is still alive the moment somebody knocks, and the returning host waits that check out instead of spending a full backoff step on it.
+
+- **Waking a cloud machine from a phone says what is happening, and offers something to press.** The page used to infer the machine's state from how long it had been quiet, which is how a machine that was already awake could look asleep, and one that would never answer could look busy indefinitely. It now reports what is actually known — checking, waking, waiting for the host, reachable, failed — and a wake that fails ends in a **Retry** rather than a spinner.
+
+- **A correction Codex refuses no longer takes the answer you were reading with it.** Codex can refuse a steer in-band, as a perfectly successful response that carries a failure inside it, and the first version of this feature read that as a dead connection — dropping the reply that was streaming at the time. A refusal now queues your text, tells you it did, and leaves the running answer and the Steer button alone. A refused correction sent from a phone is no longer billed twice, either.
+
+- **Copy image works for pictures the agent generated, in the desktop app.** Copying at original resolution needs a handle to the file on disk, and generated images never got one, so the button was disabled with an honest message and no way forward. It works now, and a phone keeps the picture it already has rather than fetching it again.
+
+- **A connector whose server we watched fail is no longer handed to the agent.** A connector with a valid token whose proxy cannot reach its server used to go to the agent anyway: the agent called a tool on it and the call hung, which on a phone is a dead end. That outcome is now remembered, and only a proxy that exited with a terminal connection error counts — a timeout, a spawn failure, a registry lookup or a successful transport fallback all withhold nothing, because a false positive silently removes a connector that works.
+
 ## 4.4.0 - 2026-09-09
 
 **Is my work safe to walk away from?** The panel now answers that without leaving the conversation: a **Changes** view that says where things stand in one sentence and carries one button for the whole promise, a **Changed N files** card at the end of every coding turn, and a refused push that names the next move instead of quoting git at you. Alongside it, a design pass over the file panel's strip: one selected thing, one palette for "changed", and a folder icon that means "project" and nothing else.
