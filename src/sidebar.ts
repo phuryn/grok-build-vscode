@@ -4076,7 +4076,7 @@ Only continue if you trust this code.`,
       this.reportRequester(
         requester,
         "warning",
-        "This Grok CLI cannot steer attachments mid-turn — your message was queued instead. It will send when the turn finishes.",
+        "This agent cannot steer attachments mid-turn — your message was queued instead. It will send when the turn finishes.",
       );
       return;
     }
@@ -4122,7 +4122,7 @@ Only continue if you trust this code.`,
         if (gen === session.gen && session.client === client) session.interjectionCount += 1;
       }, images.length ? built.blocks : undefined);
       if (r === "unsupported") {
-        // Pre-~0.2.96 CLI: latch the button off and hand the item to the queue,
+        // Unsupported backend: latch the button off and hand the item to the queue,
         // which is exactly the behavior Steer was offering to skip.
         this.emit(session, { type: "steerUnavailable" });
         this.emit(session, { type: "agentReset" });
@@ -4130,7 +4130,12 @@ Only continue if you trust this code.`,
         this.reportRequester(
           requester,
           "warning",
-          "Steering needs a newer Grok Build CLI — your message was queued instead. Update via Settings → About.",
+          // Grok’s method is unadvertised, so "unsupported" here means an old
+          // CLI that an update fixes — say so rather than describe the agent as
+          // incapable. Every other backend advertises, so there is nothing to do.
+          session.provider === "grok"
+            ? "Steering needs a newer Grok Build CLI — your message was queued instead. Update via Settings → About."
+            : "This agent cannot steer mid-turn — your message was queued instead. It will send when the turn finishes.",
         );
         return;
       }
@@ -9601,6 +9606,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           version: handshakeVersion,
           provider: session.provider,
           init: { protocolVersion: init?.protocolVersion },
+          steeringSupported: client.supportsInterject(),
         },
       });
     });

@@ -765,7 +765,8 @@ describe("AFK Pilot shared webview controls", () => {
     expect(doc.querySelector(".msg.queued .queued-tag")?.textContent).toBe("Not sent");
     expect(doc.querySelector(".msg.queued .queued-tag")?.getAttribute("title"))
       .toMatch(/rejected.*edit.*retry/i);
-    expect(doc.querySelectorAll(".msg.queued .queued-action")).toHaveLength(3);
+    expect(doc.querySelectorAll(".msg.queued .queued-action")).toHaveLength(2);
+    expect(doc.querySelector(".queued-steer")).toBeNull(); // No host capability advertised.
     expect(doc.getElementById("send-btn")!.classList.contains("stop")).toBe(false);
   });
 

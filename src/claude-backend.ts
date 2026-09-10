@@ -298,6 +298,12 @@ export class ClaudeBackend implements AcpBackend {
     return { method: "session/set_mode", params: { sessionId, modeId: claudeModeId(modeId) } };
   }
 
+  steeringCapabilities() {
+    return { supported: false, acceptsContent: false };
+  }
+
+  interject(): null { return null; }
+
   configState(response: any, fallback: BackendConfigState): BackendConfigState {
     return configStateFromClaudeOptions(response, fallback);
   }

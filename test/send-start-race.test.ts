@@ -74,6 +74,9 @@ vi.mock("../src/acp", async (importOriginal) => {
       }
     }
     async setMode(): Promise<void> {}
+    supportsInterject(): boolean {
+      return true;
+    }
     honorsInterjectContent(): boolean {
       return true;
     }

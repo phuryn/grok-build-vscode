@@ -22,6 +22,8 @@ import { CodexBackend } from "../src/codex-backend";
 function clientWithFakeProc(opts?: {
   backend?: AcpBackend;
   effort?: "high";
+  grokVersion?: string;
+  grokVersionVerified?: boolean;
   timeouts?: {
     promptIdleTimeoutMs?: number;
     promptAbsoluteTimeoutMs?: number;
@@ -32,6 +34,8 @@ function clientWithFakeProc(opts?: {
     cliPath: "x",
     cwd: "/",
     log: () => {},
+    grokVersion: opts?.grokVersion,
+    grokVersionVerified: opts?.grokVersionVerified,
     ...(opts?.backend ? { backend: opts.backend } : {}),
     ...(opts?.effort ? { effort: opts.effort } : {}),
     ...(opts?.timeouts ? { timeouts: opts.timeouts } : {}),
@@ -818,7 +822,7 @@ describe("AcpClient.interject wire", () => {
   });
 
   it("sends additive content when image blocks are provided", async () => {
-    const { client, written } = clientWithFakeProc();
+    const { client, written } = clientWithFakeProc({ grokVersion: "1.0.5", grokVersionVerified: true });
     (client as any).sessionId = "s1";
     replyToWrites(client, written, () => ({ status: "queued" }));
     const content = [

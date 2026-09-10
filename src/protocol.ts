@@ -131,6 +131,9 @@ export const HOST_CAPABILITIES = {
   // nothing at all for every user who has not updated yet. That window is not
   // hypothetical: the relay ships first, by release-order rule.
   remoteRewind: true,
+  // Backend steering dispatch and its per-session capability. Older hosts
+  // route Codex to Grok's method, so remotes must require this field.
+  remoteSteering: true,
 } as const;
 
 /** Device-code GitHub sign-in carried on `projectSetup`. Additive. */
@@ -240,6 +243,8 @@ export type HostUiCapabilities = {
    * buttons an older host drops in silence. See HOST_CAPABILITIES.
    */
   remoteRewind?: boolean;
+  /** Backend steering is wired on this host. Absent/false hides remote Steer. */
+  remoteSteering?: boolean;
   /**
    * Whether a remote may sign an agent OUT on this host.
    *
@@ -545,7 +550,7 @@ export type HostMsg =
   | { type: "updateAvailable"; version: string; url: string }
   /** Desktop in-app update is downloaded and waiting for restart. Host-local. */
   | { type: "updateReady"; version: string }
-  | { type: "initialized"; info: { cliPath: string; cwd: string; version: string | null; provider?: "grok" | "codex" | "claude"; init: { protocolVersion?: unknown } } }
+  | { type: "initialized"; info: { cliPath: string; cwd: string; version: string | null; provider?: "grok" | "codex" | "claude"; steeringSupported?: boolean; init: { protocolVersion?: unknown } } }
   | { type: "cliUpdating" }
   // `worktree` gates the gear's Apply/Remove worktree items to worktree sessions.
   | { type: "session"; sessionId: string; models: ModelInfo[]; currentModelId: string | undefined; worktree?: boolean; provider?: "grok" | "codex" | "claude" }
@@ -978,7 +983,7 @@ export type HostMsg =
   // ordinary send carrying the same host-issued id, so relay quota/rate metering
   // applies at dequeue time and replayed/outbox copies are recognisably one send.
   | { type: "submitQueuedSend"; id: string; text: string }
-  // Steer (#52) is unavailable on this CLI (`_x.ai/interject` → -32601). Latches
+  // Steer (#52) is unavailable on this backend. Latches
   // the button off for the session; the queue stays as the fallback.
   | { type: "steerUnavailable" }
   /**

@@ -515,10 +515,10 @@
     rejectedSubmissionText: "",
     // Remote-only placeholder bubble shown between a send and the host's echo.
     optimisticSendEl: null,
-    // Steer (#52). Optimistic: `_x.ai/interject` is unadvertised, so we can't ask
-    // whether it works — we offer it and let the host latch this off the first
-    // time the CLI answers -32601 (the text falls back to the queue, never lost).
-    steerSupported: true,
+    // The host normalizes backend capability at initialize. Grok starts
+    // optimistic; Codex requires its advertisement; -32601 latches either off.
+    steerSupported: false,
+    steeringProvider: null,
     // Grok thumbs (#114). Off until the host advertises feedbackAvailability.
     // Only the live-process turn that just finished is rateable (not session/load).
     feedbackAvailable: false,
@@ -2888,7 +2888,7 @@
       deviceLogin: state.deviceLoginByProvider,
       clientOwnsFontScale: CLIENT_OWNS_FONT_SCALE,
       ttsAvailable,
-      steerSupported: state.steerSupported !== false,
+      steerSupported: steerableProvider(),
       providersKnown: !!state.providersKnown,
       remoteLinked: state.remoteLinked,
       hostCaps: state.hostCaps || {},
@@ -4233,16 +4233,13 @@
   /**
    * Whether the agent running this session can hear a mid-turn message.
    *
-   * Steer is `_x.ai/interject`, an xAI extension to ACP — so it is a GROK
-   * capability, not an ACP one. Codex's adapter answers -32601 and the text
-   * falls back to the queue, and Claude Code has no interject at all. Both
-   * therefore schedule instead, and neither is offered a button that describes
-   * something its agent cannot do.
-   *
-   * An absent provider means an older host that only ever ran Grok.
+   * Use the focused backend's host-confirmed capability. Remotes also require
+   * the host dispatch field: the relay can ship this renderer before a host
+   * learns Codex steering. Neither an absent field nor a version proves support.
    */
   function steerableProvider() {
-    return state.activeProvider !== "claude" && state.activeProvider !== "codex";
+    if (IS_REMOTE && state.hostCaps?.remoteSteering !== true) return false;
+    return state.steerSupported && state.steeringProvider === state.activeProvider;
   }
 
   /**
@@ -8982,6 +8979,8 @@
     state.userMsgCount = 0;
     state.feedbackAvailable = false;
     state.turnRating = 0;
+    state.steerSupported = false;
+    state.steeringProvider = null;
     state.interjectionCount = 0;
     state.historyEventCount = 0;
     state.lastTurnUsage = null;
@@ -15495,7 +15494,7 @@
   // (session-start priming — no session id to interject against yet), a CLI that
   // can't interject, and (defensively) not being busy at all. Any of those fall
   // back to the queue, which is the safe home for the text either way.
-  // Attachments ride `_x.ai/interject` `content` (same encoder as a send).
+  // Attachments use the backend's steering content (same encoder as a send).
   function queueOutgoing(text, chips) {
     if (state.sessionSuperseded) return;
     const attachments = Array.isArray(chips) ? chips : explicitVisibleChips(state.chips);
@@ -15611,7 +15610,7 @@
     // still ends up with the button once busy lands.
     // Not for Claude Code: it has no mid-turn interject, so the button would
     // offer to do something the agent cannot do. Its messages stay scheduled.
-    // Attachments ride `_x.ai/interject` `content` — the host encodes them the
+    // Attachments ride the backend's steering content — the host encodes them the
     // same way as a send. An older CLI that ignores `content` gets the whole
     // item queued rather than a silent drop.
     if (state.steerSupported && steerableProvider()) {
@@ -16543,6 +16542,7 @@
         // any control is drawn — and a host that says nothing is a host that
         // cannot, which is the safe way round.
         state.hostCaps = (msg.capabilities && typeof msg.capabilities === "object") ? msg.capabilities : {};
+        renderQueuedBlocks();
         // Field presence: an older host never sends this, and command View all
         // then omits language rather than inventing a dialect.
         state.commandLanguage = typeof msg.commandLanguage === "string" ? msg.commandLanguage : "";
@@ -17036,6 +17036,9 @@
         break;
       }
       case "initialized": {
+        state.steeringProvider = msg.info.provider || "grok";
+        state.steerSupported = msg.info.steeringSupported === true;
+        renderQueuedBlocks();
         // The ACP handshake is done, but session/new or session/load may still be
         // running. Keep showing Starting until the startup lock clears.
         if (!msg.info.provider || msg.info.provider === "grok") state.cliVersion = msg.info.version || "";
@@ -17057,6 +17060,7 @@
       case "session": {
         state.currentModelId = msg.currentModelId;
         state.activeProvider = msg.provider === "codex" || msg.provider === "claude" ? msg.provider : "grok";
+        renderQueuedBlocks();
         syncFeedbackButtons();
         syncProviderVoice();
         // The nudge is gated on the active provider, and this is the only place

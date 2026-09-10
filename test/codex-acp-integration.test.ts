@@ -1,8 +1,8 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as path from "node:path";
 import * as fs from "node:fs";
 import * as os from "node:os";
-import { AcpClient } from "../src/acp";
+import { AcpClient, type PermissionRequest, type PromptContentBlock } from "../src/acp";
 import { CodexBackend } from "../src/codex-backend";
 import { warmCodexModelCache } from "../src/codex-model-cache";
 
@@ -34,7 +34,7 @@ describe("Codex ACP integration (real subprocess, fake adapter)", () => {
       cliPath: "C:\\Tools\\codex.exe",
       cwd: process.cwd(),
       backend: new CodexBackend({ adapterPath: path.join(__dirname, "fixtures", "fake-codex-acp.cjs") }),
-      env: { ...process.env, CODEX_HOME: codexHome },
+      env: { ...process.env, CODEX_HOME: codexHome, FAKE_CODEX_STEERING: "true", FAKE_CODEX_STEERING_SINK: path.join(codexHome, "events.jsonl") },
       log: () => {},
     });
     await client.start();
@@ -68,6 +68,52 @@ describe("Codex ACP integration (real subprocess, fake adapter)", () => {
     await client.setMode("agent-full-access");
     expect(client.currentModeId).toBe("agent-full-access");
     expect(modes).toContain("agent-full-access");
+  });
+
+  it("steers text and images while the prompt and its tool remain in flight", async () => {
+    await client.newSession();
+    const normalize = vi.spyOn((client as any).backend, "normalizePromptResult");
+    expect(client.supportsInterject()).toBe(true);
+    expect(client.honorsInterjectContent()).toBe(true);
+    const permissionP = waitFor<PermissionRequest>(client, "permissionRequest");
+    let completed = false;
+    const promptP = client.prompt("SCENARIO_STEERING").then((meta) => { completed = true; return meta; });
+    const permission = await permissionP;
+    const content: PromptContentBlock[] = [
+      { type: "text", text: "use [Image #1]" },
+      { type: "image", mimeType: "image/png", data: "cGl4ZWxz" },
+    ];
+    let accepted = 0;
+    await expect(client.interject("correct course", () => { accepted += 1; })).resolves.toBe("ok");
+    await expect(client.interject("use this", () => { accepted += 1; }, content)).resolves.toBe("ok");
+    expect(accepted).toBe(2);
+    expect(completed).toBe(false);
+    const events = fs.readFileSync(path.join(codexHome, "events.jsonl"), "utf8").trim().split(/\r?\n/).map((line) => JSON.parse(line));
+    expect(events.filter((event) => event.type === "session/prompt")).toHaveLength(1);
+    expect(events.filter((event) => event.type === "_session/steering").map((event) => event.prompt)).toEqual([
+      [{ type: "text", text: "correct course" }], content,
+    ]);
+    const toolP = waitFor<any>(client, "toolCallUpdate");
+    client.respondPermission(permission.id, "allow_once");
+    expect(await toolP).toMatchObject({ toolCallId: "in-flight", status: "completed" });
+    await promptP;
+    expect(normalize).toHaveBeenCalledWith({ stopReason: "end_turn" });
+  });
+
+  it.each(["absent", "false"])("leaves steering unavailable when initialize reports %s", async (capability) => {
+    await client.dispose();
+    client = new AcpClient({
+      cliPath: "codex", cwd: process.cwd(), log: () => {},
+      backend: new CodexBackend({ adapterPath: path.join(__dirname, "fixtures", "fake-codex-acp.cjs") }),
+      env: { ...process.env, CODEX_HOME: codexHome, FAKE_CODEX_STEERING: capability },
+    });
+    let supportedAtInitialize: boolean | undefined;
+    client.once("initialized", () => { supportedAtInitialize = client.supportsInterject(); });
+    await client.start();
+    await client.newSession();
+    expect(supportedAtInitialize).toBe(false);
+    expect(client.honorsInterjectContent()).toBe(false);
+    await expect(client.interject("keep this for the queue")).resolves.toBe("unsupported");
   });
 
   it("normalizes streamed tools, usage, title, permissions, plan review, and prompt usage", async () => {

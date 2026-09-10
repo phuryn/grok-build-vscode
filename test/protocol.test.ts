@@ -65,6 +65,7 @@ describe("host <-> webview message contract (src/protocol.ts is the source of tr
       // extension — so without this the browser shows two dead buttons to
       // everyone who has not updated yet.
       remoteRewind: true,
+      remoteSteering: true,
     });
   });
 

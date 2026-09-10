@@ -40,7 +40,7 @@ function appendSpawnProbe() {
 }
 
 function appendEvent(type, data = {}) {
-  const sink = process.env.FAKE_CODEX_SPAWN_SINK;
+  const sink = process.env.FAKE_CODEX_STEERING_SINK || process.env.FAKE_CODEX_SPAWN_SINK;
   if (!sink) return;
   require("node:fs").appendFileSync(sink, JSON.stringify({ type, pid: process.pid, cwd: process.cwd(), at: Date.now(), ...data }) + "\n");
 }
@@ -124,7 +124,10 @@ rl.on("line", async (line) => {
   const { id, method, params = {} } = msg;
   if (method === "initialize") {
     appendSpawnProbe();
-    return ok(id, { protocolVersion: 1, serverInfo: { name: "fake-codex-acp", version: "1.1.14" }, _meta: { codexPath: process.env.CODEX_PATH } });
+    return ok(id, { protocolVersion: 1, serverInfo: { name: "fake-codex-acp", version: "1.1.14" }, _meta: {
+      codexPath: process.env.CODEX_PATH,
+      ...(process.env.FAKE_CODEX_STEERING === "absent" ? {} : { steering: { supported: process.env.FAKE_CODEX_STEERING !== "false" } }),
+    } });
   }
   if (method === "session/new") {
     appendEvent("session/new", { sessionId });
@@ -170,6 +173,13 @@ rl.on("line", async (line) => {
   if (method === "_x.ai/interject") {
     return send({ jsonrpc: "2.0", id, error: { code: -32601, message: "Method not found" } });
   }
+  if (method === "_session/steering") {
+    if (params.sessionId !== sessionId || !Array.isArray(params.prompt)) {
+      return send({ jsonrpc: "2.0", id, error: { code: -32602, message: "Expected sessionId and prompt array" } });
+    }
+    appendEvent("_session/steering", params);
+    return ok(id, {});
+  }
   if (method === "session/cancel") {
     if (cancelPromptId != null) {
       notify({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "trailing" } });
@@ -180,6 +190,17 @@ rl.on("line", async (line) => {
   }
   if (method === "session/prompt") {
     const text = Array.isArray(params.prompt) ? params.prompt[0]?.text ?? "" : "";
+    if (text.includes("SCENARIO_STEERING")) {
+      appendEvent("session/prompt");
+      notify({ sessionUpdate: "tool_call", toolCallId: "in-flight", kind: "execute", title: "work", status: "in_progress" });
+      await call("session/request_permission", {
+        sessionId,
+        toolCall: { toolCallId: "in-flight", kind: "execute", title: "work" },
+        options: [{ optionId: "allow_once", kind: "allow_once", name: "Allow" }],
+      });
+      notify({ sessionUpdate: "tool_call_update", toolCallId: "in-flight", status: "completed" });
+      return ok(id, { stopReason: "end_turn" });
+    }
     if (text.includes("SCENARIO_CANCEL")) {
       cancelPromptId = id;
       notify({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "started" } });

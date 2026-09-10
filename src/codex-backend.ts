@@ -1,6 +1,7 @@
 import * as path from "node:path";
 import packageManifest from "../package.json";
 import { grokCliNeedsShell } from "./cli-process";
+import type { PromptContentBlock } from "./acp";
 import type {
   AcpBackend,
   BackendConfigState,
@@ -336,6 +337,18 @@ export class CodexBackend implements AcpBackend {
       return { method: "session/set_config_option", params: { sessionId, configId: "collaboration_mode", value: modeId } };
     }
     return { method: "session/set_config_option", params: { sessionId, configId: "mode", value: modeId } };
+  }
+
+  steeringCapabilities(initializeResult: any) {
+    const supported = initializeResult?._meta?.steering?.supported === true;
+    return { supported, acceptsContent: supported };
+  }
+
+  interject(sessionId: string, text: string, content?: readonly PromptContentBlock[]) {
+    return {
+      method: "_session/steering",
+      params: { sessionId, prompt: content?.length ? [...content] : [{ type: "text", text }] },
+    };
   }
 
   configState(response: any, fallback: BackendConfigState): BackendConfigState {

@@ -422,11 +422,12 @@ describe("app purpose + session menu (DOM)", () => {
       steerByDefault: false,
       soundNotifications: false,
       processingSound: false,
-      readRepliesAloud: false,
-      appPurpose: "coding",
-      capabilities: {},
-    });
-    click(h.window, h.doc.getElementById("rail-gear-btn") || h.doc.getElementById("gear-btn"));
+        readRepliesAloud: false,
+        appPurpose: "coding",
+        capabilities: { remoteSteering: true },
+      });
+      dispatch(h.window, { type: "initialized", info: { provider: "grok", steeringSupported: true, init: {} } });
+      click(h.window, h.doc.getElementById("rail-gear-btn") || h.doc.getElementById("gear-btn"));
     expect(gearText(h)).toMatch(/Settings/);
     expect(gearText(h)).not.toContain("Advanced settings");
     click(h.window, findGearItem(h, /Settings/)!);

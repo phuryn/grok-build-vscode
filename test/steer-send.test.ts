@@ -12,6 +12,11 @@ import type { HostMsg } from "../src/protocol";
 import { enqueueQueuedSend } from "../src/queued-send";
 import { Session } from "../src/session";
 import { GrokSidebar } from "../src/sidebar";
+import { AcpClient } from "../src/acp";
+import type { AcpBackend } from "../src/acp-backend";
+import { grokBackend } from "../src/grok-backend";
+import { CodexBackend } from "../src/codex-backend";
+import { ClaudeBackend } from "../src/claude-backend";
 
 const PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
@@ -73,6 +78,87 @@ describe("steerSend carries attachments", () => {
     writeFileSync(file, PNG);
     return file;
   }
+
+  function attachBackend(sidebar: any, backend: AcpBackend, supported = true, verified = true) {
+    const options = { grokVersion: "1.0.5", grokVersionVerified: verified };
+    const client = new AcpClient({ cliPath: "x", cwd: "/", log: () => {}, backend, ...options });
+    client.sessionId = "s1";
+    (client as any).steering = backend.steeringCapabilities({ _meta: { steering: { supported } } }, options);
+    const request = vi.fn(async (_method: string, _params: any, onQueued?: () => void) => { onQueued?.(); return {}; });
+    (client as any).request = request;
+    const session: Session = sidebar.focused;
+    session.client = client;
+    session.provider = backend.provider;
+    session.activeSessionId = "s1";
+    return { session, request, client };
+  }
+
+  it.each([grokBackend, new CodexBackend()])("carries actual backend image support through the host (%s)", async (backend) => {
+    const sidebar = makeSidebar();
+    const { session, request } = attachBackend(sidebar, backend);
+    const chip = makeImageChip(stagingPng(), 1, "image/png");
+    session.chips = [chip];
+    await sidebar.steerSend("look at this", session, undefined, [chip]);
+    expect(request).toHaveBeenCalledTimes(1);
+    const [method, params] = request.mock.calls[0];
+    expect(method).toBe(backend.provider === "grok" ? "_x.ai/interject" : "_session/steering");
+    const blocks = backend.provider === "grok" ? params.content : params.prompt;
+    expect(blocks).toEqual([
+      expect.objectContaining({ type: "text", text: expect.stringContaining("[Image #1]") }),
+      { type: "image", mimeType: "image/png", data: PNG.toString("base64") },
+    ]);
+    expect(session.queuedSends).toEqual([]);
+    expect(session.interjectionCount).toBe(1);
+    expect(sidebar.posted.filter((m: HostMsg) => m.type === "userMessage")).toEqual([
+      expect.objectContaining({ text: "look at this", steer: true }),
+    ]);
+    expect(sidebar.posted.some((m: HostMsg) => m.type === "agentStart")).toBe(false);
+  });
+
+  it.each([grokBackend, new CodexBackend(), new ClaudeBackend()])(
+    "queues images intact without dispatching to an incapable backend (%s)", async (backend) => {
+      const sidebar = makeSidebar();
+      const { session, request } = attachBackend(sidebar, backend, false, false);
+      const chip = makeImageChip(stagingPng(), 1, "image/png");
+      session.queuedSends = enqueueQueuedSend([], "keep text and pixels", [chip]);
+      await sidebar.steerSend("keep text and pixels", session, undefined, [chip], true);
+      expect(request).not.toHaveBeenCalled();
+      expect(session.queuedSends).toEqual([{ text: "keep text and pixels", chips: [expect.objectContaining({ id: chip.id })] }]);
+      expect(session.interjectionCount).toBe(0);
+    },
+  );
+
+  it.each([new CodexBackend(), new ClaudeBackend()])("queues text on an advertised capability gap (%s)", async (backend) => {
+    const sidebar = makeSidebar();
+    const { session, request } = attachBackend(sidebar, backend, false);
+    await sidebar.steerSend("keep my correction", session);
+    expect(request).not.toHaveBeenCalled();
+    expect(session.queuedSends).toEqual([{ text: "keep my correction", chips: [] }]);
+    expect(session.interjectionCount).toBe(0);
+    expect(sidebar.posted.some((m: HostMsg) => m.type === "steerUnavailable")).toBe(true);
+  });
+
+  it.each([grokBackend, new CodexBackend()])("queues text and images on method-not-found (%s)", async (backend) => {
+    const sidebar = makeSidebar();
+    const { session, request } = attachBackend(sidebar, backend);
+    request.mockRejectedValueOnce({ code: -32601, message: "Method not found" });
+    const chip = makeImageChip(stagingPng(), 1, "image/png");
+    session.queuedSends = enqueueQueuedSend([], "keep both", [chip]);
+    await sidebar.steerSend("keep both", session, undefined, [chip], true);
+    expect(session.queuedSends).toEqual([{ text: "keep both", chips: [expect.objectContaining({ id: chip.id })] }]);
+    expect(session.interjectionCount).toBe(0);
+    expect(sidebar.posted.some((m: HostMsg) => m.type === "steerUnavailable")).toBe(true);
+    // Grok’s method is unadvertised, so -32601 means an old CLI and the warning
+    // owes the user the thing that fixes it. Codex advertises its capability, so
+    // a gap there is the adapter’s and no update of ours changes it.
+    expect(sidebar.reportRequester).toHaveBeenCalledWith(
+      undefined,
+      "warning",
+      backend.provider === "grok"
+        ? expect.stringContaining("Update via Settings")
+        : expect.not.stringContaining("Update via Settings"),
+    );
+  });
 
   it("interjects image content blocks from a queued attachment", async () => {
     const sidebar = makeSidebar();

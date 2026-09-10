@@ -23,7 +23,15 @@
 // through the session buffer (agentStart sets it, agentEnd/agentError/exit
 // clear it, clearMessages resets it).
 import { describe, it, expect } from "vitest";
-import { bootWebview, dispatch, click, press, Posted } from "./webview-harness";
+import { bootWebview as bootRawWebview, dispatch, click, press, Posted } from "./webview-harness";
+
+function bootWebview(opts: Parameters<typeof bootRawWebview>[0] = {}) {
+  const harness = bootRawWebview(opts);
+  if (opts.ready !== false) {
+    dispatch(harness.window, { type: "initialized", info: { provider: "grok", steeringSupported: true, init: {} } });
+  }
+  return harness;
+}
 
 const $ = (doc: Document, id: string) => doc.getElementById(id) as HTMLElement;
 const types = (posted: Posted[]) => posted.map((p) => p.type);

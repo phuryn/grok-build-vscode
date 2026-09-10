@@ -69,6 +69,7 @@ vi.mock("../src/acp", async (importOriginal) => {
       startControl.disposes += 1;
     }
     async setMode(): Promise<void> {}
+    supportsInterject(): boolean { return this.provider === "grok"; }
     isCredentialError(): boolean {
       return /auth|unauthor|401|api[_\s-]?key|credential|sign.?in/i.test(startControl.failWith);
     }
@@ -195,6 +196,9 @@ describe("startSession bounded spawn retry", () => {
     await sidebar.startSession(undefined, sidebar.focused);
     expect(sidebar.focused.provider).toBe(provider);
     expect(startControl.efforts).toEqual([expected]);
+    expect(sidebar.posted.find((message: HostMsg) => message.type === "initialized")).toMatchObject({
+      info: { provider, steeringSupported: provider === "grok" },
+    });
   });
 
   beforeEach(() => {
