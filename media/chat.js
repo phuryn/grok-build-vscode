@@ -12069,9 +12069,11 @@
         img.alt = "Generated image";
         img.loading = "lazy";
         const mediaLabel = (msg.path && String(msg.path).split(/[\\/]/).pop()) || "Generated image";
-        // Editor host → openFile (tab). No editor / remote → lightbox. No
-        // fullId: generated media is already full-size on the wire (remote
-        // inlines the whole file as a data: URI; it never downscales).
+        // Editor host → openFile (tab). No editor / remote → lightbox. The src
+        // is always the original here — a served app-resource:// URI on a desk,
+        // the whole inlined file on a remote — so `isOriginal` is true on both.
+        // The handle is only ever used where those bytes are unreadable, which
+        // `openImagePreview` decides; a remote holding a data: URI ignores it.
         if (hostOpensInEditor() && msg.path) {
           img.title = "Open " + msg.path;
           img.style.cursor = "pointer";
@@ -12079,7 +12081,7 @@
         } else {
           img.title = "View " + mediaLabel;
           img.style.cursor = "pointer";
-          img.onclick = () => openImagePreview(msg.src, mediaLabel, undefined, true);
+          img.onclick = () => openImagePreview(msg.src, mediaLabel, msg.fullId, true);
         }
         el.appendChild(img);
       }
@@ -14542,11 +14544,19 @@
     const copy = overlay.querySelector(".image-preview-copy");
     const canCopy = !!(navigator.clipboard && navigator.clipboard.write && typeof ClipboardItem !== "undefined");
     const originalSrc = isOriginal && src.startsWith("data:image/") ? src : null;
-    copy.disabled = !canCopy || !(fullId || originalSrc);
+    // Holding the original bytes in the page beats any handle, so the handle is
+    // for surfaces that do NOT have them. Asking the host anyway can only do
+    // worse from here: `imageFull`'s contract is a render capped at 1600px, and
+    // even `imageOriginal`, which is honestly full-size, is a round trip that
+    // can time out where the bytes on screen cannot. Generated media reaches a
+    // remote as a whole inlined file, so this is the difference between the
+    // handle helping the desk and quietly degrading the phone.
+    const hostFullId = originalSrc ? null : fullId;
+    copy.disabled = !canCopy || !(hostFullId || originalSrc);
     overlay.querySelector(".image-preview-status").textContent = !canCopy
       ? "Image copying is unavailable in this browser."
-      : !(fullId || originalSrc) ? "Full-resolution image unavailable." : "";
-    copy.onclick = () => copyPreviewImage(overlay, fullId, originalSrc);
+      : !(hostFullId || originalSrc) ? "Full-resolution image unavailable." : "";
+    copy.onclick = () => copyPreviewImage(overlay, hostFullId, originalSrc);
 
     // A remote only ever holds a 320px thumbnail, so enlarging it shows a blurry
     // copy of what was already on screen. Ask the host for a real render and
@@ -14554,10 +14564,10 @@
     // unanswered request degrades to exactly the old behaviour.
     state.pendingImageFullId = null;
     setImagePreviewLoading(false);
-    if (IS_REMOTE && fullId) {
-      state.pendingImageFullId = fullId;
+    if (IS_REMOTE && hostFullId) {
+      state.pendingImageFullId = hostFullId;
       setImagePreviewLoading(true);
-      vscode.postMessage({ type: "requestImageFull", fullId });
+      vscode.postMessage({ type: "requestImageFull", fullId: hostFullId });
     }
   }
 

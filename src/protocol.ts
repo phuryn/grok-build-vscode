@@ -728,7 +728,7 @@ export type HostMsg =
   | { type: "agentStart" }
   | { type: "thoughtChunk"; text: string }
   | { type: "messageChunk"; text: string }
-  | { type: "media"; media: string; src?: string; url?: string; mimeType?: string; path?: string }
+  | { type: "media"; media: string; src?: string; url?: string; mimeType?: string; path?: string; fullId?: string }
   | {
       type: "userMessageChunk";
       text: string;

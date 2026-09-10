@@ -11,7 +11,7 @@
 //      diverted away from the generic tool group
 //   5. openInEditor capability routes image click: editor host → openFile,
 //      desktop/remote → in-app lightbox (no openFile)
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { bootWebview, dispatch, click, type Harness } from "./webview-harness";
 
 const messages = (doc: Document) => doc.getElementById("messages") as HTMLElement;
@@ -22,8 +22,11 @@ const IMG_PATH = "/sessions/abc/images/cat.jpg";
 
 type Caps = Record<string, boolean>;
 
-function bootWithCaps(capabilities: Caps, opts: { remote?: boolean } = {}): Harness {
-  const h = bootWebview({ ready: true, remote: opts.remote });
+function bootWithCaps(
+  capabilities: Caps,
+  opts: { remote?: boolean; beforeScripts?: (window: any) => void } = {},
+): Harness {
+  const h = bootWebview({ ready: true, remote: opts.remote, beforeScripts: opts.beforeScripts });
   dispatch(h.window, {
     type: "initialState",
     effort: "",
@@ -113,7 +116,7 @@ describe("addGeneratedMedia image click by surface (openInEditor)", () => {
     const previewImg = overlay!.querySelector("img") as HTMLImageElement;
     expect(previewImg.getAttribute("src")).toBe(IMG_DATA);
     expect(previewImg.getAttribute("alt")).toBe("cat.jpg");
-    // Generated media is full-size on the wire — no requestImageFull / fullId.
+    // No handle was supplied here, and the src is already the original.
     expect(h.posted.filter((m) => m.type === "requestImageFull")).toEqual([]);
   });
 
@@ -133,6 +136,61 @@ describe("addGeneratedMedia image click by surface (openInEditor)", () => {
     expect(overlay!.hidden).toBe(false);
     expect((overlay!.querySelector("img") as HTMLImageElement).getAttribute("src")).toBe(IMG_DATA);
     expect(h.posted.filter((m) => m.type === "requestImageFull")).toEqual([]);
+  });
+
+  // A served app-resource:// URI is displayable but its pixels are NOT readable
+  // back out of the webview, which is why Copy image needed a handle and why
+  // generated media — unlike attachments — never carried one. The handle is now
+  // minted, and these two cases are the reason it has to be ignored on the
+  // surface that already holds the bytes.
+  describe("Copy image on generated media, by what the surface actually holds", () => {
+    const SERVED_SRC = "https://file.vscode-resource.test/cat.jpg";
+    const clipboard = () => {
+      const write = vi.fn(async (items: any[]) => { await items[0].data["image/png"]; });
+      return { write, beforeScripts(window: any) {
+        window.ClipboardItem = class { constructor(public data: any) {} };
+        Object.defineProperty(window.navigator, "clipboard", { value: { write } });
+      } };
+    };
+
+    it("desk: a served URI has no readable pixels, so the handle is what makes Copy work", () => {
+      const { write, beforeScripts } = clipboard();
+      const h = bootWithCaps({ openInEditor: false }, { beforeScripts });
+      postGeneratedImage(h, { src: SERVED_SRC, fullId: "gen-1" });
+      click(h.window, messages(h.doc).querySelector(".generated-image img") as HTMLImageElement);
+
+      const copy = h.doc.querySelector<HTMLButtonElement>(".image-preview-copy")!;
+      expect(copy.disabled).toBe(false);
+      expect(h.doc.querySelector(".image-preview-status")!.textContent).toBe("");
+      copy.click();
+      expect(write).toHaveBeenCalledTimes(1);
+      expect(h.posted.filter((m) => m.type === "requestImageOriginal"))
+        .toMatchObject([{ fullId: "gen-1" }]);
+      // Not a remote, so the capped render is never asked for either way.
+      expect(h.posted.filter((m) => m.type === "requestImageFull")).toEqual([]);
+    });
+
+    it("remote: already holding the whole file, it ignores the handle rather than trading down", () => {
+      const { write, beforeScripts } = clipboard();
+      const h = bootWithCaps({ openInEditor: true }, { remote: true, beforeScripts });
+      postGeneratedImage(h, { fullId: "gen-1" });
+      click(h.window, messages(h.doc).querySelector(".generated-image img") as HTMLImageElement);
+
+      // `imageFull` is capped at 1600px, so fetching it would swap the original
+      // the phone already has for a smaller one — a regression on a surface
+      // where Copy has always worked, to fix a button on a different surface.
+      expect(h.posted.filter((m) => m.type === "requestImageFull")).toEqual([]);
+      expect((h.doc.querySelector(".image-preview-overlay img") as HTMLImageElement)
+        .getAttribute("src")).toBe(IMG_DATA);
+
+      const copy = h.doc.querySelector<HTMLButtonElement>(".image-preview-copy")!;
+      expect(copy.disabled).toBe(false);
+      copy.click();
+      expect(write).toHaveBeenCalledTimes(1);
+      // And no round trip for bytes that are already in the page — that request
+      // can time out where reading the src cannot.
+      expect(h.posted.filter((m) => m.type === "requestImageOriginal")).toEqual([]);
+    });
   });
 
   it("video stays a non-clickable <video> under every surface", () => {

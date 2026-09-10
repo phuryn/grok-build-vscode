@@ -7858,7 +7858,22 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       const webview = this.view?.webview;
       if (webview) {
         const src = webview.asWebviewUri(Uri.file(m.path));
-        this.emit(session, { type: "media", media: m.media, src, mimeType: mime, path: m.path });
+        // Copy image needs PIXELS, and a webview cannot read them back out of an
+        // app-resource:// URI it is only permitted to display. That is why
+        // attached images have always carried a handle and generated ones —
+        // which arrive as a served URI rather than a data: one — never could.
+        //
+        // Mint it through the same predicate the FETCH will ask, not the one
+        // that let us serve the file. The two deliberately disagree:
+        // `isServableFromDisk` knows about Codex's own image root, while
+        // `imagePathStillAuthorized` knows only an open folder or Grok session
+        // media whose catalog cwd is still open. A handle the fetch will refuse
+        // is worse than no handle — the button would enable and then fail after
+        // a twenty-second silence, where today it is disabled and says why.
+        const fullId = m.media === "image" && this.isImagePathAuthorizedNow(m.path, session)
+          ? this.registerFullImage(m.path)
+          : undefined;
+        this.emit(session, { type: "media", media: m.media, src, mimeType: mime, path: m.path, fullId });
         return;
       }
       // The path passed canonical containment but this surface has no served
