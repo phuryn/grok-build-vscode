@@ -530,7 +530,7 @@
     "vitest": "^1.6.0"
   },
   "dependencies": {
-    "@agentclientprotocol/claude-agent-acp": "0.69.0",
+    "@agentclientprotocol/claude-agent-acp": "0.76.0",
     "@agentclientprotocol/codex-acp": "1.11.0",
     "electron-updater": "^6.6.4",
     "jpeg-js": "^0.4.4",

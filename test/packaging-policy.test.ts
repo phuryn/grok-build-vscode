@@ -207,7 +207,7 @@ describe("VSIX excludes desktop app", () => {
   it("packages the pinned Claude ACP runtime without native SDK binaries", () => {
     const builder = read("electron-builder.yml");
     const full = JSON.parse(read("package.json")) as { dependencies?: Record<string, string> };
-    expect(full.dependencies?.["@agentclientprotocol/claude-agent-acp"]).toBe("0.69.0");
+    expect(full.dependencies?.["@agentclientprotocol/claude-agent-acp"]).toBe("0.76.0");
     expect(builder).toMatch(/node_modules\/@agentclientprotocol\/claude-agent-acp\/package\.json/);
     expect(builder).toMatch(/node_modules\/@agentclientprotocol\/claude-agent-acp\/dist\/\*\*\/\*/);
     expect(builder).not.toMatch(/node_modules\/@agentclientprotocol\/claude-agent-acp\/\*\*\/\*/);
