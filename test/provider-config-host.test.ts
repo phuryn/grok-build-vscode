@@ -11,7 +11,7 @@ import { HOST_CAPABILITIES } from "../src/protocol";
 const fixture = vi.hoisted(() => ({ home: "" }));
 vi.mock("../src/provider-config", async (original) => {
   const actual = await original<typeof import("../src/provider-config")>();
-  return { ...actual, resolveProviderConfigFile: (provider: unknown) => actual.resolveProviderConfigFile(provider, fixture.home) };
+  return { ...actual, resolveProviderConfigFile: (provider: unknown) => actual.resolveProviderConfigFile(provider, { HOME: fixture.home, USERPROFILE: fixture.home }) };
 });
 
 beforeEach(() => {

@@ -14,7 +14,7 @@ afterEach(() => { for (const root of roots.splice(0)) fs.rmSync(root, { recursiv
 function fixture(provider: string = "grok") {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "provider-config-"));
   roots.push(home);
-  const target = resolveProviderConfigFile(provider, home);
+  const target = resolveProviderConfigFile(provider, { HOME: home, USERPROFILE: home });
   if (!target.ok) throw new Error(target.reason);
   fs.mkdirSync(path.dirname(target.root.filePath), { recursive: true });
   fs.writeFileSync(target.root.filePath, "original = true\n");
@@ -32,7 +32,16 @@ describe("provider config file roots", () => {
     for (const provider of ["auth.json", "../auth.json", "grok/../auth.json", ".grok/config.toml", "__proto__", "constructor", "toString", "Grok", "", null, {}]) {
       expect(resolveProviderConfigFile(provider).ok).toBe(false);
     }
-    expect(resolveProviderConfigFile("codex", "C:\\Users\\test", "win32")).toMatchObject({ root: { filePath: "C:\\Users\\test\\.codex\\config.toml" } });
+    expect(resolveProviderConfigFile("codex", { USERPROFILE: "C:\\Users\\test" }, "win32")).toMatchObject({ root: { filePath: "C:\\Users\\test\\.codex\\config.toml" } });
+    // The CLI's own overrides win, or this editor writes a file it never reads.
+    expect(resolveProviderConfigFile("codex", { CODEX_HOME: "/elsewhere/codex", HOME: "/home/x" }, "linux"))
+      .toMatchObject({ root: { filePath: "/elsewhere/codex/config.toml" }, configPath: ".codex/config.toml" });
+    expect(resolveProviderConfigFile("grok", { GROK_HOME: "/elsewhere/grok", HOME: "/home/x" }, "linux"))
+      .toMatchObject({ root: { filePath: "/elsewhere/grok/config.toml" }, configPath: ".grok/config.toml" });
+    // And the label stays the table's spelling, because it is the correlation
+    // key both halves match on — it must not move with somebody's environment.
+    expect(resolveProviderConfigFile("claude", { HOME: "/home/x" }, "linux"))
+      .toMatchObject({ root: { filePath: "/home/x/.claude/settings.json" }, configPath: ".claude/settings.json" });
   });
 
   it.each(Object.keys(PROVIDER_CONFIG_FILES))("%s uses the existing reader, writer, stamp and identity guards", (provider) => {
