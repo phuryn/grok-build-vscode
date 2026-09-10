@@ -16511,16 +16511,14 @@
         // the host that was quiet, not to this one.
         forgetRailProbeVerdict();
         restoreRememberedRemoteSession();
-        // Capability field presence — never a version check. Local hosts ignore.
-        //
-        // A SECOND snapshot is a reconnect, and a reconnect voids the previous
-        // socket's outstanding work. The panel already exists by then, which is
-        // the whole test: it is created here, so a mounted one means a snapshot
-        // has landed before. Local hosts never mount it and never take either
-        // branch.
-        const remoteFilesReconnected = !!(state.filesBrowse && state.filesBrowse.component);
-        if (remoteFilesReconnected) abandonRemoteFileRequests();
-        ensureRemoteFilesBrowser({ reconnected: remoteFilesReconnected });
+        // A second snapshot used to be read here as proof that the connection
+        // had died — the panel already existing was the whole test. It was a
+        // guess, and it was wrong in both directions: a session swap or a host
+        // re-asserting its state produces a snapshot with no socket trouble at
+        // all, while a cloud machine that suspended and woke can be gone for a
+        // minute before one arrives. Nothing in this webview can see a socket.
+        // The page's shell can, and says so; see `hostReachable` below.
+        ensureRemoteFilesBrowser();
         if (typeof msg.showThinking === "boolean") state.showThinking = msg.showThinking;
         if (typeof msg.expandCommandOutputs === "boolean") state.expandCommandOutputs = msg.expandCommandOutputs;
         if (typeof msg.steerByDefault === "boolean") state.steerByDefault = msg.steerByDefault;
@@ -16549,6 +16547,16 @@
         applyExpandCommandOutputs();
         syncGearPlacement();
         renderWelcomeTip();
+        break;
+      case "hostReachable":
+        // The shell's own voice, not the host's: the connection this view's
+        // reads were riding ended, and a new one is up. Only something watching
+        // a socket can know that, which is why it is told rather than inferred.
+        //
+        // A local host never sends it and a remote page that predates it never
+        // does either, so an absent message means exactly the old behaviour —
+        // capability by arrival, as everywhere else on this wire.
+        onRemoteHostReachable();
         break;
       case "moveViewHint":
         // Live retraction. `initialState` is not re-sent on a session swap, so a
@@ -18610,9 +18618,9 @@
   /**
    * Fail every request still waiting on the connection that just ended.
    *
-   * A reconnect arrives with a whole fresh snapshot, so anything posted over the
-   * previous socket is unanswerable: either the frame never landed or its reply
-   * went nowhere. Waiting out each request's own thirty seconds is not caution,
+   * Anything posted over the previous socket is unanswerable: either the frame
+   * never landed or its reply went nowhere. Waiting out each request's own
+   * thirty seconds is not caution,
    * it is a delay we can already prove is pointless — and it is not free, because
    * until a reply proves the host echoes requestIds these are serialized per key,
    * so ONE read swallowed by a frozen socket holds up every read behind it. That
@@ -18686,7 +18694,7 @@
     return cwd ? { id: cwd, label: cwdLeaf(cwd) || "Project", title: cwd } : null;
   }
 
-  function ensureSharedRemoteFilePanel(opts) {
+  function ensureSharedRemoteFilePanel() {
     if (!remoteFilesBrowseAvailable()) return false;
     const shared = window.GrokFilePanel;
     if (!shared || typeof shared.createFilePanel !== "function") return false;
@@ -18799,7 +18807,7 @@
     }
     placeRemoteFilesButton(panel.toggleElement);
     panel.toggleElement.hidden = false;
-    void panel.setScope(currentRemoteFileScope(), opts);
+    void panel.setScope(currentRemoteFileScope());
     return true;
   }
   function remoteFilesButtonHost() {
@@ -18825,7 +18833,26 @@
     host.appendChild(btn);
   }
 
-  function ensureRemoteFilesBrowser(opts) {
+  /**
+   * The connection ended and a new one is up.
+   *
+   * Two things follow, in this order. Every request still outstanding was
+   * posted over a socket that no longer exists, so it is unanswerable and
+   * failing it now is not caution but the removal of a wait we can already
+   * prove is pointless. Then the panel re-asks for what is on screen — which
+   * is the part that replaces those requests, rather than replaying them.
+   *
+   * A panel that was never mounted has nothing to refresh: this is the first
+   * connection, not a returning one, and the ordinary mount does the reads.
+   */
+  function onRemoteHostReachable() {
+    const panel = state.filesBrowse && state.filesBrowse.component;
+    if (!panel) return;
+    abandonRemoteFileRequests();
+    if (typeof panel.refreshDisplayed === "function") void panel.refreshDisplayed();
+  }
+
+  function ensureRemoteFilesBrowser() {
     const available = remoteFilesBrowseAvailable();
     const panel = state.filesBrowse.component;
     if (!available) {
@@ -18837,7 +18864,7 @@
     // file-panel.js is part of the remote page's vendored UI bundle. There is no
     // second renderer here: a missing component is a packaging error, surfaced
     // visibly and recoverable by refreshing after the deploy is corrected.
-    if (!ensureSharedRemoteFilePanel(opts)) {
+    if (!ensureSharedRemoteFilePanel()) {
       console.error("Remote project files require media/file-panel.js");
     }
   }

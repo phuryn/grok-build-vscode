@@ -1441,13 +1441,13 @@
      * A re-assert keeps all of it and re-reads in place, which is the whole
      * promise the Changes view makes when it says it fills in on reconnect.
      *
-     * `reconnected` is the caller's to declare, because only it can see a socket.
-     * It forces the read past the in-flight guard: the request that guard is
-     * protecting went down with the previous connection and no answer to it is
-     * ever coming. `loadSeq` is what makes that safe — a superseded read's late
-     * answer is discarded rather than applied over the newer one.
+     * What this function no longer does is decide that a re-assert means the
+     * connection died. It cannot know that — only something watching a socket
+     * can — and the caller that used to tell it was itself guessing, from the
+     * arrival of a second snapshot. `refreshDisplayed` below is that job, asked
+     * for explicitly by whoever actually knows.
      */
-    async function setScope(scope, { reconnected = false } = {}) {
+    async function setScope(scope) {
       if (destroyed) return;
       const nextState = scope ? scopeState(scope) : null;
       const switched = currentState !== nextState;
@@ -1463,22 +1463,12 @@
       // confusion the per-scope state exists to prevent.
       if (switched) leaveChanges();
       paintChangesButton();
-      // Forced ONLY on a reconnect. Hosts reassert one scope from adjacent state
+      // Never forced from here. Hosts reassert one scope from adjacent state
       // and catalog events too, and forcing on those would turn each into a
       // duplicate `git status` — the same waste `rootLoad` sharing exists to
-      // avoid one function below.
-      if (canGit && currentState && gitEnabledNow()) {
-        // The list re-reads itself here; the OPEN DIFF has to be asked for
-        // separately or it keeps whatever the dead connection left on it.
-        // That is what the owner hit: a diff subview pinned to "The
-        // connection dropped before that finished." with nothing that would
-        // ever replace it, because only the list was ever refreshed. Status
-        // and diff are different request keys, so this does not queue behind
-        // the read above.
-        const openDiff = reconnected ? currentState.changes.diffPath : null;
-        void loadChanges({ force: reconnected });
-        if (openDiff) void openChangeDiff(openDiff);
-      }
+      // avoid one function below. The one case that must force is a connection
+      // that ended, and that arrives at `refreshDisplayed`.
+      if (canGit && currentState && gitEnabledNow()) void loadChanges();
       if (switched) treeMode = !(currentState && currentState.activeRelPath);
       renderTabs();
       if (!currentState) {
@@ -1500,6 +1490,51 @@
       } else {
         renderViewer();
       }
+    }
+
+    /**
+     * The connection these reads were riding is gone and a new one is up. Ask
+     * again for what is ON SCREEN — and for nothing that somebody is part way
+     * through writing.
+     *
+     * The view owns what it wants to display, which is why this recreates a
+     * handful of reads rather than replaying the requests that were in flight.
+     * Those belonged to clicks made minutes ago against a socket that no longer
+     * exists; re-sending them would answer a question nobody is still asking
+     * and, in the tree's case, would answer it about a folder that has since
+     * been collapsed.
+     *
+     * `force` is what gets past the in-flight guard, and it is safe for exactly
+     * the reason the guard exists: the request being guarded went down with the
+     * previous connection and no answer to it is ever coming. `loadSeq` and
+     * `diffSeq` fence the late answer if one somehow does.
+     *
+     * What is deliberately NOT re-read: a dirty tab, a tab mid-save, and the
+     * commit message and branch draft, which `loadChanges` never touches. A
+     * reload replaces a tab wholesale, so doing it to a file somebody has typed
+     * into would take their words away to fix a connection problem they did not
+     * cause.
+     */
+    async function refreshDisplayed() {
+      if (destroyed || !currentScope || !currentState) return;
+      const state = currentState;
+      if (canGit && gitEnabledNow()) {
+        // The list re-reads itself here; the OPEN DIFF has to be asked for
+        // separately or it keeps whatever the dead connection left on it.
+        // That is what the owner hit: a diff subview pinned to "The connection
+        // dropped before that finished." with nothing that would ever replace
+        // it, because only the list was ever refreshed. Asked for even when the
+        // tree is showing, because leaving Changes keeps the open diff and
+        // going back lands straight on it. Status and diff are different
+        // request keys, so this does not queue behind the read above.
+        const openDiff = state.changes.diffPath;
+        void loadChanges({ force: true });
+        if (openDiff) void openChangeDiff(openDiff);
+      }
+      if (changesMode) return;
+      if (treeMode) { void refreshTree(); return; }
+      const tab = state.activeRelPath ? state.tabs.get(state.activeRelPath) : null;
+      if (tab && !tab.dirty && !tab.saving && !tab.reloading && tab.kind !== "error") void reloadTab(tab);
     }
 
     async function loadRootTree() {
@@ -3810,6 +3845,12 @@
       setOpen,
       isOpen: () => open,
       setScope,
+      /**
+       * A connection ended and a new one is up. The caller is the only thing
+       * that can know that, which is the whole reason this is a call and not
+       * an inference drawn in here.
+       */
+      refreshDisplayed,
       setWidth: setPanelWidth,
       setMaximized,
       isMaximized: () => maximized,

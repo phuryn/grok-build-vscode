@@ -520,6 +520,23 @@ export type HostMsg =
   // Whether this machine holds a relay device token (gear "AFK Pilot" section).
   // Local-webview chrome — never mirrored to remotes.
   | { type: "remoteStatus"; linked: boolean }
+  /**
+   * The connection carrying this webview's messages ended, and a new one is up.
+   *
+   * Sent by the RELAY's page shell, which is what plays host on a remote and
+   * already speaks `hostNotice` and `error` from that position. A local host
+   * never sends it: a desk webview has no socket to lose, and reloading it
+   * rebuilds everything anyway. It is declared here because the contract is
+   * "what a webview may receive", and a type that arrives undeclared is exactly
+   * the drift `isKnownHostMessage` exists to catch.
+   *
+   * The webview cannot work this out for itself, and used to try: it read a
+   * second `initialState` as proof the connection had died, which is wrong in
+   * both directions — a session swap produces one with no socket trouble at
+   * all, and a suspended cloud machine can be gone a minute before one arrives.
+   * Capability by arrival, as everywhere else: no frame, old behaviour.
+   */
+  | { type: "hostReachable" }
   | { type: "fontScale"; value: number }
   | { type: "grokUpdateStatus"; current?: string | null; latest?: string | null; updateAvailable?: boolean; policy?: unknown; error?: string }
   /** Desktop app update notice (manual download page). Host-local; VS Code
@@ -1405,7 +1422,7 @@ const HOST_MESSAGE_TYPE_MAP: Record<HostMsg["type"], true> = {
   agentError: true, agentEnd: true, exit: true, setBusy: true, summarizing: true,
   sessionContext: true, clearMessages: true, onboarding: true, error: true, hostNotice: true,
   xaiNotification: true, subagentUpdate: true, childStream: true, runProgress: true, commandOutput: true, expandCommandOutputs: true, steerByDefault: true, promptNav: true, expandDiffCard: true,
-  soundNotifications: true, processingSound: true, readRepliesAloud: true, summarizeRepliesAloud: true, speechSummary: true, imageFull: true, imageOriginal: true, moveComposerCaret: true, remoteStatus: true,
+  soundNotifications: true, processingSound: true, readRepliesAloud: true, summarizeRepliesAloud: true, speechSummary: true, imageFull: true, imageOriginal: true, moveComposerCaret: true, remoteStatus: true, hostReachable: true,
   setAllToolDetails: true, focusInput: true, findInSession: true, restoreComposer: true, truncateMessages: true, uiConfirmRequest: true,
   sessions: true, sessionRemoved: true, repoSessions: true, pinnedSessions: true, repos: true, sessionDot: true, queuedSends: true, submitQueuedSend: true,
   steerUnavailable: true, feedbackAvailability: true, turnFeedbackAck: true, usage: true,

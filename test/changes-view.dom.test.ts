@@ -354,6 +354,50 @@ describe("the panel", () => {
     h.panel.destroy();
   });
 
+  it("re-reads what is on screen and leaves the commit message alone", async () => {
+    // A connection ended and a new one is up. The list is stale and has to be
+    // asked for again; the sentence somebody was part way through typing into
+    // the commit box is not stale at all, and replacing it would take their
+    // words away to fix a network problem they did not cause.
+    const h = harness({ snapshot: snap({ files: [file("a.ts", "M")] }) });
+    await h.open();
+    const box = h.q(".gfp-changes-message") as HTMLTextAreaElement;
+    expect(box, "no commit message box").toBeTruthy();
+    box.value = "Fix the thing";
+    box.dispatchEvent(new h.window.Event("input", { bubbles: true }));
+    await settle();
+    const before = h.statusCalls();
+    await h.panel.refreshDisplayed();
+    await settle();
+    await settle();
+    expect(h.statusCalls(), "the list was not re-read").toBeGreaterThan(before);
+    expect((h.q(".gfp-changes-message") as HTMLTextAreaElement).value).toBe("Fix the thing");
+    h.panel.destroy();
+  });
+
+  it("does not re-read a file somebody has typed into", async () => {
+    // Reload replaces a tab wholesale with the host's version. Doing that to a
+    // dirty tab as part of a recovery would be the same theft as above, and
+    // quieter: the words vanish and nothing says why.
+    const h = harness({ write: async () => ({ ok: true, stamp: { mtimeMs: 2, size: 8 } }) });
+    await h.open();
+    await h.panel.openPath("a.ts");
+    await settle();
+    h.q(".gfp-edit")!.click();
+    await settle();
+    const editor = h.q(".gfp-editor") as HTMLTextAreaElement;
+    editor.value = "my words";
+    editor.dispatchEvent(new h.window.Event("input", { bubbles: true }));
+    await settle();
+    await h.panel.refreshDisplayed();
+    await settle();
+    await settle();
+    // The host's version of this file is "hello". Seeing it here would mean the
+    // recovery had overwritten the draft.
+    expect((h.q(".gfp-editor") as HTMLTextAreaElement).value).toBe("my words");
+    h.panel.destroy();
+  });
+
   it("labels exactly one section: uncommitted files win over unpushed commits", async () => {
     for (const dirty of [true, false]) {
       const h = harness({ snapshot: snap({

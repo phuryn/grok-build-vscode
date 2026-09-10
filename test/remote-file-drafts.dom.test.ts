@@ -718,7 +718,18 @@ describe("remote discard and close semantics", () => {
     expect(expiries.length, "no request timeout was armed").toBeGreaterThan(0);
 
     // It wakes and dials back in, still inside that first request's lifetime.
+    //
+    // The snapshot is NOT what says so. Reading a second `initialState` as
+    // proof the connection died was a guess this webview had no way to make,
+    // and it was wrong in both directions: a session swap produces one with
+    // nothing wrong, and a suspended machine can be gone a minute before one
+    // arrives.
     boot();
+    await settle();
+    expect(requests(h, "gitStatus").length, "a snapshot on its own re-read").toBe(asked);
+
+    // The page's shell is the thing that can see a socket, and it says so.
+    dispatch(h.window, { type: "hostReachable" });
     await settle();
     expect(h.doc.querySelector(".gfp-changes-mode"), "the reconnect dropped the Changes view").toBeTruthy();
     expect(requests(h, "gitStatus").length, "the reconnect did not re-read").toBeGreaterThan(asked);
@@ -765,8 +776,13 @@ describe("remote discard and close semantics", () => {
     expect(askedDiff, "the row did not request a diff").toBeGreaterThan(0);
 
     // The machine freezes with that diff request on the wire, then wakes and
-    // dials back in with a fresh snapshot.
+    // dials back in with a fresh snapshot — which, again, proves nothing about
+    // the socket on its own.
     boot();
+    await settle();
+    expect(requests(h, "gitFileDiff").length, "a snapshot on its own re-read").toBe(askedDiff);
+
+    dispatch(h.window, { type: "hostReachable" });
     await settle();
     expect(
       requests(h, "gitFileDiff").length,

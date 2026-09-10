@@ -898,6 +898,12 @@ export type OutboundDisposition =
   | "host-local";
 
 export const OUTBOUND_DISPOSITION: Record<HostMsg["type"], OutboundDisposition> = {
+  // The RELAY's page shell sends this to its own webview; it never travels the
+  // other way. A desk host has no socket to lose and so has nothing to report,
+  // and mirroring one out would be a machine that never went away announcing
+  // that it came back — which the browser would answer by re-reading every
+  // view on screen, for nothing.
+  hostReachable: "host-local",
   media: "media",
   voiceState: "mirror",
   voiceConfigured: "mirror",
@@ -1071,6 +1077,10 @@ export type OutboundProjectAuth =
 
 export const OUTBOUND_PROJECT_AUTH: Record<HostMsg["type"], OutboundProjectAuth> = {
   // Device-global / host chrome — not project data.
+  // `hostReachable` names no project and carries no payload at all; it is
+  // suppressed outbound anyway, and this says so a second time on purpose,
+  // because these two tables are read independently.
+  hostReachable: "none",
   moveViewHint: "none",
   welcomeTips: "none",
   projectSetup: "none",
