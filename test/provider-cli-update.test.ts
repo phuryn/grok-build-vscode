@@ -5,6 +5,7 @@ import { execGrokCli } from "../src/cli-process";
 import { warmCodexModelCache } from "../src/codex-model-cache";
 import { warmClaudeModelCache } from "../src/claude-model-cache";
 import { CODEX_MANAGED_VERSION } from "../src/codex-managed-installer";
+import { CLAUDE_PINNED_CLI_VERSION } from "../src/claude-backend";
 import { allowFromRemote, remoteRequiresBoundSession, transformHostMsgForRemote } from "../src/remote-policy";
 
 vi.mock("../src/cli-process", () => ({ execGrokCli: vi.fn() }));
@@ -12,6 +13,14 @@ vi.mock("../src/codex-model-cache", () => ({ warmCodexModelCache: vi.fn() }));
 vi.mock("../src/claude-model-cache", () => ({ warmClaudeModelCache: vi.fn() }));
 
 const CACHE = "grok.providerModelCache";
+/** What is on disk BEFORE the update, matching the harness's cached row.
+ *  Older than both pins, so the freshness guard lets the update proceed. */
+const INSTALLED_BEFORE = "0.149.0";
+/** What the CLI's own updater is asked, now that the plan carries a target.
+ *  claude takes `install <version>`; codex has no measured version-capable
+ *  spelling of its own, so it keeps the plain update. */
+const updaterArgs = (provider: "codex" | "claude") =>
+  provider === "claude" ? ["install", CLAUDE_PINNED_CLI_VERSION] : ["update"];
 const exec = vi.mocked(execGrokCli);
 const defer = () => {
   let resolve!: () => void;
@@ -63,16 +72,31 @@ function harness(provider: "codex" | "claude") {
     // the state the update path must not report as success.
     startSession: vi.fn(async () => ({}) as unknown),
   });
-  exec.mockImplementation(async (_path, args) => ({
-    stdout: args[0] === "--version" ? `${provider} ${CODEX_MANAGED_VERSION}` : "arbitrary updater output",
-    stderr: "",
-  }));
+  // `--version` answers what is INSTALLED, and a successful updater run is what
+  // changes it. The update path now reads the version twice — once before it
+  // tears anything down, once after — so a single static answer would make a
+  // real update look like a no-op to the freshness guard. Modelling the state
+  // rather than counting calls also survives the probes other tests fire first.
+  let installed = INSTALLED_BEFORE;
+  const versionReply = () => ({ stdout: `${provider} ${installed}`, stderr: "" });
+  exec.mockImplementation(async (_path, args) => {
+    if (args[0] === "--version") return versionReply();
+    installed = CODEX_MANAGED_VERSION;
+    return { stdout: "arbitrary updater output", stderr: "" };
+  });
+  /** Fail the UPDATER only, leaving the version reads working — a bare
+   *  `mockRejectedValueOnce` would land on the freshness probe instead. The
+   *  installed version stays put, which is what a failed update means. */
+  const rejectUpdater = (error: unknown) => exec.mockImplementation(async (_path, args) => {
+    if (args[0] === "--version") return versionReply() as never;
+    throw error;
+  });
   for (const warm of [vi.mocked(warmCodexModelCache), vi.mocked(warmClaudeModelCache)]) {
     warm.mockImplementation(async (options) => {
       await options.onModels([{ modelId: "new-model", name: "New model" }]);
     });
   }
-  return { host, store, local, phone, background, other };
+  return { host, store, local, phone, background, other, rejectUpdater };
 }
 
 beforeEach(() => vi.clearAllMocks());
@@ -85,14 +109,14 @@ describe.each(["codex", "claude"] as const)("%s explicit CLI update", (provider)
     const untouched = other.client;
     const updating = host.updateProviderCliOnDemand(provider);
     await vi.waitFor(() => expect(local.client).toBeUndefined());
-    expect(exec).not.toHaveBeenCalled();
+    expect(exec.mock.calls.map((c) => c[1])).toEqual([["--version"]]);
     exits[0].resolve(); exits[1].resolve();
     await Promise.resolve();
-    expect(exec).not.toHaveBeenCalled();
+    expect(exec.mock.calls.map((c) => c[1])).toEqual([["--version"]]);
     exits[2].resolve();
     await updating;
-    expect(exec.mock.calls.map((c) => c[1])).toEqual([["update"], ["--version"]]);
-    expect(exec.mock.calls[0][2]).toMatchObject({ windowsHide: true, closeStdin: true, timeout: 180_000 });
+    expect(exec.mock.calls.map((c) => c[1])).toEqual([["--version"], updaterArgs(provider), ["--version"]]);
+    expect(exec.mock.calls[1][2]).toMatchObject({ windowsHide: true, closeStdin: true, timeout: 180_000 });
     expect(host.providerCliVersions[provider]).toBe(CODEX_MANAGED_VERSION);
     expect(store[CACHE][provider]).toMatchObject({ cliVersion: CODEX_MANAGED_VERSION, models: [{ modelId: "new-model" }] });
     expect(provider === "codex" ? warmCodexModelCache : warmClaudeModelCache).toHaveBeenCalledOnce();
@@ -115,11 +139,11 @@ describe.each(["codex", "claude"] as const)("%s explicit CLI update", (provider)
   });
 
   it("reports a nonzero exit even when stdout claims success, then probes and resumes", async () => {
-    const { host } = harness(provider);
-    exec.mockRejectedValueOnce(Object.assign(new Error("updater exited with code 7"), { code: 7, stdout: "Successfully updated" }));
+    const { host, rejectUpdater } = harness(provider);
+    rejectUpdater(Object.assign(new Error("updater exited with code 7"), { code: 7, stdout: "Successfully updated" }));
     await host.updateProviderCliOnDemand(provider);
     expect(host.providerCliUpdates[provider]).toMatchObject({ status: "failed", message: expect.stringContaining("code 7") });
-    expect(exec.mock.calls.map((c) => c[1])).toEqual([["update"], ["--version"]]);
+    expect(exec.mock.calls.map((c) => c[1])).toEqual([["--version"], updaterArgs(provider), ["--version"]]);
     expect(host.startSession).toHaveBeenCalledTimes(2);
   });
 
@@ -221,7 +245,7 @@ describe.each(["codex", "claude"] as const)("%s explicit CLI update", (provider)
     updating.resolve();
     await Promise.all([run, started]);
     expect(startBody).toHaveBeenCalledOnce();
-    expect(exec.mock.calls.filter((c) => c[1][0] === "update")).toHaveLength(1);
+    expect(exec.mock.calls.filter((c) => c[1][0] !== "--version")).toHaveLength(1);
   });
 
   it("waits for an existing model probe and declines new probes during replacement", async () => {
@@ -231,7 +255,7 @@ describe.each(["codex", "claude"] as const)("%s explicit CLI update", (provider)
     const run = host.updateProviderCliOnDemand(provider);
     await Promise.resolve();
     expect(await host.reprobeProviderCredentials(provider)).toBe(false);
-    expect(exec).not.toHaveBeenCalled();
+    expect(exec.mock.calls.map((c) => c[1])).toEqual([["--version"]]);
     pending.resolve();
     await run;
     expect(exec).toHaveBeenCalled();
@@ -241,7 +265,8 @@ describe.each(["codex", "claude"] as const)("%s explicit CLI update", (provider)
     const { host, local } = harness(provider);
     vi.mocked(local.client!.disposeForUpdate).mockRejectedValueOnce(new Error("process did not exit"));
     await host.updateProviderCliOnDemand(provider);
-    expect(exec.mock.calls.map((c) => c[1])).toEqual([["--version"]]);
+    // The freshness read, then the finally's re-probe. The updater never ran.
+    expect(exec.mock.calls.map((c) => c[1])).toEqual([["--version"], ["--version"]]);
     expect(host.providerCliUpdate).toBeUndefined();
     expect(host.providerCliUpdates[provider].message).toContain("process did not exit");
   });
@@ -253,10 +278,10 @@ describe.each(["codex", "claude"] as const)("%s explicit CLI update", (provider)
     const run = host.updateProviderCliOnDemand(provider);
     await host.refreshAdapterHistory(provider, "/project");
     await Promise.resolve();
-    expect(exec).not.toHaveBeenCalled();
+    expect(exec.mock.calls.map((c) => c[1])).toEqual([["--version"]]);
     reader.resolve();
     await run;
-    expect(exec.mock.calls[0][1]).toEqual(["update"]);
+    expect(exec.mock.calls[1][1]).toEqual(updaterArgs(provider));
   });
 
   it("waits for a late old version observation before clearing its memo", async () => {
@@ -265,10 +290,68 @@ describe.each(["codex", "claude"] as const)("%s explicit CLI update", (provider)
     host[`${provider}VersionProbe`] = old.promise.then(() => { host.providerCliVersions[provider] = "0.149.0"; });
     const run = host.updateProviderCliOnDemand(provider);
     await Promise.resolve();
+    // Nothing is spawned yet: the freshness read drains the in-flight probe
+    // before dropping the memo, so a late answer cannot land on top of it.
     expect(exec).not.toHaveBeenCalled();
     old.resolve();
     await run;
     expect(host.providerCliVersions[provider]).toBe(CODEX_MANAGED_VERSION);
+  });
+
+  it("says so instead of stopping sessions when the CLI is already on the pin", async () => {
+    // The row that enables this button can be minutes old: the person may have
+    // updated in a terminal, or another window may have run this already. What
+    // used to follow was the full teardown -- every conversation on this
+    // provider stopped and reopened -- to install a version already on disk.
+    const { host, local, phone } = harness(provider);
+    const pinned = provider === "codex" ? CODEX_MANAGED_VERSION : CLAUDE_PINNED_CLI_VERSION;
+    exec.mockImplementation(async (_path, args) => ({
+      stdout: args[0] === "--version" ? `${provider} ${pinned}` : "arbitrary updater output",
+      stderr: "",
+    }));
+    const clients = [local.client, phone.client];
+
+    await host.updateProviderCliOnDemand(provider);
+
+    expect(exec.mock.calls.map((c) => c[1])).toEqual([["--version"]]);
+    expect(host.providerCliUpdates[provider]).toMatchObject({
+      status: "succeeded", message: expect.stringContaining(`already on v${pinned}`),
+    });
+    // Nothing was torn down, and nothing was reopened -- the difference between
+    // a no-op and the old behaviour is exactly these two lines.
+    expect([local.client, phone.client]).toEqual(clients);
+    expect(local.client!.disposeForUpdate).not.toHaveBeenCalled();
+    expect(host.startSession).not.toHaveBeenCalled();
+    // The gate is released, or every later session start would wait on it.
+    expect(host.providerCliUpdate).toBeUndefined();
+  });
+
+  it("still updates when the installed version is merely unreadable", async () => {
+    // An unparseable `--version` is not evidence of being current. Refusing to
+    // update on it would strand a machine on a broken binary with no way back.
+    const { host } = harness(provider);
+    exec.mockImplementation(async (_path, args) => ({
+      stdout: args[0] === "--version" ? "" : "arbitrary updater output", stderr: "",
+    }));
+    await host.updateProviderCliOnDemand(provider);
+    expect(exec.mock.calls.map((c) => c[1])).toContainEqual(updaterArgs(provider));
+  });
+
+  it("installs the version the product shows, not whatever npm calls latest", async () => {
+    // Settings has already told this person their target is `latestCliVersion`
+    // and computed "update available" against it. Fetching `@latest` installed
+    // a number they were never shown and left the row still offering an update.
+    const { host } = harness(provider);
+    const pkg = provider === "codex" ? "@openai/codex" : "@anthropic-ai/claude-code";
+    const pinned = provider === "codex" ? CODEX_MANAGED_VERSION : CLAUDE_PINNED_CLI_VERSION;
+    host.locateProvider = vi.fn(() => `/home/x/.local/lib/node_modules/${pkg}/bin/cli.js`);
+    host.isManagedCodexBinary = () => false;
+
+    await host.updateProviderCliOnDemand(provider);
+
+    const install = exec.mock.calls.find((c) => c[1][0] === "install");
+    expect(install![1]).toEqual(["install", "-g", "--prefix", "/home/x/.local", `${pkg}@${pinned}`]);
+    expect(install![1].join(" ")).not.toContain("@latest");
   });
 
   it("keeps a missing-binary failure in the UI even when the provider disappears", async () => {

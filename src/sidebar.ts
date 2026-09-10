@@ -21,7 +21,7 @@ import { isAdapterProvider, isAcpProvider, ACP_PROVIDERS } from "./acp-backend";
 import { CODEX_ACP_ADAPTER_VERSION, CodexBackend, isCodexCredentialError } from "./codex-backend";
 import { locateCodexCli, resolveCodexHome } from "./codex-cli-locator";
 import { CODEX_MANAGED_VERSION, codexManagedRoot, installManagedCodex } from "./codex-managed-installer";
-import { CLI_NPM_PACKAGE, cliUpdatePlan } from "./cli-update-plan";
+import { CLI_NPM_PACKAGE, cliUpdatePlan, selfUpdateArgs } from "./cli-update-plan";
 import { warmCodexModelCache } from "./codex-model-cache";
 import { CLAUDE_ACP_ADAPTER_VERSION, CLAUDE_PINNED_CLI_VERSION, ClaudeBackend, isClaudeCredentialError } from "./claude-backend";
 import { locateClaudeCli, parseClaudeVersionOutput } from "./claude-cli-locator";
@@ -8584,6 +8584,23 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     await this.reprobeProviderCredentials(provider);
   }
 
+  /**
+   * A version reading taken NOW, not the memo.
+   *
+   * `probeCodexVersion`/`probeClaudeVersion` cache until an explicit update,
+   * which is right for display and wrong for deciding whether to tear a
+   * person's sessions down. Drain whatever is already in flight before dropping
+   * the memo — the same ordering the update's own `finally` uses, and for the
+   * same reason: a late answer from the old probe would otherwise land on top
+   * of the reading taken here.
+   */
+  private async reReadProviderCliVersion(provider: "codex" | "claude"): Promise<string> {
+    await (provider === "codex" ? this.codexVersionProbe : this.claudeVersionProbe);
+    if (provider === "codex") this.codexVersionProbe = undefined;
+    else this.claudeVersionProbe = undefined;
+    return this.probeProviderVersion(provider);
+  }
+
   /** Memoize `codex --version` until an explicit update. The adapter handshake reports
    * its own package version, not the binary it launches. */
   private probeCodexVersion(): Promise<string> {
@@ -8996,7 +9013,24 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     }
     let release!: () => void;
     const done = new Promise<void>((resolve) => { release = resolve; });
+    // Take the lock BEFORE the freshness read below, so a second click is
+    // refused rather than racing a second update through the same window.
     this.providerCliUpdate = { provider, done };
+    // The row that enabled this button can be minutes old, and the cached
+    // version behind it older still: a person can update in a terminal, or
+    // another window can have run this already. Everything past this point
+    // STOPS their sessions, so re-read at the destructive moment rather than
+    // acting on what we happened to know. Returning here deliberately skips the
+    // try/finally below — that block reports "Update completed" and reopens
+    // conversations, and neither is true of a no-op.
+    const target = provider === "codex" ? CODEX_MANAGED_VERSION : CLAUDE_PINNED_CLI_VERSION;
+    const installed = await this.reReadProviderCliVersion(provider);
+    if (installed && !versionIsOlder(installed, target)) {
+      status("succeeded", `${name} is already on v${installed}. Nothing to update.`);
+      this.providerCliUpdate = undefined;
+      release();
+      return;
+    }
     const affected = () => [...new Set([
       ...this.pool, this.focused,
       ...this.remoteClients.clients().map((id) => this.remoteClients.active(id)),
@@ -9036,6 +9070,11 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         managed: this.isManagedCodexBinary(provider, cliPath),
         realPath,
         packageName: CLI_NPM_PACKAGE[provider],
+        // The pin, not `@latest`. Settings has already told this person their
+        // target is `latestCliVersion` and computed "update available" against
+        // it; fetching whatever is newest installs a version they were never
+        // shown, and leaves the row still claiming an update is available.
+        targetVersion: target,
       });
       if (plan.kind === "managed") {
         // We put this binary here, so updating it means installing the pinned
@@ -9053,7 +9092,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         const [command, args] = plan.kind === "npm"
           ? [process.platform === "win32" ? "npm.cmd" : "npm",
             ["install", "-g", "--prefix", plan.prefix, plan.packageSpec]]
-          : [cliPath, ["update"]];
+          : [cliPath, selfUpdateArgs(provider, plan.kind === "self" ? plan.target : undefined)];
         const { stdout, stderr } = await execGrokCli(command, args, {
           timeout: 180_000, windowsHide: true, closeStdin: true,
         });

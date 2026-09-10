@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cliUpdatePlan, npmPrefixForBinary } from "../src/cli-update-plan";
+import { cliUpdatePlan, npmPrefixForBinary, selfUpdateArgs } from "../src/cli-update-plan";
 
 describe("npmPrefixForBinary", () => {
   it("reads back the prefix a POSIX npm install used", () => {
@@ -45,5 +45,46 @@ describe("cliUpdatePlan", () => {
       realPath: "/home/sprite/.local/share/claude/versions/2.1.251",
       packageName: "@anthropic-ai/claude-code",
     })).toEqual({ kind: "self" });
+  });
+});
+
+describe("carrying an exact version", () => {
+  it("names the pinned version in the npm spec rather than latest", () => {
+    expect(cliUpdatePlan({
+      managed: false,
+      realPath: "/home/x/.local/lib/node_modules/@openai/codex/bin/codex.js",
+      packageName: "@openai/codex",
+      targetVersion: "0.153.4",
+    })).toEqual({ kind: "npm", prefix: "/home/x/.local", packageSpec: "@openai/codex@0.153.4" });
+  });
+
+  it("still falls back to latest where nothing pins a version", () => {
+    expect(cliUpdatePlan({
+      managed: false,
+      realPath: "/home/x/.local/lib/node_modules/@openai/codex/bin/codex.js",
+      packageName: "@openai/codex",
+    })).toMatchObject({ packageSpec: "@openai/codex@latest" });
+  });
+
+  it("hands the target to the CLI's own updater instead of dropping it", () => {
+    // `{ kind: "self" }` used to carry nothing, so a self-updating CLI was
+    // asked for "newest" however exactly the caller had named a version.
+    expect(cliUpdatePlan({ managed: false, realPath: "/usr/local/bin/claude", targetVersion: "2.1.263" }))
+      .toEqual({ kind: "self", target: "2.1.263" });
+    expect(cliUpdatePlan({ managed: false, realPath: "/usr/local/bin/claude" }))
+      .toEqual({ kind: "self" });
+  });
+
+  it("spells the version the way each CLI takes it", () => {
+    // Measured on a real machine: `claude update` has no version flag at all,
+    // and grok wants it after `--version`. Guessing either is how a working
+    // plain update becomes a failing one.
+    expect(selfUpdateArgs("claude", "2.1.263")).toEqual(["install", "2.1.263"]);
+    expect(selfUpdateArgs("grok", "1.0.25")).toEqual(["update", "--version", "1.0.25"]);
+    // Codex has no measured version-capable spelling of its own updater.
+    expect(selfUpdateArgs("codex", "0.153.4")).toEqual(["update"]);
+    for (const p of ["codex", "claude", "grok"] as const) {
+      expect(selfUpdateArgs(p)).toEqual(["update"]);
+    }
   });
 });

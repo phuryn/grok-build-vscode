@@ -23,7 +23,12 @@ export const CLI_NPM_PACKAGE = {
 export type CliUpdatePlan =
   | { kind: "managed" }
   | { kind: "npm"; prefix: string; packageSpec: string }
-  | { kind: "self" };
+  /** `target` is the exact version to move to. The SPELLING differs per CLI —
+   *  grok takes `update --version X`, claude takes `install X` — so the plan
+   *  carries the version and the caller carries the words. Absent means "let
+   *  the CLI decide", which is the only honest thing to say about a binary we
+   *  have no pinned version for. */
+  | { kind: "self"; target?: string };
 
 /**
  * The `--prefix` an npm global install was made with, read back out of the
@@ -42,16 +47,42 @@ export function npmPrefixForBinary(realPath: string): string | undefined {
   return prefix || undefined;
 }
 
+/**
+ * The words a CLI's OWN updater takes for an exact version.
+ *
+ * Measured on a real machine (2026-09-10), because these are third-party
+ * contracts and reading them off a help page is how the `gh --json` break
+ * happened: claude takes `install <v>` and has no version flag on `update` at
+ * all, grok takes `update --version <v>`. Codex is deliberately absent — we
+ * never measured a version-capable spelling for its own updater, and guessing
+ * one would turn a working plain update into a failing one. It reaches this
+ * path only when it is neither managed nor an npm layout.
+ */
+export function selfUpdateArgs(provider: "codex" | "claude" | "grok", target?: string): string[] {
+  if (!target) return ["update"];
+  if (provider === "claude") return ["install", target];
+  if (provider === "grok") return ["update", "--version", target];
+  return ["update"];
+}
+
 export function cliUpdatePlan(input: {
   /** The binary is inside our own managed store, so we own updating it. */
   managed: boolean;
   /** The located path with symlinks resolved. */
   realPath: string;
   packageName?: string;
+  /**
+   * The version we want to be on. The product already NAMES one: Settings shows
+   * `latestCliVersion` as the pin and computes "update available" against it, so
+   * fetching `@latest` here installs something other than the number the person
+   * was just shown — and on a cloud machine that is how the same build ends up
+   * running three different CLI versions. Omitted only where nothing pins one.
+   */
+  targetVersion?: string;
 }): CliUpdatePlan {
   if (input.managed) return { kind: "managed" };
   const prefix = input.packageName ? npmPrefixForBinary(input.realPath) : undefined;
   return prefix
-    ? { kind: "npm", prefix, packageSpec: `${input.packageName}@latest` }
-    : { kind: "self" };
+    ? { kind: "npm", prefix, packageSpec: `${input.packageName}@${input.targetVersion ?? "latest"}` }
+    : { kind: "self", ...(input.targetVersion ? { target: input.targetVersion } : {}) };
 }
