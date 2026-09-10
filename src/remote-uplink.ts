@@ -20,6 +20,9 @@ import {
   workingFrame,
   parseRelayFrame,
   nextBackoffMs,
+  refusalRetryMs,
+  CLOSE_BAD_TOKEN,
+  CLOSE_DEVICE_BUSY,
   INITIAL_BACKOFF_MS,
   connectionWasHealthy,
   redactRelayUrl,
@@ -148,6 +151,8 @@ export function filterAuthorizedOutbound(
 export class RemoteUplink {
   private ws?: WebSocket;
   private backoff = INITIAL_BACKOFF_MS;
+  /** When the current run of 4002 refusals began; 0 when there is none. */
+  private refusedSince = 0;
   /** When the live socket opened, so a close can tell healthy from flapping. */
   private openedAt = 0;
   private reconnectTimer?: NodeJS.Timeout;
@@ -422,7 +427,7 @@ export class RemoteUplink {
       if (this.disposed) return;
       // 4001 = relay rejected the token — retrying with the same token is
       // pointless; the user must re-link. Stop, loudly.
-      if (code === 4001) {
+      if (code === CLOSE_BAD_TOKEN) {
         this.opts.log(`[remote] uplink rejected (revoked device token) — run "AFK Pilot: Link this device" again`);
         try {
           this.opts.onCredentialRevoked?.();
@@ -436,6 +441,23 @@ export class RemoteUplink {
       // it earned, which is what stops a flapping socket hammering the relay.
       const connectedMs = this.openedAt ? Date.now() - this.openedAt : 0;
       this.openedAt = 0;
+      // 4002 = another socket is holding this device, and it is nearly always
+      // this host's own frozen one. The relay challenges that incumbent as
+      // soon as we knock, so the obstacle clears in seconds — wait those out
+      // briefly rather than earning a thirty-second delay for it. Bounded:
+      // past the window the refusal is a real rival, and ordinary backoff
+      // takes over with the delay it already had. See `refusalRetryMs`.
+      if (code === CLOSE_DEVICE_BUSY) {
+        if (!this.refusedSince) this.refusedSince = Date.now();
+        const soon = refusalRetryMs(Date.now() - this.refusedSince);
+        if (soon !== undefined) {
+          this.opts.log(`[remote] uplink refused (device still held); retrying in ${(soon / 1000).toFixed(1)}s`);
+          this.reconnectTimer = setTimeout(() => this.connect(), soon);
+          return;
+        }
+      } else {
+        this.refusedSince = 0;
+      }
       if (connectionWasHealthy(connectedMs)) this.backoff = INITIAL_BACKOFF_MS;
       this.opts.log(`[remote] uplink disconnected (code ${code}); retrying in ${Math.round(this.backoff / 1000)}s`);
       this.reconnectTimer = setTimeout(() => this.connect(), this.backoff);

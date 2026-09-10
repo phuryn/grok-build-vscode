@@ -16,6 +16,10 @@ import {
   buildLinkStartBody,
   connectionWasHealthy,
   nextBackoffMs,
+  refusalRetryMs,
+  REFUSAL_SHORT_RETRY_WINDOW_MS,
+  REFUSAL_SHORT_RETRY_MIN_MS,
+  REFUSAL_SHORT_RETRY_MAX_MS,
   INITIAL_BACKOFF_MS,
   MAX_BACKOFF_MS,
 } from "../src/remote-frames";
@@ -584,5 +588,45 @@ describe("nextBackoffMs", () => {
     expect(nextBackoffMs(INITIAL_BACKOFF_MS)).toBe(INITIAL_BACKOFF_MS * 2);
     expect(nextBackoffMs(MAX_BACKOFF_MS)).toBe(MAX_BACKOFF_MS);
     expect(nextBackoffMs(0)).toBe(INITIAL_BACKOFF_MS * 2); // floor below initial
+  });
+});
+
+/**
+ * A 4002 says the relay is up and the device is momentarily held — nearly
+ * always by this host's own frozen socket, which the relay now challenges the
+ * instant we knock. Waiting out that challenge beats earning a thirty-second
+ * delay for it; waiting forever is the query storm `connectionWasHealthy`
+ * exists to prevent, so the short window is bounded by the challenge itself.
+ */
+describe("refusalRetryMs", () => {
+  it("retries soon while the relay could still be retiring the incumbent", () => {
+    for (const elapsed of [0, 1_000, REFUSAL_SHORT_RETRY_WINDOW_MS - 1]) {
+      const ms = refusalRetryMs(elapsed, () => 0.5);
+      expect(ms).toBeGreaterThanOrEqual(REFUSAL_SHORT_RETRY_MIN_MS);
+      expect(ms).toBeLessThanOrEqual(REFUSAL_SHORT_RETRY_MAX_MS);
+    }
+  });
+
+  it("hands back to ordinary backoff once the window is spent", () => {
+    // Past here the refusal is a real rival — another window on the same desk
+    // sharing an installId — and one of them has to lose slowly.
+    expect(refusalRetryMs(REFUSAL_SHORT_RETRY_WINDOW_MS, () => 0.5)).toBeUndefined();
+    expect(refusalRetryMs(60_000, () => 0.5)).toBeUndefined();
+  });
+
+  it("covers the whole jitter range and never leaves it", () => {
+    expect(refusalRetryMs(0, () => 0)).toBe(REFUSAL_SHORT_RETRY_MIN_MS);
+    expect(refusalRetryMs(0, () => 0.999999)).toBe(REFUSAL_SHORT_RETRY_MAX_MS);
+    // Every host refused by one relay is refused at the same instant, so a
+    // fixed delay would march them back in lockstep.
+    const seen = new Set(Array.from({ length: 200 }, () => refusalRetryMs(0)));
+    expect(seen.size).toBeGreaterThan(1);
+  });
+
+  it("is bounded by the relay's challenge deadline, not by a guess", () => {
+    // The relay pings the incumbent and gives it UPLINK_PROBE_TIMEOUT_MS (8s)
+    // to answer. The window has to outlast that plus a round trip, or the host
+    // gives up on the short retry just before the obstacle clears.
+    expect(REFUSAL_SHORT_RETRY_WINDOW_MS).toBeGreaterThan(8_000);
   });
 });

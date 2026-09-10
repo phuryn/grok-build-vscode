@@ -732,6 +732,13 @@ export function buildLinkStartBody(input: {
   };
 }
 
+/** The relay refused this socket because it is already holding one for this
+ *  device. Mirrors CLOSE_DEVICE_BUSY in the relay's server.ts. */
+export const CLOSE_DEVICE_BUSY = 4002;
+/** The relay rejected the device credential itself: re-link, never retry.
+ *  Mirrors CLOSE_BAD_TOKEN in the relay's server.ts. */
+export const CLOSE_BAD_TOKEN = 4001;
+
 export const INITIAL_BACKOFF_MS = 1000;
 export const MAX_BACKOFF_MS = 30_000;
 
@@ -770,6 +777,50 @@ export function nextBackoffMs(prev: number): number {
  */
 export function connectionWasHealthy(connectedMs: number): boolean {
   return connectedMs >= MAX_BACKOFF_MS;
+}
+
+/**
+ * The relay closes 4002 when another socket is already holding this device.
+ *
+ * Almost always that other socket is THIS host's previous one, frozen open:
+ * the machine suspended, no FIN ever reached the relay, and the close event
+ * that would have detached it never fired. The relay now challenges such an
+ * incumbent with a ping the moment a second socket claims the device, so the
+ * corpse is retired within its probe deadline and the very next attempt gets
+ * in. Measured on a real machine, the wait used to be twenty-eight seconds.
+ *
+ * A refusal is therefore not a flap. `connectionWasHealthy` exists because a
+ * socket that OPENS and dies proves nothing, and doubling the delay is what
+ * stops it hammering the relay — but 4002 is a definite answer from a relay
+ * that is plainly up and plainly working, and it says the thing we are
+ * waiting for is measured in seconds. Growing the delay to thirty for that
+ * makes the host wait long after the obstacle has gone.
+ *
+ * It is not free either: every attempt costs the relay a device lookup, which
+ * is the exact query that once ran sixty-five million times in a week. So the
+ * short retry is BOUNDED, by the only number that means anything here — how
+ * long the relay needs to retire the incumbent. Past that the refusal is no
+ * longer transient (two windows on one desk genuinely share a device token,
+ * and one of them has to lose), and ordinary backoff takes over with whatever
+ * delay it had already earned. Nothing resets it.
+ *
+ * Jittered because every host refused by one relay is refused at once.
+ */
+export const REFUSAL_SHORT_RETRY_WINDOW_MS = 10_000;
+export const REFUSAL_SHORT_RETRY_MIN_MS = 1_000;
+export const REFUSAL_SHORT_RETRY_MAX_MS = 2_000;
+
+/**
+ * How long to wait after a 4002, given how long this run of refusals has been
+ * going. `undefined` means the short window is over: use ordinary backoff.
+ */
+export function refusalRetryMs(
+  refusedForMs: number,
+  random: () => number = Math.random,
+): number | undefined {
+  if (refusedForMs >= REFUSAL_SHORT_RETRY_WINDOW_MS) return undefined;
+  const spread = REFUSAL_SHORT_RETRY_MAX_MS - REFUSAL_SHORT_RETRY_MIN_MS;
+  return REFUSAL_SHORT_RETRY_MIN_MS + Math.floor(random() * (spread + 1));
 }
 
 /**
