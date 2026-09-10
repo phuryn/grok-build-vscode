@@ -15,12 +15,18 @@ import { bootWebview } from "./webview-harness";
  * REMOTE_TAB_CLAIM_TIMEOUT_MS (250ms) for an answer. An incumbent that answers
  * says "occupied", and the duplicate then takes a fresh identity.
  *
- * The 250ms is the whole problem, and these tests exist to pin it down.
- * `settle()` carries a latch, so the FIRST outcome wins and everything after is
- * a no-op — including the incumbent's answer when it arrives at 251ms. A
- * background tab is timer-throttled by every mobile browser, and 250ms sits
- * inside that throttling window, so a late answer is the ordinary case on a
- * phone rather than the rare one.
+ * The 250ms was the whole problem. `settle()` carries a latch, so the FIRST
+ * outcome wins and everything after is a no-op — including the incumbent's
+ * answer when it arrives at 251ms. A background tab is timer-throttled by every
+ * mobile browser, and 250ms sits inside that throttling window, so a late
+ * answer is the ordinary case on a phone rather than the rare one.
+ *
+ * No deadline can separate "answered late" from "nobody is there", so the page
+ * stopped trying to. A claim settled by silence is announced as UNPROVEN, and
+ * the relay puts the question to the incumbent socket — a protocol ping, which
+ * a browser answers from its network stack with the page's JavaScript
+ * uninvolved. These tests pin what the page declares; `tab-claim-server.test.ts`
+ * in the relay pins what is done with the declaration.
  *
  * This was previously filed in the backlog as a saturation flake in
  * `webview-ui.dom.test.ts`, on reasoning that turned out to be about an
@@ -121,6 +127,13 @@ async function duplicateTab(opts: { deliverAfterMs: number; withIncumbent?: bool
     duplicateToken: duplicate.window.sessionStorage.getItem(TOKEN_KEY),
     rememberedSession: duplicate.window.sessionStorage.getItem(SESSION_KEY),
     ready: duplicate.posted.find((message) => message.type === "ready"),
+    claimUnproven:
+      (duplicate.window as unknown as { __grokTabClaimUnproven?: boolean })
+        .__grokTabClaimUnproven === true,
+    releaseIdentity: (duplicate.window as unknown as {
+      __grokReleaseTabIdentity?: () => string | null;
+    }).__grokReleaseTabIdentity,
+    duplicateWindow: duplicate.window,
   };
 }
 
@@ -134,28 +147,48 @@ describe("a duplicated tab must not claim the original's identity", () => {
     // into the original's session under a different name.
     expect(out.rememberedSession).toBeNull();
     expect(out.ready).toEqual({ type: "ready", tabToken: out.duplicateToken });
+    // Settled by an ANSWER. There is nothing left for the relay to establish,
+    // and asking it to would spend a liveness round trip on a closed question.
+    expect(out.claimUnproven).toBe(false);
   });
 
-  // THE DEFECT. Flip this to `it` when the claim no longer settles on a guess.
-  // It is written as `it.fails` deliberately: encoded that way it fails the
-  // build the moment the behaviour is fixed, so the fix cannot land while the
-  // reproducer still claims the bug is present.
+  // THE DEFECT, and what replaced the guess. 251ms is not an exotic number: it
+  // is a phone that backgrounded the first tab, which every mobile browser
+  // throttles.
   //
-  // 251ms is not an exotic number. It is a phone that backgrounded the first
-  // tab, which every mobile browser throttles.
-  it.fails("takes a fresh identity when the incumbent answers LATE", async () => {
+  // The page still announces the copied token — it has no grounds to abandon
+  // one, since a tab restored after a crash presents exactly the same evidence
+  // — but it no longer presents it as a settled claim. That flag is the whole
+  // fix on this side: the relay refuses to retire a socket that answers.
+  it("declares the claim unproven when the incumbent answers LATE", async () => {
     const out = await duplicateTab({ deliverAfterMs: CLAIM_TIMEOUT_MS + 150 });
 
-    // Today: the 250ms timer settles first, `settled` latches, and the
-    // incumbent's answer is discarded. The duplicate keeps the copied token and
-    // announces `ready` with it — and the relay retires the original's socket.
-    expect(out.duplicateToken).not.toBe(out.originalToken);
-    expect(out.ready).toEqual({ type: "ready", tabToken: out.duplicateToken });
+    expect(out.claimUnproven).toBe(true);
+    expect(out.ready).toEqual({ type: "ready", tabToken: out.originalToken });
   }, 10_000);
 
-  // The constraint any fix has to respect, and the reason the timeout defaults
-  // to keeping the identity today. Nobody is alive to answer, so replacing here
-  // would cost a restored tab its conversation for nothing.
+  // The recovery path, for when the relay answers "that token is taken". The
+  // shell owns the socket and the outbound queue, so it calls this and drops
+  // its own copied work; what belongs to the renderer goes here.
+  it("releases the inherited identity and conversation on demand", async () => {
+    const out = await duplicateTab({ deliverAfterMs: CLAIM_TIMEOUT_MS + 150 });
+    expect(typeof out.releaseIdentity).toBe("function");
+
+    const replacement = out.releaseIdentity!();
+
+    expect(replacement).not.toBe(out.originalToken);
+    expect(out.duplicateWindow.sessionStorage.getItem(TOKEN_KEY)).toBe(replacement);
+    expect(out.duplicateWindow.sessionStorage.getItem(SESSION_KEY)).toBeNull();
+  }, 10_000);
+
+  // The constraint any fix has to respect, and the reason silence must not mean
+  // "give up the identity". Nobody is alive to answer, so replacing here would
+  // cost a restored tab its conversation — and its queued unsent work — for
+  // nothing.
+  //
+  // Note it declares the claim unproven too, and identically: from inside the
+  // page this case and the one above are the same silence. That is the point.
+  // The relay finds no incumbent, asks nothing, and honours the claim.
   it("keeps its identity when there is no incumbent to answer", async () => {
     const out = await duplicateTab({
       deliverAfterMs: CLAIM_TIMEOUT_MS + 150,
@@ -165,5 +198,6 @@ describe("a duplicated tab must not claim the original's identity", () => {
     expect(out.duplicateToken).toBe(out.originalToken);
     expect(out.settledToken).toBe(out.originalToken);
     expect(out.ready).toEqual({ type: "ready", tabToken: out.originalToken });
+    expect(out.claimUnproven).toBe(true);
   }, 10_000);
 });

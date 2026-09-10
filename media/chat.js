@@ -169,37 +169,53 @@
     }
     remoteTabInstanceId = newRemoteTabToken();
     if (!remoteTabInstanceId) {
+      // No instance id means no probe is possible at all. Replacing outright is
+      // the safe read of a prior owner we can never ask about.
       if (priorRemoteTabOwner) replaceRemoteTabIdentity();
       done(remoteTabToken || undefined);
       return;
     }
     window.addEventListener("pagehide", clearRemoteTabOwner, { once: true });
 
-    const finish = (replace) => {
+    /**
+     * `proven` says whether the identity we are about to announce was settled
+     * by an ANSWER — a sibling saying "occupied", or nobody having a prior
+     * claim to answer for in the first place.
+     *
+     * A claim settled by silence is the duplicated-tab case and the
+     * crashed-tab case at once, and no amount of waiting here separates them:
+     * a backgrounded tab is throttled by every mobile browser, so its reply
+     * arrives long after any deadline this page could pick. Guessing had a
+     * one-way cost — announce a copied token and the relay retires the
+     * original tab's socket — so this stops guessing and says so instead. The
+     * relay can ask the incumbent socket a question this page cannot.
+     */
+    const finish = (replace, proven) => {
       if (replace) replaceRemoteTabIdentity();
+      else if (!proven) window.__grokTabClaimUnproven = true;
       markRemoteTabClaimed();
       done(remoteTabToken || undefined);
     };
     if (typeof BroadcastChannel !== "function") {
-      finish(!!priorRemoteTabOwner);
+      finish(!!priorRemoteTabOwner, true);
       return;
     }
     let channel;
     try {
       channel = new BroadcastChannel(REMOTE_TAB_CHANNEL);
     } catch (_) {
-      finish(!!priorRemoteTabOwner);
+      finish(!!priorRemoteTabOwner, true);
       return;
     }
     let claimed = false;
     let settled = false;
     let timer;
-    const settle = (replace) => {
+    const settle = (replace, proven) => {
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
       claimed = true;
-      finish(replace);
+      finish(replace, proven !== false);
     };
     channel.onmessage = (event) => {
       const message = event && event.data;
@@ -221,12 +237,36 @@
     };
     if (priorRemoteTabOwner) {
       channel.postMessage({ type: "probe", token: remoteTabToken, instanceId: remoteTabInstanceId });
-      timer = setTimeout(() => settle(false), REMOTE_TAB_CLAIM_TIMEOUT_MS);
+      // Silence is not an answer, and this timer no longer pretends it is.
+      // It bounds how long a fresh page waits before getting on with it; the
+      // relay settles the ownership question with a round trip of its own.
+      timer = setTimeout(() => settle(false, false), REMOTE_TAB_CLAIM_TIMEOUT_MS);
     } else {
       settle(false);
     }
     window.addEventListener("pagehide", () => channel.close(), { once: true });
   }
+
+  /**
+   * The relay found a live tab holding the token this page inherited.
+   *
+   * Everything the copy brought with it goes: the identity, so the next
+   * reconnect claims nothing; the remembered conversation, so this tab does not
+   * resume into the original's session; and the in-memory file edits. The
+   * SHELL owns the outbound queue and the captured drafts and drops its own —
+   * it is the half that would replay them.
+   *
+   * Exposed rather than wired directly because the shell is the only thing
+   * holding the socket. An older shell simply never calls it, and an older
+   * renderer never defines it; both then behave exactly as they did before the
+   * relay learned to ask.
+   */
+  window.__grokReleaseTabIdentity = () => {
+    if (!IS_REMOTE) return null;
+    replaceRemoteTabIdentity();
+    markRemoteTabClaimed();
+    return remoteTabToken || null;
+  };
 
   let resolveRemoteTabTokenReady;
   window.__grokTabTokenReady = new Promise((resolve) => {
