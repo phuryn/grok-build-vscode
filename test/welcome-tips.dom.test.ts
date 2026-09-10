@@ -242,8 +242,8 @@ describe("empty-state advice", () => {
     const h = bootWebview({ ready: false, remote: true });
     settle(h);
     const offered = offeredTips(h);
-    for (const deskOnly of ["providers", "connectors", "remote", "worktrees", "moveView"]) {
-      expect(offered, deskOnly).not.toContain(deskOnly);
+    for (const withheld of ["providers", "connectors", "remote", "worktrees", "moveView"]) {
+      expect(offered, withheld).not.toContain(withheld);
     }
     // `voiceConfigured` starts optimistically true and only the host says
     // otherwise, so a phone whose desk has a voice key is not told to set one up.

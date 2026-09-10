@@ -8031,10 +8031,6 @@
       worktreeSupported: state.worktreeSupported !== false,
       inWorktree: !!state.isWorktree,
       altAgentConnected: !state.providersKnown || altConnected,
-      // A cloud machine can connect agents from here and cannot connect Claude
-      // Code at all; both change what the providers tip should say and whether
-      // it may be shown.
-      cloudHost: !!(state.hostCaps && state.hostCaps.remoteAgentSignOut),
       remoteCanConnectAgents: !!(state.hostCaps && state.hostCaps.remoteAgentSignIn),
       // The same capability Settings gates its Connectors category on.
       mcpSettings: !!(state.hostCaps && state.hostCaps.mcpSettings),
@@ -10029,12 +10025,12 @@
     }
   }
 
-  /** The row's path, split so the DIRECTORY is what gets cut.
-   *  A plain text-overflow ellipsis on the whole path eats the filename first,
-   *  which is the only part that identifies the row — on a phone a deep path
-   *  rendered as "packages/relay-transport/src/internal/handlers/ses…". The
-   *  leaf is a separate, non-shrinking span, so it survives every width and the
-   *  middle is what disappears. `title` keeps the original path reachable. */
+  /** The row's path, filename FIRST and directory second — the same order the
+   *  Changes panel uses, so one file reads the same way in the card and in the
+   *  panel. The directory is the half that gets cut, and it is cut from the
+   *  LEFT so the folders nearest the file survive. Only when the filename alone
+   *  cannot fit does it ellipsize; see chat.css for the ladder.
+   *  `title` keeps the original path reachable. */
   function turnDiffFilePathEl(rawPath) {
     const el = document.createElement("span");
     el.className = "turn-diff-file-path";
@@ -10045,16 +10041,16 @@
       el.textContent = shown;
       return el;
     }
-    const dir = document.createElement("span");
-    dir.className = "turn-diff-file-dir";
-    // The separator rides the LEAF, so the ellipsis reads ".../name.ts"
-    // rather than leaving the two halves floating apart.
-    dir.textContent = shown.slice(0, cut);
     const leaf = document.createElement("span");
     leaf.className = "turn-diff-file-name";
-    leaf.textContent = shown.slice(cut);
-    el.appendChild(dir);
+    leaf.textContent = shown.slice(cut + 1);
+    // No separator on either half. The name leads, the path trails it as
+    // context, and a stray slash between them would read as a broken path.
+    const dir = document.createElement("span");
+    dir.className = "turn-diff-file-dir";
+    dir.textContent = shown.slice(0, cut);
     el.appendChild(leaf);
+    el.appendChild(dir);
     return el;
   }
 
@@ -18775,10 +18771,11 @@
           askAgent: appendComposerText,
           openSettings: window.__grokFilePanelOpenSettings,
         },
-        // Same progressive disclosure as thinking traces and tool detail:
-        // somebody writing prose does not get a git panel. Read live, not
-        // captured, so switching the setting takes effect without a reload.
-        gitEnabled: isCodingPurpose,
+        // No purpose gate here on purpose. People clone repositories in
+        // Knowledge work too, and `changesAvailable()` already answers the real
+        // question from evidence — git's own no-git / not-a-repo reply —
+        // rather than from a proxy for it. The turn-summary card stays
+        // Coding-only for free: it hangs off turnDiffSummaryEnabled(), not this.
         // Only the remote mount polls. A proven requestId echo is needed too:
         // a legacy timeout must poison its key to fence late, uncorrelated
         // replies. Background work must never strand the next explicit read.

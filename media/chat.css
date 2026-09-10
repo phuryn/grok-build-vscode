@@ -2883,18 +2883,34 @@ button.turn-diff-file.has-diff:focus-visible {
 }
 .turn-diff-file-path {
   display: flex;
+  gap: 6px;
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   color: var(--vscode-foreground);
 }
-/* The directory is the half that gives way; the filename never does. */
-.turn-diff-file-dir {
+/* Name first, path second — the same order and the same ladder as the
+   Changes panel, so one file reads the same way on both surfaces. The path
+   gives way first: a far larger shrink factor, and a minimum of zero, so it
+   collapses entirely before the filename loses a character. It is cut from the
+   LEFT, keeping the folders nearest the file. Full name + full path, trimmed
+   path, no path, and only then a trimmed name. */
+.turn-diff-file-name {
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.turn-diff-file-name { flex: 0 0 auto; }
+.turn-diff-file-dir {
+  flex: 0 9999 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+  color: var(--vscode-descriptionForeground, #999);
+  font-size: 0.86em;
+}
 .turn-diff-file.is-deleted .turn-diff-file-path {
   text-decoration: line-through;
   opacity: 0.85;
@@ -3326,6 +3342,11 @@ body.hide-turn-diff-summary .turn-diff-summary { display: none; }
   --float-ctl-h: 26px;
   height: var(--float-ctl-h);
   border-radius: calc(var(--float-ctl-h) / 2);
+  /* Mobile WebKit and Chrome paint their default tap highlight over the BORDER
+     BOX, which ignores border-radius, so a circle flashes as a blue square.
+     Safe to remove here because :active below is the press feedback on every
+     surface — it lasts exactly as long as the finger is down. */
+  -webkit-tap-highlight-color: transparent;
   display: inline-flex;
   align-items: center;
   border: 1px solid var(--vscode-editorWidget-border);

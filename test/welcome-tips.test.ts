@@ -318,7 +318,7 @@ describe("eligibility", () => {
     const remote = ids({ ...FRESH, isRemote: true });
     // Two different rules, and the distinction matters. Starting a worktree is
     // host-local and "continue on your phone" is being read ON the phone, so
-    // both are deskOnly. Signing an agent in and linking a connector are NOT --
+    // both are requiresLocalSurface. Signing in and linking a connector are NOT --
     // a phone can do either -- they are withheld here only because this host
     // advertises neither capability.
     for (const withheld of ["providers", "connectors", "remote", "worktrees"]) {
@@ -332,14 +332,14 @@ describe("eligibility", () => {
 
   it("offers a phone what its host says it can do", () => {
     // The owner asked why the connectors tip never appeared on a cloud machine
-    // (2026-09-06). It was deskOnly, which on a cloud host means nobody sees it
+    // (2026-09-06). It was requiresLocalSurface, which on a cloud host means
     // at all: there is no desk user there. The gate is the capability the tip's
     // own destination uses -- Settings hides its Connectors category without
     // `mcpSettings` -- so the link can never land on a page that is not there.
     const capable = ids({ ...FRESH, isRemote: true, mcpSettings: true, remoteCanConnectAgents: true });
     expect(capable).toContain("connectors");
     expect(capable).toContain("providers");
-    // deskOnly is unaffected by any capability: these need the desk itself.
+    // requiresLocalSurface is unaffected by capability: no remote can do these.
     expect(capable).not.toContain("worktrees");
     expect(capable).not.toContain("remote");
     // Each capability gates only its own tip.
@@ -351,7 +351,7 @@ describe("eligibility", () => {
     // The owner's correction, twice over. First: the relay's policy table
     // permits an image send, but a phone cannot get one onto a textarea, so
     // "the policy allows it" was never the same as "a person can do this".
-    // Then: gating it deskOnly over-corrected — a laptop browser on the relay
+    // Then: gating it requiresLocalSurface over-corrected — a laptop browser
     // pastes screenshots exactly like the desk. The honest fact is the pointer.
     expect(ids({ ...FRESH, coarsePointer: true })).not.toContain("pasteScreenshot");
     expect(ids({ ...FRESH, isRemote: true, coarsePointer: false })).toContain("pasteScreenshot");

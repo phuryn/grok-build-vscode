@@ -404,7 +404,7 @@
    * ------------------------------------------------------------------ */
 
   /** How one row reads. Short, because the row also carries the path. */
-  const CHANGE_WORD = { M: "Modified", A: "Added", D: "Deleted", R: "Renamed", U: "Conflict", "?": "New" };
+  const CHANGE_WORD = { M: "Modified", A: "Added", D: "Deleted", R: "Renamed", U: "Conflict", "?": "Added" };
 
   function changeWord(status) {
     return CHANGE_WORD[status] || "Changed";
@@ -2037,11 +2037,10 @@
      * Whether to offer the view at all.
      *
      * Three conditions, and each removes a different bad outcome. No adapter
-     * call means an older host that would drop the message in silence. Not
-     * Coding mode means somebody writing prose, for whom a git panel is noise —
-     * the same progressive disclosure the app already applies to thinking
-     * traces and tool detail. Not a repository means a button whose only
-     * content would be an explanation of why it is empty.
+     * call means an older host that would drop the message in silence. A
+     * false `gitEnabled` is an embedder saying this mount has no business
+     * showing git at all. Not a repository means a button whose only content
+     * would be an explanation of why it is empty.
      */
     function gitEnabledNow() {
       if (typeof options.gitEnabled !== "function") return true;
@@ -2555,7 +2554,11 @@
 
       const badge = doc.createElement("span");
       badge.className = "gfp-change-badge";
-      badge.textContent = file.status === "?" ? "+" : file.status;
+      // An untracked file is an ADDED file, and it says so with the same
+      // letter the turn card prints. The panel used to say "+" here and the
+      // word "new" at the other end of the row -- two vocabularies for one
+      // fact, on the two surfaces a person compares side by side.
+      badge.textContent = file.status === "?" ? "A" : file.status;
       badge.setAttribute("aria-hidden", "true");
 
       const name = doc.createElement("span");
@@ -2581,12 +2584,10 @@
         stat.className = "gfp-change-stat";
         appendCountLabel(stat, counts, doc);
         row.appendChild(stat);
-      } else if (file.status === "?") {
-        const stat = doc.createElement("span");
-        stat.className = "gfp-change-stat gfp-change-stat-word";
-        stat.textContent = "new";
-        row.appendChild(stat);
       }
+      // Nothing takes the stat column's place for an untracked file. Counting
+      // its lines needs a host-side read per file (no `git diff` entry exists),
+      // and the turn card already summarises what changed in the round.
 
       row.addEventListener("click", () => void openChangeDiff(file.path));
       return row;

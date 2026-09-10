@@ -1905,10 +1905,20 @@
    * chooses among those — which is why this needs no randomness and stays a
    * pure function.
    *
-   * `deskOnly` is the same rule that keeps the move-view hint off phones: a
-   * remote may not sign an agent in or link a connector (both `host-local`),
-   * so suggesting it there is advice the reader cannot take from where they
-   * are standing.
+   * TWO axes, because one boolean used to carry two different facts and the
+   * cost was two tips silently withheld from everyone on a cloud machine.
+   *
+   * `requiresLocalSurface` is a static property of the ADVICE: the action it
+   * points at is `host-local` in remote-policy.ts, so no remote can perform it
+   * from anywhere, ever. "Continue on your phone" read on a phone, a worktree
+   * create, an Explorer drag. It was called `deskOnly`, which read as "this
+   * needs the desk" — and on a cloud machine, where every reader is remote,
+   * that meant nobody saw it at all. Signing an agent in and linking a
+   * connector were both wrongly marked so, and both were found only when the
+   * owner noticed a tip missing (providers 2026-08-31, connectors 2026-09-06).
+   *
+   * `remoteNeeds*` is the dynamic half: does THIS host offer the capability.
+   * That is what those two became, and it is where a new gate belongs.
    *
    * Copy carries ONE `{braced}` span — the actionable phrase. The renderer
    * splits on it and builds text nodes plus a single control, so tip text
@@ -1919,10 +1929,10 @@
       id: "providers",
       copy: "Grok isn’t your only agent. {Connect Codex or Claude Code} and pick one per conversation.",
       target: "settings:providers",
-      // Was deskOnly, on the rule that a remote may not sign an agent in. It
-      // can since 3.19.x, and on a cloud machine this is the only surface
-      // there is (owner asked why it never appears, 2026-08-31).
-      deskOnly: false,
+      // Was requiresLocalSurface, on the rule that a remote may not sign an
+      // agent in. It can since 3.19.x, and on a cloud machine this is the
+      // only surface there is (owner asked why it never appears, 2026-08-31).
+      requiresLocalSurface: false,
       remoteNeedsSignIn: true,
       // Not "fewer than all three": the moment a SECOND agent exists the user
       // has discovered that agents are interchangeable here, which is the only
@@ -1933,19 +1943,19 @@
       id: "routines",
       copy: "Work that repeats can run itself. {Set up a routine} and it opens a session on schedule.",
       target: "settings:routines",
-      deskOnly: false,
+      requiresLocalSurface: false,
       eligible: (f) => f.routineCount === 0,
     },
     {
       id: "connectors",
       copy: "Give your agent your tools. {Connect Notion, Linear or GitHub} and it can read and write them.",
       target: "settings:connectors",
-      // Was deskOnly, on the rule that connecting an app needed the desk. It
+      // Was requiresLocalSurface, on the rule that connecting an app needed
       // has not since 4.1.9 shipped connector sign-in from a phone, and on a
-      // cloud machine deskOnly means nobody ever sees this rather than
+      // cloud machine that flag means nobody ever sees this rather than
       // "desk users see it" -- there is no desk user there. Exactly the
       // correction the providers tip above records for itself.
-      deskOnly: false,
+      requiresLocalSurface: false,
       // Gated on the capability this tip's own destination is gated on: the
       // Settings page hides its Connectors category unless the host advertises
       // `mcpSettings`, so without this the link could land on a page that is
@@ -1957,7 +1967,7 @@
       id: "remote",
       copy: "Leave the desk without leaving the work. {Continue on your phone.}",
       target: "settings:account",
-      deskOnly: true,
+      requiresLocalSurface: true,
       // Three states, not two (see state.remoteLinked): null means the host has
       // not read the token yet, and inviting an already-linked machine to link
       // again is the exact confusion that tri-state exists to prevent.
@@ -1967,14 +1977,14 @@
       id: "readAloud",
       copy: "Grok can read its replies out loud — turn it on in {Voice settings}.",
       target: "settings:voice",
-      deskOnly: false,
+      requiresLocalSurface: false,
       eligible: (f) => !f.readRepliesAloud,
     },
     {
       id: "voice",
       copy: "Talk instead of typing — set up {voice control} and dictate into the composer.",
       target: "settings:voice",
-      deskOnly: false,
+      requiresLocalSurface: false,
       eligible: (f) => !f.voiceConfigured,
     },
     {
@@ -1988,7 +1998,7 @@
       // does not have. Advising it there is advice that cannot be taken.
       copyWhen: (f) => (f.isRemote ? "{Mention a file with @} to bring it into the conversation." : undefined),
       target: "mention",
-      deskOnly: false,
+      requiresLocalSurface: false,
       eligible: () => true,
     },
     {
@@ -2000,7 +2010,7 @@
       // nobody remembers ("… > Continue in a new chat > Use a new worktree").
       copy: "Trying something risky? {Start it in a worktree} — your checkout stays untouched.",
       target: "worktree",
-      deskOnly: true,
+      requiresLocalSurface: true,
       // Every condition the destination list itself applies, so the link can
       // never fire something the host would refuse: coding mode, a CLI that
       // supports worktrees, and not already inside one (they do not nest).
@@ -2022,7 +2032,7 @@
       target: null,
       // `dropFile` is "host-local", so a remote's drop is refused outright and
       // the advice would be a dead end there.
-      deskOnly: true,
+      requiresLocalSurface: true,
       // No Explorer in the desktop app, where `mentions` already covers dropping.
       eligible: (f) => !f.desktopShell,
     },
@@ -2033,7 +2043,7 @@
       // at all, so there the advice is simply untrue.
       copy: "Copied a screenshot? {Paste it straight into the message box.}",
       target: null,
-      deskOnly: false,
+      requiresLocalSurface: false,
       eligible: (f) => !f.coarsePointer,
     },
   ];
@@ -2087,7 +2097,6 @@
       // here would have hidden the tip on every host that never mentions it.
       worktreeSupported: f.worktreeSupported !== false,
       inWorktree: !!f.inWorktree,
-      cloudHost: !!f.cloudHost,
       remoteCanConnectAgents: !!f.remoteCanConnectAgents,
       mcpSettings: !!f.mcpSettings,
       remoteLinked: f.remoteLinked === true ? true : f.remoteLinked === false ? false : null,
@@ -2097,9 +2106,9 @@
     return WELCOME_TIPS.filter((tip) => {
       if (dismissed.has(tip.id)) return false;
       if (shownToday.has(tip.id)) return false;
-      if (known.isRemote && tip.deskOnly) return false;
+      if (known.isRemote && tip.requiresLocalSurface) return false;
       // A tip whose action needs a capability this remote does not have is the
-      // same dead end deskOnly was invented to prevent — just decided by what
+      // same dead end requiresLocalSurface prevents — but decided by what
       // the host advertises rather than by where the reader is standing.
       if (known.isRemote && tip.remoteNeedsSignIn && !known.remoteCanConnectAgents) return false;
       if (known.isRemote && tip.remoteNeedsMcpSettings && !known.mcpSettings) return false;

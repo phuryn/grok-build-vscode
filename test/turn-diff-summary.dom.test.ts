@@ -56,10 +56,16 @@ describe("turn-level file change summary", () => {
 
     const rows = [...card.querySelectorAll(".turn-diff-file")];
     expect(rows).toHaveLength(2);
-    expect(rows[0].querySelector(".turn-diff-file-path")!.textContent).toBe("src/a.ts");
+    // Filename first, directory second. The two halves are laid out with a
+    // gap and carry no separator of their own, so the joined path lives on the
+    // title — which is what a hover and an assistive reader get.
+    expect((rows[0].querySelector(".turn-diff-file-path") as HTMLElement).title).toBe("src/a.ts");
+    expect(rows[0].querySelector(".turn-diff-file-name")!.textContent).toBe("a.ts");
+    expect(rows[0].querySelector(".turn-diff-file-dir")!.textContent).toBe("src");
     expect(rows[0].querySelector(".diff-stat-add")!.textContent).toBe("+2");
     expect(rows[0].querySelector(".diff-stat-del")!.textContent).toBe("−2");
-    expect(rows[1].querySelector(".turn-diff-file-path")!.textContent).toBe("src/b.ts");
+    expect((rows[1].querySelector(".turn-diff-file-path") as HTMLElement).title).toBe("src/b.ts");
+    expect(rows[1].querySelector(".turn-diff-file-name")!.textContent).toBe("b.ts");
 
     click(window, rows[0] as HTMLElement);
     // The row reveals that file's own tool row — there is no honest
@@ -452,11 +458,13 @@ describe("turn-level file change summary", () => {
     expect(doc.querySelector(".turn-diff-summary")).toBeNull();
   });
 
-  // A plain ellipsis on the whole path eats the filename first, which is the
-  // only part that says which file the row is. The leaf is its own span so CSS
-  // can shrink the directory and never the name; the screens harness
-  // (scripts/turn-diff-screens.mjs) is what proves the pixels follow.
-  it("splits the path so the directory is the half that can be cut", () => {
+  // Filename FIRST, directory second — the order the Changes panel uses, so
+  // one file reads the same way on both surfaces. Each half is its own span so
+  // CSS can collapse the directory entirely before the name loses a character;
+  // the screens harness (scripts/turn-diff-screens.mjs) proves the pixels
+  // follow. Neither half carries the separator: they are laid out with a gap,
+  // and a stray slash between them would read as a broken path.
+  it("puts the filename first and the directory second, each its own span", () => {
     const { window, doc } = bootWebview();
     dispatch(window, { type: "agentStart" });
     dispatch(window, editCall("p1", "packages/relay/src/deep/reconnect-policy.ts"));
@@ -464,10 +472,11 @@ describe("turn-level file change summary", () => {
     dispatch(window, { type: "agentEnd" });
 
     const path = doc.querySelector(".turn-diff-file-path") as HTMLElement;
+    const spans = [...path.children].map((el) => el.className);
+    expect(spans).toEqual(["turn-diff-file-name", "turn-diff-file-dir"]);
+    expect(path.querySelector(".turn-diff-file-name")!.textContent).toBe("reconnect-policy.ts");
     expect(path.querySelector(".turn-diff-file-dir")!.textContent).toBe("packages/relay/src/deep");
-    // The separator rides the leaf, so a cut directory still reads ".../name".
-    expect(path.querySelector(".turn-diff-file-name")!.textContent).toBe("/reconnect-policy.ts");
-    expect(path.textContent).toBe("packages/relay/src/deep/reconnect-policy.ts");
+    // The whole path stays reachable even when the directory is cut to nothing.
     expect(path.title).toBe("packages/relay/src/deep/reconnect-policy.ts");
   });
 

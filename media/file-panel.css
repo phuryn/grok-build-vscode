@@ -1355,8 +1355,12 @@ body.vscode-light {
   gap: 6px;
   min-width: 0;
 }
+/* The filename is the last thing to give way. It CAN ellipsize -- when it
+   alone does not fit, something has to -- but only after the directory beside
+   it has collapsed to nothing, which the shrink factors below arrange. */
 .gfp-change-base {
   flex: 0 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1365,7 +1369,12 @@ body.vscode-light {
    treatment the rail gives a repo's path: smaller, quieter, and the first
    thing to be truncated. */
 .gfp-change-dir {
-  flex: 0 1 auto;
+  /* A far larger shrink factor than the filename's, so every pixel of
+     shortfall comes out of the path first. Flexbox freezes an item at its
+     minimum -- zero here -- and redistributes what is left, so the ladder is:
+     full name + full path, trimmed path, no path, and only then a trimmed
+     name. */
+  flex: 0 9999 auto;
   min-width: 0;
   overflow: hidden;
   color: var(--vscode-descriptionForeground, #999);
@@ -1389,7 +1398,6 @@ body.vscode-light {
    measurement. --tdiff-* is defined in chat.css and carries a light override. */
 .gfp-change-add { color: var(--tdiff-add-line, #4ec9b0); }
 .gfp-change-del { color: var(--tdiff-del-line, #f48771); }
-.gfp-change-stat-word { font-style: italic; }
 /* On the headline the pair rides at the end of a sentence, so it takes that
    sentence's weight back down — it is the size of the change, not a second
    headline. */

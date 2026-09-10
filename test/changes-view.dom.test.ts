@@ -379,10 +379,11 @@ describe("the panel", () => {
     expect(h.q(".gfp-changes-btn")?.hidden).toBe(true);
   });
 
-  it("hides itself in Knowledge work, and never asks git anything", async () => {
-    // The same progressive disclosure as thinking traces and tool detail. The
-    // second half matters as much as the first: somebody writing prose should
-    // not be paying for two git spawns after every turn.
+  it("hides itself when the embedder disables git, and never asks git anything", async () => {
+    // Not a purpose gate — the chat mount stopped passing one, because people
+    // clone repositories in Knowledge work too and the panel can read the real
+    // answer off git. This is the embedder saying this mount has no business
+    // showing git at all, and then it must not pay for a spawn either.
     const h = harness({ gitEnabled: () => false });
     h.panel.setOpen(true);
     await settle();
@@ -563,6 +564,24 @@ describe("the panel", () => {
     await settle();
     await settle();
     expect(restorable.q(".gfp-changes-discard")).toBeTruthy();
+  });
+
+  it("names an untracked file the way the turn card does: A, once", async () => {
+    // The panel used to print "+" in the badge and the word "new" at the other
+    // end of the same row — two vocabularies for one fact, on the two surfaces
+    // a person compares side by side. The card already said A.
+    const h = harness({ snapshot: snap({ files: [file("src/deep/a.ts", "?", null, null)] }) });
+    await h.open();
+    const row = h.q(".gfp-change-row")!;
+    expect(row.querySelector(".gfp-change-badge")!.textContent).toBe("A");
+    expect(row.querySelector(".gfp-change-stat")).toBeNull();
+    expect(row.textContent).not.toContain("new");
+    expect(row.title).toBe("Added — src/deep/a.ts");
+    // Filename first, path second — the order the turn card now uses too.
+    const parts = [...row.querySelector(".gfp-change-name")!.children].map((el) => el.className);
+    expect(parts).toEqual(["gfp-change-base", "gfp-change-dir"]);
+    expect(row.querySelector(".gfp-change-base")!.textContent).toBe("a.ts");
+    expect(row.querySelector(".gfp-change-dir")!.textContent).toBe("src/deep");
   });
 
   it("draws the diff in the product's own diff markup", async () => {
@@ -1121,6 +1140,51 @@ describe("late git availability and existing turn cards", () => {
     expect(h.doc.body.classList.contains("changes-unavailable")).toBe(false);
     link.setAttribute("data-style-read", "available");
     expect(h.window.getComputedStyle(link).display).not.toBe("none");
+    await h.window.happyDOM.abort();
+  });
+
+  // People clone repositories in Knowledge work too. The mount used to gate
+  // Changes on the app purpose, which is a PROXY for "is there a repo here"
+  // sitting in front of git's own answer — and the worse of the two, because
+  // it is wrong about a repository somebody is writing prose in.
+  it("offers Changes in Knowledge work when git says there is a repository", async () => {
+    const h = bootWebview({ remote: true });
+    dispatch(h.window, { type: "initialState", cwd: "/work/notes", appPurpose: "knowledge",
+      capabilities: { browseProjectFiles: true, gitChanges: true } });
+    await settle();
+    const request = h.posted.find((msg) => msg.type === "gitStatus")!;
+    dispatch(h.window, { ...request, type: "gitStatusResult", ok: true, snapshot: snap() });
+    await settle();
+    expect((h.doc.querySelector(".gfp-changes-btn") as HTMLElement).hidden).toBe(false);
+    expect(h.doc.body.classList.contains("changes-unavailable")).toBe(false);
+
+    // The turn-summary card is the half that STAYS Coding-only, and it stays
+    // so for free: it hangs off turnDiffSummaryEnabled(), not this gate. The
+    // card is BUILT and then hidden by a body class, so completed turns keep
+    // their cards when the purpose changes back — assert the mechanism, not
+    // the absence of a node.
+    dispatch(h.window, { type: "agentStart" });
+    dispatch(h.window, { type: "toolCall", call: { toolCallId: "e", kind: "edit", title: "Edit a.ts" } });
+    dispatch(h.window, { type: "toolCallUpdate", call: { toolCallId: "e", content: [
+      { type: "diff", path: "a.ts", oldText: "x", newText: "y" },
+    ] } });
+    dispatch(h.window, { type: "agentEnd" });
+    await settle();
+    expect(h.doc.body.classList.contains("hide-turn-diff-summary")).toBe(true);
+    await h.window.happyDOM.abort();
+  });
+
+  // A plain folder is still a plain folder. The evidence decides, not the mode.
+  it("still withholds Changes in Knowledge work when there is no repository", async () => {
+    const h = bootWebview({ remote: true });
+    dispatch(h.window, { type: "initialState", cwd: "/work/notes", appPurpose: "knowledge",
+      capabilities: { browseProjectFiles: true, gitChanges: true } });
+    await settle();
+    const request = h.posted.find((msg) => msg.type === "gitStatus")!;
+    dispatch(h.window, { ...request, type: "gitStatusResult", ok: false, kind: "not-a-repo",
+      reason: "No repository" });
+    await settle();
+    expect((h.doc.querySelector(".gfp-changes-btn") as HTMLElement).hidden).toBe(true);
     await h.window.happyDOM.abort();
   });
 });
