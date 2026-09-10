@@ -1187,6 +1187,35 @@ describe("late git availability and existing turn cards", () => {
     expect((h.doc.querySelector(".gfp-changes-btn") as HTMLElement).hidden).toBe(true);
     await h.window.happyDOM.abort();
   });
+
+  /**
+   * Neither mount may reintroduce a purpose gate — and this is asserted on the
+   * SOURCE deliberately.
+   *
+   * The two tests above drive the webview mount. The desktop app mounts the
+   * same component from a generated bootstrap script, and the first attempt at
+   * this change removed the gate from the webview and left the desktop one in
+   * place — with a comment above it still claiming the two agreed. Everything
+   * passed: the DOM tests exercise the mount that was fixed, and no test of a
+   * component's option can see which embedders pass it.
+   *
+   * So the assertion has to be about the pair, not about the button. It reads
+   * as crude and it is exactly load-bearing: it fails the moment a gate comes
+   * back on one surface only, which is the failure this replaces.
+   */
+  it("keeps both mounts free of an app-purpose gate on Changes", () => {
+    const deskBoot = fileTreePanelBootSource();
+    const chatJs = readFileSync(new URL("../media/chat.js", import.meta.url), "utf8");
+
+    // The desktop bootstrap must not pass the option at all. Absent means the
+    // panel decides on git's answer, which is what both mounts now do.
+    expect(deskBoot).not.toMatch(/gitEnabled\s*:/);
+
+    // And the window hook that carried the purpose across to it is gone, so a
+    // future bootstrap cannot quietly pick it back up.
+    expect(deskBoot).not.toContain("__grokCodingPurpose");
+    expect(chatJs).not.toContain("__grokCodingPurpose");
+  });
 });
 
 describe("Changes actions in the chat mounts", () => {

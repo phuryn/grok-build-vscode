@@ -192,14 +192,15 @@ export function fileTreePanelBootSource(_iconsDir?: string): string {
         revealLabel: ${JSON.stringify(revealLabel)},
         fileIcons: { baseUrl: iconBase },
       },
-      // Same progressive disclosure as the remote client: the Changes button
-      // belongs to Coding, not to somebody writing prose. chat.js owns the
-      // setting and publishes it on the window, because this bootstrap runs as
-      // a separate script and cannot see into that module.
-      gitEnabled: () => {
-        const read = window.__grokCodingPurpose;
-        return typeof read === "function" ? !!read() : true;
-      },
+      // No gitEnabled option here, deliberately. The panel decides on evidence
+      // — it withholds Changes when the host reports no git or not-a-repo —
+      // and that answer is right on both mounts without either of them knowing
+      // what the person is using the app FOR. This used to pass the Coding
+      // purpose through, matching the remote client; the remote client stopped
+      // doing it, and a desk that kept the gate would hide Changes on a real
+      // repository purely because the same person also writes prose in it.
+      //
+      // (No backticks in this comment: the whole block is a template literal.)
       preferences: {
         getWidth: () => {
           try { return Number(localStorage.getItem("desk-ft-width")) || 280; } catch (_) { return 280; }

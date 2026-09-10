@@ -3074,9 +3074,6 @@
   window.__grokFilePanelConfirm = uiChoice;
   window.__grokFilePanelAskAgent = appendComposerText;
   window.__grokFilePanelOpenSettings = () => openSettingsCategory("providers");
-  // Read live by the desktop file panel's bootstrap; a captured boolean would
-  // freeze the Changes button in whichever mode the app booted in.
-  window.__grokCodingPurpose = () => isCodingPurpose();
 
   /** uiConfirm with a single text field. Resolves to the string, or null on
    *  cancel — an empty string is a real answer the caller may want to reject on
