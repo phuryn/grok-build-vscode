@@ -5,6 +5,7 @@
 mcps/**
 research/**
 test/**
+test-support/**
 src/**
 integration/**
 out-integration/**
