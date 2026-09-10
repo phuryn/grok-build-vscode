@@ -32,8 +32,10 @@ describe("grok CLI process invocation", () => {
     expect(sidebar).not.toMatch(/execGrokCli\([^\n]*\["mcp"/);
     expect(sidebar).toContain('client.listMcpServers()');
     // Pinned so a NEW one-shot invocation has to be noticed rather than slipped
-    // in. The tenth is the shared headless Codex/Claude updater.
-    expect(sidebar.match(/execGrokCli\s*\(/g)).toHaveLength(10);
+    // in. The tenth is the shared headless Codex/Claude updater; the eleventh is
+    // grok's freshness re-read, which runs at the moment an update would start
+    // tearing the pool down.
+    expect(sidebar.match(/execGrokCli\s*\(/g)).toHaveLength(11);
     expect(sidebar).toMatch(/execGrokCli\(cliPath, \["--version"\],[\s\S]*parseCodexVersionOutput/);
     expect(sidebar).toMatch(/execGrokCli\(cliPath, \["--version"\],[\s\S]*parseClaudeVersionOutput/);
   });

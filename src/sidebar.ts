@@ -8921,6 +8921,43 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       );
       return;
     }
+    // The About panel's Update button is drawn from a grokUpdateStatus that can
+    // be minutes old, and grok may well have moved since — its own startup
+    // auto-update runs on every host launch, and another window may have done
+    // this already. Everything past this point tears the WHOLE pool down, so ask
+    // the binary once more at the destructive moment.
+    //
+    // Skipped when the policy names a target: --check answers "is there a newer
+    // one", which is a different question from "are you on the version we
+    // require", and a pinned move must not be talked out of it by the wrong one.
+    if (!policy.target) {
+      try {
+        const { stdout } = await execGrokCli(cliPath, ["update", "--check", "--json"], { timeout: 30_000 });
+        const info = JSON.parse(stdout) as {
+          currentVersion?: string;
+          latestVersion?: string;
+          updateAvailable?: boolean;
+        };
+        if (info.updateAvailable === false) {
+          this.postGrokUpdateStatus({
+            type: "grokUpdateStatus",
+            current: info.currentVersion ?? null,
+            latest: info.latestVersion ?? null,
+            updateAvailable: false,
+            policy,
+          });
+          void this.host.showInformationMessage(
+            `Grok Build CLI is already on v${info.currentVersion ?? "the latest version"}.`,
+          );
+          return;
+        }
+      } catch (e) {
+        // A check that cannot answer is not evidence of being current. Fall
+        // through and update rather than strand someone on a binary we could not
+        // read — the old behaviour, which is the safe one to keep here.
+        this.host.appendLine(`grok update --check before updating failed: ${(e as Error).message}`);
+      }
+    }
     const updateArgs = policy.target ? ["update", "--version", policy.target] : ["update"];
     // The update tears down the whole pool (the binary is locked while any session
     // holds it open), so a session that's mid-turn or waiting on you would be

@@ -366,6 +366,89 @@ describe.each(["codex", "claude"] as const)("%s explicit CLI update", (provider)
   });
 });
 
+/**
+ * Grok's own Update button, which #10 originally left alone.
+ *
+ * It is the one CLI whose update path is separate — grok holds its binary open
+ * while running, so this tears the WHOLE pool down and resumes, where codex and
+ * claude only stop the sessions on that provider. That makes an unnecessary run
+ * of it the most expensive of the three, and it was the one still doing it.
+ */
+describe("grok explicit CLI update", () => {
+  function grokHarness(check: () => { stdout: string; stderr: string }) {
+    const host = Object.create(GrokSidebar.prototype) as any;
+    const focused = new Session();
+    focused.provider = "grok";
+    focused.activeSessionId = "grok-thread";
+    focused.cwd = "/project";
+    Object.assign(host, {
+      focused,
+      pool: new Set([focused]),
+      providerCliVersions: {},
+      locateProvider: vi.fn(() => "/installed/grok"),
+      host: { appendLine: vi.fn(), showWarningMessage: vi.fn(), showInformationMessage: vi.fn() },
+      post: vi.fn(),
+      settingsEditor: { webview: { postMessage: vi.fn() } },
+      newLocalSession: vi.fn(() => new Session()),
+      disposePool: vi.fn(async () => {}),
+      runGrokUpdate: vi.fn(async () => {}),
+      startSession: vi.fn(async () => ({}) as unknown),
+    });
+    exec.mockImplementation(async (_path, args) => {
+      if (args[0] === "--version") return { stdout: "grok 1.4.2", stderr: "" };
+      return check();
+    });
+    return host;
+  }
+
+  const current = () => ({
+    stdout: JSON.stringify({ currentVersion: "1.4.2", latestVersion: "1.4.2", updateAvailable: false }),
+    stderr: "",
+  });
+
+  it("says so instead of tearing the pool down when grok is already current", async () => {
+    const host = grokHarness(current);
+    await host.updateGrokCliOnDemand();
+    // The expensive half never ran: no teardown, no update, no resume, and the
+    // conversation the person was reading is still the focused one.
+    expect(host.disposePool).not.toHaveBeenCalled();
+    expect(host.runGrokUpdate).not.toHaveBeenCalled();
+    expect(host.startSession).not.toHaveBeenCalled();
+    expect(host.newLocalSession).not.toHaveBeenCalled();
+    expect(host.post).not.toHaveBeenCalledWith({ type: "cliUpdating" });
+    expect(host.focused.activeSessionId).toBe("grok-thread");
+    expect(host.host.showInformationMessage).toHaveBeenCalledWith(
+      "Grok Build CLI is already on v1.4.2.",
+    );
+    // The stale row that offered the button is corrected in the same breath, on
+    // both surfaces — otherwise the only way to learn is to press it again.
+    const status = { type: "grokUpdateStatus", current: "1.4.2", latest: "1.4.2", updateAvailable: false, policy: { allow: true } };
+    expect(host.post).toHaveBeenCalledWith(status);
+    expect(host.settingsEditor.webview.postMessage).toHaveBeenCalledWith(status);
+  });
+
+  it("updates when the check says a newer one exists", async () => {
+    const host = grokHarness(() => ({
+      stdout: JSON.stringify({ currentVersion: "1.4.2", latestVersion: "1.5.0", updateAvailable: true }),
+      stderr: "",
+    }));
+    await host.updateGrokCliOnDemand();
+    expect(host.runGrokUpdate).toHaveBeenCalledWith("/installed/grok", ["update"]);
+    expect(host.startSession).toHaveBeenCalledWith("grok-thread");
+  });
+
+  it("updates rather than trusting a check that could not answer", async () => {
+    const host = grokHarness(() => { throw new Error("network unreachable"); });
+    await host.updateGrokCliOnDemand();
+    // Not evidence of being current: refusing here would strand someone on a
+    // binary too broken to describe itself, which is the state they came to fix.
+    expect(host.runGrokUpdate).toHaveBeenCalledWith("/installed/grok", ["update"]);
+    expect(host.host.appendLine).toHaveBeenCalledWith(
+      expect.stringContaining("network unreachable"),
+    );
+  });
+});
+
 it.each(["updateCodex", "updateClaude"] as const)("%s is available to full remotes without a bound conversation", (type) => {
   expect(allowFromRemote(type, "full")).toBe(true);
   expect(allowFromRemote(type, "propose")).toBe(false);
