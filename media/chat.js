@@ -18521,16 +18521,24 @@
    * request that wakes it, and this panel re-reads when the host dials back in.
    * Describe that work without promising a boot time or asking for another send.
    *
-   * The opening words match the relay's own page-level notice ("Waking your
-   * cloud machine…" in web/chat.html) on purpose: a person can meet both in one
-   * session, and two voices for one event read as two different systems. This
-   * one deliberately omits the duration that one gives — there, a boot is
-   * already underway and timeable; here, a silent read is only evidence.
+   * It says only what THIS request knows, which is that no answer came.
+   *
+   * It used to open with the relay page's own words — "Waking your cloud
+   * machine…" — so that a person meeting both in one session heard one voice.
+   * Agreeing by hand was the best available answer while both were guessing
+   * from silence, and the comment here said so. The shell no longer guesses:
+   * the relay reports the phase and the page says what is actually happening
+   * to the machine. A second voice inferring the same thing from a thirty-
+   * second timer can now only contradict it — and did, whenever a read timed
+   * out on a machine the relay had already reported reachable.
+   *
+   * So the claim about the machine belongs to the page, and this keeps the
+   * one fact a timed-out read genuinely establishes. Same sentence on a cloud
+   * machine and a laptop, because the difference between them is exactly the
+   * part this no longer claims to know.
    */
   function remoteFileSilenceReason() {
-    return IS_CLOUD_HOST
-      ? "Waking your cloud machine. This view fills in when it reconnects."
-      : "That machine did not answer. It may be offline; this fills in when it reconnects.";
+    return "No answer yet. This view fills in when the machine reconnects.";
   }
 
   function remoteFileRequestKey(kind, cwd, relPath) {

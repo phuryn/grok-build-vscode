@@ -641,9 +641,13 @@ describe("remote discard and close semantics", () => {
     expect(expiries.length).toBeGreaterThan(0);
     for (const expire of expiries.splice(0)) expire();
     await settle();
-    expect(h.doc.querySelector(".gfp-changes-empty")?.textContent).toBe(cloud
-      ? "Waking your cloud machine. This view fills in when it reconnects."
-      : "That machine did not answer. It may be offline; this fills in when it reconnects.");
+    // The SAME sentence on a cloud machine and a laptop, deliberately. This
+    // used to open with the relay page's own "Waking your cloud machine…" so
+    // that two guesses at one fact spoke with one voice; the page no longer
+    // guesses — the relay reports the phase — and a timed-out read has no
+    // standing to say anything about the machine at all.
+    expect(h.doc.querySelector(".gfp-changes-empty")?.textContent)
+      .toBe("No answer yet. This view fills in when the machine reconnects.");
 
     // It wakes and dials back in. The next read must reach the WIRE — and land
     // in a view the person is still looking at, which is why nothing clicks
