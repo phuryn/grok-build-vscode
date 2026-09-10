@@ -82,6 +82,11 @@ export interface AcpBackend {
   setMode(sessionId: string, modeId: string): { method: string; params: any };
   steeringCapabilities(initializeResult: any, options: BackendSteeringOptions): BackendSteeringCapabilities;
   interject(sessionId: string, text: string, content?: readonly PromptContentBlock[]): { method: string; params: any } | null;
+  /**
+   * Whether a steering RPC that RESOLVED actually delivered the text. Some
+   * adapters report a steering failure in-band, as a successful response.
+   */
+  steerDelivered(result: any): boolean;
   configState(response: any, fallback: BackendConfigState): BackendConfigState;
   modelSetSucceeded(response: any): boolean;
   listSessions(

@@ -725,11 +725,17 @@ export class AcpClient extends EventEmitter {
     const call = this.backend.interject(this.sessionId, text, content);
     if (!call) return "unsupported";
     try {
-      await this.request(
+      const result = await this.request(
         call.method,
         call.params,
         () => onQueued?.(),
       );
+      if (!this.backend.steerDelivered(result)) {
+        // Reported in-band rather than thrown, so raise it into the path that
+        // already handles a failed steer: `steerSend` puts the text back on the
+        // queue and says so, instead of leaving a bubble the agent never saw.
+        throw new Error("the agent could not apply the correction");
+      }
       return "ok";
     } catch (e: any) {
       if (isMethodNotFoundError(e)) {

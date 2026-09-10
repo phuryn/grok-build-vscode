@@ -70,6 +70,10 @@ export const grokBackend: AcpBackend = {
   interject(sessionId, text, content) {
     return { method: "_x.ai/interject", params: buildInterjectParams(sessionId, text, content) };
   },
+  // `_x.ai/interject` has no outcome vocabulary: it buffers the text for the
+  // running turn and reports a failure as an error, which `interject` already
+  // rethrows. Nothing about Grok changes here.
+  steerDelivered() { return true; },
   configState(_response, fallback: BackendConfigState) { return fallback; },
   modelSetSucceeded(response) { return !!response?._meta?.model?.Ok; },
   async listSessions(request, cwd): Promise<BackendSessionListResult> {

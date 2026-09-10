@@ -304,6 +304,10 @@ export class ClaudeBackend implements AcpBackend {
 
   interject(): null { return null; }
 
+  // Unreachable: `steeringCapabilities` answers no, so no steering RPC is ever
+  // sent. Present because the seam is the interface, not the caller.
+  steerDelivered(): boolean { return true; }
+
   configState(response: any, fallback: BackendConfigState): BackendConfigState {
     return configStateFromClaudeOptions(response, fallback);
   }

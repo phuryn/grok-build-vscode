@@ -81,12 +81,12 @@ describe("steerSend carries attachments", () => {
     return file;
   }
 
-  function attachBackend(sidebar: any, backend: AcpBackend, supported = true, verified = true) {
+  function attachBackend(sidebar: any, backend: AcpBackend, supported = true, verified = true, answer: any = {}) {
     const options = { grokVersion: "1.0.5", grokVersionVerified: verified };
     const client = new AcpClient({ cliPath: "x", cwd: "/", log: () => {}, backend, ...options });
     client.sessionId = "s1";
     (client as any).steering = backend.steeringCapabilities({ _meta: { steering: { supported } } }, options);
-    const request = vi.fn(async (_method: string, _params: any, onQueued?: () => void) => { onQueued?.(); return {}; });
+    const request = vi.fn(async (_method: string, _params: any, onQueued?: () => void) => { onQueued?.(); return answer; });
     (client as any).request = request;
     const session: Session = sidebar.focused;
     session.client = client;
@@ -183,6 +183,50 @@ describe("steerSend carries attachments", () => {
       expect(sidebar.posted.some((m: HostMsg) => m.type === "userMessage")).toBe(false);
     },
   );
+
+  // codex-acp answers a steering RPC with one of three outcomes, and its own
+  // docstring is the source: the prompt "joined the active turn (injected),
+  // started a new one (startedNewTurn), or could not be applied (failed)".
+  // Only the last is a non-delivery, and it arrives as a SUCCESSFUL response --
+  // `executeOrQueueSteeringRequest` catches its own error and returns it -- so
+  // a host reading "did not throw" as "delivered" shows the user a steer bubble
+  // over text the agent never received.
+  it.each([
+    ["injected", true],
+    ["startedNewTurn", true],
+    ["failed", false],
+  ] as const)("believes the adapter's verdict on a steer answered %s", async (outcome, delivered) => {
+    const sidebar = makeSidebar();
+    const { session, request } = attachBackend(sidebar, new CodexBackend(), true, true, { outcome });
+    await sidebar.steerSend("use tabs, not spaces", session);
+    expect(request).toHaveBeenCalledTimes(1);
+    const errors = sidebar.posted.filter((m: HostMsg) => m.type === "error");
+    if (delivered) {
+      // `startedNewTurn` DID reach the agent. Re-queuing it would send it twice,
+      // which is worse than the untracked turn the idle guard already makes rare.
+      expect(session.queuedSends).toEqual([]);
+      expect(errors).toEqual([]);
+    } else {
+      expect(session.queuedSends).toEqual([{ text: "use tabs, not spaces", chips: [] }]);
+      expect(errors).toEqual([
+        expect.objectContaining({ text: expect.stringContaining("queued instead") }),
+      ]);
+      expect(sidebar.posted.some((m: HostMsg) => m.type === "agentReset")).toBe(true);
+      // Not a capability gap: the button stays, because the next steer may land.
+      expect(sidebar.posted.some((m: HostMsg) => m.type === "steerUnavailable")).toBe(false);
+    }
+  });
+
+  it("reads that verdict per backend, never off the wire alone", async () => {
+    const sidebar = makeSidebar();
+    // `_x.ai/interject` has no outcome vocabulary -- it buffers and reports
+    // failure by erroring -- so the same field must not be read as Grok's.
+    const { session, request } = attachBackend(sidebar, grokBackend, true, true, { outcome: "failed" });
+    await sidebar.steerSend("use tabs, not spaces", session);
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(session.queuedSends).toEqual([]);
+    expect(sidebar.posted.filter((m: HostMsg) => m.type === "error")).toEqual([]);
+  });
 
   it.each([grokBackend, new CodexBackend()])(
     "does not re-meter a queued steer the relay already charged (%s)", async (backend) => {
