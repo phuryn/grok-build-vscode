@@ -12,6 +12,7 @@ import { Uri, disposeAll, formatRemoteInstallId, shouldRehydrateOnWebviewReady }
 import { isCanonicallyInsideRoot } from "./file-tree";
 import * as fs from "node:fs";
 import * as os from "node:os";
+import { resolveProviderConfigFile } from "./provider-config";
 import * as path from "node:path";
 import { spawn } from "node:child_process";
 import { AcpClient, EffortLevel, ExitPlanRequest, PermissionRequest, QuestionRequest } from "./acp";
@@ -9274,7 +9275,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     target: Session = this.focused,
     intent: SessionStartIntent = "replace",
     clock?: OpenClock,
-    opts: { silent?: boolean } = {},
+    opts: { silent?: boolean; canReplace?: () => boolean } = {},
   ): Promise<AcpClient | undefined> {
     if (this.providerCliUpdate?.provider === target.provider) await this.providerCliUpdate.done;
     return this.runExclusiveSessionStart(target, () => this.startSessionBody(resumeId, target, intent, clock, opts));
@@ -9288,13 +9289,14 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     /** A start the PERSON did not ask for. Its failure belongs wherever the
      *  caller is reporting, never as a red banner in a conversation they were
      *  only looking at. The caller reads the undefined return instead. */
-    opts: { silent?: boolean } = {},
+    opts: { silent?: boolean; canReplace?: () => boolean } = {},
   ): Promise<AcpClient | undefined> {
     // Read the caller's clock BEFORE this function can add to it: the load
     // reservation, the workspace-switch queue, the cwd resolution, the
     // `session-meta.json` read and the wait for the exclusive start lock are
     // all already on it, and all of them belong to `resolve`.
     const clock = startedClock ?? new OpenClock();
+    if (opts.canReplace && !opts.canReplace()) return undefined;
     // A re-entry (the reactive downgrade below) arrives with the first pass's
     // phases already on it. Fold them into one NAMED phase and subtract it, so
     // the failed attempt keeps its own number instead of being reported as
@@ -9398,6 +9400,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     approveGateMs = clock.elapsed(consentAt);
     // After the last await before ++gen: a send can have begun a turn (or
     // another start can have finished) while consent was up.
+    if (opts.canReplace && !opts.canReplace()) return undefined;
     const startDecision = decideSessionStart(target, resumeId, intent);
     if (startDecision === "reuse" || startDecision === "refuse-turn") {
       if (startDecision === "refuse-turn") {
@@ -11704,6 +11707,59 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           break;
         }
         await this.trackAttach(this.addDroppedFile(abs, false, attachmentOwner));
+        break;
+      }
+      case "readProviderConfig":
+      case "writeProviderConfig": {
+        if (origin === "remote" && !requester) break;
+        const target = resolveProviderConfigFile(msg.provider);
+        const envelope = {
+          provider: msg.provider,
+          ...(typeof msg.requestId === "string" ? { requestId: msg.requestId } : {}),
+          relPath: target.ok ? target.configPath : "",
+        };
+        const reply = (body: Extract<HostMsg, { type: "providerConfigContent" | "providerConfigWriteResult" }>) => {
+          if (requester) this.sendRemoteRequester(requester, body);
+          else this.postLocal(body);
+        };
+        const unavailable = !HOST_CAPABILITIES.editProviderConfigFiles || !HOST_CAPABILITIES.editProjectFiles;
+        const refusal = unavailable ? "editing is not available" : !target.ok ? target.reason : undefined;
+        if (!target.ok || refusal) {
+          reply({ type: msg.type === "readProviderConfig" ? "providerConfigContent" : "providerConfigWriteResult",
+            ...envelope, ok: false, reason: refusal || "unknown provider config" });
+          break;
+        }
+        if (msg.type === "readProviderConfig") {
+          const wire = projectFileContentForWire(readRemoteProjectFile(target.root, target.relPath), { includeEditMeta: true });
+          reply({ type: "providerConfigContent", ...wire, ...envelope });
+        } else {
+          const written = writeRemoteProjectFile(target.root, target.relPath, msg.text, msg.stamp, {
+            expectedAbsPath: msg.expectedAbsPath,
+          });
+          reply({ type: "providerConfigWriteResult", ...envelope,
+            ...(written.ok ? { ok: true, stamp: written.stamp } : { ok: false, reason: written.reason }) });
+        }
+        break;
+      }
+      case "restartProviderSession": {
+        if (!HOST_CAPABILITIES.editProviderConfigFiles || !HOST_CAPABILITIES.editProjectFiles) break;
+        const generation = session.gen;
+        const canReplace = () => {
+          if (!isAcpProvider(msg.provider) || !msg.sessionId || msg.provider !== session.provider
+            || msg.sessionId !== session.activeSessionId || session.gen !== generation) {
+            this.reportRequester(requester, "warning", "The current conversation changed. Open the matching provider conversation and restart it there.");
+            return false;
+          }
+          if (session.priming || this.turnInFlight(session)) {
+            this.reportRequester(requester, "warning", "Wait for the current turn to finish before restarting this session.");
+            return false;
+          }
+          return true;
+        };
+        if (!canReplace()) break;
+        // The ordinary start path replaces the process and reloads its history.
+        // Recheck after its async prerequisites, before it replaces the process.
+        await this.startSession(session.hasHistory ? session.activeSessionId : undefined, session, "replace", undefined, { canReplace });
         break;
       }
       case "listProjectDir": {
@@ -20282,16 +20338,15 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   body.desk.has-rail .desk-ft-shell { display: flex; flex: 1 1 auto; flex-direction: row; min-width: 0; min-height: 0; height: 100%; }
   body.desk.has-rail .desk-ft-chat { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; min-height: 0; height: 100%; overflow: hidden; }`
       : "";
-    // The shared file-panel asset is desktop-only in this generated document.
-    // Remote browsers load it from the relay's own web/chat.html; VS Code gets
-    // neither the tag nor the bytes, making the no-file-panel decision structural.
-    const filePanelStyle = this.host.canSwitchWorkspaceFolder
+    // VS Code also uses the shared panel for the three provider configs. Its
+    // project explorer remains native; only the config menu mounts this panel.
+    const filePanelStyle = this.host.canSwitchWorkspaceFolder || HOST_CAPABILITIES.editProviderConfigFiles
       ? `<link rel="stylesheet" href="${mediaUri("file-panel.css")}" />`
       : "";
     // The highlighter rides the same gate and MUST precede the panel: the panel
     // reads `GrokSyntaxHighlight` at render time, and a missing global there
     // silently degrades every file to plain text rather than failing loudly.
-    const filePanelScript = this.host.canSwitchWorkspaceFolder
+    const filePanelScript = this.host.canSwitchWorkspaceFolder || HOST_CAPABILITIES.editProviderConfigFiles
       ? `<script nonce="${nonce}" src="${mediaUri("syntax-highlight.js")}"></script>\n` +
         `  <script nonce="${nonce}" src="${mediaUri("file-panel.js")}"></script>`
       : "";

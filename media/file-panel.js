@@ -723,7 +723,7 @@
     const rootEl = doc.createElement("aside");
     rootEl.id = mount.id || "grok-file-panel";
     rootEl.className = "gfp-panel desk-ft-panel";
-    rootEl.setAttribute("aria-label", "Workspace files");
+    rootEl.setAttribute("aria-label", mount.label || "Workspace files");
     rootEl.hidden = true;
 
     const resizer = doc.createElement("div");
@@ -3121,6 +3121,12 @@
       const head = viewerHead();
       renderViewerActions(head, tab);
       viewer.appendChild(head);
+      if (typeof ui.fileNotice === "function") {
+        const slot = doc.createElement("div");
+        slot.className = "gfp-file-notice";
+        viewer.appendChild(slot);
+        refreshFileNotice();
+      }
       if (tab.notice) {
         const notice = doc.createElement("div");
         notice.className = "gfp-notice desk-ft-notice files-browse-notice" + (tab.conflict ? " gfp-notice-warning files-browse-notice-warn" : "");
@@ -3279,6 +3285,7 @@
     }
 
     function patchDirtyUi(tab) {
+      refreshFileNotice();
       const save = viewer.querySelector(".gfp-save");
       if (save) save.disabled = tab.saving || !tab.dirty;
       const item = tabsEl.querySelector('[data-rel="' + cssEscape(tab.relPath) + '"] .gfp-tab-dirty');
@@ -3327,6 +3334,15 @@
     function repaintFor(tab) {
       if (scopes.get(tab.scopeId) === currentState) renderTabs();
       if (isOnScreen(tab)) renderViewer();
+    }
+
+    function refreshFileNotice() {
+      const slot = viewer.querySelector(".gfp-file-notice");
+      const tab = currentTab();
+      if (!slot || !tab || typeof ui.fileNotice !== "function") return;
+      slot.textContent = "";
+      const content = ui.fileNotice(tab);
+      if (content) slot.appendChild(content);
     }
 
     async function saveTab(tab) {
@@ -3851,6 +3867,7 @@
        * an inference drawn in here.
        */
       refreshDisplayed,
+      refreshFileNotice,
       setWidth: setPanelWidth,
       setMaximized,
       isMaximized: () => maximized,

@@ -3450,6 +3450,9 @@
     }
 
     addSection("Settings");
+    if (providerConfigFilesAvailable()) {
+      addGearItem(`<span class="gear-lead">${ICON.file}<span>Provider config files</span></span>`, () => openProviderConfigFiles());
+    }
     addGearItem(`<span class="gear-lead">${ICON.gear}<span>Settings</span></span>`, () => openAllSettings());
     // Older hosts have no provider account frame; retain their existing action.
     if (!IS_REMOTE && !state.providersKnown) {
@@ -16552,6 +16555,7 @@
         // any control is drawn — and a host that says nothing is a host that
         // cannot, which is the safe way round.
         state.hostCaps = (msg.capabilities && typeof msg.capabilities === "object") ? msg.capabilities : {};
+        if (providerConfigPanel && !providerConfigFilesAvailable()) providerConfigPanel.setOpen(false);
         renderQueuedBlocks();
         // Field presence: an older host never sends this, and command View all
         // then omits language rather than inventing a dialect.
@@ -18455,6 +18459,12 @@
       case "projectDirListing":
         handleProjectDirListing(msg);
         break;
+      case "providerConfigContent":
+        settleRemoteFileRequest("configRead", msg);
+        break;
+      case "providerConfigWriteResult":
+        settleRemoteFileRequest("configWrite", msg);
+        break;
       case "projectFileContent":
         handleProjectFileContent(msg);
         break;
@@ -18483,6 +18493,9 @@
         break;
     }
     if (SETTINGS_LIVE_MSGS.has(msg.type)) refreshSettingsOverlay();
+    if (providerConfigPanel && ["initialState", "session", "sessionName", "setBusy", "agentStart", "agentEnd"].includes(msg.type)) {
+      providerConfigPanel.refreshFileNotice();
+    }
     // After any step grok takes mid-turn, make sure the chat still shows it's
     // working — never a dead frame while a turn is unfinished (esp. with thinking
     // traces hidden). The turn-end boundary (promptComplete) is excluded so the
@@ -18529,8 +18542,85 @@
   modeBtn.onclick = (e) => { e.stopPropagation(); if (state.busyLocked) return; openModePopover(); };
   gearBtn.onclick = (e) => { e.stopPropagation(); openGearPopover(); };
 
+  // ---------- provider config files ----------
+  // Config uses the same component and request/stamp path on every surface.
+  // These are display entries, not filesystem listings; messages carry only a
+  // provider id and the host owns the closed path allowlist.
+  const PROVIDER_CONFIG_ENTRIES = [
+    { provider: "grok", name: "Grok", relPath: ".grok/config.toml" },
+    { provider: "codex", name: "Codex", relPath: ".codex/config.toml" },
+    { provider: "claude", name: "Claude", relPath: ".claude/settings.json" },
+  ];
+  let providerConfigPanel = null;
+
+  function providerConfigFilesAvailable() {
+    return !!(state.hostCaps && state.hostCaps.editProviderConfigFiles && state.hostCaps.editProjectFiles
+      && window.GrokFilePanel);
+  }
+
+  function providerConfigNotice(tab) {
+    const entry = PROVIDER_CONFIG_ENTRIES.find((item) => item.relPath === tab.relPath);
+    if (!entry) return null;
+    const notice = document.createElement("div");
+    notice.className = "gfp-notice";
+    const description = document.createElement("p");
+    description.textContent = entry.name + " reads this file at startup. Saved changes apply after restarting a session. Other running sessions keep their current settings.";
+    notice.appendChild(description);
+    const restart = document.createElement("button");
+    restart.type = "button";
+    restart.className = "gfp-action";
+    restart.textContent = "Restart current " + entry.name + " session";
+    const sessionId = state.activeSessionId;
+    restart.disabled = !providerConfigFilesAvailable() || state.activeProvider !== entry.provider
+      || !sessionId || state.busy || tab.dirty || tab.saving;
+    restart.title = state.activeProvider !== entry.provider || !sessionId
+      ? "Open a " + entry.name + " conversation to restart it."
+      : tab.dirty || tab.saving ? "Save your edits before restarting."
+        : state.busy ? "Wait for the current turn to finish." : "Restart the CLI and reload this conversation.";
+    if (restart.disabled) {
+      const hint = document.createElement("p");
+      hint.textContent = restart.title;
+      notice.appendChild(hint);
+    }
+    restart.addEventListener("click", () => {
+      if (!providerConfigFilesAvailable() || state.busy || tab.dirty || tab.saving
+        || state.activeProvider !== entry.provider || state.activeSessionId !== sessionId) return;
+      vscode.postMessage({ type: "restartProviderSession", provider: entry.provider, sessionId });
+      providerConfigPanel.setOpen(false);
+    });
+    notice.appendChild(restart);
+    return notice;
+  }
+
+  function openProviderConfigFiles() {
+    if (!providerConfigFilesAvailable()) return;
+    gearPopover.hidden = true;
+    if (!providerConfigPanel) {
+      const scope = { id: "provider-config-files", label: "Provider config files", title: "~/" };
+      const request = (kind, relPath, fields) => {
+        const entry = PROVIDER_CONFIG_ENTRIES.find((item) => item.relPath === relPath);
+        if (!entry || !providerConfigFilesAvailable()) return Promise.resolve({ ok: false, reason: "editing is not available" });
+        return postRemoteFileRequest(kind, { ...fields, provider: entry.provider }, relPath);
+      };
+      providerConfigPanel = window.GrokFilePanel.createFilePanel({
+        access: {
+          currentScope: async () => scope,
+          list: async (_scope, relPath) => ({ ok: true, truncated: false, entries: relPath ? []
+            : PROVIDER_CONFIG_ENTRIES.map((entry) => ({ name: "~/" + entry.relPath, kind: "file", relPath: entry.relPath })) }),
+          read: (_scope, relPath) => request("configRead", relPath, { type: "readProviderConfig" }),
+          write: (_scope, value) => request("configWrite", value.relPath, {
+            type: "writeProviderConfig", text: value.text, stamp: value.stamp, expectedAbsPath: value.expectedAbsPath,
+          }),
+        },
+        mount: { panelHost: document.body, presentation: "overlay", id: "provider-config-panel", label: "Provider config files" },
+        ui: { confirm: uiChoice, renderMarkdown, fileNotice: providerConfigNotice },
+      });
+    }
+    providerConfigPanel.setOpen(true);
+    providerConfigPanel.refreshFileNotice();
+  }
+
   // ---------- remote project files ----------
-  //
   // Browse + open under the tab's selected repo; edit+save when the host also
   // advertises editProjectFiles. Host fence is repoScopeFor + resolveTreePath
   // (see src/remote-files.ts). No create/delete/rename. Capability-gated (field
@@ -18626,7 +18716,7 @@
 
   function postRemoteFileRequest(kind, payload, keyPath) {
     const pathKey = typeof keyPath === "string" ? keyPath : (payload.relPath || "");
-    const key = remoteFileRequestKey(kind, payload.cwd, pathKey);
+    const key = remoteFileRequestKey(kind, payload.provider || payload.cwd, pathKey);
     if (remoteFilePoisoned.has(key)) {
       return Promise.resolve({ ok: false, reason: "Request state is stale. Refresh this page and try again." });
     }
@@ -18651,7 +18741,7 @@
       remoteFilePending.set(requestId, {
         requestId,
         kind,
-        cwd: payload.cwd,
+        cwd: payload.provider || payload.cwd,
         relPath: pathKey,
         key,
         timer,
@@ -18704,7 +18794,7 @@
   }
 
   function settleRemoteFileRequest(kind, msg) {
-    if (!state.filesBrowse.component) return false;
+    if (!state.filesBrowse.component && !providerConfigPanel) return false;
     const replyPath = remoteFileReplyPath(msg);
     let pending = null;
     if (typeof msg.requestId === "string") {
@@ -18716,7 +18806,7 @@
       if (
         candidate
         && candidate.kind === kind
-        && candidate.cwd === msg.cwd
+        && candidate.cwd === (msg.provider || msg.cwd)
         && candidate.relPath === replyPath
       ) {
         pending = candidate;
@@ -18726,7 +18816,7 @@
       for (const candidate of remoteFilePending.values()) {
         if (
           candidate.kind === kind
-          && candidate.cwd === msg.cwd
+          && candidate.cwd === (msg.provider || msg.cwd)
           && candidate.relPath === replyPath
         ) {
           pending = candidate;
@@ -18901,9 +18991,10 @@
    */
   function onRemoteHostReachable() {
     const panel = state.filesBrowse && state.filesBrowse.component;
-    if (!panel) return;
+    if (!panel && !providerConfigPanel) return;
     abandonRemoteFileRequests();
-    if (typeof panel.refreshDisplayed === "function") void panel.refreshDisplayed();
+    if (panel && typeof panel.refreshDisplayed === "function") void panel.refreshDisplayed();
+    if (providerConfigPanel && providerConfigFilesAvailable()) void providerConfigPanel.refreshDisplayed();
   }
 
   function ensureRemoteFilesBrowser() {

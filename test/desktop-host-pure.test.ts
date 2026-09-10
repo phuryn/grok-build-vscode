@@ -708,10 +708,11 @@ describe("desktop main wiring (source gates)", () => {
       sidebar.indexOf("return `<!DOCTYPE html>", sidebar.indexOf("const filePanelStyle")),
     );
     expect(assetGate).toContain("this.host.canSwitchWorkspaceFolder");
+    expect(assetGate).toContain("HOST_CAPABILITIES.editProviderConfigFiles");
     expect(assetGate).toContain('mediaUri("file-panel.css")');
     expect(assetGate).toContain('mediaUri("file-panel.js")');
-    // An empty branch means the VS Code webview receives neither tag; absence
-    // of a mount call is not the thing enforcing the product decision.
+    // VS Code loads the component for provider config files too. Project files
+    // still use its native explorer; only desktop injects that panel's mount.
     expect(assetGate.match(/:\s*"";/g)).toHaveLength(2);
 
     // First-frame desktop chrome: rail visible + files shell in getHtml so the

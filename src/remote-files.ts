@@ -45,6 +45,7 @@ import {
   type ReadTreeFileResult,
   type TreeFileStamp,
   type TreePathFs,
+  type TreeRoot,
   type WriteTreeFileResult,
 } from "./file-tree";
 import { repoScopeFor, type MsgOrigin } from "./remote-policy";
@@ -125,7 +126,7 @@ export function listRemoteProjectDir(
  * a phone has no OS open hand-off.
  */
 export function readRemoteProjectFile(
-  root: string,
+  root: TreeRoot,
   relPath: string,
   platform: NodeJS.Platform = process.platform,
   pathFs?: TreePathFs,
@@ -142,7 +143,7 @@ export function readRemoteProjectFile(
  * missing paths (`not found`); this pass does not create, delete, or rename.
  */
 export function writeRemoteProjectFile(
-  root: string,
+  root: TreeRoot,
   relPath: string,
   text: string,
   expectedStamp: TreeFileStamp,

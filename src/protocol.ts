@@ -93,6 +93,8 @@ export const HOST_CAPABILITIES = {
   // Edit+save existing project files from a remote. Separate from browse so a
   // host can offer list/read without a write path. OPT-IN field presence.
   editProjectFiles: true,
+  // Exact provider config files through the shared editor, on every surface.
+  editProviderConfigFiles: true,
   // The Changes view: read git status and per-file diffs, and run the four
   // operations in `git-status.ts`'s closed set. OPT-IN field presence, never a
   // version check — an older host classifies `gitStatus` as unknown and DROPS
@@ -203,6 +205,8 @@ export type HostUiCapabilities = {
    * No create/delete/rename in this pass.
    */
   editProjectFiles?: boolean;
+  /** Opt-in: absent/false hides provider config files, including on old hosts. */
+  editProviderConfigFiles?: boolean;
   /**
    * Whether this host can answer the Changes view: `gitStatus`, `gitFileDiff`
    * and the closed set of `gitRun` operations.
@@ -364,6 +368,10 @@ export type QueuedSend = {
 };
 
 export type HostMsg =
+  | ({ type: "providerConfigContent"; requestId?: string; provider: "grok" | "codex" | "claude"; relPath: string }
+      & import("./remote-files").RemoteProjectFileWire)
+  | ({ type: "providerConfigWriteResult"; requestId?: string; provider: "grok" | "codex" | "claude"; relPath: string }
+      & ({ ok: true; stamp: { mtimeMs: number; size: number } } | { ok: false; reason: string }))
   | { type: "initialState"; effort: string; cwd: string; useCtrlEnter: boolean; extVersion: string; showThinking: boolean; expandCommandOutputs: boolean; steerByDefault: boolean; promptNav: boolean; /** Absent on older hosts means collapsed. */ expandDiffCard?: boolean; soundNotifications: boolean; processingSound: boolean; readRepliesAloud: boolean; /** Global "Use this app for" — absent on older hosts means Knowledge work. */ appPurpose?: "knowledge" | "coding";
       /** VS Code language id for command View all, from the host shell dialect.
        *  Absent on older hosts — View all then omits language. */
@@ -1264,6 +1272,18 @@ export type WebviewMsg =
   // (same pipeline as drop / the + picker). The `@rel/path` text stays in the
   // composer, so the prompt carries both the prose reference and the chip.
   | { type: "addMentionFile"; relPath: string }
+  /** Provider config files use new types so older hosts drop them, never
+   *  interpret a new selector as an existing project-root request. */
+  | { type: "readProviderConfig"; requestId?: string; provider: "grok" | "codex" | "claude" }
+  | {
+      type: "writeProviderConfig";
+      requestId?: string;
+      provider: "grok" | "codex" | "claude";
+      text: string;
+      stamp: { mtimeMs: number; size: number };
+      expectedAbsPath: string;
+    }
+  | { type: "restartProviderSession"; provider: "grok" | "codex" | "claude"; sessionId: string }
   /**
    * Remote file browse: list one directory under the tab's selected repo
    * (`cwd` must be that scope — see `resolveRemoteFileRoot`). `relPath`
@@ -1419,6 +1439,7 @@ const HOST_MESSAGE_TYPE_MAP: Record<HostMsg["type"], true> = {
   modeChanged: true, openModePopover: true, voiceState: true, voiceConfigured: true,
   voicePartial: true, voiceSubmit: true, voiceTranscript: true, voiceError: true,
   chips: true, commandsUpdate: true, mentionResults: true, projectDirListing: true, projectFileContent: true, projectFileWriteResult: true, gitStatusResult: true, gitFileDiffResult: true, gitRunResult: true, userMessage: true, agentStart: true,
+  providerConfigContent: true, providerConfigWriteResult: true,
   thoughtChunk: true, messageChunk: true, media: true, userMessageChunk: true,
   historyReplay: true, historyBatch: true, permissionHistoryQueue: true, planHistoryQueue: true,
   toolCall: true, toolCallUpdate: true, permissionRequest: true, permissionOptions: true,
@@ -1451,6 +1472,7 @@ const WEBVIEW_MESSAGE_TYPE_MAP: Record<WebviewMsg["type"], true> = {
   resumeSession: true, renameSession: true, deleteSession: true,
   clearAllSessions: true, pickFile: true, mentionQuery: true, addMentionFile: true,
   listProjectDir: true, readProjectFile: true, writeProjectFile: true,
+  readProviderConfig: true, writeProviderConfig: true, restartProviderSession: true,
   gitStatus: true, gitFileDiff: true, gitRun: true,
   pasteImage: true, uploadFile: true, voiceStart: true,
   voiceStop: true, remoteVoiceStart: true, remoteVoiceChunk: true,

@@ -83,6 +83,9 @@ export interface TreeFileStamp {
   size: number;
 }
 
+/** A file root exposes exactly one named file, never its directory or siblings. */
+export type TreeRoot = string | { filePath: string };
+
 export type TextFileLineEnding = "lf" | "crlf";
 
 export interface TextFileDetails {
@@ -155,11 +158,17 @@ export function canonicalPath(absPath: string, pathFs: TreePathFs = defaultTreeF
  * Lexical containment alone is not enough (symlink / junction escape).
  */
 export function isCanonicallyInsideRoot(
-  root: string,
+  root: TreeRoot,
   absPath: string,
   platform: NodeJS.Platform = process.platform,
   pathFs: TreePathFs = defaultTreeFs,
 ): boolean {
+  if (typeof root !== "string") {
+    const paths = platform === "win32" ? path.win32 : path.posix;
+    const expected = paths.join(canonicalPath(paths.dirname(root.filePath), pathFs), paths.basename(root.filePath));
+    const actual = canonicalPath(absPath, pathFs);
+    return platform === "win32" ? actual.toLowerCase() === expected.toLowerCase() : actual === expected;
+  }
   const realRoot = canonicalPath(root, pathFs);
   const realAbs = canonicalPath(absPath, pathFs);
   return isFsPathInWorkspace(realAbs, [realRoot], platform);
@@ -170,13 +179,27 @@ export function isCanonicallyInsideRoot(
  * Rejects traversal (`..`), absolute inputs that leave the root, null bytes,
  * empty/invalid roots, and paths whose **real** target escapes the real root.
  * The workspace root itself is allowed (`relPath` "").
+ * A file root accepts only its exact basename and refuses a redirected file.
  */
 export function resolveTreePath(
-  root: string,
+  root: TreeRoot,
   relPath: string,
   platform: NodeJS.Platform = process.platform,
   pathFs: TreePathFs = defaultTreeFs,
 ): ResolveTreePathResult {
+  if (root && typeof root === "object") {
+    const paths = platform === "win32" ? path.win32 : path.posix;
+    if (typeof root.filePath !== "string" || !paths.isAbsolute(root.filePath)) {
+      return { ok: false, reason: "invalid file root" };
+    }
+    const absPath = paths.resolve(root.filePath);
+    // Exact input, before normalization: no aliases, traversal, or listing.
+    if (relPath !== paths.basename(absPath)) return { ok: false, reason: "path is not the allowed file" };
+    if (!isCanonicallyInsideRoot(root, absPath, platform, pathFs)) {
+      return { ok: false, reason: "file root redirects to another file" };
+    }
+    return { ok: true, absPath, relPath };
+  }
   if (!root || typeof root !== "string") {
     return { ok: false, reason: "no workspace root" };
   }
@@ -483,7 +506,7 @@ function decodeUtf8(buf: Buffer): { text: string; bom: boolean } | null {
  * as the open-path TOCTOU rechecks in file-tree-ipc).
  */
 function recheckTreePathForRead(
-  root: string,
+  root: TreeRoot,
   relPath: string,
   expectedAbs: string,
   expectedReal: string,
@@ -513,7 +536,7 @@ function recheckTreePathForRead(
  * `{ openExternal: true }` so the panel can hand off to the OS.
  */
 export function readTreeFile(
-  root: string,
+  root: TreeRoot,
   relPath: string,
   platform: NodeJS.Platform = process.platform,
   pathFs: TreePathFs = defaultTreeFs,
@@ -658,7 +681,7 @@ export function readTreeFile(
  * prevents a new write caller from accidentally weakening either guard.
  */
 export function writeTreeFile(
-  root: string,
+  root: TreeRoot,
   relPath: string,
   text: string,
   expectedStamp: TreeFileStamp,

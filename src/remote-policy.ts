@@ -270,6 +270,7 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
   // (writeProjectFile) at the mutation tier below.
   listProjectDir: "view",
   readProjectFile: "view",
+  readProviderConfig: "view",
   // The Changes view's two reads. Same fence as the browse above — the host
   // resolves the root through resolveRemoteFileRoot, not from the message.
   // Neither can mutate anything: gitStatus and gitFileDiff run git with
@@ -352,6 +353,9 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
   // read-only remote must not rewrite the desk tree. Existing files only
   // (create/delete/rename are deliberately out of scope).
   writeProjectFile: "propose",
+  // Same file-editing gate; the host selects one exact allowlisted file.
+  writeProviderConfig: "propose",
+  restartProviderSession: "propose",
   // Commit / push / new branch / revert one file, from a phone.
   //
   // "full" rather than "propose", and the reason is that the neighbouring rows
@@ -569,6 +573,9 @@ export const REMOTE_REQUIRES_BOUND_SESSION: Record<WebviewMsg["type"], boolean> 
   mentionQuery: true,
   listProjectDir: false,
   readProjectFile: false,
+  readProviderConfig: false,
+  writeProviderConfig: false,
+  restartProviderSession: true,
   // The Changes view asks about the REPOSITORY, not the conversation. A tab
   // whose session mapping went away can still legitimately show what changed
   // on disk, and refusing here would blank the view for the exact person who
@@ -969,6 +976,8 @@ export const OUTBOUND_DISPOSITION: Record<HostMsg["type"], OutboundDisposition> 
   projectDirListing: "mirror",
   projectFileContent: "mirror",
   projectFileWriteResult: "mirror",
+  providerConfigContent: "mirror",
+  providerConfigWriteResult: "mirror",
   gitStatusResult: "mirror",
   gitFileDiffResult: "mirror",
   gitRunResult: "mirror",
@@ -1156,6 +1165,9 @@ export const OUTBOUND_PROJECT_AUTH: Record<HostMsg["type"], OutboundProjectAuth>
   projectDirListing: "message-cwd",
   projectFileContent: "message-cwd",
   projectFileWriteResult: "message-cwd",
+  // Machine config, sent only to the requester; no repository scope to widen.
+  providerConfigContent: "none",
+  providerConfigWriteResult: "none",
   gitStatusResult: "message-cwd",
   gitFileDiffResult: "message-cwd",
   gitRunResult: "message-cwd",

@@ -335,10 +335,18 @@ function parseRemoteWebviewMsg(msg: unknown): WebviewMsg | null {
       return isRemoteCwd(value.cwd) && isRemoteMentionPath(value.relPath)
         ? msg as WebviewMsg
         : null;
+    case "readProviderConfig":
+      return ["grok", "codex", "claude"].includes(value.provider as string) ? msg as WebviewMsg : null;
+    case "restartProviderSession":
+      return ["grok", "codex", "claude"].includes(value.provider as string) && isRemoteSessionId(value.sessionId)
+        ? msg as WebviewMsg : null;
+    case "writeProviderConfig":
     case "writeProjectFile": {
       // Existing-file save only: stamp + expectedAbsPath are mandatory so the
       // host can refuse a stale tab or a cross-project relPath collision.
-      if (!isRemoteCwd(value.cwd) || !isRemoteMentionPath(value.relPath)) return null;
+      if (value.type === "writeProviderConfig") {
+        if (!["grok", "codex", "claude"].includes(value.provider as string)) return null;
+      } else if (!isRemoteCwd(value.cwd) || !isRemoteMentionPath(value.relPath)) return null;
       if (typeof value.text !== "string") return null;
       if (!isRemoteCwd(value.expectedAbsPath)) return null;
       const stamp = value.stamp;

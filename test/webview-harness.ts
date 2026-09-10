@@ -108,8 +108,7 @@ export function bootWebview(opts: {
   if (opts.beforeScripts) opts.beforeScripts(window);
   (window as any).eval(helperSrc);
   (window as any).eval(settingsSrc);
-  // Relay chat.html loads this before chat.js; VS Code does not load it at all,
-  // but evaluating an inert component global here lets one harness cover both.
+  // Every surface loads the shared component; each feature gates its own mount.
   (window as any).eval(filePanelSrc);
   (window as any).eval(chatSrc);
   // The webview now boots busy+locked (startup spinner) and only goes idle once
