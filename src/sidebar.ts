@@ -4118,6 +4118,15 @@ Only continue if you trust this code.`,
     // from "was working and never settled".
     if (!this.turnInFlight(session)) {
       putBackOnQueue();
+      // This text is already paid for: the relay meters `steerSend` on ingress
+      // exactly like `send`, which is why every other fallback in this function
+      // declines the relay round-trip. Those fallbacks can leave the flag alone
+      // because they do not flush. This one does — and a `fromQueue` steer
+      // arrives with the flag set by the original `queueSend`, which
+      // `putBackOnQueue` faithfully restores. Left standing it would send the
+      // correction back out through the phone as a fresh `send` and charge the
+      // person a second time for one message.
+      session.queuedSendRequiresRelay = false;
       void this.maybeFlushQueuedSends(session);
       return;
     }

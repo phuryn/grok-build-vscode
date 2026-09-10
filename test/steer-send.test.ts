@@ -184,6 +184,26 @@ describe("steerSend carries attachments", () => {
     },
   );
 
+  it.each([grokBackend, new CodexBackend()])(
+    "does not re-meter a queued steer the relay already charged (%s)", async (backend) => {
+      const sidebar = makeSidebar();
+      const { session, request } = attachBackend(sidebar, backend);
+      session.turnToken = undefined;
+      session.queuedSends = enqueueQueuedSend([], "one correction", []);
+      // `queueSend` set this when the phone queued the block. The relay then
+      // metered the `steerSend` that followed, so the text is paid for once.
+      session.queuedSendRequiresRelay = true;
+      sidebar.maybeFlushQueuedSends = vi.fn(async () => {});
+      await sidebar.steerSend("one correction", session, undefined, undefined, true);
+      expect(request).not.toHaveBeenCalled();
+      expect(session.queuedSends).toEqual([{ text: "one correction", chips: [] }]);
+      // The flag is the whole defect: a flush with it standing goes back out as
+      // `submitQueuedSend`, which the phone re-sends and the relay bills again.
+      expect(session.queuedSendRequiresRelay).toBe(false);
+      expect(sidebar.maybeFlushQueuedSends).toHaveBeenCalledTimes(1);
+    },
+  );
+
   it("interjects image content blocks from a queued attachment", async () => {
     const sidebar = makeSidebar();
     const { session, calls } = attachClient(sidebar, { honorContent: true });
