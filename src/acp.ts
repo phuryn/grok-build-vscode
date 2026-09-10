@@ -716,7 +716,7 @@ export class AcpClient extends EventEmitter {
     text: string,
     onQueued?: () => void,
     content?: readonly PromptContentBlock[],
-  ): Promise<"ok" | "unsupported"> {
+  ): Promise<"ok" | "unsupported" | "failed"> {
     if (!this.supportsInterject()) return "unsupported";
     if (content?.some((block) => block.type === "image") && !this.honorsInterjectContent()) {
       return "unsupported";
@@ -730,12 +730,12 @@ export class AcpClient extends EventEmitter {
         call.params,
         () => onQueued?.(),
       );
-      if (!this.backend.steerDelivered(result)) {
-        // Reported in-band rather than thrown, so raise it into the path that
-        // already handles a failed steer: `steerSend` puts the text back on the
-        // queue and says so, instead of leaving a bubble the agent never saw.
-        throw new Error("the agent could not apply the correction");
-      }
+      // A steering RPC can RESOLVE and still report that nothing was applied.
+      // Reported rather than thrown, and deliberately NOT the same answer as a
+      // throw: a throw means the call itself died, while this arrives from a
+      // live session whose turn is still streaming. The caller has to fall back
+      // WITHOUT suppressing a reply that is perfectly fine.
+      if (!this.backend.steerDelivered(result)) return "failed";
       return "ok";
     } catch (e: any) {
       if (isMethodNotFoundError(e)) {

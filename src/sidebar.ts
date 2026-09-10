@@ -4164,6 +4164,30 @@ Only continue if you trust this code.`,
         );
         return;
       }
+      if (r === "failed") {
+        // The adapter answered successfully and said it could not apply the
+        // correction. The turn is STILL RUNNING, which is what separates this
+        // from the catch below: `agentReset` there suppresses the rest of a
+        // turn, and doing that here would delete the reply the person is
+        // reading. The reply is fine. It is the correction that did not land,
+        // so the queue takes it — the fallback Steer was offering to skip.
+        putBackOnQueue();
+        // Already paid for: the relay meters `steerSend` on ingress exactly
+        // like `send`. `putBackOnQueue` faithfully restores the flag a
+        // `fromQueue` steer arrived with, and left standing it would send this
+        // correction back out through the phone as a fresh `send` and charge
+        // the person twice for one message that never landed. Same reasoning
+        // as the idle-turn fallback above, and the same single line.
+        session.queuedSendRequiresRelay = false;
+        // No `steerUnavailable`: this is one refusal, not a missing capability.
+        // The button stays, because the next correction may well land.
+        this.reportRequester(
+          requester,
+          "warning",
+          "The agent could not take that correction mid-turn — your message was queued instead. It will send when the turn finishes.",
+        );
+        return;
+      }
       this.host.appendLine(
         images.length
           ? `[steer] interjected ${rpcText.length} chars + ${images.length} image(s) into the running turn`

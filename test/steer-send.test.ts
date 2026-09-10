@@ -208,13 +208,32 @@ describe("steerSend carries attachments", () => {
       expect(errors).toEqual([]);
     } else {
       expect(session.queuedSends).toEqual([{ text: "use tabs, not spaces", chips: [] }]);
-      expect(errors).toEqual([
-        expect.objectContaining({ text: expect.stringContaining("queued instead") }),
-      ]);
-      expect(sidebar.posted.some((m: HostMsg) => m.type === "agentReset")).toBe(true);
+      expect(sidebar.reportRequester).toHaveBeenCalledWith(
+        undefined, "warning", expect.stringContaining("queued instead"),
+      );
+      // The turn is still streaming. `agentReset` drops the in-flight agent
+      // bubble to suppress the rest of a turn, so emitting it here would delete
+      // the reply the person is reading to report that their CORRECTION failed.
+      expect(sidebar.posted.some((m: HostMsg) => m.type === "agentReset")).toBe(false);
+      expect(errors).toEqual([]);
       // Not a capability gap: the button stays, because the next steer may land.
       expect(sidebar.posted.some((m: HostMsg) => m.type === "steerUnavailable")).toBe(false);
     }
+  });
+
+  it("does not re-meter a from-queue steer the adapter refused in-band", async () => {
+    const sidebar = makeSidebar();
+    const { session, request } = attachBackend(sidebar, new CodexBackend(), true, true, { outcome: "failed" });
+    // The shape that bills twice: text queued from the phone (so the relay has
+    // already metered it), then steered, then refused by the adapter.
+    session.queuedSends = enqueueQueuedSend([], "use tabs, not spaces", []);
+    session.queuedSendRequiresRelay = true;
+    await sidebar.steerSend("use tabs, not spaces", session, undefined, undefined, true);
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(session.queuedSends).toEqual([{ text: "use tabs, not spaces", chips: [] }]);
+    // Left set, the eventual flush asks the phone to submit it again as a fresh
+    // `send`, which the relay meters a second time for one failed correction.
+    expect(session.queuedSendRequiresRelay).toBe(false);
   });
 
   it("reads that verdict per backend, never off the wire alone", async () => {
