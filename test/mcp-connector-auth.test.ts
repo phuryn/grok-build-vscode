@@ -62,7 +62,7 @@ describe("sidebar connect wiring", () => {
     expect(body).toContain("env: npx.env");
     expect(body).not.toContain("env: process.env");
     expect(body).toContain("writeOAuthClientMetadataFile");
-    expect(body).toContain("clientInfo.path");
+    expect(body).toContain("clientInfo?.path");
     expect(body).not.toContain("quoteSpawnArgs");
     expect(body).toContain("withAuthHeaderEnv(npx.env, token)");
     expect(body).toContain('auth: "key"');

@@ -476,8 +476,10 @@ import {
 import {
   authorizeMcpRemote,
   connectorsLackingOAuthToken,
+  connectorsWithUnavailableServer,
   npxSpawnPlan,
   persistConnectorOAuthClientMetadata,
+  recordMcpRemoteOutcome,
   writeOAuthClientMetadataFile,
 } from "./mcp-connector-auth";
 import { authorizeMcpConnectorOAuth, ownedMcpOAuthClient, writeOAuthClientInfoFile } from "./mcp-connector-oauth";
@@ -12075,6 +12077,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         error: this.mcpConnectError?.message,
         keySet: new Set((this.mcpConnectorKeys ?? new Map()).keys()),
         lapsed: this.lapsedOAuthConnectors(store),
+        unavailable: connectorsWithUnavailableServer({ store }),
       }),
     };
   }
@@ -12182,6 +12185,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       persistConnectorOAuthClientMetadata(store),
       keyAuth,
       this.lapsedOAuthConnectors(store),
+      connectorsWithUnavailableServer({ store }),
     );
     const files: { dispose: () => void }[] = [];
     try {
@@ -12264,6 +12268,11 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       await this.connectKeyMcpConnector(connector, endpoint, opts);
       return;
     }
+    const retry = connectorsWithUnavailableServer({ store }).has(id)
+      && !this.lapsedOAuthConnectors(store).has(id);
+    // Remote Connect reserves a sign-in tab. Re-send the unavailable row before
+    // entering Connecting so Settings closes that placeholder; no OAuth follows.
+    if (retry && opts.remote) this.postMcpConnectors();
     this.mcpConnectingId = id;
     this.mcpConnectError = undefined;
     const npx = npxSpawnPlan(process.platform);
@@ -12273,7 +12282,9 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     this.mcpRemoteAuthorization = pending;
     this.postMcpConnectors();
     try {
-      const client = await authorizeMcpConnectorOAuth({
+      // A saved connector with an unavailable server needs a connection retry,
+      // not another consent flow. The headless probe cannot open a host browser.
+      const client = retry ? ownedMcpOAuthClient(endpoint, this.relayUrl()) : await authorizeMcpConnectorOAuth({
         connector, endpoint, relayUrl: this.relayUrl(),
         env: npx.env,
         onAuthorization: async (url) => {
@@ -12283,21 +12294,28 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           if (!opts.remote) await this.host.openExternal(url);
         },
       });
-      clientInfo = writeOAuthClientInfoFile(client);
+      if (client) clientInfo = writeOAuthClientInfoFile(client);
       if (connector.oauthScope?.trim()) {
         metadata = writeOAuthClientMetadataFile(connector.oauthScope.trim());
       }
       const result = await authorizeMcpRemote({
         spawn,
         command: npx.command,
-        args: mcpRemoteArgs(endpoint, undefined, metadata?.path, undefined, clientInfo.path),
+        args: mcpRemoteArgs(endpoint, undefined, metadata?.path, undefined, clientInfo?.path),
         shell: npx.shell,
         env: npx.env,
         headless: true,
       });
       if (this.mcpConnectingId !== id || this.mcpRemoteAuthorization !== pending) return;
+      recordMcpRemoteOutcome(endpoint, result);
       if (!result.ok) {
-        this.mcpConnectError = { id, message: result.message };
+        if (result.kind === "port-conflict" && store[id]) return;
+        // Let the fresh marker own this row so another host's successful retry
+        // clears it here too, instead of leaving an in-memory error behind.
+        if (result.kind === "server-unavailable" && connectorsWithUnavailableServer({ store }).has(id)) return;
+        this.mcpConnectError = { id, message: retry && result.kind === "timeout"
+          ? "The connection check timed out. The connector is still enabled for new conversations."
+          : result.message };
         return;
       }
       // Re-read rather than writing the pre-await snapshot. The browser flow
@@ -12312,6 +12330,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       this.mcpConnectError = undefined;
     } catch (error) {
       if (this.mcpRemoteAuthorization !== pending) return;
+      recordMcpRemoteOutcome(endpoint, undefined);
       this.mcpConnectError = { id, message: (error as Error).message || "Could not connect." };
     } finally {
       try { metadata?.dispose(); } catch { /* best-effort */ }
@@ -12343,7 +12362,9 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     }
     const token = incoming || this.mcpConnectorKeys.get(id) || "";
     const store = this.connectedConnectorStore();
-    if (typeof opts.readOnly === "boolean" && !incoming && store[id] && this.mcpConnectorKeys.has(id)) {
+    const retry = connectorsWithUnavailableServer({ store }).has(id);
+    if (typeof opts.readOnly === "boolean" && !incoming && store[id] && this.mcpConnectorKeys.has(id)
+      && !retry) {
       await this.state.update(
         MCP_CONNECTORS_KEY,
         connectConnector(store, id, endpoint, opts.readOnly),
@@ -12374,8 +12395,13 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         auth: "key",
       });
       if (this.mcpConnectingId !== id) return;
+      recordMcpRemoteOutcome(endpoint, result);
       if (!result.ok) {
-        this.mcpConnectError = { id, message: result.message };
+        if (result.kind === "port-conflict" && store[id]) return;
+        if (result.kind === "server-unavailable" && connectorsWithUnavailableServer({ store }).has(id)) return;
+        this.mcpConnectError = { id, message: retry && result.kind === "timeout"
+          ? "The connection check timed out. The connector is still enabled for new conversations."
+          : result.message };
         return;
       }
       const header = bearerAuthorizationHeader(token);
@@ -12391,6 +12417,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       );
       this.mcpConnectError = undefined;
     } catch {
+      recordMcpRemoteOutcome(endpoint, undefined);
       // Secret-store errors are not a response channel for credential values.
       this.mcpConnectError = { id, message: "Could not save this connector's key. Try connecting again." };
     } finally {

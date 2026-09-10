@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { GrokSidebar } from "../src/sidebar";
-import { authorizeMcpRemote } from "../src/mcp-connector-auth";
-import { authorizeMcpConnectorOAuth } from "../src/mcp-connector-oauth";
-import { MCP_CONNECTORS_KEY, mcpConnectorSecretKey } from "../src/mcp-connectors";
+import { authorizeMcpRemote, recordMcpRemoteOutcome } from "../src/mcp-connector-auth";
+import { authorizeMcpConnectorOAuth, ownedMcpOAuthClient } from "../src/mcp-connector-oauth";
+import { CONNECTOR_UNAVAILABLE_MESSAGE, MCP_CONNECTORS_KEY, MCP_REMOTE_STORE_VERSION, mcpConnectorSecretKey } from "../src/mcp-connectors";
 
 vi.mock("../src/mcp-connector-auth", async (original) => ({
   ...await original<typeof import("../src/mcp-connector-auth")>(),
@@ -15,6 +17,7 @@ vi.mock("../src/mcp-connector-auth", async (original) => ({
 vi.mock("../src/mcp-connector-oauth", async (original) => ({
   ...await original<typeof import("../src/mcp-connector-oauth")>(),
   authorizeMcpConnectorOAuth: vi.fn(),
+  ownedMcpOAuthClient: vi.fn(),
 }));
 
 vi.mock("node:child_process", async (original) => ({
@@ -44,12 +47,21 @@ function host() {
   return { h, secrets };
 }
 
+let authRoot: string;
 beforeEach(() => {
+  authRoot = mkdtempSync(join(tmpdir(), "grok-remote-connector-test-"));
+  vi.stubEnv("MCP_REMOTE_CONFIG_DIR", authRoot);
+  mkdirSync(join(authRoot, `mcp-remote-${MCP_REMOTE_STORE_VERSION}`));
   vi.mocked(authorizeMcpRemote).mockReset().mockResolvedValue({ ok: true });
   vi.mocked(authorizeMcpConnectorOAuth).mockReset();
+  vi.mocked(ownedMcpOAuthClient).mockReset();
   vi.mocked(spawn).mockReset();
 });
-afterEach(() => { vi.restoreAllMocks(); });
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+  rmSync(authRoot, { recursive: true, force: true });
+});
 
 const client = { client_id: "host-client", redirect_uris: ["https://relay.example/mcp/oauth/callback"] };
 
@@ -248,5 +260,109 @@ describe("remote connector host routing", () => {
     const frame = h.mcpConnectorsMessage();
     expect(JSON.stringify(frame)).not.toContain("ghp_secret_do_not_echo");
     expect(frame.connectors.find((c) => c.id === "github").error).toContain("Try connecting again");
+  });
+});
+
+describe("known-unavailable connector recovery through existing actions", () => {
+  const endpoint = "https://custom.example.invalid/mcp";
+  const unavailable = { ok: false, kind: "server-unavailable", message: CONNECTOR_UNAVAILABLE_MESSAGE } as const;
+
+  async function savedHost() {
+    const { h, secrets } = host();
+    h.reservedMcpIdentityFor = () => ({ names: [], urls: [] });
+    await h.state.update(MCP_CONNECTORS_KEY, { notion: { endpoint } });
+    h.state.update.mockClear();
+    return { h, secrets };
+  }
+
+  it.each(["grok", "codex", "claude"])("a failed proxy is withheld from the next %s session and shown in Settings", async (provider) => {
+    const { h } = await savedHost();
+    vi.mocked(authorizeMcpConnectorOAuth).mockResolvedValue(client);
+    vi.mocked(authorizeMcpRemote).mockResolvedValue(unavailable);
+    await h.onMessage({ type: "connectMcpConnector", id: "notion" }, "remote", "phone");
+    expect(h.state.update).not.toHaveBeenCalled();
+    expect(h.connectedConnectorStore()).toEqual({ notion: { endpoint } });
+    expect(h.mcpConnectorsMessage().connectors.find((c) => c.id === "notion"))
+      .toMatchObject({ connected: false, status: "error", endpoint });
+    expect(await h.hostMcpServersFor({ provider }, vi.fn())).toEqual([]);
+    // A second host reads the same marker, without inheriting an in-memory error.
+    const second = await savedHost();
+    expect(await second.h.hostMcpServersFor({ provider }, vi.fn())).toEqual([]);
+    vi.mocked(authorizeMcpRemote).mockResolvedValue({ ok: true });
+    await second.h.onMessage({ type: "connectMcpConnector", id: "notion" }, "remote", "phone");
+    expect(h.mcpConnectorsMessage().connectors.find((c) => c.id === "notion"))
+      .toMatchObject({ connected: true, status: "idle" });
+  });
+
+  it.each(["local", "remote"])("%s Connect retries saved OAuth without authorizing or opening a browser", async (origin) => {
+    const { h } = await savedHost();
+    recordMcpRemoteOutcome(endpoint, unavailable);
+    vi.mocked(ownedMcpOAuthClient).mockReturnValue(client);
+    await h.onMessage({ type: "connectMcpConnector", id: "notion" }, origin, "phone");
+    expect(authorizeMcpConnectorOAuth).not.toHaveBeenCalled();
+    expect(h.host.openExternal).not.toHaveBeenCalled();
+    expect(authorizeMcpRemote).toHaveBeenCalledTimes(1);
+    const snapshots = h.post.mock.calls.map(([message]) => message).filter((message) => message.type === "mcpConnectors");
+    if (origin === "remote") {
+      expect(snapshots[0].connectors.find((c) => c.id === "notion").status).toBe("error");
+      expect(snapshots[1].connectors.find((c) => c.id === "notion").status).toBe("connecting");
+    }
+    const args = vi.mocked(authorizeMcpRemote).mock.calls[0][0];
+    expect(args.headless).toBe(true);
+    expect(args.args).toContain(endpoint);
+    expect(args.args).toContain("--static-oauth-client-info");
+    expect(h.mcpConnectorsMessage().connectors.find((c) => c.id === "notion"))
+      .toMatchObject({ connected: true, status: "idle" });
+    const cleanup: Array<() => void> = [];
+    try {
+      for (const provider of ["grok", "codex", "claude"]) {
+        expect(await h.hostMcpServersFor({ provider }, (fn) => cleanup.push(fn)))
+          .toEqual([expect.objectContaining({ name: "notion" })]);
+      }
+    } finally { cleanup.forEach((fn) => fn()); }
+  });
+
+  it.each(["timeout", "port-conflict", "failed"] as const)("an ambiguous or healthy %s retry clears withholding and never respawns", async (kind) => {
+    const { h } = await savedHost();
+    recordMcpRemoteOutcome(endpoint, unavailable);
+    vi.mocked(authorizeMcpRemote).mockResolvedValue({ ok: false, kind, message: kind });
+    await h.onMessage({ type: "connectMcpConnector", id: "notion" }, "remote", "phone");
+    expect(authorizeMcpConnectorOAuth).not.toHaveBeenCalled();
+    expect(authorizeMcpRemote).toHaveBeenCalledTimes(1);
+    expect(h.state.update).not.toHaveBeenCalled();
+    expect(await h.hostMcpServersFor({ provider: "grok" }, vi.fn()))
+      .toEqual([expect.objectContaining({ name: "notion" })]);
+    expect(h.mcpConnectorsMessage().connectors.find((c) => c.id === "notion").connected).toBe(true);
+    if (kind === "port-conflict") expect(h.mcpConnectError).toBeUndefined();
+  });
+
+  it("a repeated definite failure retains saved auth and stays unavailable", async () => {
+    const { h } = await savedHost();
+    recordMcpRemoteOutcome(endpoint, unavailable);
+    vi.mocked(authorizeMcpRemote).mockResolvedValue(unavailable);
+    await h.onMessage({ type: "connectMcpConnector", id: "notion" }, "remote", "phone");
+    expect(authorizeMcpConnectorOAuth).not.toHaveBeenCalled();
+    expect(h.state.update).not.toHaveBeenCalled();
+    expect(await h.hostMcpServersFor({ provider: "grok" }, vi.fn())).toEqual([]);
+  });
+
+  it("a key retry accepts the existing form's empty token without becoming a preference-only write", async () => {
+    const { h, secrets } = host();
+    const key = "ghp_saved_key";
+    await h.onMessage({ type: "connectMcpConnector", id: "github", key, readOnly: true }, "remote", "phone");
+    const endpoint = h.connectedConnectorStore().github.endpoint;
+    vi.mocked(authorizeMcpRemote).mockResolvedValueOnce(unavailable);
+    await h.onMessage({ type: "connectMcpConnector", id: "github", key }, "remote", "phone");
+    expect(h.mcpConnectorsMessage().connectors.find((c) => c.id === "github"))
+      .toMatchObject({ connected: false, keySet: true });
+    vi.mocked(authorizeMcpRemote).mockClear();
+    await h.onMessage({ type: "connectMcpConnector", id: "github", key: "", readOnly: true }, "remote", "phone");
+    expect(authorizeMcpRemote).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(authorizeMcpRemote).mock.calls[0][0].env?.AUTH_HEADER).toBe(`Bearer ${key}`);
+    expect(h.connectedConnectorStore().github).toEqual({ endpoint, readOnly: true });
+    expect(secrets.get(mcpConnectorSecretKey("github"))).toBe(key);
+    expect(h.context.secrets.delete).not.toHaveBeenCalled();
+    expect(h.mcpConnectorsMessage().connectors.find((c) => c.id === "github"))
+      .toMatchObject({ connected: true, status: "idle" });
   });
 });

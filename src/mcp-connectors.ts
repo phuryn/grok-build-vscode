@@ -15,6 +15,9 @@
 
 export const MCP_CONNECTORS_KEY = "grok.mcpConnectors";
 
+export const CONNECTOR_UNAVAILABLE_MESSAGE =
+  "The connector's server could not be reached. Check the server or network, then press Connect to retry.";
+
 /**
  * **Pinned on purpose — do not float this back to bare `mcp-remote`.**
  *
@@ -215,6 +218,7 @@ export type ConnectFailureKind =
   | "timeout"
   | "port-conflict"
   | "endpoint-refused"
+  | "server-unavailable"
   | "oauth-incompatible"
   | "key-rejected"
   | "failed";
@@ -570,12 +574,14 @@ export function hostMcpServers(
    * CLI. See the skip below; an empty set (the default) keeps the old behaviour.
    */
   lapsed: ReadonlySet<string> = new Set(),
+  unavailable: ReadonlySet<string> = new Set(),
 ): AcpMcpStdioServer[] {
   const out: AcpMcpStdioServer[] = [];
   const seen = new Set<string>();
   for (const connector of TIER1_CONNECTORS) {
     const record = store[connector.id];
     if (!record) continue;
+    if (unavailable.has(connector.id)) continue;
     const endpoint = record.endpoint || connector.endpoint;
     if (reservedConflictsConnector(connector, endpoint, reserved)) continue;
     const name = normalizeMcpName(connector.id);
@@ -621,6 +627,8 @@ export function connectorViews(
     keySet?: ReadonlySet<string>;
     /** OAuth connectors being withheld from `mcpServers` — see hostMcpServers. */
     lapsed?: ReadonlySet<string>;
+    /** Definite proxy failures, independent of saved authorization. */
+    unavailable?: ReadonlySet<string>;
   } = {},
 ): ConnectorView[] {
   return TIER1_CONNECTORS.map((connector) => {
@@ -636,15 +644,21 @@ export function connectorViews(
     // is untouched, so reconnecting keeps any endpoint override.
     const lapsed = auth === "oauth" && connected && !connecting && !failed
       && !!opts.lapsed?.has(connector.id);
+    const unavailable = connected && !!opts.unavailable?.has(connector.id);
+    const unavailableMessage = CONNECTOR_UNAVAILABLE_MESSAGE + (keySet
+      ? " Leave the token field empty and press Connect again to use the saved token."
+      : auth === "oauth" ? " Your saved authorization will be reused." : "");
     return {
       id: connector.id,
       name: connector.name,
       description: connector.description,
       endpoint: store[connector.id]?.endpoint || connector.endpoint,
-      connected: lapsed ? false : connected,
-      status: connecting ? "connecting" : (failed || lapsed) ? "error" : "idle",
+      connected: lapsed || unavailable ? false : connected,
+      status: connecting ? "connecting" : (failed || lapsed || unavailable) ? "error" : "idle",
       auth,
-      ...(failed ? { error: opts.error } : lapsed ? { error: CONNECTOR_REAUTH_MESSAGE } : {}),
+      ...(lapsed ? { error: CONNECTOR_REAUTH_MESSAGE }
+        : unavailable && !connecting ? { error: unavailableMessage }
+        : failed ? { error: opts.error } : {}),
       ...(auth === "key" ? {
         keySet,
         ...(connector.keyHint ? { keyHint: connector.keyHint } : {}),
@@ -950,6 +964,8 @@ export function connectFailureMessage(kind: ConnectFailureKind, detail?: string)
       return detail
         ? `The app refused the connection: ${detail}`
         : "The app refused the connection. Check the endpoint is reachable, then try again.";
+    case "server-unavailable":
+      return CONNECTOR_UNAVAILABLE_MESSAGE;
     case "oauth-incompatible":
       return "This app's sign-in is not compatible with this connector.";
     case "key-rejected":
@@ -1000,6 +1016,12 @@ export function classifyConnectFailure(input: {
   if (connectOutputLooksLikeOAuthIncompatible(input.output || "") || connectOutputLooksLikeOAuthIncompatible(input.spawnError?.message || "")) {
     return input.auth === "key" ? "key-rejected" : "oauth-incompatible";
   }
+  // Only a failed process with a concrete proxy connection error is evidence.
+  // npm failures, HTTP/auth refusals and startup deadlines prove no outage.
+  if (!input.spawnError && typeof input.exitCode === "number" && input.exitCode > 0
+    && connectOutputLooksLikeUnavailableServer(input.output || "")) {
+    return "server-unavailable";
+  }
   if (
     /enotfound|econnrefused|eai_again|getaddrinfo|status code 4\d\d|http 4\d\d|404 not found|connection refused|unable to connect|certificate/.test(output)
   ) {
@@ -1011,6 +1033,15 @@ export function classifyConnectFailure(input: {
 export function connectOutputLooksLikePortConflict(output: string): boolean {
   const text = output.toLowerCase();
   return /\beaddrinuse\b/.test(text) || /address already in use/.test(text);
+}
+
+/** Narrow on purpose: unknown output must never hide a working connector. */
+export function connectOutputLooksLikeUnavailableServer(output: string): boolean {
+  if (connectOutputLooksSuccessful(output) || connectOutputLooksLikePortConflict(output)
+    || /timeout|timed?\s*out|\babort|cancel|npm\s+(?:err|error)\b/i.test(output)
+    || output.split(/\r?\n/).some((line) => parseInitializeResult(line) === true)) return false;
+  const failure = output.match(/(?:^|\n)(?:\[\d+\]\s+)?Connection error:\s*([\s\S]*)$/i)?.[1];
+  return !!failure && /\b(?:connect (?:ECONNREFUSED|ENETUNREACH|EHOSTUNREACH)|getaddrinfo ENOTFOUND)\b/.test(failure);
 }
 
 /** Vendor DCR / client-metadata rejection. Not the user's fault and not fixed by retrying.

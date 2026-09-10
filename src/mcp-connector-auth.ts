@@ -1,7 +1,7 @@
 /** One-shot MCP initialization probe, legacy authorization, and measured token-store paths. */
 import { createInterface } from "node:readline";
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
@@ -438,4 +438,59 @@ export function connectorsLackingOAuthToken(opts: {
   } catch {
     return empty;
   }
+}
+
+const availabilityFs = { readFileSync, writeFileSync, unlinkSync };
+interface McpAvailabilityStoreOpts {
+  home?: string;
+  env?: NodeJS.ProcessEnv;
+  fs?: typeof availabilityFs;
+}
+
+function unavailableMarker(endpoint: string, opts: McpAvailabilityStoreOpts): string {
+  return join(mcpAuthRoot(opts.env ?? process.env, opts.home ?? homedir()),
+    `mcp-remote-${MCP_REMOTE_STORE_VERSION}`, `${mcpServerUrlHash(endpoint)}_grok-unavailable.json`);
+}
+
+/**
+ * Our own marker, never a token or registration. Only the latest definite
+ * failure withholds; success, port conflict, or an ambiguous retry clears it.
+ * No directory creation: absent/unwritable storage fails open.
+ */
+export function recordMcpRemoteOutcome(
+  endpoint: string,
+  result: AuthorizeMcpRemoteResult | undefined,
+  opts: McpAvailabilityStoreOpts = {},
+): void {
+  try {
+    const fs = opts.fs ?? availabilityFs;
+    const file = unavailableMarker(endpoint, opts);
+    if (result?.ok === false && result.kind === "server-unavailable") {
+      fs.writeFileSync(file, JSON.stringify("server-unavailable"), "utf8");
+    } else {
+      fs.unlinkSync(file);
+    }
+  } catch { /* Cannot establish availability; do not affect saved authorization. */ }
+}
+
+/**
+ * Read fresh for both session/new and Settings. Missing directories/files,
+ * unreadable or malformed state, unknown outcomes and unavailable md5 all
+ * withhold nothing. Markers are scoped to the exact endpoint and proxy store
+ * version, so changing either cannot inherit an old failure.
+ */
+export function connectorsWithUnavailableServer(opts: McpAvailabilityStoreOpts & {
+  store: ConnectedConnectorStore;
+}): ReadonlySet<string> {
+  const unavailable = new Set<string>();
+  for (const connector of TIER1_CONNECTORS) {
+    const record = opts.store[connector.id];
+    if (!record) continue;
+    try {
+      const raw = (opts.fs ?? availabilityFs).readFileSync(
+        unavailableMarker(record.endpoint || connector.endpoint, opts), "utf8");
+      if (JSON.parse(raw) === "server-unavailable") unavailable.add(connector.id);
+    } catch { /* Ambiguity must never remove a working connector. */ }
+  }
+  return unavailable;
 }

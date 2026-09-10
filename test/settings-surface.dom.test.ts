@@ -4,7 +4,7 @@ import { Window } from "happy-dom";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { TIER1_CONNECTORS } from "../src/mcp-connectors";
+import { connectorViews, CONNECTOR_UNAVAILABLE_MESSAGE, TIER1_CONNECTORS } from "../src/mcp-connectors";
 import { parseWebviewMsg } from "../src/desktop/webview-msg-validate";
 import { bootWebview, click, dispatch } from "./webview-harness";
 
@@ -861,6 +861,48 @@ describe("settings overlay (chat.js)", () => {
     expect(overlay.textContent).toContain("Connected");
     expect(h.posted).not.toContainEqual(expect.objectContaining({ type: "connectMcpConnector" }));
     expect(h.posted).not.toContainEqual(expect.objectContaining({ type: "disconnectMcpConnector" }));
+  });
+
+  it.each([false, true])("an unavailable key connector can retry with an empty token field (remote=%s)", (remote) => {
+    const h = bootWebview({ remote });
+    seedChat(h, { capabilities: { mcpSettings: true } });
+    const connectors = connectorViews({ github: { endpoint: "https://key.example/mcp", readOnly: true } }, {
+      unavailable: new Set(["github"]), keySet: new Set(["github"]),
+    }).filter((c) => c.id === "github");
+    dispatch(h.window, { type: "mcpConnectors", remoteConnect: true, connectors });
+    openSettings(h);
+    clickSettingsNav(h, "Connectors");
+    const overlay = h.doc.getElementById("settings-overlay")!;
+    expect(overlay.textContent).toContain(CONNECTOR_UNAVAILABLE_MESSAGE);
+    expect(overlay.textContent).toContain("Leave the token field empty");
+    expect(overlay.querySelector(".settings-mcp-status.is-ready")).toBeNull();
+    click(h.window, overlay.querySelector(".settings-connector-action")!);
+    expect((overlay.querySelector(".settings-connector-key-input") as HTMLInputElement).value).toBe("");
+    click(h.window, overlay.querySelector(".settings-connector-key-submit")!);
+    expect(h.posted).toContainEqual({ type: "connectMcpConnector", id: "github", key: "", readOnly: true });
+  });
+
+  it("a remote saved-OAuth retry closes the unused sign-in placeholder", () => {
+    const h = bootWebview({ remote: true });
+    seedChat(h, { capabilities: { mcpSettings: true } });
+    const store = { notion: { endpoint: "https://mcp.example/mcp" } };
+    const rows = (opts = {}) => connectorViews(store, opts).filter((c) => c.id === "notion");
+    const message = { type: "mcpConnectors", remoteConnect: true, connectors: rows({ unavailable: new Set(["notion"]) }) };
+    dispatch(h.window, message);
+    openSettings(h);
+    clickSettingsNav(h, "Connectors");
+    const overlay = h.doc.getElementById("settings-overlay")!;
+    const tab = { opener: {}, document: { title: "", body: { textContent: "" } }, location: { replace: vi.fn() }, close: vi.fn() };
+    h.window.open = vi.fn().mockReturnValue(tab);
+    click(h.window, overlay.querySelector(".settings-connector-action")!);
+    expect(h.posted).toContainEqual({ type: "connectMcpConnector", id: "notion" });
+    // The host first sends the still-unavailable row, then starts the probe.
+    dispatch(h.window, message);
+    dispatch(h.window, { ...message, connectors: rows({ unavailable: new Set(["notion"]), connectingId: "notion" }) });
+    dispatch(h.window, { ...message, connectors: rows() });
+    expect(tab.close).toHaveBeenCalledOnce();
+    expect(tab.location.replace).not.toHaveBeenCalled();
+    expect(overlay.querySelector(".settings-connector-action")?.textContent).toBe("Disconnect");
   });
 
   it("a capable remote writes and replaces a key without ever reading one back", () => {
