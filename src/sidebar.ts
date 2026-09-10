@@ -4105,6 +4105,22 @@ Only continue if you trust this code.`,
       putBackOnComposer();
       return;
     }
+    // The turn ended before the steer landed — while attachments were being
+    // read, or, on a phone, while `steerSend` was still crossing the relay.
+    // The backends disagree about what an idle steer means and only one of
+    // them is harmless: grok buffers it, but codex-acp’s
+    // `performSteeringRequest` documents "otherwise starts a new turn", and a
+    // turn the host never began paints no Stop and ends no busy state — the
+    // agent works on while the chat looks finished. The queue is what Steer
+    // was offering to skip, so it is the honest home for the text; flushing
+    // it sends the ordinary tracked turn the user was going to get anyway.
+    // `turnInFlight` and not `status`: only the token can tell "working"
+    // from "was working and never settled".
+    if (!this.turnInFlight(session)) {
+      putBackOnQueue();
+      void this.maybeFlushQueuedSends(session);
+      return;
+    }
 
     const displayText = queuedSendsText(contributions);
     const displayChips = contributions.flatMap((item) => item.chips);

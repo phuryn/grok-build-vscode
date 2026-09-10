@@ -49,6 +49,8 @@ function attachClient(sidebar: any, opts?: { honorContent?: boolean; result?: "o
   const calls: Array<{ text: string; content?: unknown }> = [];
   const session: Session = sidebar.focused;
   session.activeSessionId = "s1";
+  // Steer only exists mid-turn, and the host reads that off the token.
+  session.turnToken = {};
   session.client = {
     sessionId: "s1",
     availableCommands: [],
@@ -90,6 +92,7 @@ describe("steerSend carries attachments", () => {
     session.client = client;
     session.provider = backend.provider;
     session.activeSessionId = "s1";
+    session.turnToken = {};
     return { session, request, client };
   }
 
@@ -159,6 +162,27 @@ describe("steerSend carries attachments", () => {
         : expect.not.stringContaining("Update via Settings"),
     );
   });
+
+  it.each([grokBackend, new CodexBackend()])(
+    "queues an idle steer instead of starting a turn nobody is watching (%s)", async (backend) => {
+      const sidebar = makeSidebar();
+      const { session, request } = attachBackend(sidebar, backend);
+      // The turn finished while the tap was crossing the relay.
+      session.turnToken = undefined;
+      const flushed: string[] = [];
+      sidebar.maybeFlushQueuedSends = vi.fn(async (s: Session) => {
+        flushed.push(...s.queuedSends.map((q) => q.text));
+      });
+      await sidebar.steerSend("say less", session);
+      expect(request).not.toHaveBeenCalled();
+      expect(session.queuedSends).toEqual([{ text: "say less", chips: [] }]);
+      expect(flushed).toEqual(["say less"]);
+      // The capability is fine; latching the button off would be a lie.
+      expect(sidebar.posted.some((m: HostMsg) => m.type === "steerUnavailable")).toBe(false);
+      // No bubble either: nothing was steered, and the flush paints the send.
+      expect(sidebar.posted.some((m: HostMsg) => m.type === "userMessage")).toBe(false);
+    },
+  );
 
   it("interjects image content blocks from a queued attachment", async () => {
     const sidebar = makeSidebar();
