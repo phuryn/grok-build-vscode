@@ -31,38 +31,52 @@ interface FindApi {
 }
 
 /**
- * Wait until the transcript has stopped growing.
+ * Wait until the transcript actually contains what the caller dispatched.
  *
- * Three earlier versions of this were counted waits — one animation frame, then
- * two frames with a macrotask between — and both lose the same race for the same
- * reason: chat.js appends across an unknown number of turns of the event loop,
- * and no fixed count outruns an arbitrarily loaded machine. The symptom was a
- * file that passed in isolation and failed a DIFFERENT test in it on each full
- * run, which reads as flakiness in the feature and is really a race in the
- * harness.
+ * Four earlier versions of this were counted waits — one animation frame,
+ * then two frames with a macrotask between, then "the node count stopped
+ * changing" — and every one lost the same race for the same reason: chat.js
+ * appends across an unknown number of turns of the event loop, and no fixed
+ * count outruns an arbitrarily loaded machine.
  *
- * So this waits for a CONDITION instead: the node count stable across two
- * consecutive frames. That is bounded by how fast the machine actually is rather
- * than by a number somebody guessed, and it returns immediately on an idle one.
+ * The stability version was the subtle one, and it is why this file kept
+ * failing a DIFFERENT test on each saturated run. "Two consecutive equal
+ * readings" is ALSO true of two readings of ZERO: on a loaded box the first two
+ * frames can both land before chat.js has appended anything, and the helper
+ * then reports the transcript rendered when the transcript is empty. It could
+ * not tell "nothing has happened yet" from "everything has happened", so the
+ * test that ran next asserted against a blank page and blamed the feature. Its
+ * deadline made that worse by returning SILENTLY, so a genuine hang arrived as
+ * a confusing assertion failure somewhere downstream.
  *
- * The deadline exists so a genuine hang fails as a timeout rather than spinning
- * for the whole suite.
+ * So the wait is for the CONTENT the caller just dispatched, and nothing else
+ * counts as done. A predicate cannot be satisfied by an empty page, it is
+ * bounded by how fast the machine actually is rather than by a number somebody
+ * guessed, it returns immediately on an idle one, and a real hang throws here
+ * naming what never arrived.
  */
-async function flushPaint(window: Window, timeoutMs = 5_000) {
-  const doc = window.document;
+async function waitForDom(window: Window, what: string, done: () => boolean, timeoutMs = 5_000) {
   const frame = () => new Promise<void>((resolve) => { window.requestAnimationFrame(() => resolve()); });
-  const count = () => doc.querySelectorAll(".msg, .tool-item, .thought").length;
   const deadline = Date.now() + timeoutMs;
-  let previous = -1;
   for (;;) {
+    if (done()) {
+      // One more turn of the loop, so anything appended in the same batch as
+      // the thing we were waiting for is also in place before we return.
+      await frame();
+      return;
+    }
+    if (Date.now() > deadline) {
+      throw new Error(`the harness never rendered ${what} within ${timeoutMs}ms`);
+    }
     await frame();
-    const now = count();
-    // Two consecutive equal readings: nothing arrived during a whole frame.
-    if (now === previous) return;
-    previous = now;
-    if (Date.now() > deadline) return; // a hang is the test's problem to report
     await new Promise<void>((resolve) => { setTimeout(resolve, 0); });
   }
+}
+
+/** Text present anywhere in the rendered transcript. */
+function transcriptHas(window: Window, text: string) {
+  const nodes = [...window.document.querySelectorAll(".msg, .thought, .tool-item")];
+  return nodes.some((el) => (el.textContent || "").includes(text));
 }
 
 async function playTurn(window: Window, user: string, agent: string, thought?: string) {
@@ -71,7 +85,13 @@ async function playTurn(window: Window, user: string, agent: string, thought?: s
   if (thought) dispatch(window, { type: "thoughtChunk", text: thought });
   dispatch(window, { type: "messageChunk", text: agent });
   dispatch(window, { type: "agentEnd" });
-  await flushPaint(window);
+  // Both halves, because the user bubble and the agent bubble are appended by
+  // different paths and the agent's is the later one.
+  await waitForDom(
+    window,
+    `the turn ${JSON.stringify(user)} -> ${JSON.stringify(agent)}`,
+    () => transcriptHas(window, user) && transcriptHas(window, agent),
+  );
 }
 
 function exec(id: string, command: string) {
@@ -381,7 +401,11 @@ describe("find in conversation — large transcript", () => {
       dispatch(window, { type: "messageChunk", text: `agent line ${i} extra needle-${i % 7}` });
       dispatch(window, { type: "agentEnd" });
     }
-    await flushPaint(window);
+    await waitForDom(
+      window,
+      `all ${n} turns`,
+      () => transcriptHas(window, `agent line ${n - 1} `),
+    );
     api(window).open();
     const t0 = Date.now();
     api(window).setQuery("needle-3");
@@ -389,5 +413,27 @@ describe("find in conversation — large transcript", () => {
     expect(api(window).matchCount()).toBeGreaterThan(0);
     expect(doc.querySelectorAll("mark").length).toBe(0);
     expect(ms, `find over ${n * 2} bubbles took ${ms}ms`).toBeLessThan(1000);
+  });
+
+  // The harness's own contract, because the previous version of it silently
+  // reported success on an EMPTY page and the cost landed on whichever test ran
+  // next. Two properties, and the second matters as much as the first: it has
+  // to fail rather than return, and it has to name what never arrived, or the
+  // next person reads a blank-page assertion and goes looking in the feature.
+  it("fails loudly, and by name, when the transcript never renders", async () => {
+    const { window } = bootWebview();
+    await expect(waitForDom(window, "a turn that is never dispatched", () => false, 50))
+      .rejects.toThrow(/never rendered a turn that is never dispatched/);
+  });
+
+  // The exact shape that used to pass: nothing dispatched, so the node count is
+  // stable at zero from the first frame. Stability alone cannot tell that from
+  // a finished render; the content predicate can.
+  it("does not mistake an empty transcript for a settled one", async () => {
+    const { window } = bootWebview();
+    await expect(waitForDom(window, "an unsent message", () => transcriptHas(window, "never-sent"), 50))
+      .rejects.toThrow();
+    await playTurn(window, "never-sent", "reply");
+    expect(transcriptHas(window, "never-sent")).toBe(true);
   });
 });
