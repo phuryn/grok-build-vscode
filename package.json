@@ -501,6 +501,7 @@
     "marketplace:publish": "node scripts/marketplace-publish.mjs",
     "e2e:lifecycle-host": "npm run compile && node scripts/lifecycle-host.mjs",
     "smoke:live": "npm run compile && node scripts/live-smoke.mjs",
+    "smoke:acp": "npm run compile && node scripts/acp-smoke.mjs",
     "telemetry:probe": "tsc -p . && node scripts/telemetry-probe.cjs",
     "check:relay": "node scripts/check-production-relay.mjs",
     "check:vsix": "npm run compile && node scripts/check-vsix-requires.mjs",
