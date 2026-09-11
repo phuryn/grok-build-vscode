@@ -12958,35 +12958,35 @@
       stepSize: CLIENT_FONT_SCALE_STEP,
       key: CLIENT_FONT_SCALE_KEY,
     };
-    window.addEventListener("keydown", (e) => {
-      if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
-      // Ignore when an editable field is composing IME, but allow zoom over inputs
-      // (desktop apps zoom the whole UI regardless of focus).
-      const key = e.key;
-      if (key === "=" || key === "+" || key === "Add") {
-        e.preventDefault();
-        setClientFontScale(stepClientFontScale(state.remoteFontScale, CLIENT_FONT_SCALE_STEP));
-      } else if (key === "-" || key === "Subtract") {
-        e.preventDefault();
-        setClientFontScale(stepClientFontScale(state.remoteFontScale, -CLIENT_FONT_SCALE_STEP));
-      } else if (key === "0" || key === "Digit0" || key === "Numpad0") {
-        // Ctrl/Cmd+0 resets to 100%.
-        if (key === "0" || e.code === "Digit0" || e.code === "Numpad0") {
+    window.addEventListener(
+      "keydown",
+      (e) => {
+        // Require Shift + (Cmd or Ctrl) to zoom in/out with + / -
+        if (!(e.ctrlKey || e.metaKey)) return;
+        const key = e.key;
+        if (e.shiftKey && (key === "+" || key === "=" || key === "Add" || e.code === "Equal")) {
+          e.preventDefault();
+          setClientFontScale(stepClientFontScale(state.remoteFontScale, CLIENT_FONT_SCALE_STEP));
+        } else if (e.shiftKey && (key === "-" || key === "_" || key === "Subtract" || e.code === "Minus")) {
+          e.preventDefault();
+          setClientFontScale(stepClientFontScale(state.remoteFontScale, -CLIENT_FONT_SCALE_STEP));
+        } else if (key === "0" || key === "Digit0" || key === "Numpad0") {
           e.preventDefault();
           setClientFontScale(1);
         }
-      }
-    });
+      },
+      true,
+    );
+
+    // Disable Cmd+Wheel / Ctrl+Wheel zoom completely
     window.addEventListener(
       "wheel",
       (e) => {
-        if (!(e.ctrlKey || e.metaKey)) return;
-        // Continuous scale; prevent Chromium page-zoom fighting us.
-        e.preventDefault();
-        const delta = e.deltaY === 0 ? 0 : e.deltaY > 0 ? -0.05 : 0.05;
-        if (delta) setClientFontScale(stepClientFontScale(state.remoteFontScale, delta));
+        if (e.ctrlKey || e.metaKey) {
+          e.preventDefault();
+        }
       },
-      { passive: false },
+      { passive: false, capture: true },
     );
   }
 
