@@ -304,7 +304,7 @@ describe("queued blocks — host-owned per session (#37)", () => {
         { text: "and B", chips: [chipB] },
       ],
     });
-    expect(queuedBlocks(doc)).toEqual(["look at A\n\nand B"]);
+    expect(queuedBlocks(doc)).toEqual(["look at A", "and B"]);
     const chipLabels = [...doc.querySelectorAll(".msg.queued .msg-chip")].map((el) => el.textContent);
     expect(chipLabels).toEqual(["Image #1", "Image #2"]);
   });
@@ -658,6 +658,41 @@ describe("queued-block actions survive mid-stream reflow (#52)", () => {
 
     press(window, doc.querySelector(".queued-steer") as HTMLElement);
     expect(types(posted)).toContain("steerSend");
+  });
+
+  it("renders distinct queued items as draggable cards and posts reorderQueuedSends on drop", () => {
+    const { window, doc, posted } = bootWebview();
+    dispatch(window, {
+      type: "queuedSends",
+      items: ["item 1", "item 2", "item 3"],
+      queued: [
+        { text: "item 1" },
+        { text: "item 2" },
+        { text: "item 3" },
+      ],
+    });
+
+    const cards = [...doc.querySelectorAll(".queued-item")] as HTMLElement[];
+    expect(cards.length).toBe(3);
+    expect(cards[0].draggable).toBe(true);
+
+    const tags = [...doc.querySelectorAll(".queued-tag")].map((el) => el.textContent);
+    expect(tags).toEqual(["Queued #1", "Queued #2", "Queued #3"]);
+
+    // Simulate drop from index 2 to index 0
+    const dropEvent = new (window as any).Event("drop", { bubbles: true, cancelable: true });
+    dropEvent.dataTransfer = {
+      getData: (type: string) => (type === "text/plain" ? "2" : ""),
+    };
+    dropEvent.clientY = 0;
+    cards[0].getBoundingClientRect = () => ({ top: 0, height: 40, bottom: 40, left: 0, right: 100, width: 100 } as any);
+    cards[0].dispatchEvent(dropEvent);
+
+    expect(posted.find((p) => p.type === "reorderQueuedSends")).toEqual({
+      type: "reorderQueuedSends",
+      fromIndex: 2,
+      toIndex: 0,
+    });
   });
 });
 

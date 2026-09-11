@@ -233,6 +233,7 @@ import {
   queuedSendsMessage,
   queuedSendsText,
   restoreQueuedChips,
+  reorderQueuedSends,
   type QueuedSendEntry,
 } from "./queued-send";
 
@@ -3913,8 +3914,10 @@ Only continue if you trust this code.`,
     // Same readiness as handleSend — client without sessionId is still priming.
     if (!sessionReadyForPrompt(session)) return undefined;
     if (session.status === "working" || session.status === "needs-you") return undefined;
+    if (!session.queuedSends.length) return undefined;
     // `""` is a ready image-only queue; `undefined` is "do not flush".
-    return queuedFlushText(session.queuedSends);
+    // Discrete queue: flush only the first item in the queue.
+    return queuedFlushText([session.queuedSends[0]]);
   }
 
   private emitQueuedSends(session: Session): void {
@@ -3968,6 +3971,7 @@ Only continue if you trust this code.`,
     requester?: RemoteRequester,
     requestedChips?: FileChip[],
     fromQueue = false,
+    queueIndex?: number,
   ): Promise<void> {
     const authored = text ?? "";
     const takeQueue = (fromQueue && queuedSendsHaveContent(session.queuedSends))
@@ -3996,11 +4000,22 @@ Only continue if you trust this code.`,
     let contributions: QueuedSendEntry[];
     let fromComposer = false;
     if (takeQueue) {
-      contributions = session.queuedSends.map((item) => ({
-        text: item.text,
-        chips: item.chips.map(cloneChipForQueue),
-      }));
-      session.queuedSends = [];
+      if (typeof queueIndex === "number" && queueIndex >= 0 && queueIndex < session.queuedSends.length) {
+        contributions = [{
+          text: session.queuedSends[queueIndex].text,
+          chips: session.queuedSends[queueIndex].chips.map(cloneChipForQueue),
+        }];
+        session.queuedSends = [
+          ...session.queuedSends.slice(0, queueIndex),
+          ...session.queuedSends.slice(queueIndex + 1),
+        ];
+      } else {
+        contributions = session.queuedSends.map((item) => ({
+          text: item.text,
+          chips: item.chips.map(cloneChipForQueue),
+        }));
+        session.queuedSends = [];
+      }
       session.queuedSendDispatch = undefined;
       session.queuedSendCommit = undefined;
       this.emitQueuedSends(session);
@@ -4018,7 +4033,15 @@ Only continue if you trust this code.`,
 
     const putBackOnQueue = (): void => {
       if (takeQueue) {
-        session.queuedSends = [...contributions, ...session.queuedSends];
+        if (typeof queueIndex === "number" && queueIndex >= 0) {
+          session.queuedSends = [
+            ...session.queuedSends.slice(0, queueIndex),
+            ...contributions,
+            ...session.queuedSends.slice(queueIndex),
+          ];
+        } else {
+          session.queuedSends = [...contributions, ...session.queuedSends];
+        }
         session.queuedSendRequiresRelay = relayFlag;
       } else {
         for (const item of contributions) {
@@ -4453,6 +4476,7 @@ Only continue if you trust this code.`,
     totalUserBubbles?: number,
     session: Session = this.focused,
     requester?: RemoteRequester,
+    chips?: FileChip[],
   ): Promise<void> {
     if (!session.client || !session.activeSessionId) {
       return void this.reportRequester(requester, "warning", "Start a session before editing a message.");
@@ -4500,7 +4524,7 @@ Only continue if you trust this code.`,
         // Was a modal offering "Copy text to composer" and awaiting the click.
         // Nobody can click it on a cloud machine, so the handler hung there —
         // and the button was the only sensible answer anyway. Do it, and say so.
-        this.restoreComposerFor(session, requester, text);
+        this.restoreComposerFor(session, requester, text, chips);
         return void this.reportRequester(
           requester,
           "info",
@@ -4559,7 +4583,7 @@ Only continue if you trust this code.`,
       const surviving = survivingUserMessagesAfterRewind(points, target);
       await this.truncateSessionCardsAfterRewind(resumeId, surviving);
       this.applyRewindToView(session, surviving);
-      this.restoreComposerFor(session, requester, text);
+      this.restoreComposerFor(session, requester, text, chips);
       if (reportedFiles > 0) {
         this.reportRequester(
           requester,
@@ -4600,8 +4624,16 @@ Only continue if you trust this code.`,
     session: Session,
     requester: RemoteRequester | undefined,
     text: string,
+    chips?: FileChip[],
   ): void {
-    if (!text) return;
+    if (!text && (!chips || !chips.length)) return;
+    
+    if (chips && chips.length) {
+      session.chips = restoreQueuedChips(session.chips, [{ text: "", chips }]);
+      if (session === this.focused) this.refreshImplicitChip(true);
+      else this.postChips(session);
+    }
+    
     const message: HostMsg = { type: "restoreComposer", text };
     if (requester) {
       // Resolve through the tab, so a phone that reconnected while the rewind
@@ -10788,15 +10820,9 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         break;
       }
       case "dequeueSend": {
-        // Old webviews render one pending block and send `index: 0` for Edit /
-        // Remove / Steer. Chip-aware clients use `clearQueuedSends` for that
-        // block, so this message keeps the pre-split meaning: the pending
-        // block, not the first of several entries. Passing `false` is the
-        // capability gate — we cannot see whether a remote honored
-        // `queueSendChips`, and every client that still sends `dequeueSend`
-        // is the old one.
         const s = session;
-        const result = dequeueQueuedSends(s.queuedSends, msg.index, false);
+        const index = typeof msg.index === "number" ? msg.index : 0;
+        const result = dequeueQueuedSends(s.queuedSends, index, true);
         if (result) {
           s.queuedSendDispatch = undefined;
           s.queuedSendCommit = undefined;
@@ -10811,11 +10837,31 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         }
         break;
       }
+      case "removeQueuedSend": {
+        const s = session;
+        if (typeof msg.index === "number" && msg.index >= 0 && msg.index < s.queuedSends.length) {
+          s.queuedSends = [
+            ...s.queuedSends.slice(0, msg.index),
+            ...s.queuedSends.slice(msg.index + 1),
+          ];
+          if (!s.queuedSends.length) s.queuedSendRequiresRelay = false;
+          this.emitQueuedSends(s);
+        }
+        break;
+      }
+      case "reorderQueuedSends": {
+        const s = session;
+        if (typeof msg.fromIndex === "number" && typeof msg.toIndex === "number") {
+          s.queuedSends = reorderQueuedSends(s.queuedSends, msg.fromIndex, msg.toIndex);
+          this.emitQueuedSends(s);
+        }
+        break;
+      }
       case "steerSend":
         if (session.hasHistory && (msg.text.trim() || msg.chips?.length || session.chips.length)) {
           this.reportRemoteMessage(session, origin);
         }
-        await this.steerSend(msg.text, session, requester, msg.chips, msg.fromQueue === true);
+        await this.steerSend(msg.text, session, requester, msg.chips, msg.fromQueue === true, msg.index);
         break;
       case "turnFeedback":
         await this.handleTurnFeedback(msg.rating, session, requester);
@@ -10896,7 +10942,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         break;
       }
       case "editLastMessage":
-        await this.editLastMessage(msg.userBubbleIndex, msg.text, msg.totalUserBubbles, session, requester);
+        await this.editLastMessage(msg.userBubbleIndex, msg.text, msg.totalUserBubbles, session, requester, msg.chips);
         break;
       case "workflowControl":
         await this.controlWorkflow(msg.action, msg.displayName, session);

@@ -141,6 +141,28 @@ export function takeQueuedSendsPrefix(
  * `clearQueuedSends` for the block). Pass `false` unless the sender is known
  * to address entries individually.
  */
+export function reorderQueuedSends(
+  items: readonly QueuedSendEntry[],
+  fromIndex: number,
+  toIndex: number,
+): QueuedSendEntry[] {
+  if (
+    !Number.isInteger(fromIndex) ||
+    !Number.isInteger(toIndex) ||
+    fromIndex < 0 ||
+    fromIndex >= items.length ||
+    toIndex < 0 ||
+    toIndex >= items.length ||
+    fromIndex === toIndex
+  ) {
+    return [...items];
+  }
+  const copy = [...items];
+  const [removed] = copy.splice(fromIndex, 1);
+  copy.splice(toIndex, 0, removed);
+  return copy;
+}
+
 export function dequeueQueuedSends(
   items: readonly QueuedSendEntry[],
   index: number,
