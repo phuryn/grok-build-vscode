@@ -368,7 +368,9 @@ export type QueuedSend = {
 };
 
 export type HostMsg =
-  | ({ type: "providerConfigContent"; requestId?: string; provider: "grok" | "codex" | "claude"; relPath: string }
+  | ({ type: "providerConfigContent"; requestId?: string; provider: "grok" | "codex" | "claude"; relPath: string;
+      /** On a miss, path presence opts into create-on-save. Older hosts omit it. */
+      absPath?: string; text?: string; stamp?: { mtimeMs: number; size: number } }
       & import("./remote-files").RemoteProjectFileWire)
   | ({ type: "providerConfigWriteResult"; requestId?: string; provider: "grok" | "codex" | "claude"; relPath: string }
       & ({ ok: true; stamp: { mtimeMs: number; size: number } } | { ok: false; reason: string }))
@@ -1058,6 +1060,7 @@ export type WebviewMsg =
   /** Close one project folder. It leaves the rail; nothing leaves the disk. */
   | { type: "removeProjectFolder"; cwd?: string }
   | { type: "openGlobalConfig" }
+  | { type: "openProviderConfig"; provider: "grok" | "codex" | "claude" }
   | { type: "openProjectConfig" }
   | { type: "listMcpServers" }
   /** Open the Routines page — the host answers with a `routines` frame. */
@@ -1280,6 +1283,7 @@ export type WebviewMsg =
       requestId?: string;
       provider: "grok" | "codex" | "claude";
       text: string;
+      /** A missing read supplies {mtimeMs: 0, size: -1}; save may create only that config. */
       stamp: { mtimeMs: number; size: number };
       expectedAbsPath: string;
     }
@@ -1457,7 +1461,7 @@ const HOST_MESSAGE_TYPE_MAP: Record<HostMsg["type"], true> = {
 const WEBVIEW_MESSAGE_TYPE_MAP: Record<WebviewMsg["type"], true> = {
   ready: true, remotePreferences: true, send: true, newSession: true, cancel: true, pickModel: true,
   setMode: true, removeChip: true, toggleChip: true, openFile: true, showInFolder: true, openUrl: true,
-  openText: true, openDiff: true, exportExpr: true, setEffort: true, openGlobalConfig: true,
+  openText: true, openDiff: true, exportExpr: true, setEffort: true, openGlobalConfig: true, openProviderConfig: true,
   addProjectFolder: true, removeProjectFolder: true, createProject: true, cloneProject: true, setupGithubCli: true, listGithubRepos: true, githubSignOut: true, githubLoginWithToken: true,
   openProjectConfig: true, listMcpServers: true, connectMcpConnector: true, disconnectMcpConnector: true,
   listRoutines: true, saveRoutine: true, deleteRoutine: true, setRoutinePaused: true, runRoutineNow: true, showLogs: true, toggleDevTools: true, openSettings: true, openSettingsSurface: true, closeSettingsSurface: true, dismissWelcomeTip: true, welcomeTipShown: true, moveView: true,

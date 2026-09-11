@@ -339,6 +339,19 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
       if (!isString(raw.cwd)) return null;
       if (!opt(raw.relPath, isString)) return null;
       break;
+    case "openProviderConfig":
+    case "readProviderConfig":
+      if (!["grok", "codex", "claude"].includes(raw.provider as string)) return null;
+      if (!opt(raw.requestId, isString)) return null;
+      break;
+    case "restartProviderSession":
+      if (!["grok", "codex", "claude"].includes(raw.provider as string) || !isString(raw.sessionId) || !raw.sessionId) return null;
+      break;
+    case "writeProviderConfig":
+      if (!["grok", "codex", "claude"].includes(raw.provider as string)
+        || !opt(raw.requestId, isString) || !isString(raw.text) || !isString(raw.expectedAbsPath)
+        || !isObject(raw.stamp) || !isNumber(raw.stamp.mtimeMs) || !isNumber(raw.stamp.size)) return null;
+      break;
     case "readProjectFile":
       if (!isString(raw.cwd) || !isString(raw.relPath)) return null;
       break;

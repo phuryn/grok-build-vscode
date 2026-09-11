@@ -430,7 +430,7 @@ describe("settings overlay (chat.js)", () => {
       "showThinking", "expandCommandOutputs", "expandDiffCard", "steerByDefault",
       "soundNotifications", "processingSound",
       "readRepliesAloud", "summarizeRepliesAloud",
-      "openGlobalConfig", "openProjectConfig", "showLogs",
+      "openProjectConfig", "showLogs",
       "openVsCodeSettings", "moveView",
     ]));
   });
@@ -2624,6 +2624,36 @@ describe("the Previous-prompt row (#150)", () => {
 
 
 describe("every desktop toggle reaches the desktop host", () => {
+  it.each(["grok", "codex", "claude"])("accepts the %s config open, read, save and restart messages", (provider) => {
+    const api = loadSettings();
+    const window = new Window();
+    const container = window.document.createElement("div");
+    const posted: unknown[] = [];
+    const mounted = api.mount(container as unknown as Element, {
+      standalone: true, category: "providers",
+      env: { hostCaps: { editProviderConfigFiles: true, editProjectFiles: true } },
+      post: (msg: unknown) => posted.push(msg),
+    });
+    (container.querySelector(`[data-provider="${provider}"]`) as any).click();
+    expect(posted).toContainEqual({ type: "openProviderConfig", provider });
+    for (const message of [
+      posted.at(-1),
+      { type: "readProviderConfig", provider, requestId: "read" },
+      { type: "writeProviderConfig", provider, requestId: "create", text: "{}", stamp: { mtimeMs: 0, size: -1 }, expectedAbsPath: "/home/user/config" },
+      { type: "restartProviderSession", provider, sessionId: "current" },
+    ]) expect(parseWebviewMsg(message)).not.toBeNull();
+    mounted.dispose();
+    window.happyDOM.abort();
+  });
+
+  it("rejects malformed provider config messages at the desktop boundary", () => {
+    for (const type of ["openProviderConfig", "readProviderConfig", "writeProviderConfig", "restartProviderSession"]) {
+      for (const provider of [undefined, "__proto__", "../auth.json", "other"]) expect(parseWebviewMsg({ type, provider })).toBeNull();
+    }
+    expect(parseWebviewMsg({ type: "writeProviderConfig", provider: "grok", text: "", expectedAbsPath: "/tmp/config" })).toBeNull();
+    expect(parseWebviewMsg({ type: "restartProviderSession", provider: "grok" })).toBeNull();
+  });
+
   // The desktop app drops any webview message its validator does not list,
   // silently. VS Code has no such gate and a phone applies local-only rows
   // without posting, so a toggle can work on three surfaces and be dead on

@@ -194,7 +194,8 @@
       // its version stamp, but never adopts a different absolute target.
       expectedAbsPath: result.absPath,
       mode: result.kind === "markdown" ? "preview" : "read",
-      editing: false,
+      missing: !!result.missing,
+      editing: !!result.missing,
       dirty: false,
       saving: false,
       sentText: null,
@@ -228,10 +229,26 @@
     return tab;
   }
 
+  /**
+   * Is there anything for Save to do?
+   *
+   * `dirty` answers "has this been EDITED", and everything that asks the person
+   * a question reads it: the close prompt, the tab dot, the page's own unload
+   * guard. A file that does not exist yet has been edited by nobody, so it must
+   * not claim so — open one on a phone and an untouched buffer would otherwise
+   * make a reload say "changes you made may not be saved". But it still has
+   * something to save: the buffer IS the file, and saving is what creates it.
+   * Those are two different questions, so they get two different functions.
+   */
+  function savable(tab) {
+    return !!(tab.dirty || tab.missing);
+  }
+
   function applySaveSuccess(tab, sentText, result) {
     // The remote editor learned this the hard way: the textarea remains live
     // while Save is in flight. Only the captured payload reached the host.
     tab.baselineText = sentText;
+    tab.missing = false;
     tab.stamp = result.stamp;
     tab.sentText = null;
     tab.saving = false;
@@ -3270,7 +3287,7 @@
           cancel.disabled = tab.saving;
           const save = actionButton(tab.saving ? "Saving…" : "Save", "primary", () => void saveTab(tab));
           save.classList.add("gfp-save", "files-browse-action", "files-browse-action-primary");
-          save.disabled = tab.saving || !tab.dirty;
+          save.disabled = tab.saving || !savable(tab);
           end.append(cancel, save);
         }
       }
@@ -3287,7 +3304,7 @@
     function patchDirtyUi(tab) {
       refreshFileNotice();
       const save = viewer.querySelector(".gfp-save");
-      if (save) save.disabled = tab.saving || !tab.dirty;
+      if (save) save.disabled = tab.saving || !savable(tab);
       const item = tabsEl.querySelector('[data-rel="' + cssEscape(tab.relPath) + '"] .gfp-tab-dirty');
       if (item) item.textContent = tab.dirty ? "•" : "";
       applyStripPlan();
@@ -3301,6 +3318,10 @@
           actions: [{ id: "discard", label: "Discard", danger: true }],
         });
         if (answer !== "discard") return false;
+      }
+      if (tab.missing) {
+        tab.dirty = false;
+        return closeTab(tab.relPath);
       }
       tab.draftText = tab.baselineText;
       tab.dirty = false;
@@ -3346,7 +3367,7 @@
     }
 
     async function saveTab(tab) {
-      if (!access.write || !tab.dirty || tab.saving || !tab.stamp || !tab.expectedAbsPath) return false;
+      if (!access.write || !savable(tab) || tab.saving || !tab.stamp || !tab.expectedAbsPath) return false;
       const sentText = tab.draftText;
       const seq = ++tab.saveSeq;
       tab.saving = true;
@@ -3451,6 +3472,7 @@
         return renderViewer();
       }
       tab.stamp = fresh.stamp;
+      tab.missing = !!fresh.missing;
       tab.saving = false;
       // Dirty against what is ON DISK NOW, not against the version this tab was
       // opened at. Overwrite exists precisely because the file moved underneath
@@ -3461,7 +3483,7 @@
       // the newer bytes — and closing it would not have warned.
       if (typeof fresh.text === "string") tab.baselineText = fresh.text;
       tab.dirty = tab.draftText !== tab.baselineText;
-      if (!tab.dirty) {
+      if (!savable(tab)) {
         // The refresh proved the file already holds exactly this text, so there
         // is nothing to overwrite. `saveTab` refuses a clean tab and returns
         // silently, which left "Refreshing version…" on screen forever — an

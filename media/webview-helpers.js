@@ -38,7 +38,7 @@
     "remoteStatus", "hostReachable",
   ];
   const WEBVIEW_MESSAGE_TYPES = [
-    "readProviderConfig", "writeProviderConfig", "restartProviderSession",
+    "readProviderConfig", "writeProviderConfig", "restartProviderSession", "openProviderConfig",
     "ready", "remotePreferences", "send", "newSession", "cancel", "pickModel", "setMode", "removeChip",
     "toggleChip", "openFile", "showInFolder", "openUrl", "openText", "openDiff", "exportExpr", "setEffort",
     "addProjectFolder", "removeProjectFolder", "createProject", "cloneProject", "setupGithubCli", "listGithubRepos", "githubSignOut", "githubLoginWithToken",

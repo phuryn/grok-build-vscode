@@ -7,15 +7,19 @@ import { Session } from "../src/session";
 import { RemoteClientState } from "../src/remote-client-state";
 import { Uri } from "../src/host";
 import { HOST_CAPABILITIES } from "../src/protocol";
+import { MISSING_PROVIDER_CONFIG_STAMP } from "../src/provider-config";
+import { GLOBAL_CONFIG_STUB } from "../src/grok-config";
+import { Window } from "happy-dom";
 
-const fixture = vi.hoisted(() => ({ home: "" }));
+const fixture = vi.hoisted(() => ({ home: "", overrides: {} as NodeJS.ProcessEnv }));
 vi.mock("../src/provider-config", async (original) => {
   const actual = await original<typeof import("../src/provider-config")>();
-  return { ...actual, resolveProviderConfigFile: (provider: unknown) => actual.resolveProviderConfigFile(provider, { HOME: fixture.home, USERPROFILE: fixture.home }) };
+  return { ...actual, resolveProviderConfigFile: (provider: unknown) => actual.resolveProviderConfigFile(provider, { HOME: fixture.home, USERPROFILE: fixture.home, ...fixture.overrides }) };
 });
 
 beforeEach(() => {
   fixture.home = fs.mkdtempSync(path.join(os.tmpdir(), "config-host-"));
+  fixture.overrides = {};
   for (const [dir, name] of [[".grok", "config.toml"], [".codex", "config.toml"], [".claude", "settings.json"]]) {
     fs.mkdirSync(path.join(fixture.home, dir));
     fs.writeFileSync(path.join(fixture.home, dir, name), "original = true\n");
@@ -32,7 +36,7 @@ function host() {
   sidebar.focused.cwd = "/repo";
   sidebar.remoteClients = new RemoteClientState<Session>("/repo");
   sidebar.remoteClients.ready("phone");
-  sidebar.host = { workspaceRoot: () => "/repo", appendLine: vi.fn() };
+  sidebar.host = { workspaceRoot: () => "/repo", appendLine: vi.fn(), openHostResolvedPath: vi.fn() };
   sidebar.postLocal = vi.fn();
   sidebar.post = vi.fn();
   sidebar.sendRemoteRequester = vi.fn();
@@ -44,6 +48,153 @@ function host() {
 }
 
 describe("provider config host dispatch", () => {
+  function settingsHost() {
+    const sidebar = host();
+    sidebar.state = { get: (_key: string, fallback: unknown) => fallback };
+    sidebar.context = { extensionVersion: "test", extensionUri: Uri.file(path.resolve(__dirname, "..")) };
+    sidebar.host.getConfiguration = () => ({ get: (_key: string, fallback: unknown) => fallback });
+    sidebar.appPurpose = () => "coding";
+    sidebar.chatFontScale = () => 1;
+    sidebar.lastVoiceConfiguredByCwd = new Map();
+    sidebar.voiceSetting = (_cwd: string, _key: string, fallback: unknown) => fallback;
+    sidebar.providerCliVersions = {};
+    sidebar.providerStateMessage = () => ({ type: "providerState", providers: [] });
+    sidebar.githubStatePayload = () => ({});
+    sidebar.mcpConnectorsMessage = () => ({ type: "mcpConnectors", connectors: [] });
+    return sidebar;
+  }
+
+  it.each([false, true])("advertises config editing in the actual remote snapshot (VS Code host=%s)", (vscode) => {
+    const sidebar = settingsHost();
+    sidebar.host.canOpenSettingsEditor = vscode;
+    sidebar.host.canSwitchWorkspaceFolder = !vscode;
+    sidebar.remoteClients.cwdIfPresent = () => "";
+    sidebar.authorizedSessionCwds = () => [];
+    sidebar.localRepoCatalogEntries = () => [];
+    sidebar.githubStateMessage = () => ({ type: "githubState" });
+    sidebar.mcpConnectorAuthorizationMessage = () => undefined;
+    sidebar.mcpServersMessage = () => ({ type: "mcpServers", servers: [] });
+    sidebar.welcomeTipsMessage = () => ({ type: "welcomeTips" });
+    sidebar.projectSetupMessage = () => ({ type: "projectSetup" });
+    sidebar.githubProjectSetupExtra = () => ({});
+    sidebar.resolveVoiceApiKey = () => undefined;
+    sidebar.rememberVoiceConfigured = vi.fn();
+    sidebar.voiceConfiguredMsg = () => ({ type: "voiceConfigured", configured: false });
+    sidebar.seedPostedVoiceConfigured = vi.fn();
+    sidebar.remoteVoice = new Map();
+    sidebar.buildRemoteReposMsg = () => ({ type: "repos", entries: [] });
+    sidebar.buildSessionsList = () => ({ type: "sessions", sessions: [] });
+    sidebar.buildPinnedSessions = () => ({ pins: [] });
+    sidebar.remoteMediaDeps = {};
+    const frames = sidebar.buildRemoteSnapshot("phone");
+    const initial = frames.find((frame: { type: string }) => frame.type === "initialState");
+    expect(initial.capabilities).toMatchObject({ editProviderConfigFiles: true, editProjectFiles: true });
+    expect(initial.capabilities.settingsEditor).toBeUndefined();
+  });
+
+  it("boots the real standalone Settings HTML with config capabilities and opens through its allowlist", async () => {
+    const sidebar = settingsHost();
+    const html = sidebar.getSettingsHtml({ cspSource: "test:", asWebviewUri: (uri: unknown) => String(uri) }, { remoteLinked: false, category: "providers" });
+    const window = new Window({ url: "https://localhost/" });
+    window.document.body.innerHTML = '<div id="settings-root"></div>';
+    const messages: any[] = [];
+    (window as any).acquireVsCodeApi = () => ({ postMessage: (msg: any) => messages.push(msg) });
+    (window as any).eval(fs.readFileSync(path.resolve(__dirname, "../media/settings.js"), "utf8"));
+    for (const script of html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)) {
+      if (script[1].trim()) (window as any).eval(script[1]);
+    }
+    expect((window as any).GrokFilePanel).toBeUndefined();
+    const configs = window.document.querySelector('[data-id="providerConfigFiles"]')!;
+    expect(configs).toBeTruthy();
+    (configs.querySelector('[data-provider="codex"]') as any).click();
+    const message = messages.at(-1);
+    expect(message).toEqual({ type: "openProviderConfig", provider: "codex" });
+    await sidebar.onSettingsPanelMessage(message);
+    expect(sidebar.host.openHostResolvedPath).toHaveBeenCalledWith(path.join(fixture.home, ".codex", "config.toml"));
+    window.happyDOM.abort();
+  });
+
+  it.each([["grok", GLOBAL_CONFIG_STUB], ["codex", ""], ["claude", "{}"]])("leaves a missing %s read untouched, then creates it on save", async (provider, stub) => {
+    const sidebar = host();
+    const dir = path.join(fixture.home, `.${provider}`);
+    fs.rmSync(dir, { recursive: true });
+    await sidebar.onMessage({ type: "readProviderConfig", provider, requestId: "missing" }, "remote", "phone");
+    const read = sidebar.sendRemoteRequester.mock.calls.at(-1)[1];
+    expect(read).toMatchObject({ ok: false, reason: "not found", text: stub, stamp: MISSING_PROVIDER_CONFIG_STAMP,
+      absPath: path.join(dir, provider === "claude" ? "settings.json" : "config.toml") });
+    expect(fs.existsSync(dir)).toBe(false);
+    await sidebar.onMessage({ type: "writeProviderConfig", provider, requestId: "create", text: read.text, stamp: read.stamp, expectedAbsPath: read.absPath }, "remote", "phone");
+    expect(sidebar.sendRemoteRequester.mock.calls.at(-1)[1]).toMatchObject({ type: "providerConfigWriteResult", requestId: "create", ok: true });
+    expect(fs.readFileSync(read.absPath, "utf8")).toBe(stub);
+    if (provider === "claude") expect(JSON.parse(fs.readFileSync(read.absPath, "utf8"))).toEqual({});
+  });
+
+  it.each(["grok", "codex", "claude"])("refuses a %s config that appeared after the missing read", async (provider) => {
+    const sidebar = host();
+    const file = path.join(fixture.home, `.${provider}`, provider === "claude" ? "settings.json" : "config.toml");
+    fs.unlinkSync(file);
+    await sidebar.onMessage({ type: "readProviderConfig", provider }, "local");
+    const read = sidebar.postLocal.mock.calls.at(-1)[0];
+    fs.writeFileSync(file, provider === "claude" ? '{"keep":true}' : "keep = true");
+    const appeared = fs.readFileSync(file, "utf8");
+    await sidebar.onMessage({ type: "writeProviderConfig", provider, text: "draft", stamp: read.stamp, expectedAbsPath: read.absPath }, "local");
+    expect(sidebar.postLocal.mock.calls.at(-1)[0]).toMatchObject({ ok: false, reason: "changed" });
+    expect(fs.readFileSync(file, "utf8")).toBe(appeared);
+  });
+
+  it("rejects a changed destination or invalid body before creating a config directory", async () => {
+    const sidebar = host();
+    const dir = path.join(fixture.home, ".codex");
+    fs.rmSync(dir, { recursive: true });
+    const file = path.join(dir, "config.toml");
+    for (const patch of [{ expectedAbsPath: path.join(fixture.home, "other.toml") }, { text: undefined }, { text: "x".repeat(2 * 1024 * 1024 + 1) }]) {
+      await sidebar.onMessage({ type: "writeProviderConfig", provider: "codex", text: "", expectedAbsPath: file,
+        stamp: MISSING_PROVIDER_CONFIG_STAMP, ...patch }, "local");
+      expect(sidebar.postLocal.mock.calls.at(-1)[0].ok).toBe(false);
+      expect(fs.existsSync(dir)).toBe(false);
+    }
+  });
+
+  it("returns a creation failure to the requester and preserves the blocking file", async () => {
+    const sidebar = host();
+    const dir = path.join(fixture.home, ".codex");
+    fs.rmSync(dir, { recursive: true });
+    await sidebar.onMessage({ type: "readProviderConfig", provider: "codex" }, "remote", "phone");
+    const read = sidebar.sendRemoteRequester.mock.calls.at(-1)[1];
+    fs.writeFileSync(dir, "blocking file");
+    await sidebar.onMessage({ type: "writeProviderConfig", provider: "codex", text: "", expectedAbsPath: read.absPath, stamp: read.stamp }, "remote", "phone");
+    expect(sidebar.sendRemoteRequester.mock.calls.at(-1)[1]).toMatchObject({ type: "providerConfigWriteResult", ok: false, reason: expect.any(String) });
+    expect(fs.readFileSync(dir, "utf8")).toBe("blocking file");
+  });
+
+  it.each(["grok", "codex"])("uses the %s home override for native and panel routes", async (provider) => {
+    const sidebar = host();
+    const dir = path.join(fixture.home, "override", provider);
+    fixture.overrides = { [provider === "grok" ? "GROK_HOME" : "CODEX_HOME"]: dir };
+    const file = path.join(dir, "config.toml");
+    await sidebar.onMessage({ type: "readProviderConfig", provider }, "local");
+    const read = sidebar.postLocal.mock.calls.at(-1)[0];
+    expect(read.absPath).toBe(file);
+    await sidebar.onMessage({ type: "writeProviderConfig", provider, text: "custom = true", stamp: read.stamp, expectedAbsPath: read.absPath }, "local");
+    expect(fs.readFileSync(file, "utf8")).toBe("custom = true");
+    fs.unlinkSync(file);
+    await sidebar.onSettingsPanelMessage({ type: "openProviderConfig", provider, path: path.join(fixture.home, "auth.json") });
+    expect(sidebar.host.openHostResolvedPath).toHaveBeenCalledWith(file);
+    expect(fs.readFileSync(file, "utf8")).toBe(provider === "grok" ? GLOBAL_CONFIG_STUB : "");
+  });
+
+  it("opens Claude as JSON from standalone Settings and never opens native configs for a remote", async () => {
+    const sidebar = host();
+    const file = path.join(fixture.home, ".claude", "settings.json");
+    fs.unlinkSync(file);
+    await sidebar.onSettingsPanelMessage({ type: "openProviderConfig", provider: "claude" });
+    expect(sidebar.host.openHostResolvedPath).toHaveBeenCalledWith(file);
+    expect(fs.readFileSync(file, "utf8")).toBe("{}");
+    sidebar.host.openHostResolvedPath.mockClear();
+    await sidebar.onMessage({ type: "openProviderConfig", provider: "claude" }, "remote", "phone");
+    expect(sidebar.host.openHostResolvedPath).not.toHaveBeenCalled();
+  });
+
   it.each(["grok", "codex", "claude"])("reads and writes %s only for the requester, ignoring all forged path selectors", async (provider) => {
     const sidebar = host();
     const name = provider === "claude" ? "settings.json" : "config.toml";

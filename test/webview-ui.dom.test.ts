@@ -2265,7 +2265,7 @@ describe("gear menu — Other group + About / Settings", () => {
     clickSettingsNav(h.window, h.doc, "Advanced");
 
     const overlay = h.doc.getElementById("settings-overlay")!;
-    expect(overlay.querySelector('[data-id="openGlobalConfig"]')).toBeTruthy();
+    expect(overlay.querySelector('[data-id="openGlobalConfig"]')).toBeNull();
     expect(overlay.querySelector('[data-id="openProjectConfig"]')).toBeTruthy();
     expect(overlay.querySelector('[data-id="showLogs"]')).toBeTruthy();
 
@@ -3167,8 +3167,9 @@ describe("gear entry: Move view (Settings → Advanced)", () => {
     openAdvancedSettings(window, doc);
     expect(itemByLabel(doc, "Move view")).toBeUndefined();
     expect(itemByLabel(doc, "Show extension logs")).toBeUndefined();
-    // Config paths still work on desktop.
-    expect(itemByLabel(doc, "Open global config")).toBeTruthy();
+    // The project config stays in Advanced; global config lives in Providers.
+    expect(itemByLabel(doc, "Open project config")).toBeTruthy();
+    expect(itemByLabel(doc, "Open global config")).toBeUndefined();
   });
 });
 

@@ -1024,6 +1024,14 @@
       local: "githubToken",
     },
     {
+      id: "providerConfigFiles",
+      category: "providers",
+      title: "Provider config files",
+      description: "~/.grok/config.toml · ~/.codex/config.toml · ~/.claude/settings.json",
+      kind: "providerConfigs",
+      visible: (s, env) => !!(env && env.hostCaps && env.hostCaps.editProviderConfigFiles && env.hostCaps.editProjectFiles),
+    },
+    {
       id: "continueRemotely",
       category: "account",
       title: "Continue remotely",
@@ -1105,16 +1113,6 @@
       // flip while nothing happened.
       localOnly: (s, env) => !!(env && env.isRemote),
       message: (value) => ({ type: "setPromptNav", value }),
-    },
-    {
-      id: "openGlobalConfig",
-      category: "advanced",
-      title: "Open global config",
-      description: "Open the user-level Grok config file on this machine.",
-      kind: "action",
-      actionLabel: "Open",
-      hostLocal: true,
-      message: () => ({ type: "openGlobalConfig" }),
     },
     {
       id: "openProjectConfig",
@@ -2919,6 +2917,15 @@
   }
 
   function renderRow(row, snapshot, env, keyForm, githubTokenForm, githubCliStarted) {
+    if (row.kind === "providerConfigs") {
+      const el = document.createElement("details");
+      el.className = "settings-row settings-provider-configs";
+      el.dataset.id = row.id;
+      el.innerHTML = `<summary class="settings-row-title">Provider config files</summary>` +
+        [["grok", "Grok", "~/.grok/config.toml"], ["codex", "Codex", "~/.codex/config.toml"], ["claude", "Claude", "~/.claude/settings.json"]]
+          .map(([provider, name, path]) => `<div class="settings-provider-config"><div class="settings-row-copy"><div class="settings-row-title">${name}</div><div class="settings-row-desc">${path}</div></div><button type="button" class="settings-action" data-provider="${provider}" aria-label="Open ${path}">Open</button></div>`).join("");
+      return el;
+    }
     if (row.kind === "mcp") return renderMcpCatalog(snapshot, env);
     if (row.kind === "connectors") return renderConnectorsCatalog(snapshot, env, keyForm);
     if (row.kind === "routines") return renderRoutines(snapshot, env);
@@ -3108,6 +3115,7 @@
     let oauthWindow;
     let githubTokenForm = { open: false, value: "" };
     let githubCliStarted = false;
+    let providerConfigsOpen = false;
     let pendingRestore = null;
     let aboutChecked = false;
     let providersChecked = false;
@@ -3636,7 +3644,22 @@
       body.querySelectorAll(".settings-row").forEach((el) => {
         const row = ROWS.find((r) => r.id === el.dataset.id);
         if (!row) return;
-        if (row.kind === "toggle") {
+        if (row.kind === "providerConfigs") {
+          el.open = providerConfigsOpen;
+          el.ontoggle = () => { providerConfigsOpen = el.open; };
+          el.querySelectorAll("[data-provider]").forEach((btn) => {
+            btn.onclick = () => {
+              // The standalone Settings webview owns no chat panel. Choose
+              // by this mount, never settingsEditor on the connected host:
+              // a browser driving VS Code still needs its own panel.
+              if (opts.standalone) post({ type: "openProviderConfig", provider: btn.dataset.provider });
+              else {
+                if (onClose) onClose();
+                if (onLocal) onLocal("providerConfig:" + btn.dataset.provider);
+              }
+            };
+          });
+        } else if (row.kind === "toggle") {
           const sw = el.querySelector(".settings-switch");
           if (!sw || sw.disabled) return;
           sw.onclick = (e) => {

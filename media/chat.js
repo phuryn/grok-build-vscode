@@ -3083,6 +3083,9 @@
       },
       apply: applySettingsChange,
       onLocal: (name) => {
+        if (typeof name === "string" && name.indexOf("providerConfig:") === 0) {
+          void openProviderConfigFiles(name.slice("providerConfig:".length));
+        }
         if (name === "explainRemote") showRemoteExplainer();
         if (name === "openDeviceManager") window.open("/", "_blank", "noopener");
         // Settings → Providers → Connect. The overlay stays open behind the
@@ -3453,9 +3456,6 @@
     }
 
     addSection("Settings");
-    if (providerConfigFilesAvailable()) {
-      addGearItem(`<span class="gear-lead">${ICON.file}<span>Provider config files</span></span>`, () => openProviderConfigFiles());
-    }
     addGearItem(`<span class="gear-lead">${ICON.gear}<span>Settings</span></span>`, () => openAllSettings());
     // Older hosts have no provider account frame; retain their existing action.
     if (!IS_REMOTE && !state.providersKnown) {
@@ -18546,7 +18546,7 @@
   gearBtn.onclick = (e) => { e.stopPropagation(); openGearPopover(); };
 
   // ---------- provider config files ----------
-  // Config uses the same component and request/stamp path on every surface.
+  // Desktop/remote Settings mount this panel; standalone Settings opens the host editor.
   // These are display entries, not filesystem listings; messages carry only a
   // provider id and the host owns the closed path allowlist.
   const PROVIDER_CONFIG_ENTRIES = [
@@ -18569,6 +18569,11 @@
     const description = document.createElement("p");
     description.textContent = entry.name + " reads this file at startup. Saved changes apply after restarting a session. Other running sessions keep their current settings.";
     notice.appendChild(description);
+    if (tab.missing) {
+      const missing = document.createElement("p");
+      missing.textContent = "This file does not exist yet. Save to create it.";
+      notice.appendChild(missing);
+    }
     const restart = document.createElement("button");
     restart.type = "button";
     restart.className = "gfp-action";
@@ -18595,11 +18600,11 @@
     return notice;
   }
 
-  function openProviderConfigFiles() {
+  async function openProviderConfigFiles(provider) {
     if (!providerConfigFilesAvailable()) return;
+    const scope = { id: "provider-config-files", label: "Provider config files", title: "~/" };
     gearPopover.hidden = true;
     if (!providerConfigPanel) {
-      const scope = { id: "provider-config-files", label: "Provider config files", title: "~/" };
       const request = (kind, relPath, fields) => {
         const entry = PROVIDER_CONFIG_ENTRIES.find((item) => item.relPath === relPath);
         if (!entry || !providerConfigFilesAvailable()) return Promise.resolve({ ok: false, reason: "editing is not available" });
@@ -18610,7 +18615,16 @@
           currentScope: async () => scope,
           list: async (_scope, relPath) => ({ ok: true, truncated: false, entries: relPath ? []
             : PROVIDER_CONFIG_ENTRIES.map((entry) => ({ name: "~/" + entry.relPath, kind: "file", relPath: entry.relPath })) }),
-          read: (_scope, relPath) => request("configRead", relPath, { type: "readProviderConfig" }),
+          read: async (_scope, relPath) => {
+            const result = await request("configRead", relPath, { type: "readProviderConfig" });
+            // Path arrival is the create capability. An old host's miss stays
+            // an error; no new enum value can fall through its project route.
+            if (result && !result.ok && result.reason === "not found" && result.absPath) {
+              return { ...result, ok: true, relPath, kind: relPath.endsWith(".json") ? "json" : "text",
+                text: result.text || "", stamp: result.stamp || { mtimeMs: 0, size: -1 }, missing: true };
+            }
+            return result;
+          },
           write: (_scope, value) => request("configWrite", value.relPath, {
             type: "writeProviderConfig", text: value.text, stamp: value.stamp, expectedAbsPath: value.expectedAbsPath,
           }),
@@ -18619,7 +18633,10 @@
         ui: { confirm: uiChoice, renderMarkdown, fileNotice: providerConfigNotice },
       });
     }
+    await providerConfigPanel.setScope(scope);
     providerConfigPanel.setOpen(true);
+    const entry = PROVIDER_CONFIG_ENTRIES.find((item) => item.provider === provider);
+    if (entry) await providerConfigPanel.openPath(entry.relPath);
     providerConfigPanel.refreshFileNotice();
   }
 

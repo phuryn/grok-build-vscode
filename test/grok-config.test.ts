@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import * as path from "node:path";
 import {
   configForcesAlwaysApprove,
@@ -149,11 +149,29 @@ describe("config path helpers (host-resolved intents)", () => {
       },
     };
     const target = path.join("/tmp", ".grok", "config.toml");
-    ensureConfigToml(target, GLOBAL_CONFIG_STUB, fs);
+    expect(ensureConfigToml(target, GLOBAL_CONFIG_STUB, fs)).toBe(true);
     expect(created).toEqual([path.dirname(target)]);
     expect(written).toEqual([{ p: target, data: GLOBAL_CONFIG_STUB }]);
     // Second call is a no-op.
-    ensureConfigToml(target, PROJECT_CONFIG_STUB, fs);
+    expect(ensureConfigToml(target, PROJECT_CONFIG_STUB, fs)).toBe(false);
     expect(written).toHaveLength(1);
+  });
+
+  it("uses exclusive creation and treats an appearance during creation as an existing file", () => {
+    const writeFileSync = vi.fn((_p: string, _data: string, opts?: { flag: string }) => {
+      expect(opts).toEqual({ flag: "wx" });
+      throw Object.assign(new Error("exists"), { code: "EEXIST" });
+    });
+    expect(ensureConfigToml("/tmp/config.toml", GLOBAL_CONFIG_STUB, {
+      existsSync: () => false, mkdirSync: () => {}, writeFileSync,
+    })).toBe(false);
+    expect(writeFileSync).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["mkdir", "write"])("propagates a %s failure during stub creation", (step) => {
+    const fail = () => { throw new Error("disk denied"); };
+    expect(() => ensureConfigToml("/tmp/config.toml", GLOBAL_CONFIG_STUB, {
+      existsSync: () => false, mkdirSync: step === "mkdir" ? fail : () => {}, writeFileSync: fail,
+    })).toThrow("disk denied");
   });
 });

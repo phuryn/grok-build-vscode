@@ -12,7 +12,7 @@ import { Uri, disposeAll, formatRemoteInstallId, shouldRehydrateOnWebviewReady }
 import { isCanonicallyInsideRoot } from "./file-tree";
 import * as fs from "node:fs";
 import * as os from "node:os";
-import { resolveProviderConfigFile } from "./provider-config";
+import { MISSING_PROVIDER_CONFIG_STAMP, resolveProviderConfigFile, writeProviderConfigFile } from "./provider-config";
 import * as path from "node:path";
 import { spawn } from "node:child_process";
 import { AcpClient, EffortLevel, ExitPlanRequest, PermissionRequest, QuestionRequest } from "./acp";
@@ -252,6 +252,7 @@ import {
 import {
   alwaysApproveSource,
   configForcesAlwaysApprove,
+  ensureConfigToml,
   globalConfigPath,
   projectConfigPath,
 } from "./grok-config";
@@ -974,6 +975,7 @@ export class GrokSidebar {
     "setTelemetryEnabled",
     "setThumbsFeedback",
     "openGlobalConfig",
+    "openProviderConfig",
     "openProjectConfig",
     "listMcpServers",
     "connectMcpConnector",
@@ -11320,6 +11322,14 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         this.postWelcomeTips();
         break;
       }
+      case "openProviderConfig": {
+        if (origin !== "local") break;
+        const target = resolveProviderConfigFile(msg.provider);
+        if (!target.ok) break;
+        ensureConfigToml(target.root.filePath, target.stub);
+        await this.host.openHostResolvedPath(target.root.filePath);
+        break;
+      }
       case "openGlobalConfig": {
         // Intent only — host resolves ~/.grok/config.toml (never a renderer path).
         await this.host.openGlobalConfig();
@@ -11807,11 +11817,12 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         }
         if (msg.type === "readProviderConfig") {
           const wire = projectFileContentForWire(readRemoteProjectFile(target.root, target.relPath), { includeEditMeta: true });
-          reply({ type: "providerConfigContent", ...wire, ...envelope });
+          reply({ type: "providerConfigContent", ...wire, ...envelope,
+            ...(!wire.ok && wire.reason === "not found" ? {
+              absPath: target.root.filePath, text: target.stub, stamp: MISSING_PROVIDER_CONFIG_STAMP,
+            } : {}) });
         } else {
-          const written = writeRemoteProjectFile(target.root, target.relPath, msg.text, msg.stamp, {
-            expectedAbsPath: msg.expectedAbsPath,
-          });
+          const written = writeProviderConfigFile(target, msg.text, msg.stamp, msg.expectedAbsPath);
           reply({ type: "providerConfigWriteResult", ...envelope,
             ...(written.ok ? { ok: true, stamp: written.stamp } : { ok: false, reason: written.reason }) });
         }
@@ -20266,6 +20277,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           showOutput: this.host.canShowOutput,
           toggleDevTools: this.host.canToggleDevTools,
           settingsEditor: true,
+          editProviderConfigFiles: HOST_CAPABILITIES.editProviderConfigFiles,
+          editProjectFiles: HOST_CAPABILITIES.editProjectFiles,
           ...(this.host.canShowMcpSettings ? { mcpSettings: true } : {}),
         },
       },

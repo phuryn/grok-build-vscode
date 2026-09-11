@@ -317,6 +317,34 @@ describe("shared file-panel component", () => {
     expect((h.document.querySelector(".gfp-editor") as HTMLTextAreaElement).value).toBe("draft");
   });
 
+  it("a file that does not exist yet is savable without claiming anybody edited it", async () => {
+    // Provider configs open as an empty draft when the file is absent, so Save
+    // has to be live before a keystroke — the buffer IS the file. What must NOT
+    // follow is the tab calling itself dirty: the close prompt, the tab dot and
+    // the page's own unload guard all read `dirty`, and a phone reload would
+    // have warned about edits nobody made.
+    let confirms = 0;
+    const h = harness({
+      confirm: async () => { confirms++; return "discard"; },
+      read: async (_scopeId: string, relPath: string) => ({
+        ok: true, relPath, kind: "text", text: "", missing: true,
+        stamp: { mtimeMs: 0, size: -1 }, absPath: "/work/app/" + relPath,
+      }),
+    });
+    await settle();
+    await h.panel.openPath("notes.md", true);
+    await settle();
+
+    expect((h.document.querySelector(".gfp-save") as HTMLButtonElement).disabled).toBe(false);
+    expect(h.panel.hasDirty()).toBe(false);
+    expect(h.document.querySelector(".gfp-tab-dirty")?.textContent).toBe("");
+
+    click(h.window, h.document.querySelector(".gfp-tab-close"));
+    await settle();
+    expect(confirms).toBe(0);
+    expect([...h.document.querySelectorAll(".gfp-tab-name")]).toEqual([]);
+  });
+
   it("keeps keystrokes typed while Save is in flight dirty", async () => {
     const pending = deferred<unknown>();
     const h = harness({ write: async () => pending.promise });

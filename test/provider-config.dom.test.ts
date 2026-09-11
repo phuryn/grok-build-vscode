@@ -13,6 +13,7 @@ function button(h: Harness, text: string, root: ParentNode = h.doc): HTMLButtonE
 }
 
 const surfaces = ["vscode", "desktop", "remote", "phone"] as const;
+const mounts = new WeakMap<Harness, { surface: typeof surfaces[number]; capabilities: Record<string, boolean> }>();
 function boot(surface: typeof surfaces[number], capabilities: Record<string, boolean>): Harness {
   const h = bootWebview({
     remote: surface === "remote" || surface === "phone", vscode: surface === "vscode",
@@ -27,7 +28,9 @@ function boot(surface: typeof surfaces[number], capabilities: Record<string, boo
     },
   });
   dispatch(h.window, { type: "initialState", cwd: "/repo", capabilities: { settingsEditor: surface === "vscode", ...capabilities } });
+  dispatch(h.window, { type: "providerState", providers: [{ id: "grok", connected: true }, { id: "codex", connected: true }, { id: "claude", connected: true }] });
   if (surface !== "vscode") dispatch(h.window, { type: "repos", entries: [{ cwd: "/repo", label: "Project", available: true }], selectedCwd: "/repo", activeCwd: "/repo" });
+  mounts.set(h, { surface, capabilities });
   return h;
 }
 
@@ -37,11 +40,37 @@ function session(h: Harness, provider = "grok", id = "session-1") {
   dispatch(h.window, { type: "setBusy", value: false });
 }
 
-async function open(h: Harness) {
+function settings(h: Harness) {
+  const { surface, capabilities } = mounts.get(h)!;
   click(h.window, (h.doc.getElementById("rail-gear-btn") || h.doc.getElementById("gear-btn"))!);
-  const entry = [...h.doc.querySelectorAll(".toolbar-popover-item")].find((el) => el.textContent === "Provider config files");
+  expect(h.doc.getElementById("gear-popover")?.textContent).not.toContain("Provider config files");
+  const entry = [...h.doc.querySelectorAll(".toolbar-popover-item")].find((el) => el.textContent === "Settings");
   expect(entry).toBeTruthy();
   click(h.window, entry!);
+  if (surface === "vscode") {
+    expect(h.posted).toContainEqual({ type: "openSettingsSurface" });
+    // The separate webview loads settings.js without chat.js or an onLocal callback.
+    const container = h.doc.createElement("div");
+    container.id = "standalone-settings";
+    h.doc.body.appendChild(container);
+    (h.window as any).GrokSettings.mount(container, {
+      standalone: true, category: "providers", env: { hostCaps: capabilities },
+      post: (message: Posted) => h.posted.push(message),
+    });
+  } else {
+    const nav = h.doc.querySelector('[data-category="providers"]');
+    expect(nav).toBeTruthy();
+    click(h.window, nav!);
+  }
+  return h.doc.getElementById(surface === "vscode" ? "standalone-settings" : "settings-overlay")!;
+}
+
+async function open(h: Harness) {
+  const root = settings(h);
+  const configs = root.querySelector('[data-id="providerConfigFiles"]')!;
+  expect(configs).toBeTruthy();
+  click(h.window, configs.querySelector("summary")!);
+  click(h.window, configs.querySelector('[data-provider="grok"]')!);
   await settle();
 }
 
@@ -52,9 +81,11 @@ function latest(h: Harness, type: string): Posted {
 }
 
 async function read(h: Harness, provider = "grok", relPath = ".grok/config.toml") {
-  const row = [...h.doc.querySelectorAll("#provider-config-panel .gfp-row")].find((el) => el.textContent?.includes("~/" + relPath));
-  expect(row).toBeTruthy();
-  click(h.window, row!);
+  if (provider !== "grok") {
+    const row = [...h.doc.querySelectorAll("#provider-config-panel .gfp-row")].find((el) => el.textContent?.includes("~/" + relPath));
+    expect(row).toBeTruthy();
+    click(h.window, row!);
+  }
   await settle();
   const request = latest(h, "readProviderConfig");
   expect(request).toMatchObject({ provider });
@@ -68,19 +99,44 @@ async function read(h: Harness, provider = "grok", relPath = ".grok/config.toml"
 describe.each(surfaces)("provider config files on %s", (surface) => {
   it("offers no entry point to an old host, even if project editing works", () => {
     const h = boot(surface, { browseProjectFiles: true, editProjectFiles: true });
-    click(h.window, (h.doc.getElementById("rail-gear-btn") || h.doc.getElementById("gear-btn"))!);
-    expect(h.doc.getElementById("gear-popover")?.textContent).not.toContain("Provider config files");
+    expect(settings(h).querySelector('[data-id="providerConfigFiles"]')).toBeNull();
     expect(h.doc.getElementById("provider-config-panel")).toBeNull();
     expect(h.posted.some((m) => /ProviderConfig/.test(m.type))).toBe(false);
     h.window.happyDOM.abort();
   });
 
-  it("opens exactly three config files from chat and saves through the shared panel", async () => {
+  it("puts the three paths last in Providers and removes only the global Advanced row", () => {
+    const h = boot(surface, { editProjectFiles: true, editProviderConfigFiles: true });
+    const root = settings(h);
+    const rows = [...root.querySelectorAll(".settings-row")];
+    expect(rows.at(-1)?.getAttribute("data-id")).toBe("providerConfigFiles");
+    const configs = rows.at(-1)!;
+    click(h.window, configs.querySelector("summary")!);
+    expect(configs.getAttribute("open")).not.toBeNull();
+    expect([...configs.querySelectorAll(".settings-row-desc")].map((el) => el.textContent)).toEqual([
+      "~/.grok/config.toml", "~/.codex/config.toml", "~/.claude/settings.json",
+    ]);
+    click(h.window, root.querySelector('[data-category="advanced"]')!);
+    expect(root.textContent).not.toContain("Open global config");
+    expect(!!root.querySelector('[data-id="openProjectConfig"]')).toBe(surface === "vscode" || surface === "desktop");
+    h.window.happyDOM.abort();
+  });
+
+  it("routes each native row to the editor, and overlay rows to the shared panel", async () => {
     const h = boot(surface, { editProjectFiles: true, editProviderConfigFiles: true });
     session(h);
+    if (surface === "vscode") {
+      const root = settings(h);
+      h.posted.length = 0;
+      for (const provider of ["grok", "codex", "claude"]) click(h.window, root.querySelector(`[data-provider="${provider}"]`)!);
+      expect(h.posted).toEqual(["grok", "codex", "claude"].map((provider) => ({ type: "openProviderConfig", provider })));
+      expect(h.doc.getElementById("provider-config-panel")).toBeNull();
+      h.window.happyDOM.abort();
+      return;
+    }
     await open(h);
     expect(h.doc.querySelectorAll("#provider-config-panel .gfp-row")).toHaveLength(3);
-    expect(h.posted.some((m) => ["openSettingsSurface", "listProjectDir", "readProjectFile", "writeProjectFile"].includes(m.type))).toBe(false);
+    expect(h.posted.some((m) => ["openProviderConfig", "openSettingsSurface", "listProjectDir", "readProjectFile", "writeProjectFile"].includes(m.type))).toBe(false);
     await read(h);
     const panel = h.doc.getElementById("provider-config-panel")!;
     expect(panel.textContent).toContain("reads this file at startup");
@@ -108,16 +164,66 @@ describe.each(surfaces)("provider config files on %s", (surface) => {
 });
 
 describe("config editor decisions", () => {
+  it("uses the browser panel even when the connected host advertises a VS Code editor", async () => {
+    const h = boot("remote", { settingsEditor: true, editProjectFiles: true, editProviderConfigFiles: true });
+    await open(h);
+    expect(h.doc.getElementById("provider-config-panel")).toBeTruthy();
+    expect(h.posted.some((m) => m.type === "openProviderConfig" || m.type === "openSettingsSurface")).toBe(false);
+    expect(latest(h, "readProviderConfig")).toMatchObject({ provider: "grok" });
+    h.window.happyDOM.abort();
+  });
+
+  it.each([
+    ["grok", ".grok/config.toml", "# Grok global configuration\n"],
+    ["codex", ".codex/config.toml", ""],
+    ["claude", ".claude/settings.json", "{}"],
+  ].flatMap(([provider, relPath, stub]) => [true, false].map((withPath) => ({ provider, relPath, stub, withPath }))))(
+    "opens a missing $provider config as an editable draft only with the host path (path=$withPath)", async ({ provider, relPath, stub, withPath }) => {
+    const h = boot("remote", { editProjectFiles: true, editProviderConfigFiles: true });
+    await open(h);
+    if (provider !== "grok") {
+      const row = [...h.doc.querySelectorAll("#provider-config-panel .gfp-row")].find((el) => el.textContent?.includes("~/" + relPath));
+      click(h.window, row!);
+      await settle();
+    }
+    const request = latest(h, "readProviderConfig");
+    dispatch(h.window, { type: "providerConfigContent", provider, relPath, requestId: request.requestId,
+      ok: false, reason: "not found", ...(withPath ? { absPath: "/home/user/" + relPath, text: stub } : {}) });
+    await settle();
+    const panel = h.doc.getElementById("provider-config-panel")!;
+    const editor = panel.querySelector("textarea");
+    if (withPath) {
+      expect(editor).toBeTruthy();
+      expect(editor!.readOnly).toBe(false);
+      expect(editor!.value).toBe(stub);
+      expect(panel.textContent).toContain("This file does not exist yet. Save to create it.");
+      expect(button(h, "Save", panel).disabled).toBe(false);
+      click(h.window, button(h, "Save", panel));
+      await settle();
+      const save = latest(h, "writeProviderConfig");
+      expect(save).toMatchObject({ text: editor!.value, stamp: { mtimeMs: 0, size: -1 }, expectedAbsPath: "/home/user/" + relPath });
+      dispatch(h.window, { type: "providerConfigWriteResult", provider, relPath, requestId: save.requestId,
+        ok: true, stamp: { mtimeMs: 2, size: 28 } });
+      await settle();
+      expect(panel.textContent).not.toContain("does not exist yet");
+      expect(button(h, "Save", panel).disabled).toBe(true);
+    } else {
+      expect(editor).toBeNull();
+      expect(panel.textContent).toContain("not found");
+      expect(h.posted.some((m) => m.type === "writeProviderConfig")).toBe(false);
+    }
+    h.window.happyDOM.abort();
+  });
+
   it("requires the existing file edit gate as well as the new capability", () => {
     const h = boot("remote", { editProviderConfigFiles: true });
-    click(h.window, (h.doc.getElementById("rail-gear-btn") || h.doc.getElementById("gear-btn"))!);
-    expect(h.doc.getElementById("gear-popover")?.textContent).not.toContain("Provider config files");
+    expect(settings(h).querySelector('[data-id="providerConfigFiles"]')).toBeNull();
     h.window.happyDOM.abort();
   });
 
   it.each([ ["grok", ".grok/config.toml", "Grok"], ["codex", ".codex/config.toml", "Codex"], ["claude", ".claude/settings.json", "Claude"] ])(
     "only offers restart for the current idle %s conversation", async (provider, relPath, name) => {
-      const h = boot("vscode", { editProjectFiles: true, editProviderConfigFiles: true });
+      const h = boot("desktop", { editProjectFiles: true, editProviderConfigFiles: true });
       session(h, provider, "same-session");
       await open(h);
       await read(h, provider, relPath);

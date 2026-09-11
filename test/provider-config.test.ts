@@ -128,6 +128,7 @@ describe("provider config wire decisions", () => {
   const parse = (msg: unknown) => parseRelayFrame(JSON.stringify({ t: "msg", clientId: "phone", msg }));
   it("uses the file editing tier and binds only restart to a conversation", () => {
     expect(INBOUND_DISPOSITION.readProviderConfig).toBe("view");
+    expect(INBOUND_DISPOSITION.openProviderConfig).toBe("host-local");
     expect(INBOUND_DISPOSITION.writeProviderConfig).toBe(INBOUND_DISPOSITION.writeProjectFile);
     expect(INBOUND_DISPOSITION.restartProviderSession).toBe("propose");
     expect(remoteRequiresBoundSession("readProviderConfig")).toBe(false);

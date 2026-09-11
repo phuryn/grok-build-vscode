@@ -40,18 +40,24 @@ export function projectConfigPath(projectCwd: string): string {
 export type ConfigFs = {
   existsSync: (p: string) => boolean;
   mkdirSync: (p: string, opts?: { recursive?: boolean }) => void;
-  writeFileSync: (p: string, data: string) => void;
+  writeFileSync: (p: string, data: string, opts?: { flag: string }) => void;
 };
 
-/** Create a stub config.toml (and parent dir) when the file is missing. */
+/** Create a stub and parent dir when missing; true only when this call created it. */
 export function ensureConfigToml(
   absPath: string,
   stub: string,
   fs: ConfigFs = nodeFs,
-): void {
-  if (fs.existsSync(absPath)) return;
+): boolean {
+  if (fs.existsSync(absPath)) return false;
   fs.mkdirSync(path.dirname(absPath), { recursive: true });
-  fs.writeFileSync(absPath, stub);
+  try {
+    fs.writeFileSync(absPath, stub, { flag: "wx" });
+    return true;
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "EEXIST") return false;
+    throw e;
+  }
 }
 
 

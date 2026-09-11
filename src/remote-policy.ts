@@ -457,6 +457,7 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
   // the machine it is borrowing.
   removeProjectFolder: "host-local",
   openGlobalConfig: "host-local",
+  openProviderConfig: "host-local",
   openProjectConfig: "host-local",
   // Read-only inventory query through the live Grok ACP session. Same class as
   // refreshContextDetails: no turn, no mutation, no desk-local picker.
@@ -639,6 +640,7 @@ export const REMOTE_REQUIRES_BOUND_SESSION: Record<WebviewMsg["type"], boolean> 
   addProjectFolder: false,
   removeProjectFolder: false,
   openGlobalConfig: false,
+  openProviderConfig: false,
   openProjectConfig: false,
   listMcpServers: false,
   listRoutines: false,

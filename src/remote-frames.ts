@@ -342,8 +342,8 @@ function parseRemoteWebviewMsg(msg: unknown): WebviewMsg | null {
         ? msg as WebviewMsg : null;
     case "writeProviderConfig":
     case "writeProjectFile": {
-      // Existing-file save only: stamp + expectedAbsPath are mandatory so the
-      // host can refuse a stale tab or a cross-project relPath collision.
+      // Stamp + expectedAbsPath are mandatory. Project saves require existing
+      // files; provider configs can carry the missing-file stamp from a read.
       if (value.type === "writeProviderConfig") {
         if (!["grok", "codex", "claude"].includes(value.provider as string)) return null;
       } else if (!isRemoteCwd(value.cwd) || !isRemoteMentionPath(value.relPath)) return null;
