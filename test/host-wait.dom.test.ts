@@ -290,6 +290,39 @@ describe("one page-local waiting strip", () => {
     expect(strip(h).textContent).toBe("Opened ~/.codex/config.toml.");
   });
 
+  it("says nothing at all when the machine answered and the answer is on screen", async () => {
+    // The file is open, its text is rendered, the tab is selected. A strip that
+    // adds "Opened README.md." for three seconds is describing what the person
+    // is looking at -- and on a phone the panel is full-screen, so it gives up
+    // that height and springs back when the strip goes. Two layout moves and
+    // nothing learned. The screenshot gate caught this one on a tablet.
+    const h = boot(upLink());
+    const request = await config(h);
+    expect(strip(h).hidden).toBe(false);
+    await configReply(h, request);
+    expect(h.doc.querySelector(".gfp-viewer-body")?.textContent).toContain("original = true");
+    expect(strip(h).hidden).toBe(true);
+    expect(h.doc.body.classList.contains("host-wait-visible")).toBe(false);
+  });
+
+  it("still says it when the person was told to wait, because they are owed the end of that sentence", async () => {
+    const h = boot();
+    const request = await config(h);
+    expect(strip(h).textContent).toContain("Waking your machine.");
+    link(h, upLink()); await settle();
+    await configReply(h, latest(h, "readProviderConfig"));
+    expect(strip(h).textContent).toBe("Opened ~/.codex/config.toml.");
+    expireResult(h);
+  });
+
+  it("reports a failure whatever the link did, because that is news either way", async () => {
+    const h = boot(upLink());
+    const request = await config(h);
+    await configReply(h, request, { ok: false, reason: "permission denied" });
+    expect(strip(h).dataset.state).toBe("failure");
+    expect(strip(h).textContent).toContain("Couldn't open ~/.codex/config.toml.");
+  });
+
   it("never mounts the strip without the global capability", async () => {
     const h = boot(null);
     delete (h.window as any).afkpilotHostLink;

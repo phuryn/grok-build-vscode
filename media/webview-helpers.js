@@ -3194,9 +3194,32 @@
       const op = {
         ...spec, id: ++sequence, started: Date.now(), workingSince: Date.now(), status: "pending",
         wasWaking: !!snapshot() && !snapshot().reachable,
+        // Sticky, unlike wasWaking above, which flips back on every event. The
+        // question this answers is "was this person ever made to wait", and an
+        // answer that a reconnection erases cannot answer it.
+        waited: !!snapshot() && !snapshot().reachable,
         cancel() { operations.delete(op.id); op.cancelled = true; paint(); },
         resume() { if (op.cancelled) return; op.status = "pending"; op.reason = ""; op.until = null; paint(); },
-        succeed() { if (op.cancelled) return; op.status = "success"; op.until = Date.now() + 3000; paint(); },
+        /*
+         * A success is only news if the person was made to wait for it.
+         *
+         * The file is on screen, the row has moved back to its value, the tab's
+         * dot has cleared -- saying so in words as well tells them what they are
+         * already looking at, holds the strip for three seconds, and on a phone
+         * takes that height off the full-screen panel underneath, which then
+         * springs back when the strip goes. Nothing is learned and the layout
+         * moves twice.
+         *
+         * What IS worth saying is the resolution of a wait this strip asked
+         * them to sit through: they were told the machine was starting, so they
+         * are owed the end of that sentence. Failures are news whatever the
+         * link did, and are not gated here.
+         */
+        succeed() {
+          if (op.cancelled) return;
+          if (!op.waited) { operations.delete(op.id); paint(); return; }
+          op.status = "success"; op.until = Date.now() + 3000; paint();
+        },
         fail(reason, retry) {
           if (op.cancelled) return;
           op.status = "failure"; op.reason = reason || ""; op.retry = retry; paint();
@@ -3217,6 +3240,7 @@
         for (const op of operations.values()) {
           if (snapshot() && snapshot().reachable && op.wasWaking) op.workingSince = Date.now();
           op.wasWaking = !!snapshot() && !snapshot().reachable;
+          if (op.wasWaking) op.waited = true;
         }
         paint();
       }
