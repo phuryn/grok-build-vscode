@@ -1324,7 +1324,7 @@ describe("settings overlay (chat.js)", () => {
     expect(api.TELEMETRY_COPY).toContain("The IP address is discarded, never stored.");
   });
 
-  it("orders General rows as purpose, text size, coding display, steer, stats, thumbs on every surface", () => {
+  it("orders General rows as purpose, text size, coding display, steer, stats, previous prompt, thumbs on every surface", () => {
     const api = loadSettings();
     const coding = api.defaultSnapshot({ appPurpose: "coding" });
     const generalIds = (env: Record<string, unknown>) =>
@@ -1333,15 +1333,15 @@ describe("settings overlay (chat.js)", () => {
         .map((row) => row.id);
     expect(generalIds(fullEnv({ isDesktop: true, isRemote: false }))).toEqual([
       "appPurpose", "chatFontScale", "showThinking", "expandCommandOutputs", "expandDiffCard", "steerByDefault",
-      "telemetryDesktop", "thumbsFeedback",
+      "telemetryDesktop", "promptNav", "thumbsFeedback",
     ]);
     expect(generalIds(fullEnv({ isDesktop: false, isRemote: false, clientOwnsFontScale: false }))).toEqual([
       "appPurpose", "openChatFontScale", "showThinking", "expandCommandOutputs", "expandDiffCard", "steerByDefault",
-      "telemetryVsCode", "thumbsFeedback",
+      "telemetryVsCode", "promptNav", "thumbsFeedback",
     ]);
     expect(generalIds(fullEnv({ isDesktop: true, isRemote: true }))).toEqual([
       "appPurpose", "chatFontScale", "showThinking", "expandCommandOutputs", "expandDiffCard", "steerByDefault",
-      "telemetryRemote", "thumbsFeedbackRemote",
+      "telemetryRemote", "promptNav", "thumbsFeedbackRemote",
     ]);
   });
 
@@ -2590,6 +2590,22 @@ describe("the Previous-prompt row (#150)", () => {
     // to make this consistent, and the wrong one: the IDEs are where it is
     // actually tested.
     expect(row.visible).toBeUndefined();
+  });
+
+  it("sits in General, immediately above the SpaceXAI feedback rows", () => {
+    // It started under Advanced while it was experimental. It is on by
+    // default now, so the place it is looked for is the same list as every
+    // other everyday toggle -- and Advanced is where a person goes to change
+    // something they already know exists.
+    const api = loadSettings() as any;
+    const general = api.ROWS
+      .filter((r: { category: string }) => r.category === "general")
+      .map((r: { id: string }) => r.id);
+    const at = general.indexOf("promptNav");
+    expect(at).toBeGreaterThan(-1);
+    // The neighbour is named rather than the index, so inserting a row
+    // above this pair does not fail a test about something else.
+    expect(general[at + 1]).toBe("thumbsFeedback");
   });
 
   it("is on by default in all four places a default lives, and no longer says Experimental", () => {

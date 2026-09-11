@@ -643,6 +643,21 @@
       },
     },
     {
+      id: "promptNav",
+      category: "general",
+      title: "Previous prompt button",
+      description: "Show a button above the message box that jumps back to your previous prompt and highlights it. This device only.",
+      kind: "toggle",
+      defaultValue: true,
+      get: (s) => !!(s && s.promptNav),
+      // Client-local on a remote, host-backed on a desk. Not a nicety: VS
+      // Code opens Settings as its own webview, so a localOnly row there
+      // has no `apply` to call and no message to post, and the switch would
+      // flip while nothing happened.
+      localOnly: (s, env) => !!(env && env.isRemote),
+      message: (value) => ({ type: "setPromptNav", value }),
+    },
+    {
       id: "thumbsFeedback",
       category: "general",
       title: "Thumbs feedback to SpaceXAI",
@@ -1098,21 +1113,6 @@
       actionLabel: "Open",
       visible: (s, env) => !!(env && env.isRemote),
       local: "openDeviceManager",
-    },
-    {
-      id: "promptNav",
-      category: "advanced",
-      title: "Previous prompt button",
-      description: "Show a button above the message box that jumps back to your previous prompt and highlights it. This device only.",
-      kind: "toggle",
-      defaultValue: true,
-      get: (s) => !!(s && s.promptNav),
-      // Client-local on a remote, host-backed on a desk. Not a nicety: VS
-      // Code opens Settings as its own webview, so a localOnly row there
-      // has no `apply` to call and no message to post, and the switch would
-      // flip while nothing happened.
-      localOnly: (s, env) => !!(env && env.isRemote),
-      message: (value) => ({ type: "setPromptNav", value }),
     },
     {
       id: "openProjectConfig",
