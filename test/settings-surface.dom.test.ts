@@ -464,25 +464,33 @@ describe("dialogs above renderer layers", () => {
     restored(h);
   });
 
-  it.each(["Escape", "Close", "backdrop", "session reset"])("clears the reusable image lightbox marker through %s", (exit) => {
+  it.each(["Escape", "Close", "backdrop", "session reset", "Back"])("dismisses the image lightbox as a LAYER through %s", (exit) => {
+    // It used to be a dialog ABOVE the layers, which suppressed all of them --
+    // so on a phone Back skipped every one and left the page. Enlarging an
+    // image and pressing Back to put it away is the commonest Back there is
+    // (owner, on his phone). It is a layer now, and Back closes it.
     const h = bootLayers();
     dispatch(h.window, { type: "chips", chips: [{ id: "image-1", path: "/image.png", relPath: "Image #1",
       imageIndex: 1, hidden: false, previewSrc: "data:image/png;base64,AAAA" }] });
     for (let i = 0; i < 2; i++) click(h.window, h.doc.querySelector(".attachment button")!);
-    blocked(h);
-    if (exit === "Escape") keydown(h.window, { key: "Escape" });
+    expect(h.doc.body.dataset.modalAbove).toBeUndefined();
+    expect(h.layers.depth).toBe(h.depth + 1);
+    expect(h.changes).toEqual([h.depth + 1]);
+    if (exit === "Back") {
+      expect(h.layers.dismissTop()).toBe(true);
+      // Ahead of Settings, which it opened over and covers completely.
+      expect(h.doc.getElementById("settings-overlay")).not.toBeNull();
+    } else if (exit === "Escape") keydown(h.window, { key: "Escape" });
     else if (exit === "session reset") dispatch(h.window, { type: "clearMessages" });
     else click(h.window, h.doc.querySelector(exit === "Close" ? ".image-preview-close" : ".image-preview-overlay")!);
     expect((h.doc.querySelector(".image-preview-overlay") as HTMLElement).hidden).toBe(true);
-    restored(h);
-    // A second close of the retained DOM node must not corrupt bookkeeping.
-    click(h.window, h.doc.querySelector(".image-preview-close")!);
-    const result = choice(h);
-    blocked(h);
-    click(h.window, h.doc.querySelector(".confirm-primary")!);
-    expect(h.doc.body.dataset.modalAbove).toBeUndefined();
     expect(h.layers.depth).toBe(h.depth);
-    void result;
+    expect(h.changes).toEqual([h.depth + 1, h.depth]);
+    // The node is retained and reused, so a second close must not report a
+    // change that never happened -- the shell spends a history entry per one.
+    click(h.window, h.doc.querySelector(".image-preview-close")!);
+    expect(h.layers.depth).toBe(h.depth);
+    expect(h.changes).toEqual([h.depth + 1, h.depth]);
   });
 
   it.each([false, true])("keeps the marker when nested Add project / wizard dialogs close (outer first=%s)", (outerFirst) => {

@@ -3161,6 +3161,11 @@
 
   let settingsOpener = null;
 
+  function openImageLayer() {
+    const overlay = document.querySelector(".image-preview-overlay");
+    return overlay && !overlay.hidden ? overlay : null;
+  }
+
   function openFilesLayer() {
     const panel = state.filesBrowse.component;
     return panel && panel.isOpen() && panel.isOverlay()
@@ -3174,10 +3179,17 @@
   window.afkpilotLayers = {
     get depth() {
       if (document.body.dataset.modalAbove) return 0;
-      return Number(!!document.getElementById("settings-overlay")) + Number(!!openFilesLayer());
+      return Number(!!document.getElementById("settings-overlay"))
+        + Number(!!openFilesLayer()) + Number(!!openImageLayer());
     },
     dismissTop() {
       if (document.body.dataset.modalAbove) return false;
+      // The lightbox first, and without reading the stacking: it opens from the
+      // transcript or a composer chip, and every other layer covers both of
+      // those -- so whenever it is up, it went up last. Its own full-screen
+      // backdrop then hides the controls that would open anything else, so
+      // nothing can arrive over it either.
+      if (openImageLayer()) { closeImagePreview(); return true; }
       const settings = document.getElementById("settings-overlay");
       const files = openFilesLayer();
       // Settings covers the files toggle, so it normally opens last. But an
@@ -14706,7 +14718,10 @@
     }
     setImagePreviewLoading(false);
     state.pendingImageFullId = null;
-    unmarkModalAbove(overlay);
+    // A layer, not a dialog above one: Back closes the picture and leaves the
+    // person in the conversation, which on a phone is the commonest Back there
+    // is. Nothing else changes -- Escape and the close control still call this.
+    reportLayerDepth();
   }
 
   function openImagePreview(src, label, fullId, isOriginal = false) {
@@ -14757,14 +14772,28 @@
       setImagePreviewLoading(true);
       vscode.postMessage({ type: "requestImageFull", fullId: hostFullId });
     }
-    markModalAbove(overlay, "image-preview");
+    reportLayerDepth();
   }
 
+  // Capture, and registered at load. The settings overlay puts its own Escape
+  // handler on document in capture too, when it opens; at one node capture runs
+  // in registration order, so this one goes first and Escape closes the picture
+  // on top rather than the page beneath it. That used to fall out of the
+  // `modalAbove` marker the lightbox set. It is a LAYER now, so Back can close
+  // it -- and a layer has to claim the keyboard for itself. The marker is still
+  // honoured in the other direction: a dialog stacked ABOVE the picture owns
+  // Escape while it is up.
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
+    if (document.body.dataset.modalAbove) return;
     const overlay = document.querySelector(".image-preview-overlay");
-    if (overlay && !overlay.hidden) closeImagePreview();
-  });
+    if (!overlay || overlay.hidden) return;
+    // stopImmediatePropagation, not stopPropagation: the settings handler is
+    // on the SAME node in the same phase, and stopping propagation only stops
+    // the event moving to the next node.
+    e.stopImmediatePropagation();
+    closeImagePreview();
+  }, true);
 
   function previewCacheForCurrentSession() {
     return state.imagePreviews;
