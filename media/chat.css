@@ -5900,3 +5900,29 @@ a.add-project-github-open {
   gap: 4px;
 }
 .onb-steps li { margin: 0; }
+/* One strip above every covering surface, with space reserved for its chrome. */
+.host-wait-strip {
+  position: fixed;
+  inset: auto 0 0;
+  z-index: 10050;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 10px 14px calc(10px + env(safe-area-inset-bottom, 0px));
+  color: var(--vscode-foreground, #ddd);
+  background: var(--vscode-editorWidget-background, #252526);
+  border-top: 1px solid var(--vscode-widget-border, #555);
+  font-size: 13px;
+  line-height: 1.4;
+}
+.host-wait-strip[hidden] { display: none; }
+.host-wait-copy { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.host-wait-strip button { flex: none; color: inherit; background: transparent; border: 1px solid currentColor; border-radius: 4px; padding: 6px 10px; cursor: pointer; }
+.host-wait-spinner { width: 14px; height: 14px; flex: none; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: host-wait-spin 1s linear infinite; }
+@keyframes host-wait-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .host-wait-spinner { animation: none; border-style: dotted; } }
+body.host-wait-visible { padding-bottom: var(--host-wait-height, 76px); }
+body.host-wait-visible .settings-overlay,
+body.host-wait-visible .gfp-panel.gfp-overlay { bottom: var(--host-wait-height, 76px) !important; }
+.settings-pending { grid-column: 1 / -1; font-size: 12px; opacity: .8; }

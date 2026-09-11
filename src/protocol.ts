@@ -552,6 +552,23 @@ export type HostMsg =
    * Capability by arrival, as everywhere else: no frame, old behaviour.
    */
   | { type: "hostReachable" }
+  /**
+   * The same shell, reporting the link's STATE rather than commanding a
+   * re-read. `hostReachable` above is a command — the webview answers it by
+   * abandoning every in-flight file request and re-running `git status` for
+   * whatever is on screen — so it may only fire when the connection actually
+   * came back from a held state. A page that also wants to say "still waking",
+   * "still offline", "back but not restored yet" needs a message that costs
+   * nothing to receive, and this is it.
+   *
+   * `link.connection` counts the shell's sockets. A request posted over an
+   * earlier one can never be answered: replies are addressed to the client id
+   * that asked, and a reconnect is issued a new one.
+   */
+  | {
+    type: "hostLink";
+    link: { reachable: boolean; phase: string; since: number; restored: boolean; connection: number };
+  }
   | { type: "fontScale"; value: number }
   | { type: "grokUpdateStatus"; current?: string | null; latest?: string | null; updateAvailable?: boolean; policy?: unknown; error?: string }
   /** Desktop app update notice (manual download page). Host-local; VS Code
@@ -1452,7 +1469,7 @@ const HOST_MESSAGE_TYPE_MAP: Record<HostMsg["type"], true> = {
   agentError: true, agentEnd: true, exit: true, setBusy: true, summarizing: true,
   sessionContext: true, clearMessages: true, onboarding: true, error: true, hostNotice: true,
   xaiNotification: true, subagentUpdate: true, childStream: true, runProgress: true, commandOutput: true, expandCommandOutputs: true, steerByDefault: true, promptNav: true, expandDiffCard: true,
-  soundNotifications: true, processingSound: true, readRepliesAloud: true, summarizeRepliesAloud: true, speechSummary: true, imageFull: true, imageOriginal: true, moveComposerCaret: true, remoteStatus: true, hostReachable: true,
+  soundNotifications: true, processingSound: true, readRepliesAloud: true, summarizeRepliesAloud: true, speechSummary: true, imageFull: true, imageOriginal: true, moveComposerCaret: true, remoteStatus: true, hostReachable: true, hostLink: true,
   setAllToolDetails: true, focusInput: true, findInSession: true, restoreComposer: true, truncateMessages: true, uiConfirmRequest: true,
   sessions: true, sessionRemoved: true, repoSessions: true, pinnedSessions: true, repos: true, sessionDot: true, queuedSends: true, submitQueuedSend: true,
   steerUnavailable: true, feedbackAvailability: true, turnFeedbackAck: true, usage: true,

@@ -913,6 +913,8 @@ export const OUTBOUND_DISPOSITION: Record<HostMsg["type"], OutboundDisposition> 
   // that it came back — which the browser would answer by re-reading every
   // view on screen, for nothing.
   hostReachable: "host-local",
+  // Same shell, same reason: a desk host has no socket and no link to report.
+  hostLink: "host-local",
   media: "media",
   voiceState: "mirror",
   voiceConfigured: "mirror",
@@ -1088,10 +1090,11 @@ export type OutboundProjectAuth =
 
 export const OUTBOUND_PROJECT_AUTH: Record<HostMsg["type"], OutboundProjectAuth> = {
   // Device-global / host chrome — not project data.
-  // `hostReachable` names no project and carries no payload at all; it is
-  // suppressed outbound anyway, and this says so a second time on purpose,
-  // because these two tables are read independently.
+  // `hostReachable` and `hostLink` name no project and carry no project data
+  // at all; both are suppressed outbound anyway, and this says so a second
+  // time on purpose, because these two tables are read independently.
   hostReachable: "none",
+  hostLink: "none",
   moveViewHint: "none",
   welcomeTips: "none",
   projectSetup: "none",

@@ -1,5 +1,100 @@
 (function () {
   const vscode = acquireVsCodeApi();
+  const hostWait = window.GrokHostWait.get();
+  const pendingPreferences = new Map();
+  let sendWait = null;
+  const queuedWaits = new Set();
+
+  function preferenceSpec(message) {
+    const fields = {
+      setAppPurpose: ["appPurpose", "this app to " + (message.value === "coding" ? "Coding" : "Knowledge work")],
+      setVoiceSendPhrase: ["voiceSendPhrase", "the voice send phrase to “" + message.value + "”"],
+      setVoiceKeyterms: ["voiceKeyterms", "voice keyterms to “" + (Array.isArray(message.value) ? message.value.join(", ") : "") + "”"],
+      setTelemetryEnabled: ["telemetryEnabled", "anonymous analytics to " + (message.value ? "on" : "off")],
+      setThumbsFeedback: ["thumbsFeedback", "feedback buttons to " + (message.value ? "on" : "off")],
+    };
+    if (fields[message.type]) {
+      const [field, target] = fields[message.type];
+      return { key: field, field, value: message.value, target };
+    }
+    if (message.type === "setRepoColor" || message.type === "setRepoArchived") {
+      const field = message.type === "setRepoColor" ? "color" : "archived";
+      const target = field === "archived"
+        ? message.cwd + " to " + (message.archived ? "Archived" : "Projects")
+        : "the colour of " + message.cwd + " to " + (message.color || "none");
+      return { key: field + ":" + message.cwd, field, value: message[field], target };
+    }
+    if (message.type === "setRoutinePaused") {
+      return { key: "routine:" + message.id, field: "paused", value: message.paused, target: "routine " + message.id + " to " + (message.paused ? "paused" : "active") };
+    }
+    // Mode, model and effort have execution-time side effects. Never retain them.
+    return null;
+  }
+
+  function postPreference(message) {
+    const spec = preferenceSpec(message);
+    if (!hostWait.snapshot() || !spec) return false;
+    const previous = pendingPreferences.get(spec.key);
+    if (previous) previous.op.cancel();
+    const pending = { ...spec, message: { ...message }, sent: false, uncertain: false };
+    pending.op = hostWait.begin({ label: "Setting " + spec.target, success: "Set " + spec.target + ".", failure: "Couldn't set " + spec.target + "." });
+    pendingPreferences.set(spec.key, pending);
+    if (hostWait.available()) {
+      pending.sent = true;
+      vscode.postMessage(pending.message);
+    } else {
+      // A harmless existing read wakes the host. The setter stays here until
+      // restore completes; sending it into a known drop is not delivery.
+      vscode.postMessage({ type: "listSessions" });
+    }
+    return true;
+  }
+
+  function observePreferences(msg) {
+    if (!hostWait.snapshot()) return;
+    for (const pending of pendingPreferences.values()) {
+      if (msg.type === "hostLink") {
+        if (!msg.link.reachable && pending.sent) pending.uncertain = true;
+        if (msg.link.reachable && msg.link.restored && !pending.sent) {
+          pending.sent = true;
+          vscode.postMessage(pending.message);
+        }
+        continue;
+      }
+      if (!hostWait.snapshot().reachable) continue;
+      let value;
+      if (msg.type === "initialState") value = msg[pending.field];
+      if (msg.type === pending.field) value = msg.value;
+      if (msg.type === "voiceConfigured") {
+        if (pending.field === "voiceSendPhrase") value = msg.sendPhrase;
+        if (pending.field === "voiceKeyterms") value = msg.keyterms;
+      }
+      if (msg.type === "repos" && pending.message.cwd) {
+        const repo = (msg.entries || []).find((entry) => sameCwd(entry.cwd, pending.message.cwd));
+        if (repo) value = repo[pending.field];
+      }
+      if (msg.type === "routines" && pending.message.id) {
+        const routine = (msg.entries || []).find((entry) => entry.id === pending.message.id);
+        if (routine) value = routine.paused;
+        if (msg.error && msg.errorId === pending.message.id) {
+          pending.op.fail(msg.error, () => postPreference(pending.message));
+          continue;
+        }
+      }
+      if (value === undefined) continue;
+      if (JSON.stringify(value) === JSON.stringify(pending.value)) {
+        pendingPreferences.delete(pending.key);
+        pending.op.succeed();
+      } else if (pending.sent && pending.uncertain) {
+        // A write may have landed before its answer vanished. The desk's newer
+        // value wins until the person explicitly asks to change it again.
+        pending.op.fail("The machine has a different value. Your change is not confirmed.", () => {
+          postPreference(pending.message);
+          refreshSettingsOverlay();
+        });
+      }
+    }
+  }
   const CHAT_SCRIPT_URL = document.currentScript?.src || window.location.href;
   // True in the relay's browser client (its chat.html shim sets the flag before
   // loading this file); always false inside the VS Code webview. Gates the
@@ -2309,6 +2404,11 @@
 
   function setAppPurpose(value) {
     const next = value === "coding" ? "coding" : "knowledge";
+    if (hostWait.snapshot()) {
+      postPreference({ type: "setAppPurpose", value: next });
+      refreshSettingsOverlay();
+      return;
+    }
     if (state.appPurpose === next) return;
     state.appPurpose = next;
     vscode.postMessage({ type: "setAppPurpose", value: next });
@@ -2900,6 +3000,8 @@
 
   function settingsSnapshot() {
     return {
+      pendingPreferences: Object.fromEntries([...pendingPreferences.values()].map((p) => [p.key, p.op.label])),
+      pendingPreferenceValues: Object.fromEntries([...pendingPreferences.values()].map((p) => [p.key, p.value])),
       appPurpose: state.appPurpose === "coding" ? "coding" : "knowledge",
       showThinking: !!state.showThinking,
       expandCommandOutputs: !!state.expandCommandOutputs,
@@ -2940,6 +3042,7 @@
   }
 
   function applySettingsChange(id, value, message) {
+    if (message && postPreference(message)) return { pending: true, snapshot: settingsSnapshot() };
     switch (id) {
       case "appPurpose":
         state.appPurpose = value === "coding" ? "coding" : "knowledge";
@@ -3079,7 +3182,8 @@
         // nothing. Remember that one is outstanding; the relay's refusal below
         // is its answer.
         if (msg && msg.type === "saveRoutine") state.routineSavePending = true;
-        vscode.postMessage(msg);
+        if (!postPreference(msg)) vscode.postMessage(msg);
+        else refreshSettingsOverlay();
       },
       apply: applySettingsChange,
       onLocal: (name) => {
@@ -5101,7 +5205,8 @@
         closeRailColorPicker();
         // Skip a no-op write: re-picking the current colour should not churn
         // the catalog (and a remote round-trip for nothing).
-        if (sw.id === current) return;
+        if (sw.id === current && !pendingPreferences.has("color:" + repo.cwd)) return;
+        if (postPreference({ type: "setRepoColor", cwd: repo.cwd, color: sw.id })) return;
         vscode.postMessage({ type: "setRepoColor", cwd: repo.cwd, color: sw.id });
         // Paint now. The next `repos` frame that names this cwd is the
         // authority — confirm, contradict, or a silent host's expiry.
@@ -7341,11 +7446,11 @@
         title: inArchive
           ? "Show this project under Projects again"
           : "Move this project out of the way. Its conversations stay, and working here brings it back.",
-        onSelect: () => vscode.postMessage({
+        onSelect: () => postPreference({
           type: "setRepoArchived",
           cwd: repo.cwd,
           archived: !inArchive,
-        }),
+        }) || vscode.postMessage({ type: "setRepoArchived", cwd: repo.cwd, archived: !inArchive }),
       }, null] : []),
       // Folder colour — host-persisted, capability-gated the same way as archive
       // (`color` present on catalog rows). Opens a swatch picker rather than a
@@ -15029,6 +15134,8 @@
     }
     // Chips are host-owned state (every mutation routes through the host and
     // comes back via postChips) — the host snapshots its own copy on send.
+    if (sendWait) sendWait.cancel();
+    sendWait = hostWait.begin({ label: "Sending your message", success: "Message sent.", failure: "Couldn't send your message." });
     vscode.postMessage({ type: "send", text, ...(submissionId ? { submissionId } : {}) });
     input.value = "";
     renderInputHighlight();
@@ -15514,6 +15621,10 @@
   function queueOutgoing(text, chips) {
     if (state.sessionSuperseded) return;
     const attachments = Array.isArray(chips) ? chips : explicitVisibleChips(state.chips);
+    if (hostWait.snapshot()) {
+      queuedWaits.add({ text, chipIds: visibleChipIds(attachments), sessionId: state.activeSessionId,
+        op: hostWait.begin({ label: "Sending your message", success: "Message queued.", failure: "Couldn't send your message." }) });
+    }
     if (
       state.steerByDefault && state.steerSupported && steerableProvider() && state.busy && !state.busyLocked
     ) {
@@ -16538,6 +16649,7 @@
 
   function handleHostMessage(msg) {
     if (!msg || typeof msg !== "object") return;
+    observePreferences(msg);
     if (state.replayHold && msg.type !== "historyReplay" && REPLAY_HOLD_TYPES.has(msg.type)) {
       state.replayHeld.push(msg);
       return;
@@ -16574,7 +16686,7 @@
         // re-asserting its state produces a snapshot with no socket trouble at
         // all, while a cloud machine that suspended and woke can be gone for a
         // minute before one arrives. Nothing in this webview can see a socket.
-        // The page's shell can, and says so; see `hostReachable` below.
+        // The page's shell can, and says so; see `hostReachable`/`hostLink`.
         ensureRemoteFilesBrowser();
         if (typeof msg.showThinking === "boolean") state.showThinking = msg.showThinking;
         if (typeof msg.expandCommandOutputs === "boolean") state.expandCommandOutputs = msg.expandCommandOutputs;
@@ -16613,7 +16725,22 @@
         // A local host never sends it and a remote page that predates it never
         // does either, so an absent message means exactly the old behaviour —
         // capability by arrival, as everywhere else on this wire.
-        onRemoteHostReachable();
+        //
+        // A shell that also sends `hostLink` has said all of this there, in
+        // more detail and with the phase attached. Answering both would abandon
+        // the in-flight reads twice for one reconnection.
+        if (hostWait.snapshot()) break;
+        onRemoteHostReachable(null);
+        break;
+      case "hostLink":
+        // What the link IS, every time it changes — including the phases that
+        // are nobody's cue to act (waking, offline, back but not restored).
+        // Splitting it from the command above is the whole point: this one is
+        // free to receive, so the strip can say what is happening without a
+        // `git status` riding on every flap of a phone's radio.
+        if (!msg.link) break;
+        if (msg.link.reachable) onRemoteHostReachable(msg.link);
+        else noteRemoteFileDisconnect();
         break;
       case "moveViewHint":
         // Live retraction. `initialState` is not re-sent on a session swap, so a
@@ -17264,6 +17391,13 @@
         break;
       }
       case "userMessage":
+        for (const pending of queuedWaits) {
+          if (pending.sessionId === state.activeSessionId && msg.text === pending.text && sameChipIds(msg.chips, pending.chipIds)) {
+            pending.op.success = "Message sent.";
+            pending.op.succeed();
+            queuedWaits.delete(pending);
+          }
+        }
         // Live send, including a buffer rebuild inside historyReplay. A prior
         // hidden turn's skip ends here — this event is never hidden.
         state.skipUserBubble = false;
@@ -17278,6 +17412,7 @@
             : msg.text === state.pendingSubmissionText &&
               sameChipIds(msg.chips, state.pendingSubmissionChipIds))
         )) {
+          if (sendWait) { sendWait.succeed(); sendWait = null; }
           clearOptimisticSend();
           state.pendingSubmissionText = "";
           state.pendingSubmissionId = null;
@@ -17916,6 +18051,13 @@
         // re-focus like everything else, so queued blocks survive session swaps.
         // Prefer additive `queued` (text + chips); `items` is the text-only fallback.
         state.sendQueue = normalizeQueuedSends(msg);
+        for (const pending of queuedWaits) {
+          if (pending.sessionId === state.activeSessionId && state.sendQueue.some((entry) =>
+            entry.text === pending.text && sameChipIds(entry.chips, pending.chipIds))) {
+            pending.op.succeed();
+            queuedWaits.delete(pending);
+          }
+        }
         if (!state.sendQueue.length) {
           state.queuedSubmissionPending = false;
           state.queuedSubmissionRejected = false;
@@ -18143,6 +18285,22 @@
           // Rejected by the relay (quota/rate cap): the message was never
           // sent, so the optimistic bubble must go — the "Not sent" recovery
           // block below is the honest representation.
+          if (sendWait) {
+            sendWait.fail(msg.text, () => {
+              // The existing recovery UI owns the authored text and delivery.
+              const text = state.rejectedSubmissionText;
+              if (!text) return;
+              if (input.value.trim()) {
+                // Existing composer work is never replaced to perform a retry.
+                input.focus();
+                return;
+              }
+              state.rejectedSubmissionText = "";
+              renderQueuedBlocks();
+              input.value = text;
+              sendOrStop();
+            });
+          }
           clearOptimisticSend();
           hideGrokking();
           state.rejectedSubmissionText = state.pendingSubmissionText;
@@ -18605,18 +18763,18 @@
     const scope = { id: "provider-config-files", label: "Provider config files", title: "~/" };
     gearPopover.hidden = true;
     if (!providerConfigPanel) {
-      const request = (kind, relPath, fields) => {
+      const request = (kind, relPath, fields, options) => {
         const entry = PROVIDER_CONFIG_ENTRIES.find((item) => item.relPath === relPath);
         if (!entry || !providerConfigFilesAvailable()) return Promise.resolve({ ok: false, reason: "editing is not available" });
-        return postRemoteFileRequest(kind, { ...fields, provider: entry.provider }, relPath);
+        return postRemoteFileRequest(kind, { ...fields, provider: entry.provider }, relPath, options);
       };
       providerConfigPanel = window.GrokFilePanel.createFilePanel({
         access: {
           currentScope: async () => scope,
           list: async (_scope, relPath) => ({ ok: true, truncated: false, entries: relPath ? []
             : PROVIDER_CONFIG_ENTRIES.map((entry) => ({ name: "~/" + entry.relPath, kind: "file", relPath: entry.relPath })) }),
-          read: async (_scope, relPath) => {
-            const result = await request("configRead", relPath, { type: "readProviderConfig" });
+          read: async (_scope, relPath, options) => {
+            const result = await request("configRead", relPath, { type: "readProviderConfig" }, options);
             // Path arrival is the create capability. An old host's miss stays
             // an error; no new enum value can fall through its project route.
             if (result && !result.ok && result.reason === "not found" && result.absPath) {
@@ -18630,7 +18788,7 @@
           }),
         },
         mount: { panelHost: document.body, presentation: "overlay", id: "provider-config-panel", label: "Provider config files" },
-        ui: { confirm: uiChoice, renderMarkdown, fileNotice: providerConfigNotice },
+        ui: { confirm: uiChoice, renderMarkdown, fileNotice: providerConfigNotice, pathLabel: (path) => "~/" + path },
       });
     }
     await providerConfigPanel.setScope(scope);
@@ -18683,6 +18841,7 @@
   const remoteFilePending = new Map();
   const remoteFileTails = new Map();
   const remoteFilePoisoned = new Set();
+  const remoteFileUncorrelatedUnsafe = new Set();
 
   /*
    * What to say when a request got no answer at all.
@@ -18734,8 +18893,103 @@
     return kind === "gitRun" ? REMOTE_GIT_WRITE_TIMEOUT_MS : REMOTE_FILE_TIMEOUT_MS;
   }
 
-  function postRemoteFileRequest(kind, payload, keyPath) {
+  const SHELL_HELD_READS = new Set(["list", "read", "configRead", "gitStatus", "gitDiff"]);
+
+  function postLinkedFileRequest(kind, payload, pathKey, options) {
+    const read = SHELL_HELD_READS.has(kind);
+    if (!read && !hostWait.available()) {
+      vscode.postMessage({ type: "listSessions" });
+      return Promise.resolve({ ok: false, reason: "The machine is offline. Nothing was sent. Try again when it is back." });
+    }
+    return new Promise((resolve) => {
+      const key = remoteFileRequestKey(kind, payload.provider || payload.cwd, pathKey);
+      const pending = { kind, key, cwd: payload.provider || payload.cwd, relPath: pathKey, linked: true, read, resolve, timer: null };
+      const signal = options && options.signal;
+      const finish = (result) => {
+        remoteFilePending.delete(pending.requestId);
+        if (signal) signal.removeEventListener("abort", cancel);
+        resolve(result);
+      };
+      const cancel = () => {
+        remoteFileUncorrelatedUnsafe.add(key);
+        finish({ ok: false, cancelled: true, reason: "View closed." });
+      };
+      pending.resolve = (result) => {
+        // A manufactured refusal ENDS the shell's ownership of this attempt.
+        // Wait for the next usable link before making a fresh correlated read.
+        if (read && !result.ok && !hostWait.available()
+          && /connection|reconnect|restor|offline/i.test(result.reason || "")) {
+          pending.retryOnRestore = true;
+          remoteFilePending.set(pending.requestId, pending);
+          return;
+        }
+        finish(result);
+      };
+      pending.send = () => {
+        if (pending.requestId) remoteFileUncorrelatedUnsafe.add(key);
+        remoteFilePending.delete(pending.requestId);
+        pending.requestId = "file-" + (++remoteFileRequestSeq);
+        pending.retryOnRestore = false;
+        pending.shellHeld = !hostWait.snapshot().restored;
+        // Which socket is carrying this. The host answers a remote request by
+        // addressing the client id that asked, and a reconnect is issued a new
+        // one — so anything still outstanding over an earlier connection has
+        // nowhere left to land. See `settleLostLinkedWrites`.
+        pending.connection = hostWait.snapshot().connection;
+        remoteFilePending.set(pending.requestId, pending);
+        vscode.postMessage({ ...payload, requestId: pending.requestId });
+      };
+      if (signal && signal.aborted) { cancel(); return; }
+      if (signal) signal.addEventListener("abort", cancel, { once: true });
+      pending.send();
+    });
+  }
+
+  function noteRemoteFileDisconnect() {
+    for (const pending of remoteFilePending.values()) {
+      // Reads still in the shell's restore hold keep that owner. A live read
+      // lost with a previous socket has no shell owner and needs a new id.
+      if (pending.linked && pending.read && !pending.shellHeld) pending.retryOnRestore = true;
+    }
+  }
+
+  /**
+   * End every linked WRITE that was riding a connection which no longer exists.
+   *
+   * Reads above are reissued, because asking twice costs nothing. A write is
+   * the opposite: it may already have run, and sending it again is how one tap
+   * becomes two commits. So the answer is neither to replay it nor to keep
+   * waiting — the reply was addressed to a client id the relay retired when
+   * this page reconnected, and it is never coming. Say so, once, and let the
+   * person decide.
+   *
+   * Waiting was the alternative and it is not a neutral one: the panel reads
+   * "Saving…" for as long as the tab stays open, which is the same screen a
+   * successful save leaves behind for a moment, on the one surface whose job is
+   * to answer "is my work saved". Only a reload escaped it.
+   *
+   * The comparison is against the socket that is up NOW, not against a flag,
+   * because the two things that end a request are not the same: a machine gone
+   * quiet for twelve seconds keeps its socket, and a write to a slow `git push`
+   * is still legitimately running behind it.
+   */
+  function settleLostLinkedWrites(connection) {
+    for (const pending of [...remoteFilePending.values()]) {
+      if (!pending.linked || pending.read) continue;
+      if (pending.connection === connection) continue;
+      // The retry sends a new id; a late uncorrelated answer to the abandoned
+      // attempt must not be allowed to satisfy it.
+      remoteFileUncorrelatedUnsafe.add(pending.key);
+      pending.resolve({
+        ok: false,
+        reason: "The connection dropped before that finished. It may already have been applied — check before trying again.",
+      });
+    }
+  }
+
+  function postRemoteFileRequest(kind, payload, keyPath, options) {
     const pathKey = typeof keyPath === "string" ? keyPath : (payload.relPath || "");
+    if (hostWait.snapshot()) return postLinkedFileRequest(kind, payload, pathKey, options);
     const key = remoteFileRequestKey(kind, payload.provider || payload.cwd, pathKey);
     if (remoteFilePoisoned.has(key)) {
       return Promise.resolve({ ok: false, reason: "Request state is stale. Refresh this page and try again." });
@@ -18827,7 +19081,8 @@
         candidate
         && candidate.kind === kind
         && candidate.cwd === (msg.provider || msg.cwd)
-        && candidate.relPath === replyPath
+        && (candidate.relPath === replyPath || (kind === "configRead" && !msg.ok && !replyPath && msg.provider === candidate.cwd))
+        && !candidate.retryOnRestore
       ) {
         pending = candidate;
       }
@@ -18836,6 +19091,7 @@
       for (const candidate of remoteFilePending.values()) {
         if (
           candidate.kind === kind
+          && !(candidate.linked && (candidate.retryOnRestore || remoteFileUncorrelatedUnsafe.has(candidate.key)))
           && candidate.cwd === (msg.provider || msg.cwd)
           && candidate.relPath === replyPath
         ) {
@@ -18870,12 +19126,12 @@
         : "";
       const access = {
         currentScope: async () => currentRemoteFileScope(),
-        list: (cwd, relPath) => postRemoteFileRequest("list", {
+        list: (cwd, relPath, options) => postRemoteFileRequest("list", {
           type: "listProjectDir", cwd, relPath: relPath || "",
-        }),
-        read: (cwd, relPath) => postRemoteFileRequest("read", {
+        }, relPath || "", options),
+        read: (cwd, relPath, options) => postRemoteFileRequest("read", {
           type: "readProjectFile", cwd, relPath,
-        }),
+        }, relPath, options),
       };
       if (remoteFilesEditAvailable()) {
         access.write = (cwd, request) => postRemoteFileRequest("write", {
@@ -18888,12 +19144,12 @@
         });
       }
       if (remoteGitAvailable()) {
-        access.gitStatus = (cwd) => postRemoteFileRequest("gitStatus", {
+        access.gitStatus = (cwd, _value, options) => postRemoteFileRequest("gitStatus", {
           type: "gitStatus", cwd,
-        });
-        access.gitDiff = (cwd, relPath) => postRemoteFileRequest("gitDiff", {
+        }, "", options);
+        access.gitDiff = (cwd, relPath, options) => postRemoteFileRequest("gitDiff", {
           type: "gitFileDiff", cwd, path: relPath,
-        }, relPath);
+        }, relPath, options);
         // The op set is closed and re-planned host-side from the host's OWN
         // snapshot, so this passes the request through rather than validating
         // it: a renderer check here would be a second, weaker copy of a fence
@@ -18998,20 +19254,26 @@
   }
 
   /**
-   * The connection ended and a new one is up.
-   *
-   * Two things follow, in this order. Every request still outstanding was
-   * posted over a socket that no longer exists, so it is unanswerable and
-   * failing it now is not caution but the removal of a wait we can already
-   * prove is pointless. Then the panel re-asks for what is on screen — which
-   * is the part that replaces those requests, rather than replaying them.
-   *
-   * A panel that was never mounted has nothing to refresh: this is the first
-   * connection, not a returning one, and the ordinary mount does the reads.
+   * Linked pages keep shell-held reads and retry only ended/live-lost attempts,
+   * and end any write whose connection is gone. Legacy pages still abandon and
+   * refresh wholesale. Neither path ever replays a write.
    */
-  function onRemoteHostReachable() {
+  function onRemoteHostReachable(link) {
     const panel = state.filesBrowse && state.filesBrowse.component;
     if (!panel && !providerConfigPanel) return;
+    if (link && hostWait.snapshot()) {
+      if (!link.restored) return;
+      settleLostLinkedWrites(link.connection);
+      for (const pending of [...remoteFilePending.values()]) {
+        if (!pending.linked || !pending.read) continue;
+        if (pending.retryOnRestore) pending.send();
+        // The shell flushes its held read at this boundary. Never reissue it.
+        pending.shellHeld = false;
+      }
+      if (panel) void panel.refreshDisplayed({ preservePending: true });
+      if (providerConfigPanel) void providerConfigPanel.refreshDisplayed({ preservePending: true });
+      return;
+    }
     abandonRemoteFileRequests();
     if (panel && typeof panel.refreshDisplayed === "function") void panel.refreshDisplayed();
     if (providerConfigPanel && providerConfigFilesAvailable()) void providerConfigPanel.refreshDisplayed();

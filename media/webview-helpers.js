@@ -35,7 +35,7 @@
     "promptComplete", "contextUsage", "commandOutput", "expandCommandOutputs", "setAllToolDetails", "focusInput", "findInSession", "restoreComposer", "truncateMessages", "uiConfirmRequest", "agentReset", "agentError", "agentEnd", "exit", "setBusy", "summarizing",
     "sessionContext", "clearMessages", "onboarding", "error", "hostNotice", "xaiNotification", "subagentUpdate", "childStream", "runProgress", "sessions", "repoSessions", "pinnedSessions", "repos",
     "sessionDot", "queuedSends", "submitQueuedSend", "steerUnavailable", "feedbackAvailability", "turnFeedbackAck", "usage", "steerByDefault", "promptNav", "expandDiffCard", "soundNotifications", "processingSound", "readRepliesAloud", "summarizeRepliesAloud", "speechSummary", "imageFull", "imageOriginal", "moveComposerCaret",
-    "remoteStatus", "hostReachable",
+    "remoteStatus", "hostReachable", "hostLink",
   ];
   const WEBVIEW_MESSAGE_TYPES = [
     "readProviderConfig", "writeProviderConfig", "restartProviderSession", "openProviderConfig",
@@ -3112,4 +3112,116 @@
   } else {
     root.GrokWebviewHelpers = api;
   }
+})(typeof globalThis !== "undefined" ? globalThis : this);
+
+// Page-local operation UI, shipped in the helper bundle on every surface.
+// A socket snapshot is a capability, never a host/protocol version check.
+(function (root) {
+  let shared;
+  function create(win) {
+    const operations = new Map();
+    let sequence = 0;
+    let timer;
+    let element;
+    const snapshot = () => win.afkpilotHostLink;
+    const available = () => !snapshot() || (snapshot().reachable && snapshot().restored);
+    function paint() {
+      if (timer) win.clearTimeout(timer);
+      const now = Date.now();
+      for (const [id, op] of operations) {
+        if (op.until && now >= op.until) operations.delete(id);
+      }
+      const visible = snapshot() ? [...operations.values()].filter((op) => !op.cancelled) : [];
+      if (!visible.length) {
+        if (element) element.hidden = true;
+        win.document.body.classList.remove("host-wait-visible");
+        return;
+      }
+      if (!element) {
+        element = win.document.createElement("aside");
+        element.id = "host-wait-strip";
+        element.className = "host-wait-strip";
+        element.setAttribute("aria-label", "Machine activity");
+        // A body sibling of the overlays, never a child of the transcript.
+        win.document.body.appendChild(element);
+        if (typeof win.ResizeObserver === "function") {
+          new win.ResizeObserver(() => {
+            win.document.body.style.setProperty("--host-wait-height", element.offsetHeight + "px");
+          }).observe(element);
+        }
+      }
+      element.hidden = false;
+      win.document.body.classList.add("host-wait-visible");
+      const pending = visible.filter((op) => op.status === "pending");
+      const op = pending[pending.length - 1] || visible[visible.length - 1];
+      const link = snapshot();
+      const waking = !link.reachable;
+      const since = waking ? (link.phase === "waking" ? link.since : op.started) : op.workingSince;
+      const elapsed = Math.max(0, Math.floor((now - since) / 1000));
+      const duration = Math.floor(elapsed / 60) + ":" + String(elapsed % 60).padStart(2, "0");
+      const copy = win.document.createElement("span");
+      copy.className = "host-wait-copy";
+      copy.setAttribute("role", "status");
+      let spinner;
+      if (op.status === "pending") {
+        spinner = win.document.createElement("span");
+        spinner.className = "host-wait-spinner";
+        spinner.setAttribute("aria-hidden", "true");
+        copy.textContent = waking
+          ? (elapsed >= 30 ? "Still starting… " + duration + " so far." : "Waking your machine.") + " " + op.label
+          : op.label + (elapsed >= 30 ? " — " + duration + " so far. Waiting for confirmation." : "…");
+        if (pending.length > 1) copy.textContent += " · " + pending.filter((item) => item !== op).map((item) => item.label).join(" · ");
+      } else {
+        copy.textContent = op.status === "success" ? op.success : op.failure + (op.reason ? " " + op.reason : "");
+      }
+      if (pending.length || visible.some((item) => item.until)) timer = win.setTimeout(paint, 1000);
+      const renderKey = op.id + ":" + op.status + ":" + copy.textContent;
+      if (element.dataset.renderKey === renderKey) return;
+      element.dataset.renderKey = renderKey;
+      element.replaceChildren();
+      if (spinner) element.appendChild(spinner);
+      element.dataset.state = op.status;
+      element.appendChild(copy);
+      if (op.status === "failure" && op.retry) {
+        const button = win.document.createElement("button");
+        button.type = "button";
+        button.textContent = "Try again";
+        button.onclick = () => { op.cancel(); op.retry(); };
+        element.appendChild(button);
+      }
+    }
+    function begin(spec) {
+      const op = {
+        ...spec, id: ++sequence, started: Date.now(), workingSince: Date.now(), status: "pending",
+        wasWaking: !!snapshot() && !snapshot().reachable,
+        cancel() { operations.delete(op.id); op.cancelled = true; paint(); },
+        resume() { if (op.cancelled) return; op.status = "pending"; op.reason = ""; op.until = null; paint(); },
+        succeed() { if (op.cancelled) return; op.status = "success"; op.until = Date.now() + 3000; paint(); },
+        fail(reason, retry) {
+          if (op.cancelled) return;
+          op.status = "failure"; op.reason = reason || ""; op.retry = retry; paint();
+        },
+      };
+      operations.set(op.id, op);
+      paint();
+      return op;
+    }
+    // `hostLink`, not `hostReachable`. The strip wants every phase change --
+    // waking, offline, back-but-not-restored -- and `hostReachable` is a
+    // command the renderer answers by abandoning its in-flight reads and
+    // re-running `git status`, so a shell that fired it on each change would
+    // turn a flapping uplink into a storm of those. Two messages, because they
+    // are two different things: one says what the link IS, one says act on it.
+    win.addEventListener("message", (event) => {
+      if (event.data && event.data.type === "hostLink") {
+        for (const op of operations.values()) {
+          if (snapshot() && snapshot().reachable && op.wasWaking) op.workingSince = Date.now();
+          op.wasWaking = !!snapshot() && !snapshot().reachable;
+        }
+        paint();
+      }
+    });
+    return { begin, snapshot, available };
+  }
+  root.GrokHostWait = { get: () => shared || (shared = create(root)) };
 })(typeof globalThis !== "undefined" ? globalThis : this);

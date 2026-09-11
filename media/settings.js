@@ -1755,7 +1755,7 @@
     const parent = container.parentElement;
     if (!parent) return;
     for (const sibling of Array.from(parent.children)) {
-      if (sibling === container) continue;
+      if (sibling === container || sibling.id === "host-wait-strip") continue;
       if (on) {
         // Track ownership for BOTH attributes: cleanup must not strip an
         // inert some other surface set before settings opened.
@@ -2933,6 +2933,13 @@
     el.className = "settings-row";
     el.dataset.id = row.id;
     el.dataset.kind = row.kind || "";
+    if (snapshot.pendingPreferences && snapshot.pendingPreferences[row.id]) {
+      el.setAttribute("aria-busy", "true");
+      const pending = document.createElement("span");
+      pending.className = "settings-pending";
+      pending.textContent = snapshot.pendingPreferences[row.id] + " — pending";
+      el.appendChild(pending);
+    }
     const enabled = rowEnabled(row, snapshot);
     if (!enabled) el.classList.add("is-disabled");
     const title = document.createElement("div");
@@ -3157,7 +3164,10 @@
       snapshot = applyValue(row, value, snapshot);
       const message = rowMessage(row, value, snapshot);
       const localOnly = isLocalOnly(row, previous, env);
-      if (apply) apply(row.id, value, localOnly ? null : message, snapshot);
+      if (apply) {
+        const applied = apply(row.id, value, localOnly ? null : message, snapshot);
+        if (applied && applied.pending) snapshot = applied.snapshot;
+      }
       else if (message && !localOnly) post(message);
       if (pendingRestore) pendingRestore = null;
       paint();
@@ -3664,7 +3674,8 @@
           if (!sw || sw.disabled) return;
           sw.onclick = (e) => {
             e.stopPropagation();
-            commit(row, !rowValue(row, snapshot));
+            const pending = snapshot.pendingPreferenceValues || {};
+            commit(row, !(Object.prototype.hasOwnProperty.call(pending, row.id) ? pending[row.id] : rowValue(row, snapshot)));
           };
         } else if (row.kind === "select") {
           const select = el.querySelector("select");
@@ -3974,7 +3985,9 @@
           const card = btn.closest(".settings-routine");
           const id = card && card.dataset.routine;
           if (!id) return;
-          post({ type: "setRoutinePaused", id, paused: !btn.dataset.paused });
+          const pending = snapshot.pendingPreferenceValues || {};
+          const key = "routine:" + id;
+          post({ type: "setRoutinePaused", id, paused: Object.prototype.hasOwnProperty.call(pending, key) ? !pending[key] : !btn.dataset.paused });
         });
       });
       body.querySelectorAll(".settings-routine-run-now").forEach((btn) => {
@@ -4058,7 +4071,8 @@
 
     function trapTab(e) {
       if (!modal || e.key !== "Tab") return false;
-      const items = focusableControls(container);
+      const strip = document.getElementById("host-wait-strip");
+      const items = focusableControls(container).concat(strip && !strip.hidden ? focusableControls(strip) : []);
       if (!items.length) {
         e.preventDefault();
         e.stopPropagation();
@@ -4068,13 +4082,13 @@
       const last = items[items.length - 1];
       const active = container.ownerDocument && container.ownerDocument.activeElement;
       if (e.shiftKey) {
-        if (active === first || !container.contains(active)) {
+        if (active === first || !items.includes(active)) {
           e.preventDefault();
           e.stopPropagation();
           last.focus();
           return true;
         }
-      } else if (active === last || !container.contains(active)) {
+      } else if (active === last || !items.includes(active)) {
         e.preventDefault();
         e.stopPropagation();
         first.focus();

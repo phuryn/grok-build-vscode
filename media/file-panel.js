@@ -207,22 +207,6 @@
     };
   }
 
-  /**
-   * A tab for a file that could not be opened.
-   *
-   * The error used to be painted over the tree instead: no tab, so nothing
-   * named the file that had failed, and the tree's filter box stayed on screen
-   * above a message about a file you could no longer see. Giving the failure a
-   * tab makes it behave like every other open file — it says which file, it can
-   * be left open while you look at something else, and it closes the same way.
-   */
-  function makeErrorTab(scopeId, relPath, reason) {
-    return {
-      ...makeTab(scopeId, { relPath, kind: "error", text: "" }),
-      error: reason || "Could not open file.",
-    };
-  }
-
   function applyDraft(tab, text) {
     tab.draftText = String(text);
     tab.dirty = tab.draftText !== tab.baselineText;
@@ -698,6 +682,26 @@
       : (source) => "<pre>" + escapeHtml(source) + "</pre>";
     const doc = options.document || root.document;
     const win = options.window || root;
+    const waiting = win.GrokHostWait && win.GrokHostWait.get();
+    const operations = new Set();
+    const pathLabel = (path) => typeof ui.pathLabel === "function" ? ui.pathLabel(path) : path;
+    function beginOperation(label, success, failure) {
+      if (!waiting || !waiting.snapshot()) return null;
+      for (const old of operations) if (old.cancelled || (old.until && old.until < Date.now())) operations.delete(old);
+      const op = waiting.begin({ label, success, failure });
+      operations.add(op);
+      return op;
+    }
+    function finishOperation(op, result, retry) {
+      if (!op) return;
+      if (result && result.cancelled) op.cancel();
+      else if (result && result.ok) op.succeed();
+      else op.fail(result && result.reason, retry);
+    }
+    function cancelOperations() {
+      for (const op of operations) op.cancel();
+      operations.clear();
+    }
     const mount = options.mount || {};
     const elementIds = mount.elementIds || {};
     const panelHost = mount.panelHost || doc.body;
@@ -810,7 +814,7 @@
     refreshBtn.title = "Refresh";
     refreshBtn.setAttribute("aria-label", "Refresh file tree");
     refreshBtn.addEventListener("click", () => {
-      void refreshTree();
+      void refreshTree(true);
     });
 
     // Content-area maximize. The mount opts in (desktop and the wide browser);
@@ -962,6 +966,7 @@
       toggle.setAttribute("aria-expanded", String(open));
       toggle.title = open ? "Hide file panel" : "Show file panel";
       if (!open) setMaximized(false);
+      if (!open && wasOpen) { cancelOperations(); abortPending(); }
       applyPresentation();
       if (open && currentState && !currentState.tree) void loadRootTree();
       syncChangesPolling();
@@ -1420,8 +1425,9 @@
       pendingControllers.clear();
     }
 
-    async function callAccess(method, scopeId, value) {
+    async function callAccess(method, scopeId, value, owner) {
       const controller = typeof AbortController === "function" ? new AbortController() : null;
+      if (owner) owner.readController = controller;
       if (controller) pendingControllers.add(controller);
       try {
         return await access[method](scopeId, value, controller ? { signal: controller.signal } : undefined);
@@ -1468,7 +1474,7 @@
       if (destroyed) return;
       const nextState = scope ? scopeState(scope) : null;
       const switched = currentState !== nextState;
-      if (switched) abortPending();
+      if (switched) { cancelOperations(); abortPending(); }
       currentState = nextState;
       currentScope = nextState ? nextState.scope : null;
       title.title = scope && (scope.title || scope.label) || "Show file tree";
@@ -1532,8 +1538,9 @@
      * into would take their words away to fix a connection problem they did not
      * cause.
      */
-    async function refreshDisplayed() {
+    async function refreshDisplayed(opts) {
       if (destroyed || !currentScope || !currentState) return;
+      if (opts && opts.preservePending && !open) return;
       const state = currentState;
       if (canGit && gitEnabledNow()) {
         // The list re-reads itself here; the OPEN DIFF has to be asked for
@@ -1545,13 +1552,13 @@
         // going back lands straight on it. Status and diff are different
         // request keys, so this does not queue behind the read above.
         const openDiff = state.changes.diffPath;
-        void loadChanges({ force: true });
-        if (openDiff) void openChangeDiff(openDiff);
+        void loadChanges({ force: !(opts && opts.preservePending) });
+        if (openDiff && !(opts && opts.preservePending && state.changes.diffLoading)) void openChangeDiff(openDiff, false);
       }
       if (changesMode) return;
       if (treeMode) { void refreshTree(); return; }
       const tab = state.activeRelPath ? state.tabs.get(state.activeRelPath) : null;
-      if (tab && !tab.dirty && !tab.saving && !tab.reloading && tab.kind !== "error") void reloadTab(tab);
+      if (tab && !tab.dirty && !tab.saving && !tab.reloading && !tab.loading) void reloadTab(tab, false);
     }
 
     async function loadRootTree() {
@@ -1568,13 +1575,14 @@
       state.rootLoad = (async () => {
         const result = await callAccess("list", scopeId, "");
         if (result && result.ok) state.tree = result;
-        if (destroyed || currentState !== state) return;
+        if (destroyed || currentState !== state) return { ok: false, cancelled: true };
         tree.textContent = "";
         if (!result || !result.ok) {
           appendStatus(tree, result && result.reason || "Could not list folder.", true);
-          return;
+          return result;
         }
         renderRootTree(state);
+        return result;
       })();
       paintRefresh();
       try {
@@ -1597,12 +1605,17 @@
      * Everything else is deliberately untouched — open tabs, the filter text,
      * scroll position. A refresh that cost you your place is not worth pressing.
      */
-    async function refreshTree() {
+    async function refreshTree(intent) {
       if (destroyed || !currentScope || !currentState) return;
       const state = currentState;
+      const operation = intent ? beginOperation("Reading project files", "Project files refreshed.", "Couldn't read project files.") : null;
       // A first listing already in flight is as fresh as anything we would ask
       // for, so join it rather than racing a second request against it.
-      if (state.rootLoad) return state.rootLoad;
+      if (state.rootLoad) {
+        const result = await state.rootLoad;
+        finishOperation(operation, result, () => refreshTree(true));
+        return;
+      }
       const scopeId = state.scope.id;
       const remembered = expandedPaths();
       const scrollTop = tree.scrollTop;
@@ -1612,6 +1625,7 @@
           callAccess("list", scopeId, ""),
           ...remembered.map((relPath) => callAccess("list", scopeId, relPath)),
         ]);
+        finishOperation(operation, rootResult && rootResult.ok ? folderResults.find((r) => !r || !r.ok) || rootResult : rootResult, () => refreshTree(true));
         if (destroyed || currentState !== state) return;
         if (!rootResult || !rootResult.ok) {
           // Keep the tree you had. A refresh that failed is a failed refresh,
@@ -1623,7 +1637,7 @@
           const status = statusLine(rootResult && rootResult.reason || "Could not list folder.", true);
           status.classList.add("gfp-refresh-error");
           tree.appendChild(status);
-          return;
+          return rootResult;
         }
         const listings = new Map();
         remembered.forEach((relPath, index) => {
@@ -1633,6 +1647,7 @@
         state.tree = rootResult;
         renderRootTree(state, listings);
         tree.scrollTop = scrollTop;
+        return rootResult;
       })();
       paintRefresh();
       try {
@@ -1839,18 +1854,30 @@
       node.classList.toggle("gfp-expanded", opening);
       node.classList.toggle("desk-ft-open", opening);
       lead.innerHTML = opening ? ICON.chevronDown : ICON.chevronRight;
-      if (!opening) return;
+      if (!opening) {
+        if (node.readController) node.readController.abort();
+        if (node.operation) node.operation.cancel();
+        return;
+      }
       if (children.dataset.loaded === "1") return;
       appendStatus(children, "Loading…");
       const state = currentState;
       const scopeId = state.scope.id;
       const seq = (directorySeq.get(scopeKey(scopeId, entry.relPath)) || 0) + 1;
       directorySeq.set(scopeKey(scopeId, entry.relPath), seq);
-      const result = await callAccess("list", scopeId, entry.relPath);
+      node.operation = beginOperation("Reading " + entry.relPath, "Loaded " + entry.relPath + ".", "Couldn't read " + entry.relPath + ".");
+      const result = await callAccess("list", scopeId, entry.relPath, node);
       if (
         destroyed || currentState !== state
+        || !node.classList.contains("gfp-expanded")
         || directorySeq.get(scopeKey(scopeId, entry.relPath)) !== seq
       ) return;
+      finishOperation(node.operation, result, () => {
+        if (open && currentState === state && node.isConnected) {
+          node.classList.remove("gfp-expanded");
+          void toggleDirectory(node, entry, lead);
+        }
+      });
       children.textContent = "";
       if (!result || !result.ok) {
         appendStatus(children, result && result.reason || "Could not list folder.", true);
@@ -1918,38 +1945,18 @@
       if (!currentScope || !currentState || !relPath) return { ok: false, reason: "no repository scope" };
       const state = currentState;
       const scopeId = state.scope.id;
-      if (!force && state.tabs.has(relPath)) {
+      let tab = state.tabs.get(relPath);
+      if (!force && tab && tab.kind !== "pending" && tab.kind !== "error") {
         activateTab(relPath);
         return { ok: true };
       }
-      const existing = state.tabs.get(relPath);
-      const readSeq = existing ? ++existing.readSeq : 1;
-      const result = await callAccess("read", scopeId, relPath);
-      if (destroyed || currentState !== state) return { ok: false, reason: "scope changed" };
-      if (existing && existing.readSeq !== readSeq) return { ok: false, reason: "superseded" };
-      if (!result || !result.ok) {
-        // Open it as a tab rather than painting the message over the tree, so
-        // the failure names its own file. Same path as a success from here on.
-        //
-        // This used to hand a non-previewable file straight to the OS on the
-        // desktop (`result.openExternal`), which meant the same click did two
-        // different things depending on which client you were sitting at — a
-        // tab with a message in the browser, a silently launched external app
-        // on the desktop. The tab is now the answer everywhere, and the OS
-        // route is offered INSIDE it rather than taken on your behalf.
-        const failed = makeErrorTab(scopeId, relPath, result && result.reason);
-        failed.canOpenExternally = !!(result && result.openExternal && access.openExternal);
-        state.tabs.set(relPath, failed);
-        if (!state.order.includes(relPath)) state.order.push(relPath);
-        state.activeRelPath = relPath;
-        treeMode = false;
-        leaveChanges();
-        renderTabs();
-        renderViewer();
-        setOpen(true);
-        return result || { ok: false, reason: "read failed" };
-      }
-      const tab = makeTab(scopeId, result);
+      if (tab && (tab.dirty || tab.saving)) { activateTab(relPath); return { ok: false, reason: "File has edits." }; }
+      if (tab && tab.loading && !force) { activateTab(relPath); return { ok: false, reason: "Opening file." }; }
+      if (tab && tab.readController) tab.readController.abort();
+      if (tab && tab.operation) tab.operation.cancel();
+      tab = makeTab(scopeId, { relPath, kind: "pending" });
+      tab.loading = true;
+      tab.operation = beginOperation("Opening " + pathLabel(relPath), "Opened " + pathLabel(relPath) + ".", "Couldn't open " + pathLabel(relPath) + ".");
       state.tabs.set(relPath, tab);
       if (!state.order.includes(relPath)) state.order.push(relPath);
       state.activeRelPath = relPath;
@@ -1958,6 +1965,39 @@
       renderTabs();
       renderViewer();
       setOpen(true);
+      const result = await callAccess("read", scopeId, relPath, tab);
+      tab.loading = false;
+      if (destroyed || currentState !== state || state.tabs.get(relPath) !== tab || tab.dirty) {
+        if (tab.operation) tab.operation.cancel();
+        return { ok: false, reason: "superseded" };
+      }
+      finishOperation(tab.operation, result, () => {
+        if (open && currentState === state && state.tabs.get(relPath) === tab && !tab.dirty) void openFile(relPath, true);
+      });
+      if (!result || !result.ok) {
+        // The failure stays in the tab it was opened in.
+        //
+        // It used to be painted over the tree instead: no tab, so nothing named
+        // the file that had failed, and the tree's filter box stayed on screen
+        // above a message about a file you could no longer see. A tab makes the
+        // failure behave like every other open file — it says which file, it
+        // can be left open while you look at something else, it closes the same
+        // way, and now it is the same tab that was already on screen saying
+        // "Opening…", so nothing about the view jumps when the answer lands.
+        tab.error = result && result.reason || "Could not open file.";
+        tab.canOpenExternally = !!(result && result.openExternal && access.openExternal);
+        if (open) {
+          renderTabs();
+          if (state.activeRelPath === relPath && !treeMode && !changesMode) renderViewer();
+        }
+        return result || { ok: false, reason: "read failed" };
+      }
+      const fresh = makeTab(scopeId, result);
+      state.tabs.set(relPath, fresh);
+      // Another tab may have been selected while this one was opening.
+      if (state.activeRelPath === relPath && !treeMode && !changesMode && open) {
+        renderTabs(); renderViewer();
+      }
       return { ok: true, kind: result.kind };
     }
 
@@ -1995,6 +2035,8 @@
       // whether the body needs a new subject, and it has to be read before the
       // bookkeeping below moves activeRelPath onto a survivor.
       const wasOnScreen = !treeMode && !changesMode && state.activeRelPath === relPath;
+      if (tab.readController) tab.readController.abort();
+      if (tab.operation) tab.operation.cancel();
       state.tabs.delete(relPath);
       state.order = state.order.filter((item) => item !== relPath);
       if (state.activeRelPath === relPath) {
@@ -2167,6 +2209,8 @@
 
     function showChanges() {
       if (!canGit || !currentState) return;
+      if (currentState.changes.operation) currentState.changes.operation.cancel();
+      currentState.changes.operation = beginOperation("Reading what changed", "Changes loaded.", "Couldn't read what changed.");
       changesMode = true;
       treeMode = false;
       rootEl.classList.remove("gfp-viewing");
@@ -2200,7 +2244,7 @@
       }
       let result;
       try {
-        result = await access.gitStatus(scopeId);
+        result = await callAccess("gitStatus", scopeId);
       } catch (err) {
         result = { ok: false, kind: "failed", reason: String((err && err.message) || err || "Could not read git status.") };
       }
@@ -2210,6 +2254,8 @@
       // A background failure cannot replace good data, hide a working tab, or
       // erase a notice. The next tick may succeed; explicit reads still explain
       // failures to the person who asked for them.
+      finishOperation(state.changes.operation, result, () => showChanges());
+      state.changes.operation = null;
       if (quiet && (!result || !result.ok)) return;
       if (result && result.ok) {
         state.changes.snapshot = result.snapshot;
@@ -2239,10 +2285,13 @@
       }
     }
 
-    async function openChangeDiff(path) {
+    async function openChangeDiff(path, intent = true) {
       if (!currentScope || !currentState) return;
       const state = currentState;
       const scopeId = currentScope.id;
+      if (state.changes.readController) state.changes.readController.abort();
+      if (state.changes.diffOperation) state.changes.diffOperation.cancel();
+      const operation = state.changes.diffOperation = intent ? beginOperation("Reading changes in " + path, "Changes loaded for " + path + ".", "Couldn't read changes in " + path + ".") : null;
       const seq = ++state.changes.diffSeq;
       state.changes.diffPath = path;
       state.changes.diffPatch = "";
@@ -2252,12 +2301,13 @@
       renderChanges();
       let result;
       try {
-        result = await access.gitDiff(scopeId, path);
+        result = await callAccess("gitDiff", scopeId, path, state.changes);
       } catch (err) {
         result = { ok: false, reason: String((err && err.message) || err || "Could not read the diff.") };
       }
       if (destroyed || seq !== state.changes.diffSeq || currentState !== state || state.changes.diffPath !== path) return;
       state.changes.diffLoading = false;
+      finishOperation(operation, result, () => openChangeDiff(path));
       if (result && result.ok) {
         state.changes.diffPatch = result.patch || "";
         state.changes.diffTruncated = !!result.truncated;
@@ -2269,6 +2319,8 @@
 
     function closeChangeDiff() {
       if (!currentState) return;
+      if (currentState.changes.readController) currentState.changes.readController.abort();
+      if (currentState.changes.diffOperation) currentState.changes.diffOperation.cancel();
       currentState.changes.diffPath = null;
       currentState.changes.diffPatch = "";
       currentState.changes.diffError = "";
@@ -2280,6 +2332,7 @@
       const state = currentState;
       const scopeId = currentScope.id;
       if (state.changes.running) return;
+      const operation = beginOperation("Running Git " + request.op, "Git " + request.op + " finished.", "Couldn't finish Git " + request.op + ".");
       const before = state.changes.snapshot;
       state.changes.running = true;
       gitWritesInFlight += 1;
@@ -2302,6 +2355,10 @@
       syncChangesPolling();
       if (destroyed || currentState !== state) return;
       if (result && result.snapshot) state.changes.snapshot = result.snapshot;
+      // A failed compound command may have committed before its push failed.
+      // Return to the updated Changes controls so retry is replanned from that
+      // outcome, rather than replaying the old command and its message.
+      finishOperation(operation, result, () => { if (open && currentState === state) showChanges(); });
       // A push can fail after its commit succeeded. An advanced local history
       // with no remaining files proves the message was spent in that case too.
       if (request.op === "commit" && result && (result.ok || (request.push && result.snapshot
@@ -3154,7 +3211,10 @@
       const body = doc.createElement("div");
       body.className = "gfp-viewer-body desk-ft-viewer-body files-browse-viewer-body";
       if (elementIds.viewerBody) body.id = elementIds.viewerBody;
-      if (tab.error) {
+      if (tab.loading) {
+        body.setAttribute("aria-busy", "true");
+        appendStatus(body, "Opening " + pathLabel(tab.relPath) + "…", false);
+      } else if (tab.error) {
         // Inside the tab's own body, under its own tab. The message is the
         // content of this file as far as the panel is concerned.
         //
@@ -3164,6 +3224,7 @@
         // client with nothing at all in the menu still drops it.
         if (!head.childNodes.length) head.remove();
         appendStatus(body, tab.error, true);
+        body.appendChild(actionButton("Try again", "", () => void openFile(tab.relPath, true)));
         // The desktop can still hand it to the OS — offered here, not done for
         // you, so the same click means the same thing on every client.
         if (tab.canOpenExternally && access.openExternal) {
@@ -3369,6 +3430,7 @@
     async function saveTab(tab) {
       if (!access.write || !savable(tab) || tab.saving || !tab.stamp || !tab.expectedAbsPath) return false;
       const sentText = tab.draftText;
+      const operation = beginOperation("Saving " + pathLabel(tab.relPath), "Saved " + pathLabel(tab.relPath) + ".", "Couldn't save " + pathLabel(tab.relPath) + ".");
       const seq = ++tab.saveSeq;
       tab.saving = true;
       tab.sentText = sentText;
@@ -3381,6 +3443,9 @@
         expectedAbsPath: tab.expectedAbsPath,
       });
       if (destroyed || tab.saveSeq !== seq) return false;
+      finishOperation(operation, result, () => {
+        if (open && currentScope && currentScope.id === tab.scopeId) void saveTab(tab);
+      });
       if (result && result.ok) {
         applySaveSuccess(tab, sentText, result);
         // Editor writes bypass agentEnd and git operations. Keep the current
@@ -3422,7 +3487,7 @@
       viewer.appendChild(actions);
     }
 
-    async function reloadTab(tab) {
+    async function reloadTab(tab, intent = true) {
       const state = scopes.get(tab.scopeId);
       if (!state || state.tabs.get(tab.relPath) !== tab || tab.reloading) return false;
       // Reload replaces the whole tab with the host's version, so anything typed
@@ -3432,11 +3497,15 @@
       // the honest way to say that is to stop accepting edits, not to accept
       // them and then drop them.
       tab.reloading = true;
+      const operation = intent ? beginOperation("Opening " + pathLabel(tab.relPath), "Opened " + pathLabel(tab.relPath) + ".", "Couldn't open " + pathLabel(tab.relPath) + ".") : tab.operation;
+      tab.operation = operation;
+      if (operation) operation.resume();
       tab.notice = "Reloading…";
       repaintFor(tab);
-      const result = await access.read(tab.scopeId, tab.relPath);
+      const result = await callAccess("read", tab.scopeId, tab.relPath, tab);
       tab.reloading = false;
       if (destroyed || state.tabs.get(tab.relPath) !== tab) return false;
+      finishOperation(operation, result, () => { if (open && !tab.dirty) void reloadTab(tab); });
       if (!result || !result.ok) {
         tab.conflict = false;
         tab.notice = result && result.reason || "Could not reload the current file version.";
@@ -3780,6 +3849,7 @@
 
     function destroy() {
       destroyed = true;
+      cancelOperations();
       syncChangesPolling();
       doc.body.classList.add("changes-unavailable");
       abortPending();
