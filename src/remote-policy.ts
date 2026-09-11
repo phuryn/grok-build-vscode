@@ -290,6 +290,8 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
   questionCancel: "propose",
   queueSend: "propose",
   dequeueSend: "propose",
+  removeQueuedSend: "propose",
+  reorderQueuedSends: "propose",
   clearQueuedSends: "propose",
   steerSend: "propose",
   // A thumbs rating is input about the conversation the remote is already
@@ -596,6 +598,8 @@ export const REMOTE_REQUIRES_BOUND_SESSION: Record<WebviewMsg["type"], boolean> 
   questionCancel: true,
   queueSend: true,
   dequeueSend: true,
+  removeQueuedSend: true,
+  reorderQueuedSends: true,
   clearQueuedSends: true,
   steerSend: true,
   turnFeedback: true,

@@ -105,18 +105,18 @@ describe("client font scale (remote)", () => {
     expect(doc.body.style.getPropertyValue("--chat-zoom")).toBe("1.4");
   });
 
-  it("Ctrl/Cmd + +/- /0 and wheel adjust zoom", () => {
+  it("Ctrl/Cmd + Shift + +/- /0 adjust zoom and wheel zoom is disabled", () => {
     const { window } = bootWebview({ remote: true, beforeScripts: withRail });
     const api = (window as any).__grokFontScale;
     api.set(1);
 
     window.dispatchEvent(
-      new (window as any).KeyboardEvent("keydown", { key: "=", ctrlKey: true, bubbles: true }),
+      new (window as any).KeyboardEvent("keydown", { key: "+", ctrlKey: true, shiftKey: true, bubbles: true }),
     );
     expect(api.get()).toBeCloseTo(1.1, 5);
 
     window.dispatchEvent(
-      new (window as any).KeyboardEvent("keydown", { key: "-", metaKey: true, bubbles: true }),
+      new (window as any).KeyboardEvent("keydown", { key: "-", metaKey: true, shiftKey: true, bubbles: true }),
     );
     expect(api.get()).toBeCloseTo(1.0, 5);
 
@@ -127,14 +127,13 @@ describe("client font scale (remote)", () => {
     expect(api.get()).toBe(1);
 
     api.set(1);
-    // happy-dom's WheelEvent may not accept ctrlKey/deltaY in the init dict —
-    // set them on the instance so the client handler sees a real mod+wheel.
+    // wheel zoom should be disabled completely
     const wheel = new (window as any).WheelEvent("wheel", { bubbles: true, cancelable: true });
     Object.defineProperty(wheel, "deltaY", { value: -100, configurable: true });
     Object.defineProperty(wheel, "ctrlKey", { value: true, configurable: true });
     Object.defineProperty(wheel, "metaKey", { value: false, configurable: true });
     window.dispatchEvent(wheel);
-    expect(api.get()).toBeGreaterThan(1);
+    expect(api.get()).toBe(1);
   });
 });
 
@@ -175,9 +174,9 @@ describe("client font scale (desktop bridge)", () => {
     expect(slider.value).toBe("100");
     // Model/effort stay on the conversation surface, not this one.
 
-    // Ctrl+= steps zoom; open slider must reflect the same value.
+    // Ctrl+Shift+= (or +) steps zoom; open slider must reflect the same value.
     window.dispatchEvent(
-      new (window as any).KeyboardEvent("keydown", { key: "=", ctrlKey: true, bubbles: true }),
+      new (window as any).KeyboardEvent("keydown", { key: "+", ctrlKey: true, shiftKey: true, bubbles: true }),
     );
     expect((window as any).__grokFontScale.get()).toBeCloseTo(1.1, 5);
     expect(slider.value).toBe("110");
