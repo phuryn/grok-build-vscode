@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 import { bootWebview, dispatch, type Harness } from "./webview-harness";
 
@@ -152,5 +153,51 @@ describe("prompt navigation (#150)", () => {
     // name; "Bottom" read as prompt-relative next to a navigation control.
     const h = transcript({ on: false });
     expect(h.button("scroll-bottom-btn").textContent).toBe("Scroll to bottom");
+  });
+});
+
+/**
+ * The mark TINTS the bubble, and a long prompt is clamped with a fade whose
+ * only job is to occlude the clipped text. So the fade has to terminate on
+ * whatever the bubble is actually painted -- and a highlighted bubble is no
+ * longer the default colour. The fade was left on the default, so a jumped-to
+ * long prompt wore a dark band across the bottom of a blue bubble (owner,
+ * desktop app, dark theme, 2026-09-11).
+ *
+ * No DOM suite above can catch this. happy-dom applies no stylesheet and
+ * composites no gradient, so the two rules are only ever visibly wrong
+ * together on a real screen. Asserted against the stylesheet itself, the way
+ * `confirm-stacking.test.ts` asserts a relationship no single page observes.
+ */
+describe("the clamp fade follows the bubble it is drawn on", () => {
+  const css = readFileSync(new URL("../media/chat.css", import.meta.url), "utf8");
+
+  /** The blue percentage and the surface a rule mixes it into. */
+  function tint(selector: string) {
+    const at = css.indexOf(selector + " {");
+    expect(at, `${selector} is gone -- the pair below cannot be checked`).toBeGreaterThan(-1);
+    const rule = css.slice(at, css.indexOf("\n}", at));
+    const mix = /color-mix\(in srgb, var\(--vscode-charts-blue, #3794ff\) (\d+)%, var\((--chat-surface-user(?:-opaque)?)\)\)/.exec(rule);
+    expect(mix, `${selector} no longer mixes the jump blue into a bubble surface`).not.toBeNull();
+    return { percent: mix![1], surface: mix![2] };
+  }
+
+  it("ends the fade on the SAME colour the tinted bubble is painted", () => {
+    const bubble = tint(".msg.user.prompt-nav-target .msg-bubble");
+    const fade = tint(".msg.user.collapsible.prompt-nav-target .body::after");
+    expect(fade.percent).toBe(bubble.percent);
+    // Not the same variable, and deliberately so. The bubble fill is
+    // translucent and cannot terminate a gradient opaquely; `-opaque` is that
+    // fill already composited over the sidebar. Mixing an opaque blue in
+    // before compositing and after compositing give the same result, so this
+    // pair lands on the painted colour exactly rather than approximately.
+    expect(bubble.surface).toBe("--chat-surface-user");
+    expect(fade.surface).toBe("--chat-surface-user-opaque");
+  });
+
+  it("still ends an untinted fade on the untinted bubble", () => {
+    const at = css.indexOf(".msg.user.collapsible .body::after {");
+    const rule = css.slice(at, css.indexOf("\n}", at));
+    expect(rule).toContain("linear-gradient(to bottom, transparent, var(--chat-surface-user-opaque))");
   });
 });

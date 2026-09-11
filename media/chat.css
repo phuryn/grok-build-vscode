@@ -4505,6 +4505,27 @@ body.dragging { outline: 2px dashed var(--vscode-focusBorder); outline-offset: -
   background: linear-gradient(to bottom, transparent, var(--chat-surface-user-opaque));
   pointer-events: none;
 }
+/* ...and on the TINTED colour once a jump has landed on this prompt. The fade
+   exists to occlude the clipped text, so it has to end on whatever the bubble
+   is actually painted, and a highlighted bubble is not the same colour any
+   more -- leaving it produced a dark band across the bottom of a blue bubble
+   (owner, desktop app, dark theme, 2026-09-11).
+
+   The same 18 % blue as the highlight, mixed into the OPAQUE variant for the
+   same reason the rule above uses it. That lands on exactly the painted
+   colour rather than approximately: `--chat-surface-user-opaque` is
+   `--chat-surface-user` already composited over the sidebar, and mixing an
+   opaque blue into a translucent fill and then compositing gives the same
+   result as compositing first and mixing after. */
+.msg.user.collapsible.prompt-nav-target .body::after {
+  background: linear-gradient(to bottom, transparent,
+    color-mix(in srgb, var(--vscode-charts-blue, #3794ff) 18%, var(--chat-surface-user-opaque)));
+}
+@media (prefers-reduced-motion: no-preference) {
+  /* Matches the bubble's own 120ms, so the fade and the fill arrive together
+     instead of the band snapping a frame ahead of the tint. */
+  .msg.user.collapsible .body::after { transition: background 120ms ease-out; }
+}
 .msg-expand-btn {
   display: none;
   position: absolute;
