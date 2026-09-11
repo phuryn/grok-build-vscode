@@ -106,6 +106,18 @@ html:has(body.desk) {
 }
 
 body {
+  /* Re-reveal, and the whole point of the pair: getHtml's inline critical
+     style holds the body invisible until THIS stylesheet has arrived.
+     VS Code serves it through the webview service worker, which can
+     cold-start a beat after the HTML renders -- most visibly on the first
+     load after an install, when nothing is warm -- and the link does not
+     block that paint. The gap showed the skeleton bars as white
+     rectangles, the composer as a bare monospace textarea and the context
+     meter as raw text, for long enough to need a video to catch.
+
+     The inline style still paints html's background, so what shows during
+     the gap is the theme colour, not a blank white panel. */
+  visibility: visible;
   display: flex;
   flex-direction: column;
   /* grok.chatFontScale zooms the chat via --chat-zoom (set inline on <body>).
@@ -1468,15 +1480,19 @@ a:hover {
 body.thinking-hidden .msg.thinking.find-reveal { display: block; }
 
 .welcome {
+  /* The RELAY's half of the pair above, and it cannot be folded into it: the
+     web client hides `.welcome` rather than the body in its own inline
+     critical style (web/chat.html), and an element's own `visibility: hidden`
+     is not undone by making an ancestor visible. Deleting this line leaves
+     the phone's welcome screen invisible forever -- with nothing in this repo
+     to notice, which is why grok-remote pins the pair in a test of its own. */
+  visibility: visible;
   display: flex;
   flex-direction: column;
   align-items: center;
   text-align: center;
   padding: 32px 12px;
   gap: 8px;
-  /* Re-reveal: the inline critical style in getHtml holds the welcome
-     invisible until this stylesheet has loaded (anti-FOUC). */
-  visibility: visible;
 }
 /* The explicit display above beats the UA's [hidden]{display:none}, so
    clearWelcome()'s `hidden` attribute needs this companion rule ÔÇö without it

@@ -20146,6 +20146,14 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
 <meta charset="UTF-8" />
 <meta http-equiv="Content-Security-Policy"
       content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; img-src ${webview.cspSource} data:; font-src ${webview.cspSource}; script-src 'nonce-${nonce}';" />
+<style>
+  /* The same cold-start gap the chat webview guards against — see getHtml.
+     Cheaper here because the rail is nearly empty before its script runs: a
+     search box and a scroll region, which unstyled is a full-width native
+     input on a white page. projects-rail.css re-reveals. */
+  html, body { background: var(--vscode-sideBar-background, var(--vscode-editor-background)); }
+  body { visibility: hidden; }
+</style>
 <link rel="stylesheet" href="${mediaUri("projects-rail.css")}" />
 </head>
 <body>
@@ -20290,6 +20298,13 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
 <meta charset="UTF-8" />
 <meta http-equiv="Content-Security-Policy"
       content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; img-src ${webview.cspSource} data:; font-src ${webview.cspSource}; script-src 'nonce-${nonce}';" />
+<style>
+  /* Background only, not the visibility pair the chat and rail webviews use:
+     this page's body holds one empty div until settings.js mounts into it, so
+     there is no unstyled content to hide — only an unpainted page, which
+     without this is white on a dark theme. */
+  html, body { background: var(--vscode-editor-background, var(--vscode-sideBar-background)); }
+</style>
 <link rel="stylesheet" href="${mediaUri("settings.css")}" />
 <title>Grok Settings</title>
 </head>
@@ -20449,12 +20464,16 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
 <style>
   /* Critical pre-stylesheet paint. VS Code serves chat.css through its webview
      service worker, which can cold-start a beat after the HTML renders — that
-     gap otherwise flashes the welcome screen unstyled on a white background.
-     Paint the theme background immediately and hold the welcome invisible;
-     chat.css re-reveals it (visibility: visible on .welcome). */
+     gap otherwise paints the panel with no stylesheet at all. It was the welcome
+     screen on a white background; on a restored session it is skeleton bars as
+     white rectangles, the composer as a bare textarea and the context meter as
+     raw text. Same gap, and whichever one shows depends only on what the panel
+     happened to open with, so hold the WHOLE body rather than one screen of it.
+     html keeps its background, so the gap shows the theme colour rather than
+     white, and chat.css re-reveals (visibility: visible on body). */
   html, body { background: var(--vscode-sideBar-background, var(--vscode-editor-background)); }
   body { color: var(--vscode-foreground); font-family: var(--vscode-font-family); }
-  .welcome { visibility: hidden; }
+  body { visibility: hidden; }
 ${firstFrameLayout}
 </style>
 <link rel="stylesheet" href="${mediaUri("chat.css")}" />

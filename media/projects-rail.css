@@ -26,6 +26,10 @@
 }
 
 html, body {
+  /* Re-reveal: the rail webview's inline critical style holds the body
+     invisible until this file arrives, so the cold-start gap shows the theme
+     background rather than an unstyled search box. */
+  visibility: visible;
   height: 100%;
   margin: 0;
   padding: 0;
