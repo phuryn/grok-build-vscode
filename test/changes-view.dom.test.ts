@@ -13,6 +13,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { Window } from "happy-dom";
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describeGitFailure } from "../src/git-status";
 import { bootWebview, dispatch } from "./webview-harness";
 import { fileTreePanelBootSource } from "../src/desktop/file-tree-panel";
@@ -626,6 +627,45 @@ describe("the panel", () => {
     expect(parts).toEqual(["gfp-change-base", "gfp-change-dir"]);
     expect(row.querySelector(".gfp-change-base")!.textContent).toBe("a.ts");
     expect(row.querySelector(".gfp-change-dir")!.textContent).toBe("src/deep");
+  });
+
+  it("gives the filename no share of the shortfall, on both surfaces", () => {
+    // The bug this pins: a 9999:1 shrink factor does NOT build a priority
+    // ladder. Flex shrinking is proportional and SIMULTANEOUS, so the filename
+    // kept about 0.013% of every shortfall -- one 1/64px layout unit of which
+    // is enough for `text-overflow` to drop real characters, while the path
+    // beside it was still a hundred pixels wide. Measured in Chromium at
+    // 388px: the name's box came out 220.125 against a content width of
+    // 220.1406, and rendered "testfilewithalongname." plus an ellipsis.
+    //
+    // Only an INFLEXIBLE name gives the path absolute priority, so the shrink
+    // factor is the thing to guard. A source assertion rather than a layout
+    // one because happy-dom does not lay out; the width sweep that proved it
+    // runs in Chromium.
+    const read = (name: string) => readFileSync(
+      fileURLToPath(new URL(`../media/${name}`, import.meta.url)), "utf8",
+    );
+    const block = (css: string, selector: string) => {
+      const at = css.indexOf(selector + " {");
+      expect(at, `${selector} is gone`).toBeGreaterThan(-1);
+      return css.slice(at, css.indexOf("}", at));
+    };
+    for (const [sheet, nameSel, dirSel] of [
+      ["file-panel.css", ".gfp-change-base", ".gfp-change-dir"],
+      ["chat.css", ".turn-diff-file-name", ".turn-diff-file-dir"],
+    ] as const) {
+      const css = read(sheet);
+      const nameRule = block(css, nameSel);
+      expect(nameRule, `${sheet} ${nameSel} must not shrink`).toMatch(/flex:\s*0\s+0\s+auto/);
+      // It still has to ellipsize in the one case where it alone cannot fit.
+      expect(nameRule).toMatch(/max-width:/);
+      expect(nameRule).toMatch(/text-overflow:\s*ellipsis/);
+      // And the path is then the only thing left that can absorb the shortfall,
+      // so it needs an ordinary factor and a floor of zero -- not a magic one.
+      const dirRule = block(css, dirSel);
+      expect(dirRule).toMatch(/flex:\s*0\s+1\s+auto/);
+      expect(dirRule).toMatch(/min-width:\s*0/);
+    }
   });
 
   it("draws the diff in the product's own diff markup", async () => {

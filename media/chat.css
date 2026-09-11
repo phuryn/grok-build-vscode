@@ -2891,18 +2891,23 @@ button.turn-diff-file.has-diff:focus-visible {
 }
 /* Name first, path second — the same order and the same ladder as the
    Changes panel, so one file reads the same way on both surfaces. The path
-   gives way first: a far larger shrink factor, and a minimum of zero, so it
-   collapses entirely before the filename loses a character. It is cut from the
-   LEFT, keeping the folders nearest the file. Full name + full path, trimmed
-   path, no path, and only then a trimmed name. */
+   gives way first and is cut from the LEFT, keeping the folders nearest the
+   file: full name + full path, trimmed path, no path, and only then a trimmed
+   name. The name is INFLEXIBLE to arrange that — a shrink factor cannot, for
+   the reason written out over the same pair in file-panel.css — and the
+   `max-width` is what still lets it ellipsize when it alone does not fit.
+   The name here always has a path beside it (chat.js writes plain text into
+   the container when there is no directory), so the cap always allows for the
+   6px separator, which is real for as long as there are two elements. */
 .turn-diff-file-name {
-  flex: 0 1 auto;
+  flex: 0 0 auto;
   min-width: 0;
+  max-width: calc(100% - 6px);
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .turn-diff-file-dir {
-  flex: 0 9999 auto;
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;

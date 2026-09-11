@@ -1357,24 +1357,35 @@ body.vscode-light {
 }
 /* The filename is the last thing to give way. It CAN ellipsize -- when it
    alone does not fit, something has to -- but only after the directory beside
-   it has collapsed to nothing, which the shrink factors below arrange. */
+   it has collapsed to nothing.
+   It is INFLEXIBLE to arrange that, not merely stubborn. A large shrink factor
+   on the path cannot do it: flex shrinking is proportional and simultaneous,
+   so the name keeps a share of every shortfall however small that share is,
+   and one 1/64px layout unit of it is enough for `text-overflow` to drop real
+   characters -- while the path beside it is still a hundred pixels wide. That
+   was the bug. `max-width` is what lets the name ellipsize in the one case
+   where it must: when it alone does not fit the row. */
 .gfp-change-base {
-  flex: 0 1 auto;
+  flex: 0 0 auto;
   min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* The 6px separator is real for as long as there are two elements to separate,
+   so the cap allows for it. Moving it into the path as padding does NOT buy
+   the name those pixels back at the last rung -- padding is a floor, the path
+   box cannot go below it, and the row overflows by what the name gained. */
+.gfp-change-base:not(:only-child) {
+  max-width: calc(100% - 6px);
+}
 /* The directory is context for the name beside it, so it takes the same
    treatment the rail gives a repo's path: smaller, quieter, and the first
-   thing to be truncated. */
+   thing to be truncated. With the name inflexible it is the only item that can
+   shrink, so an ordinary shrink factor already takes the whole shortfall. */
 .gfp-change-dir {
-  /* A far larger shrink factor than the filename's, so every pixel of
-     shortfall comes out of the path first. Flexbox freezes an item at its
-     minimum -- zero here -- and redistributes what is left, so the ladder is:
-     full name + full path, trimmed path, no path, and only then a trimmed
-     name. */
-  flex: 0 9999 auto;
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   color: var(--vscode-descriptionForeground, #999);
