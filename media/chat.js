@@ -9982,6 +9982,7 @@
     const el = document.createElement("div");
     el.className = `msg ${role}`;
     el._copyText = text || "";
+    el._chips = chips || [];
     // A steered (interjected) message rides inside the turn that was already
     // running — it is not its own prompt and has no rewind point, so it must be
     // excluded from the bubble→rewind-point mapping (see refreshUserRewindButtons).
@@ -19694,12 +19695,16 @@
       // yields, and exactly what belongs back in the composer. NOT the rewind
       // result's `prompt_text` — that IS this message, but in raw wire form
       // (envelope + tags still attached).
-      vscode.postMessage({
+      const editMsg = {
         type: "editLastMessage",
         userBubbleIndex: idx,
         text: (msgEl && msgEl._copyText) || "",
         totalUserBubbles: visibleUserBubbleCount(),
-      });
+      };
+      if (msgEl && msgEl._chips && msgEl._chips.length) {
+        editMsg.chips = msgEl._chips;
+      }
+      vscode.postMessage(editMsg);
       return;
     }
     closePopovers();

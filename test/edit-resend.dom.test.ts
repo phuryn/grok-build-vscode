@@ -57,6 +57,32 @@ describe("Edit on the latest user message (#56)", () => {
     });
   });
 
+  it("posts attached chips with editLastMessage when the message has attachments", () => {
+    const { window, posted, doc } = bootWebview();
+    const chip = {
+      id: "image:/s/test.png:1:1",
+      path: "/s/test.png",
+      relPath: "Image #1",
+      hidden: false,
+      imageIndex: 1,
+      mimeType: "image/png",
+    };
+    dispatch(window, {
+      type: "userMessage",
+      text: "with image",
+      chips: [chip],
+    });
+
+    click(window, editBtn(userBubbles(doc)[0]));
+    expect(posted.find((m: any) => m.type === "editLastMessage")).toEqual({
+      type: "editLastMessage",
+      userBubbleIndex: 0,
+      text: "with image",
+      chips: [expect.objectContaining({ id: chip.id })],
+      totalUserBubbles: 1,
+    });
+  });
+
   it("does nothing mid-turn — the rewind underneath needs a settled session", () => {
     const { window, posted, doc } = bootWebview();
     send(window, "go");

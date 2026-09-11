@@ -1428,7 +1428,7 @@ export type WebviewMsg =
   | { type: "rewindSession"; userBubbleIndex?: number; text?: string; totalUserBubbles?: number }
   /** Edit-and-resend (#56): rewind past this (latest) user message and hand its
    *  text back to the composer. `text` is the bubble's own cleaned copy text. */
-  | { type: "editLastMessage"; userBubbleIndex: number; text: string; totalUserBubbles?: number }
+  | { type: "editLastMessage"; userBubbleIndex: number; text: string; chips?: FileChip[]; totalUserBubbles?: number }
   /** Reply to `uiConfirmRequest`. Answerable by whichever client was shown the
    *  dialog, remote included, since 2026-09-01: the confirm moved in-chat in
    *  2.0.0, so `host-local` here did not buy a more careful check — it meant a
