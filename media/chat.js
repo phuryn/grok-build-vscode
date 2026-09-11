@@ -3137,6 +3137,45 @@
 
   let settingsOpener = null;
 
+  function openFilesLayer() {
+    const panel = state.filesBrowse.component;
+    return panel && panel.isOpen() && panel.isOverlay()
+      && panel.element.isConnected && !panel.element.hidden ? panel : null;
+  }
+
+  // Page-local capability: the shell decides what to do with these layers.
+  // Read the surfaces themselves; only notification deduplication is cached.
+  window.afkpilotLayers = {
+    get depth() {
+      return Number(!!document.getElementById("settings-overlay")) + Number(!!openFilesLayer());
+    },
+    dismissTop() {
+      const settings = document.getElementById("settings-overlay");
+      const files = openFilesLayer();
+      // Settings covers the files toggle, so it normally opens last. But an
+      // already-open docked panel can become an overlay while Settings is up:
+      // resizing to phone width raises it to z-index 1200 (Settings is 120).
+      // Read the current stacking for that path, which needs no toggle click.
+      if (settings && (!files || (Number(getComputedStyle(files.element).zIndex) || 0)
+          <= (Number(getComputedStyle(settings).zIndex) || 0))) {
+        closeSettingsOverlay();
+        return true;
+      }
+      if (files) {
+        files.setOpen(false);
+        return true;
+      }
+      return false;
+    },
+  };
+  let lastLayerDepth = window.afkpilotLayers.depth;
+  function reportLayerDepth() {
+    const depth = window.afkpilotLayers.depth;
+    if (depth === lastLayerDepth) return;
+    lastLayerDepth = depth;
+    window.dispatchEvent(new CustomEvent("afkpilot-layers"));
+  }
+
   function closeSettingsOverlay() {
     if (settingsSurface && settingsSurface.dispose) settingsSurface.dispose();
     settingsSurface = null;
@@ -3147,6 +3186,7 @@
     if (opener && typeof opener.focus === "function" && document.contains(opener)) {
       try { opener.focus(); } catch { /* */ }
     }
+    reportLayerDepth();
   }
 
   function refreshSettingsOverlay() {
@@ -3202,6 +3242,7 @@
       onClose: closeSettingsOverlay,
     });
     settingsSurface.focusSearch();
+    reportLayerDepth();
   }
 
   function openAllSettings() {
@@ -19215,15 +19256,19 @@
         // Older hosts retain their entry/reconnect/turn-end refresh behavior.
         pollChanges: () => remoteFileRequestIdsSupported === true,
         initialOpen,
+        onPresentationChanged: reportLayerDepth,
         onOpenChanged: (open) => {
           state.filesBrowse.open = open;
           document.body.classList.toggle("files-browse-open", open);
           try { sessionStorage.setItem("grok.remote.filesOpen", open ? "1" : "0"); } catch (_) { /* private mode */ }
+          // Creation calls this before returning the dismissible component.
+          if (state.filesBrowse.component) reportLayerDepth();
         },
       });
       state.filesBrowse.component = panel;
       panel.toggleElement.id = "files-browse-btn";
       panel.toggleElement.classList.add("icon-btn");
+      reportLayerDepth();
     }
     placeRemoteFilesButton(panel.toggleElement);
     panel.toggleElement.hidden = false;

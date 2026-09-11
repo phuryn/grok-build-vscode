@@ -13,7 +13,8 @@
  * is therefore always built while `.top-bar` is still the correct answer.
  */
 import { describe, expect, it } from "vitest";
-import { bootWebview, dispatch, type Harness } from "./webview-harness";
+import { readFileSync } from "node:fs";
+import { bootWebview, click, dispatch, type Harness } from "./webview-harness";
 
 const withRail = (window: any) => {
   const doc = window.document;
@@ -111,5 +112,188 @@ describe("remote files button placement", () => {
     // Either never built, or built and hidden — both are correct; a visible
     // control the host cannot answer is not.
     expect(btn === null || btn.hidden).toBe(true);
+  });
+});
+
+describe("page-local file panel layers", () => {
+  function withDock(window: any) {
+    window.happyDOM.setViewport({ width: 1200, height: 800 });
+    const host = window.document.createElement("div");
+    host.id = "file-panel-dock";
+    window.document.body.appendChild(host);
+  }
+
+  it.each(["close button", "toggle", "dismissTop", "capability removed"])("reports closing through %s", async (close) => {
+    const h = remoteWithFiles();
+    const layers = (h.window as any).afkpilotLayers;
+    const depths: number[] = [];
+    h.window.addEventListener("afkpilot-layers", () => depths.push(layers.depth));
+    expect(layers.depth).toBe(0);
+    expect(layers.dismissTop()).toBe(false);
+    click(h.window, h.doc.getElementById("files-browse-btn")!);
+    expect(layers.depth).toBe(1);
+    expect(depths).toEqual([1]);
+    if (close === "close button") click(h.window, h.doc.querySelector(".gfp-close")!);
+    else if (close === "toggle") click(h.window, h.doc.getElementById("files-browse-btn")!);
+    else if (close === "dismissTop") expect(layers.dismissTop()).toBe(true);
+    else {
+      dispatch(h.window, { type: "initialState", capabilities: {} });
+      dispatch(h.window, { type: "initialState", capabilities: {} });
+    }
+    expect((h.doc.getElementById("files-browse-panel") as HTMLElement).hidden).toBe(true);
+    expect(h.doc.body.classList.contains("files-browse-open")).toBe(false);
+    expect(layers.depth).toBe(0);
+    expect(layers.dismissTop()).toBe(false);
+    expect(depths).toEqual([1, 0]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await h.window.happyDOM.abort();
+  });
+
+  it("does not count or dismiss a docked panel, including underneath Settings", async () => {
+    const h = remoteWithFiles(withDock);
+    const layers = (h.window as any).afkpilotLayers;
+    const depths: number[] = [];
+    h.window.addEventListener("afkpilot-layers", () => depths.push(layers.depth));
+    const panel = h.doc.getElementById("files-browse-panel") as HTMLElement;
+    click(h.window, h.doc.getElementById("files-browse-btn")!);
+    expect(panel.classList.contains("gfp-docked")).toBe(true);
+    expect(panel.hidden).toBe(false);
+    expect(layers.depth).toBe(0);
+    expect(layers.dismissTop()).toBe(false);
+    expect(panel.hidden).toBe(false);
+    expect(depths).toEqual([]);
+
+    (h.window as any).__grokFilePanelOpenSettings();
+    expect(layers.depth).toBe(1);
+    expect(layers.dismissTop()).toBe(true);
+    expect(h.doc.getElementById("settings-overlay")).toBeNull();
+    expect(layers.depth).toBe(0);
+    expect(layers.dismissTop()).toBe(false);
+    expect(panel.hidden).toBe(false);
+    click(h.window, h.doc.getElementById("files-browse-btn")!);
+    expect(panel.hidden).toBe(true);
+    expect(depths).toEqual([1, 0]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await h.window.happyDOM.abort();
+  });
+
+  it("dismisses Settings before the file overlay underneath it without needing styles", async () => {
+    const h = remoteWithFiles();
+    const layers = (h.window as any).afkpilotLayers;
+    const depths: number[] = [];
+    h.window.addEventListener("afkpilot-layers", () => depths.push(layers.depth));
+    click(h.window, h.doc.getElementById("files-browse-btn")!);
+    (h.window as any).__grokFilePanelOpenSettings();
+    const panel = h.doc.getElementById("files-browse-panel") as HTMLElement;
+    expect(panel.classList.contains("gfp-overlay")).toBe(true);
+    expect(layers.depth).toBe(2);
+    expect(layers.dismissTop()).toBe(true);
+    expect(h.doc.getElementById("settings-overlay")).toBeNull();
+    expect(panel.hidden).toBe(false);
+    expect(layers.depth).toBe(1);
+    expect(layers.dismissTop()).toBe(true);
+    expect(panel.hidden).toBe(true);
+    expect(layers.depth).toBe(0);
+    expect(layers.dismissTop()).toBe(false);
+    expect(depths).toEqual([1, 2, 1, 0]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await h.window.happyDOM.abort();
+  });
+
+  it("reports presentation changes only when an open panel becomes or stops being a layer", async () => {
+    const h = remoteWithFiles(withDock);
+    const layers = (h.window as any).afkpilotLayers;
+    const depths: number[] = [];
+    h.window.addEventListener("afkpilot-layers", () => depths.push(layers.depth));
+    const panel = h.doc.getElementById("files-browse-panel") as HTMLElement;
+    const resize = (width: number) => {
+      h.window.happyDOM.setViewport({ width, height: 800 });
+      h.window.dispatchEvent(new h.window.Event("resize"));
+    };
+    resize(390);
+    expect(panel.classList.contains("gfp-overlay")).toBe(true);
+    expect(layers.depth).toBe(0);
+    resize(1200);
+    click(h.window, h.doc.getElementById("files-browse-btn")!);
+    expect(layers.depth).toBe(0);
+    expect(depths).toEqual([]);
+    resize(390);
+    expect(layers.depth).toBe(1);
+    resize(390);
+    expect(depths).toEqual([1]);
+    resize(1200);
+    expect(panel.classList.contains("gfp-docked")).toBe(true);
+    expect(panel.hidden).toBe(false);
+    expect(layers.depth).toBe(0);
+    expect(layers.dismissTop()).toBe(false);
+    resize(1200);
+    click(h.window, h.doc.getElementById("files-browse-btn")!);
+    resize(390);
+    expect(layers.depth).toBe(0);
+    expect(depths).toEqual([1, 0]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await h.window.happyDOM.abort();
+  });
+
+  it("handles a docked panel becoming the top overlay while Settings is already open", async () => {
+    const h = remoteWithFiles((window) => {
+      withDock(window);
+      for (const name of ["settings", "file-panel"]) {
+        const style = window.document.createElement("style");
+        style.textContent = readFileSync(new URL(`../media/${name}.css`, import.meta.url), "utf8");
+        window.document.head.appendChild(style);
+      }
+    });
+    const layers = (h.window as any).afkpilotLayers;
+    const depths: number[] = [];
+    h.window.addEventListener("afkpilot-layers", () => depths.push(layers.depth));
+    click(h.window, h.doc.getElementById("files-browse-btn")!);
+    (h.window as any).__grokFilePanelOpenSettings();
+    expect(layers.depth).toBe(1);
+    expect(depths).toEqual([1]);
+    // No click on the covered files toggle: changing presentation is enough
+    // to put the phone overlay (1200) above the existing Settings (120).
+    h.window.happyDOM.setViewport({ width: 390, height: 844 });
+    h.window.dispatchEvent(new h.window.Event("resize"));
+    expect(layers.depth).toBe(2);
+    const panel = h.doc.getElementById("files-browse-panel") as HTMLElement;
+    expect(panel.classList.contains("gfp-overlay")).toBe(true);
+    expect(h.window.getComputedStyle(panel as any).zIndex).toBe("1200");
+    expect(h.window.getComputedStyle(h.doc.getElementById("settings-overlay") as any).zIndex).toBe("120");
+    expect(depths).toEqual([1, 2]);
+    expect(layers.dismissTop()).toBe(true);
+    expect(panel.hidden).toBe(true);
+    expect(h.doc.getElementById("settings-overlay")).not.toBeNull();
+    expect(layers.depth).toBe(1);
+    expect(layers.dismissTop()).toBe(true);
+    expect(panel.hidden).toBe(true);
+    expect(h.doc.getElementById("settings-overlay")).toBeNull();
+    expect(layers.depth).toBe(0);
+    expect(layers.dismissTop()).toBe(false);
+    expect(depths).toEqual([1, 2, 1, 0]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await h.window.happyDOM.abort();
+  });
+
+  it.each(["overlay", "docked"])("only publishes dismissible restored-open state (%s)", async (presentation) => {
+    const depths: number[] = [];
+    const dismissed: boolean[] = [];
+    const h = remoteWithFiles((window) => {
+      if (presentation === "docked") withDock(window);
+      window.sessionStorage.setItem("grok.remote.filesOpen", "1");
+      const matchMedia = window.matchMedia.bind(window);
+      window.matchMedia = (query: string) => query === "(hover: none), (pointer: coarse)"
+        ? { matches: false } : matchMedia(query);
+      window.addEventListener("afkpilot-layers", () => {
+        depths.push(window.afkpilotLayers.depth);
+        if (window.afkpilotLayers.depth) dismissed.push(window.afkpilotLayers.dismissTop());
+      });
+    });
+    expect(depths).toEqual(presentation === "overlay" ? [1, 0] : []);
+    expect(dismissed).toEqual(presentation === "overlay" ? [true] : []);
+    expect((h.window as any).afkpilotLayers.depth).toBe(0);
+    expect((h.doc.getElementById("files-browse-panel") as HTMLElement).hidden).toBe(presentation === "overlay");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await h.window.happyDOM.abort();
   });
 });

@@ -912,6 +912,7 @@
     }
 
     function applyPresentation() {
+      const wasOverlay = rootEl.classList.contains("gfp-overlay");
       const overlay = isOverlay();
       rootEl.classList.toggle("gfp-overlay", overlay);
       rootEl.classList.toggle("gfp-docked", !overlay);
@@ -957,6 +958,9 @@
         panelHost.appendChild(rootEl);
       }
       applyStripShrink();
+      if (overlay !== wasOverlay && typeof options.onPresentationChanged === "function") {
+        options.onPresentationChanged(overlay);
+      }
     }
 
     function setOpen(next) {
@@ -3952,6 +3956,7 @@
       toggleElement: toggle,
       setOpen,
       isOpen: () => open,
+      isOverlay: () => rootEl.classList.contains("gfp-overlay"),
       setScope,
       /**
        * A connection ended and a new one is up. The caller is the only thing

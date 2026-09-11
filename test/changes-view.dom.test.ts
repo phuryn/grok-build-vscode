@@ -1308,7 +1308,15 @@ describe("Changes actions in the chat mounts", () => {
     const current = snap({ ahead: 1 });
     const failure = { ok: false, snapshot: current, reason: githubReason, detail: githubDetail };
     const gitRun = vi.fn(async () => failure);
-    const h = bootWebview({ remote, postMessage: (msg) => {
+    const historyAccess = vi.fn();
+    const h = bootWebview({ remote, beforeScripts: (window) => {
+      const original = window.history;
+      Object.defineProperty(window, "history", {
+        configurable: true,
+        get: () => { historyAccess("read"); return original; },
+        set: () => { historyAccess("write"); },
+      });
+    }, postMessage: (msg) => {
       const responses: Record<string, Record<string, unknown>> = {
         listProjectDir: { type: "projectDirListing", ok: true, entries: [], truncated: false },
         gitStatus: { type: "gitStatusResult", ok: true, snapshot: current },
@@ -1317,6 +1325,9 @@ describe("Changes actions in the chat mounts", () => {
       const reply = responses[msg.type];
       if (reply) queueMicrotask(() => dispatch(h.window, { ...msg, ...reply }));
     } });
+    const layers = (h.window as any).afkpilotLayers;
+    const depths: number[] = [];
+    h.window.addEventListener("afkpilot-layers", () => depths.push(layers.depth));
     dispatch(h.window, { type: "initialState", cwd: "/work/app", appPurpose: "coding",
       capabilities: { browseProjectFiles: remote, gitChanges: true },
     });
@@ -1336,12 +1347,17 @@ describe("Changes actions in the chat mounts", () => {
     const toggle = q(".gfp-toggle");
     toggle.click();
     await settle();
+    if (remote) expect(depths).toEqual([1]);
     q(".gfp-changes-btn").click();
     await settle();
     const input = q("#input") as HTMLTextAreaElement;
     input.value = "Please keep my draft.";
     h.posted.length = 0;
     q(".gfp-changes-ask-pull").click();
+    if (remote) {
+      expect(layers.depth).toBe(0);
+      expect(depths).toEqual([1, 0]);
+    }
     expect(input.value).toBe("Please keep my draft. " + pullMessage);
     expect(h.doc.activeElement).toBe(input);
     expect(q(".gfp-panel").hidden).toBe(remote);
@@ -1361,12 +1377,20 @@ describe("Changes actions in the chat mounts", () => {
     await settle();
     expect(q(".gfp-changes-notice-action")?.textContent).toBe("Connect GitHub");
     h.posted.length = 0;
+    depths.length = 0;
     q(".gfp-changes-notice-action").click();
+    if (remote) {
+      // The phone panel closes before Settings takes focus. Both transitions
+      // matter to a shell reconciling its own dismissible layers.
+      expect(layers.depth).toBe(1);
+      expect(depths).toEqual([0, 1]);
+    }
     expect(q(".gfp-panel").hidden).toBe(remote);
     expect(q("#settings-overlay")).toBeTruthy();
     expect(h.doc.querySelector('[data-id="githubConnection"], [data-id="githubConnectionStatus"], [data-id="githubConnectionRemote"]')).toBeTruthy();
     expect(input.value).toBe("Keep this line.\n" + pullMessage);
     expect(h.posted.some((msg) => /send|prompt|gitRun|githubConnect/i.test(msg.type))).toBe(false);
+    expect(historyAccess).not.toHaveBeenCalled();
     await h.window.happyDOM.abort();
   });
 

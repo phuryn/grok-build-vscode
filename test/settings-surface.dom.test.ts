@@ -278,6 +278,83 @@ describe("settings catalog", () => {
   });
 });
 
+describe("page-local settings layers", () => {
+  it.each(["Back to app", "Escape", "closeOnAction"])("reports opening and closing through %s", async (close) => {
+    const h = bootWebview();
+    seedChat(h);
+    const layers = (h.window as any).afkpilotLayers;
+    const depths: number[] = [];
+    h.window.addEventListener("afkpilot-layers", (event) => {
+      expect(event).toBeInstanceOf(h.window.CustomEvent);
+      expect((event as any).detail).toBeNull();
+      depths.push(layers.depth);
+    });
+    expect(layers.depth).toBe(0);
+    expect(layers.dismissTop()).toBe(false);
+    expect(depths).toEqual([]);
+    openSettings(h);
+    expect(layers.depth).toBe(1);
+    expect(depths).toEqual([1]);
+    if (close === "Escape") keydown(h.window, { key: "Escape" });
+    else if (close === "Back to app") click(h.window, h.doc.querySelector(".settings-back")!);
+    else {
+      clickSettingsNav(h, "Advanced");
+      expect(depths).toEqual([1]);
+      click(h.window, h.doc.querySelector('[data-id="showLogs"] .settings-action')!);
+      expect(h.posted).toContainEqual({ type: "showLogs" });
+    }
+    expect(h.doc.getElementById("settings-overlay")).toBeNull();
+    expect(layers.depth).toBe(0);
+    expect(depths).toEqual([1, 0]);
+    expect(layers.dismissTop()).toBe(false);
+    expect(depths).toEqual([1, 0]);
+    await h.window.happyDOM.abort();
+  });
+
+  it.each(["remote", "desktop", "vscode"])("dismisses once, locally, without accessing history on %s", async (surface) => {
+    const historyAccess = vi.fn();
+    const h = bootWebview({
+      remote: surface === "remote",
+      vscode: surface === "vscode",
+      beforeScripts: (window) => {
+        const original = window.history;
+        Object.defineProperty(window, "history", {
+          configurable: true,
+          get: () => { historyAccess("read"); return original; },
+          set: () => { historyAccess("write"); },
+        });
+      },
+    });
+    seedChat(h, { capabilities: surface === "desktop" ? { relocateView: false, showOutput: false } : {} });
+    const layers = (h.window as any).afkpilotLayers;
+    const depths: number[] = [];
+    h.window.addEventListener("afkpilot-layers", () => depths.push(layers.depth));
+    openSettings(h);
+    h.posted.length = 0;
+    expect(layers.depth).toBe(1);
+    expect(layers.dismissTop()).toBe(true);
+    expect(layers.depth).toBe(0);
+    expect(layers.dismissTop()).toBe(false);
+    expect(depths).toEqual([1, 0]);
+    expect(h.posted).toEqual([]);
+    expect(historyAccess).not.toHaveBeenCalled();
+    await h.window.happyDOM.abort();
+  });
+
+  it("does not count the host's Settings editor as a renderer layer", async () => {
+    const h = bootWebview({ vscode: true });
+    seedChat(h, { capabilities: { settingsEditor: true } });
+    const changed = vi.fn();
+    h.window.addEventListener("afkpilot-layers", changed);
+    openSettings(h);
+    expect(h.posted).toContainEqual({ type: "openSettingsSurface" });
+    expect((h.window as any).afkpilotLayers.depth).toBe(0);
+    expect((h.window as any).afkpilotLayers.dismissTop()).toBe(false);
+    expect(changed).not.toHaveBeenCalled();
+    await h.window.happyDOM.abort();
+  });
+});
+
 describe("settings overlay (chat.js)", () => {
   it("renders every category from the gear Settings entry", () => {
     const h = bootWebview();

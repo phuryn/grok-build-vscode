@@ -524,22 +524,35 @@ describe("shared file-panel component", () => {
     const dockHost = document.createElement("aside");
     dockHost.style.display = "none";
     document.body.append(panelHost, dockHost);
+    const presentations: boolean[] = [];
     const panel = createFilePanel({
       access: { currentScope: async () => null, list: async () => ({ ok: true, entries: [] }) },
       document,
       window,
       mount: { panelHost, dockHost, presentation: "responsive" },
+      onPresentationChanged: (overlay: boolean) => {
+        const element = document.querySelector(".gfp-panel")!;
+        expect(element.classList.contains("gfp-overlay")).toBe(overlay);
+        expect(element.parentElement).toBe(overlay ? panelHost : dockHost);
+        presentations.push(overlay);
+      },
     });
 
     panel.setOpen(true);
     await settle();
     expect(panel.element.classList.contains("gfp-overlay")).toBe(true);
     expect(panel.element.parentElement).toBe(panelHost);
+    expect(panel.isOverlay()).toBe(true);
+    expect(presentations).toEqual([true]);
 
     dockHost.style.display = "block";
     window.dispatchEvent(new window.Event("resize"));
     expect(panel.element.classList.contains("gfp-docked")).toBe(true);
     expect(panel.element.parentElement).toBe(dockHost);
+    expect(panel.isOverlay()).toBe(false);
+    window.dispatchEvent(new window.Event("resize"));
+    expect(presentations).toEqual([true, false]);
+    panel.destroy();
   });
 
   it("refreshes a stamp for Overwrite but refuses a different file identity", async () => {
