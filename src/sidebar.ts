@@ -4948,6 +4948,7 @@ Only continue if you trust this code.`,
     totalUserBubbles?: number,
     session: Session = this.focused,
     requester?: RemoteRequester,
+    chips?: FileChip[],
   ): Promise<void> {
     if (!session.client || !session.activeSessionId) {
       return void this.reportRequester(requester, "warning", "Start a session before editing a message.");
@@ -4995,7 +4996,7 @@ Only continue if you trust this code.`,
         // Was a modal offering "Copy text to composer" and awaiting the click.
         // Nobody can click it on a cloud machine, so the handler hung there —
         // and the button was the only sensible answer anyway. Do it, and say so.
-        this.restoreComposerFor(session, requester, text);
+        this.restoreComposerFor(session, requester, text, chips);
         return void this.reportRequester(
           requester,
           "info",
@@ -5054,7 +5055,7 @@ Only continue if you trust this code.`,
       const surviving = survivingUserMessagesAfterRewind(points, target);
       await this.truncateSessionCardsAfterRewind(resumeId, surviving);
       this.applyRewindToView(session, surviving);
-      this.restoreComposerFor(session, requester, text);
+      this.restoreComposerFor(session, requester, text, chips);
       if (reportedFiles > 0) {
         this.reportRequester(
           requester,
@@ -5095,8 +5096,16 @@ Only continue if you trust this code.`,
     session: Session,
     requester: RemoteRequester | undefined,
     text: string,
+    chips?: FileChip[],
   ): void {
-    if (!text) return;
+    if (!text && (!chips || !chips.length)) return;
+    
+    if (chips && chips.length) {
+      session.chips = restoreQueuedChips(session.chips, [{ text: "", chips }]);
+      if (session === this.focused) this.refreshImplicitChip(true);
+      else this.postChips(session);
+    }
+    
     const message: HostMsg = { type: "restoreComposer", text };
     if (requester) {
       // Resolve through the tab, so a phone that reconnected while the rewind
@@ -11553,7 +11562,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         break;
       }
       case "editLastMessage":
-        await this.editLastMessage(msg.userBubbleIndex, msg.text, msg.totalUserBubbles, session, requester);
+        await this.editLastMessage(msg.userBubbleIndex, msg.text, msg.totalUserBubbles, session, requester, msg.chips);
         break;
       case "workflowControl":
         await this.controlWorkflow(msg.action, msg.displayName, session);
