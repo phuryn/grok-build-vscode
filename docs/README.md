@@ -1,11 +1,8 @@
 # Documentation
 
-Product documentation lives here. System-level engineering documentation — the
-architecture across the extension and its relay, the remote-control wire
-protocol, authentication, the cross-repo test matrix and how releases ship —
-lives in the companion **[afkpilot](https://github.com/phuryn/afkpilot)**
-repository; start with its
-[docs index](https://github.com/phuryn/afkpilot/tree/main/docs).
+Product documentation lives here. Build, test and repo conventions are in
+[development.md](development.md), and the architecture of the extension is in
+[architecture.md](architecture.md).
 
 ## Using it
 

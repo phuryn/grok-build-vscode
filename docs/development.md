@@ -30,9 +30,10 @@ no layout engine: rects are zeros and stylesheets never apply, so an icon with
 no size or a control pushed off-screen satisfies every assertion those suites
 can make. Anything about *painted geometry* belongs there instead.
 
-`npm run e2e:lifecycle-host` is the extension-side half of the cross-repo
-lifecycle suite (real relay + real browser + real host + a host restart). The
-relay repo's orchestrator spawns it as a child. Contract: `GROK_RELAY_URL`,
+`npm run e2e:lifecycle-host` is the extension-side half of the end-to-end
+lifecycle suite (real relay + real browser + real host + a host restart); the
+orchestrator lives with the server half and spawns this as a child. Contract:
+`GROK_RELAY_URL`,
 `GROK_RELAY_DEVICE_TOKEN`, `GROK_HOME`, and `GROK_LIFECYCLE_WORKSPACES`
 (OS-delimited paths, or a JSON array; two folders for repo switching). It
 prints `GROK_LIFECYCLE_HOST_READY` on stdout once the relay admits the host
@@ -62,16 +63,3 @@ material under `## Development` in `README.md` never reaches the store page.
 - Commits explain the *why*, not the *what*.
 - No speculative abstractions.
 - The grok-free suite is the floor — every change keeps it green.
-
-## The companion repository
-
-Remote Control's server half — the AFK Pilot relay and the browser client —
-is open source at [afkpilot](https://github.com/phuryn/afkpilot). That
-repo also carries the system-wide engineering documentation: the two-repo map
-and mirrored wire contract, authentication, the full cross-repo test matrix,
-delivery/CI, and the UI design system —
-[start at its docs index](https://github.com/phuryn/afkpilot/tree/main/docs).
-
-The relay vendors this repo's `media/` renderer (`npm run sync-ui` over
-there), so shared-UI changes are usually tested in both checkouts side by
-side — clone them as sibling directories.
