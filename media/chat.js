@@ -2434,6 +2434,26 @@
     gearPopover.appendChild(el);
   }
 
+  // Dialogs can overlap (including a wizard arriving from the host), and close
+  // in either order. Only marker presence is a contract; its name is diagnostic.
+  // Per-element ownership makes repeated close paths harmless without keeping
+  // a registry of dialogs or their closers.
+  let modalAboveCount = 0;
+  function markModalAbove(dialog, name) {
+    if (dialog._modalAbove) return;
+    dialog._modalAbove = true;
+    modalAboveCount += 1;
+    document.body.dataset.modalAbove = name;
+    reportLayerDepth();
+  }
+  function unmarkModalAbove(dialog) {
+    if (!dialog || !dialog._modalAbove) return;
+    dialog._modalAbove = false;
+    modalAboveCount -= 1;
+    if (!modalAboveCount) delete document.body.dataset.modalAbove;
+    reportLayerDepth();
+  }
+
   // Promise<boolean> confirm dialog rendered in-page (chat.css .confirm-*).
   // Replaces the host's native modals for chat-triggered destructive actions,
   // so they confirm identically on desktop and in the browser client — where a
@@ -2463,6 +2483,7 @@
       const done = (v) => {
         document.removeEventListener("keydown", onKey, true);
         overlay.remove();
+        unmarkModalAbove(overlay);
         resolve(opts.booleanResult ? v === "confirm" : v);
       };
       const onKey = (e) => {
@@ -2489,6 +2510,7 @@
       panel.appendChild(actions);
       overlay.appendChild(panel);
       document.body.appendChild(overlay);
+      markModalAbove(overlay, "confirm");
       focusButton.focus();
     });
   }
@@ -2502,6 +2524,8 @@
 
   // In-app preview overlay. OPT-IN via capabilities.previewInApp (desktop).
   // Absent / remote / VS Code keep the host editor or inline-expand path.
+  // Its z-index (110) is below Settings (120), so it does not set modalAbove:
+  // Settings must keep its existing Escape path when it is over this preview.
   function hostPreviewsInApp() {
     return !IS_REMOTE && state.hostCaps && state.hostCaps.previewInApp === true;
   }
@@ -3145,11 +3169,15 @@
 
   // Page-local capability: the shell decides what to do with these layers.
   // Read the surfaces themselves; only notification deduplication is cached.
+  // A dialog above owns this gesture; Back with one up behaves as it always
+  // did: it can leave the page. Dialogs do not register Back closers here.
   window.afkpilotLayers = {
     get depth() {
+      if (document.body.dataset.modalAbove) return 0;
       return Number(!!document.getElementById("settings-overlay")) + Number(!!openFilesLayer());
     },
     dismissTop() {
+      if (document.body.dataset.modalAbove) return false;
       const settings = document.getElementById("settings-overlay");
       const files = openFilesLayer();
       // Settings covers the files toggle, so it normally opens last. But an
@@ -3300,6 +3328,7 @@
       const done = (v) => {
         document.removeEventListener("keydown", onKey, true);
         overlay.remove();
+        unmarkModalAbove(overlay);
         resolve(v);
       };
       const onKey = (e) => {
@@ -3319,6 +3348,7 @@
       panel.appendChild(actions);
       overlay.appendChild(panel);
       document.body.appendChild(overlay);
+      markModalAbove(overlay, "prompt");
       field.focus();
       field.select();
     });
@@ -3378,6 +3408,7 @@
     const done = () => {
       document.removeEventListener("keydown", onKey, true);
       overlay.remove();
+      unmarkModalAbove(overlay);
     };
     const onKey = (e) => {
       if (e.key === "Escape") {
@@ -3409,6 +3440,7 @@
     panel.append(closeBtn, title, body, actions);
     overlay.appendChild(panel);
     document.body.appendChild(overlay);
+    markModalAbove(overlay, "remote-explainer");
     moreBtn.focus();
   }
 
@@ -6628,13 +6660,15 @@
       state.projectGithub = null;
       cancelGithubDeviceLoginIfSupported();
     }
-    if (addProjectFormScrim) addProjectFormScrim.remove();
+    const scrim = addProjectFormScrim;
+    if (scrim) scrim.remove();
     // Capture-phase, so it must come off again — a listener left behind would
     // swallow Escape everywhere else in the app for the rest of the session.
     if (addProjectFormKeydown) document.removeEventListener("keydown", addProjectFormKeydown, true);
     addProjectFormKeydown = null;
     addProjectFormScrim = null;
     addProjectFormApi = null;
+    unmarkModalAbove(scrim);
   }
 
   /**
@@ -6771,6 +6805,7 @@
       githubState: state.githubState || undefined,
       repos: state.githubRepos,
     });
+    markModalAbove(scrim, "add-project");
     api.focus();
   }
 
@@ -9499,10 +9534,11 @@
   function closeConnectWizard() {
     if (!connectWizard) return;
     document.removeEventListener("keydown", connectWizard.onKey, true);
-    delete document.body.dataset.modalAbove;
-    connectWizard.overlay.remove();
+    const overlay = connectWizard.overlay;
+    overlay.remove();
     const opener = connectWizard.opener;
     connectWizard = null;
+    unmarkModalAbove(overlay);
     if (opener && typeof opener.focus === "function" && document.contains(opener)) {
       try { opener.focus(); } catch { /* the opener may have gone with a repaint */ }
     }
@@ -9540,9 +9576,6 @@
     overlay.onclick = (e) => { if (e.target === overlay) { e.stopPropagation(); closeConnectWizard(); } };
     const onKey = (e) => { if (e.key === "Escape") { e.stopPropagation(); closeConnectWizard(); } };
     document.addEventListener("keydown", onKey, true);
-    // Tells any page underneath (the settings overlay has its own Escape and
-    // Tab trap) that a modal owns the keyboard while this is up.
-    document.body.dataset.modalAbove = "connect-wizard";
     document.body.appendChild(overlay);
     connectWizard = { provider, overlay, panel, body, onKey, opener: opener || document.activeElement };
     // Nothing has come back from the host yet — and on a cloud machine the
@@ -9551,6 +9584,8 @@
     // (owner, 2026-08-31). A real frame replaces this on arrival.
     if (!state.deviceLoginByProvider[provider]) connectWizard.lastDevice = { status: "starting" };
     renderConnectWizard();
+    // Settings underneath must yield both its Escape handler and its Tab trap.
+    markModalAbove(overlay, "connect-wizard");
     const focusTarget = body.querySelector(".onb-action") || closeBtn;
     try { focusTarget.focus(); } catch { /* focus is a courtesy, never a failure */ }
   }
@@ -14671,6 +14706,7 @@
     }
     setImagePreviewLoading(false);
     state.pendingImageFullId = null;
+    unmarkModalAbove(overlay);
   }
 
   function openImagePreview(src, label, fullId, isOriginal = false) {
@@ -14721,6 +14757,7 @@
       setImagePreviewLoading(true);
       vscode.postMessage({ type: "requestImageFull", fullId: hostFullId });
     }
+    markModalAbove(overlay, "image-preview");
   }
 
   document.addEventListener("keydown", (e) => {

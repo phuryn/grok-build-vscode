@@ -709,7 +709,7 @@ describe("the wizard and Settings share a screen", () => {
     expect(guard).toBeLessThan(onKey.indexOf('e.key === "Escape"'));
 
     const chatSrc = fs.readFileSync(path.join(root, "media", "chat.js"), "utf8");
-    expect(chatSrc).toContain('document.body.dataset.modalAbove = "connect-wizard"');
+    expect(chatSrc).toContain('markModalAbove(overlay, "connect-wizard")');
     expect(chatSrc).toContain("delete document.body.dataset.modalAbove");
   });
 

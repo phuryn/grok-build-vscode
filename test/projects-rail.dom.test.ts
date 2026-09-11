@@ -2270,6 +2270,33 @@ describe("rail transition (optimistic highlight)", () => {
     expect(activeName(doc, "alpha")).toBe("alpha one");
   });
 
+  it.each(["Escape", "input Escape", "Enter", "Cancel", "Rename", "backdrop"])("releases the rename prompt's modal marker through %s", async (exit) => {
+    const h = boot("/work/alpha");
+    dispatch(h.window, { ...sessionsFrame([row("a1", "/work/alpha", "alpha one", 9)]), activeId: "a1" });
+    (h.window as any).__grokFilePanelOpenSettings();
+    const layers = (h.window as any).afkpilotLayers;
+    expect(layers.depth).toBe(1);
+    const changes: number[] = [];
+    h.window.addEventListener("afkpilot-layers", () => changes.push(layers.depth));
+    const section = h.doc.querySelectorAll(".rail-repo")[repoNames(h.doc).indexOf("alpha")];
+    click(h.window, menuItem(openMenu(h.window, section.querySelector(".rail-session")!), "Rename")!);
+    const input = h.doc.querySelector(".confirm-input") as HTMLInputElement;
+    input.value = "A new name";
+    expect(h.doc.body.dataset.modalAbove).toBe("prompt");
+    expect(layers.depth).toBe(0);
+    expect(layers.dismissTop()).toBe(false);
+    if (exit === "Escape") h.doc.dispatchEvent(new h.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    else if (exit === "input Escape" || exit === "Enter") input.dispatchEvent(new h.window.KeyboardEvent("keydown", { key: exit === "Enter" ? "Enter" : "Escape", bubbles: true }));
+    else click(h.window, h.doc.querySelector(exit === "backdrop" ? ".confirm-overlay"
+      : exit === "Rename" ? ".confirm-primary" : ".confirm-btn:not(.confirm-primary)")!);
+    await Promise.resolve();
+    expect(h.doc.querySelector(".confirm-overlay")).toBeNull();
+    expect(h.doc.body.dataset.modalAbove).toBeUndefined();
+    expect(layers.depth).toBe(1);
+    expect(changes).toEqual([0, 1]);
+    expect(h.posted.filter((msg) => msg.type === "renameSession")).toHaveLength(exit === "Enter" || exit === "Rename" ? 1 : 0);
+  });
+
   it("paints a rail rename on the header and row before any host frame", async () => {
     const { doc, window } = boot("/work/alpha");
     dispatch(window, {

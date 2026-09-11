@@ -355,6 +355,188 @@ describe("page-local settings layers", () => {
   });
 });
 
+describe("dialogs above renderer layers", () => {
+  function bootLayers(kind = "settings", remote = true) {
+    const h = bootWebview({ remote });
+    seedChat(h, { capabilities: { browseProjectFiles: true, remoteAgentSignIn: true,
+      createProject: true, cloneProject: true, addProjectFolder: true } });
+    if (kind !== "settings") click(h.window, h.doc.getElementById("files-browse-btn")!);
+    if (kind !== "files") openSettings(h);
+    const layers = (h.window as any).afkpilotLayers;
+    const depth = layers.depth;
+    const changes: number[] = [];
+    h.window.addEventListener("afkpilot-layers", () => changes.push(layers.depth));
+    return { ...h, layers, depth, changes };
+  }
+  type H = ReturnType<typeof bootLayers>;
+  const blocked = (h: H) => {
+    expect(h.doc.body.dataset.modalAbove).toBeTruthy();
+    expect(h.layers.depth).toBe(0);
+    expect(h.layers.dismissTop()).toBe(false);
+  };
+  const restored = (h: H) => {
+    expect(h.doc.body.dataset.modalAbove).toBeUndefined();
+    expect(h.layers.depth).toBe(h.depth);
+    expect(h.changes).toEqual([0, h.depth]);
+  };
+  const choice = (h: H) => (h.window as any).__grokFilePanelConfirm({ title: "Keep this?" });
+  const wizardFrame = (h: H, device: unknown = { status: "waiting", code: "ABCD", url: "https://example.test/login" }) =>
+    dispatch(h.window, { type: "onboarding", state: "auth-required", platform: "linux", provider: "codex", device });
+  const openAdd = (h: H) => {
+    const opener = h.doc.createElement("button");
+    opener.className = "onb-action";
+    opener.dataset.act = "addProjectFolder";
+    h.doc.body.appendChild(opener);
+    click(h.window, opener);
+    click(h.window, [...h.doc.querySelectorAll(".rail-menu-item")].find((el) => el.textContent?.includes("Clone from GitHub"))!);
+  };
+  const closeAdd = (h: H) => click(h.window, h.doc.querySelector(".add-project-btn:not(.add-project-primary)")!);
+  const closeWizard = (h: H) => click(h.window, h.doc.querySelector(".connect-wizard-panel > .confirm-actions button")!);
+
+  it.each(["settings", "files", "both"])("reads the marker immediately with %s open", (kind) => {
+    const h = bootLayers(kind);
+    h.doc.body.dataset.modalAbove = "test-dialog";
+    blocked(h);
+    delete h.doc.body.dataset.modalAbove;
+    expect(h.layers.depth).toBe(h.depth);
+  });
+
+  it.each(["Escape", "Cancel", "backdrop", "confirm"])("restores both layers after a confirm exits through %s", async (exit) => {
+    const h = bootLayers("both");
+    const result = choice(h);
+    blocked(h);
+    expect(h.changes).toEqual([0]);
+    expect(keydown(h.window, { key: "Tab" }).defaultPrevented).toBe(false);
+    if (exit === "Escape") keydown(h.window, { key: "Escape" });
+    else click(h.window, h.doc.querySelector(exit === "backdrop" ? ".confirm-overlay"
+      : exit === "confirm" ? ".confirm-primary" : ".confirm-btn:not(.confirm-primary)")!);
+    expect(await result).toBe(exit === "confirm" ? "confirm" : "cancel");
+    expect(h.doc.querySelector(".confirm-overlay")).toBeNull();
+    restored(h);
+  });
+
+  it.each(["Escape", "Cancel", "scrim", "done"])("restores the layer after Add project exits through %s", (exit) => {
+    const h = bootLayers();
+    openAdd(h);
+    const input = h.doc.querySelector(".add-project-input") as HTMLInputElement;
+    input.value = "https://example.test/repo.git";
+    dispatch(h.window, { type: "projectSetup", error: "Try again" });
+    expect(input.value).toBe("https://example.test/repo.git");
+    blocked(h);
+    if (exit === "Escape") keydown(h.window, { key: "Escape" });
+    else if (exit === "Cancel") closeAdd(h);
+    else if (exit === "scrim") h.doc.querySelector(".add-project-scrim")!.dispatchEvent(new h.window.MouseEvent("mousedown", { bubbles: true }));
+    else dispatch(h.window, { type: "projectSetup", done: true });
+    expect(h.doc.querySelector(".add-project-scrim")).toBeNull();
+    restored(h);
+  });
+
+  it.each(["Escape", "Close", "backdrop", "cancel flow", "flow gone", "success"])("restores Settings after the wizard exits through %s", async (exit) => {
+    const h = bootLayers();
+    wizardFrame(h);
+    wizardFrame(h); // Live repaints must not acquire another marker.
+    blocked(h);
+    expect(h.changes).toEqual([0]);
+    if (exit === "Escape") keydown(h.window, { key: "Escape" });
+    else if (exit === "Close") closeWizard(h);
+    else if (exit === "backdrop") click(h.window, h.doc.querySelector(".connect-wizard-overlay")!);
+    else if (exit === "cancel flow") click(h.window, h.doc.querySelector('.connect-wizard-overlay [data-act="cancelDeviceLogin"]')!);
+    else if (exit === "flow gone") wizardFrame(h, null);
+    else {
+      wizardFrame(h, { status: "done" });
+      blocked(h);
+      await vi.waitFor(() => expect(h.doc.querySelector(".connect-wizard-overlay")).toBeNull(), { timeout: 2500 });
+    }
+    expect(h.doc.querySelector(".connect-wizard-overlay")).toBeNull();
+    restored(h);
+  });
+
+  it.each(["Escape", "Close", "backdrop", "FAQ"])("clears the explainer marker through %s", (exit) => {
+    const h = bootLayers("settings", false);
+    dispatch(h.window, { type: "remoteStatus", linked: false });
+    click(h.window, h.doc.getElementById("gear-btn")!);
+    click(h.window, [...h.doc.querySelectorAll("#gear-popover .toolbar-popover-item")].find((el) => el.textContent?.includes("How it works"))!);
+    blocked(h);
+    if (exit === "Escape") keydown(h.window, { key: "Escape" });
+    else click(h.window, h.doc.querySelector(exit === "Close" ? ".remote-explainer-close"
+      : exit === "backdrop" ? ".remote-explainer-overlay" : ".remote-explainer-panel .confirm-primary")!);
+    expect(h.doc.querySelector(".remote-explainer-overlay")).toBeNull();
+    restored(h);
+  });
+
+  it.each(["Escape", "Close", "backdrop", "session reset"])("clears the reusable image lightbox marker through %s", (exit) => {
+    const h = bootLayers();
+    dispatch(h.window, { type: "chips", chips: [{ id: "image-1", path: "/image.png", relPath: "Image #1",
+      imageIndex: 1, hidden: false, previewSrc: "data:image/png;base64,AAAA" }] });
+    for (let i = 0; i < 2; i++) click(h.window, h.doc.querySelector(".attachment button")!);
+    blocked(h);
+    if (exit === "Escape") keydown(h.window, { key: "Escape" });
+    else if (exit === "session reset") dispatch(h.window, { type: "clearMessages" });
+    else click(h.window, h.doc.querySelector(exit === "Close" ? ".image-preview-close" : ".image-preview-overlay")!);
+    expect((h.doc.querySelector(".image-preview-overlay") as HTMLElement).hidden).toBe(true);
+    restored(h);
+    // A second close of the retained DOM node must not corrupt bookkeeping.
+    click(h.window, h.doc.querySelector(".image-preview-close")!);
+    const result = choice(h);
+    blocked(h);
+    click(h.window, h.doc.querySelector(".confirm-primary")!);
+    expect(h.doc.body.dataset.modalAbove).toBeUndefined();
+    expect(h.layers.depth).toBe(h.depth);
+    void result;
+  });
+
+  it.each([false, true])("keeps the marker when nested Add project / wizard dialogs close (outer first=%s)", (outerFirst) => {
+    const h = bootLayers();
+    openAdd(h);
+    wizardFrame(h);
+    if (outerFirst) {
+      // Host completion can retire the outer form while the wizard is up.
+      dispatch(h.window, { type: "projectSetup", done: true });
+      dispatch(h.window, { type: "projectSetup", done: true });
+    } else closeWizard(h);
+    blocked(h);
+    expect(h.changes).toEqual([0]);
+    if (outerFirst) closeWizard(h);
+    else closeAdd(h);
+    restored(h);
+  });
+
+  it("releases replaced forms and wizard instances without orphaning their markers", () => {
+    const h = bootLayers();
+    openAdd(h);
+    const firstForm = h.doc.querySelector(".add-project-scrim");
+    openAdd(h);
+    expect(h.doc.querySelectorAll(".add-project-scrim")).toHaveLength(1);
+    expect(h.doc.querySelector(".add-project-scrim")).not.toBe(firstForm);
+    wizardFrame(h);
+    const firstWizard = h.doc.querySelector(".connect-wizard-overlay");
+    dispatch(h.window, { type: "onboarding", state: "auth-required", provider: "grok", device: { status: "starting" } });
+    expect(h.doc.querySelectorAll(".connect-wizard-overlay")).toHaveLength(1);
+    expect(h.doc.querySelector(".connect-wizard-overlay")).not.toBe(firstWizard);
+    closeWizard(h);
+    blocked(h);
+    closeAdd(h);
+    expect(h.doc.body.dataset.modalAbove).toBeUndefined();
+    expect(h.layers.depth).toBe(h.depth);
+    expect(h.changes).toEqual([0, h.depth, 0, h.depth]);
+  });
+
+  it("keeps same-kind confirms independent and tolerates a repeated close", async () => {
+    const h = bootLayers();
+    const first = choice(h);
+    const firstButton = h.doc.querySelector(".confirm-primary")!;
+    const second = choice(h);
+    click(h.window, firstButton);
+    click(h.window, firstButton);
+    blocked(h);
+    expect(h.changes).toEqual([0]);
+    click(h.window, h.doc.querySelector(".confirm-primary")!);
+    expect(await first).toBe("confirm");
+    expect(await second).toBe("confirm");
+    restored(h);
+  });
+});
+
 describe("settings overlay (chat.js)", () => {
   it("renders every category from the gear Settings entry", () => {
     const h = bootWebview();

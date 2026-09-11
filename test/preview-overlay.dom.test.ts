@@ -72,6 +72,19 @@ function viewAllButtons(doc: Document): HTMLButtonElement[] {
 }
 
 describe("preview overlay — View all", () => {
+  it("leaves Settings' existing Escape path intact because the preview is below it", () => {
+    const h = bootPreview();
+    openLongCommand(h.window);
+    click(h.window, viewAllButtons(h.doc)[0]);
+    expect(h.doc.getElementById("preview-overlay")).not.toBeNull();
+    expect(h.doc.body.dataset.modalAbove).toBeUndefined();
+    (h.window as any).__grokFilePanelOpenSettings();
+    expect((h.window as any).afkpilotLayers.depth).toBe(1);
+    h.doc.dispatchEvent(new h.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(h.doc.getElementById("settings-overlay")).toBeNull();
+    expect(h.doc.body.dataset.modalAbove).toBeUndefined();
+  });
+
   it("posts openText when the host does not advertise previewInApp", () => {
     const { window, doc, posted } = bootPreview({ preview: false });
     openLongCommand(window);
