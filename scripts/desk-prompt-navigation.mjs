@@ -18,9 +18,11 @@ export async function assertPromptNavigation(page, shot) {
   }
   await page.waitForFunction(() => document.querySelectorAll("#messages .msg.user").length === 3);
 
-  // Off by default: everyone keeps the plain scroll-to-bottom pill, standing on
-  // its own in the composer, with the label it has always had.
-  const off = await page.evaluate(() => {
+  // On by default since 4.5.0 (#150): the control left the experiment, so a
+  // desk that never expressed an opinion now gets it. What did NOT change is
+  // the pill beside it - the plain scroll-to-bottom, standing on its own in
+  // the composer, with the label it has always had.
+  const initial = await page.evaluate(() => {
     const bottom = document.getElementById("scroll-bottom-btn");
     return {
       prev: document.getElementById("prompt-prev-btn").classList.contains("visible"),
@@ -29,9 +31,9 @@ export async function assertPromptNavigation(page, shot) {
       copies: document.querySelectorAll("#scroll-bottom-btn").length,
     };
   });
-  assert.deepEqual(off, { prev: false, standalone: true, label: "Scroll to bottom", copies: 1 });
+  assert.deepEqual(initial, { prev: true, standalone: true, label: "Scroll to bottom", copies: 1 });
 
-  // Turn it on the way a DESK actually receives it: the settings page posts
+  // Drive it the way a DESK actually receives it: the settings page posts
   // `setPromptNav`, the host writes `grok.promptNav`, and its config listener
   // posts this frame back to the chat webview. This is that frame, not a stand
   // in for it - on a desk the chat page has no other way to learn the value.
@@ -46,7 +48,22 @@ export async function assertPromptNavigation(page, shot) {
   // A settle, not a waitForFunction: the webview's CSP has no 'unsafe-eval',
   // and Playwright's polling path compiles its predicate with eval - so a
   // predicate that is false on its first synchronous try throws instead of
-  // waiting. The `prev: true` assertion below is what proves the frame landed.
+  // waiting.
+  //
+  // OFF first, and that ordering is the point now the default is on. Asserting
+  // `prev: true` after a `value: true` frame would pass whether or not the
+  // frame arrived - the same shape as the empty-list overlap check below,
+  // which guarded nothing while reading green. Retiring the control is the
+  // only assertion here that still fails if the frame is dropped.
+  await hostMsg(page, { type: "promptNav", value: false });
+  await page.waitForTimeout(250);
+  assert.equal(
+    await page.evaluate(() => document.getElementById("prompt-prev-btn").classList.contains("visible")),
+    false,
+    "a promptNav:false frame must retire the control",
+  );
+
+  // ...and back on, which is the state the geometry below is about.
   await hostMsg(page, { type: "promptNav", value: true });
   await page.waitForTimeout(250);
 
