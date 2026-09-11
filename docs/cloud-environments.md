@@ -48,46 +48,58 @@ Best-effort. A relay that is unreachable or older than the endpoint gets silence
 because a failure here **delays** a routine and never loses one — catch-up is
 arithmetic, so a missed window still runs when the machine next comes up.
 
-### Connectors are hidden
+### Connectors work here, and it is worth saying why
 
-`mcpSettings` is withheld. Connecting an MCP connector is a browser OAuth flow at
-the vendor, and a hosted machine has no browser — nor, unlike a desk, any
-computer to walk over to.
+It reads like they could not. Connecting an MCP connector is a browser OAuth
+flow at the vendor, and a hosted machine has no browser — nor, unlike a desk,
+any computer to walk over to.
 
-This is the **one** host-local capability that does not re-home. The rest of them
-— opening a file, a diff, a URL, settings — are all things the remote client can
-do itself, because in a cloud environment it is the only client there is. That
-one genuinely cannot: nobody can complete somebody else's OAuth on their behalf.
+But the consent does not happen *here*. It happens in the browser of whoever
+asked, and the relay callback hands the code back to this host. Nobody is
+completing somebody else's OAuth: the person doing it is the one holding the
+phone.
 
-Hidden rather than shown-and-disabled: a control that explains why it will not
-work is still a control that does not work.
+So nothing is withheld. `mcpSettings` is advertised exactly as on a desk —
+`canShowMcpSettings` is true on both hosts and has no cloud branch — and
+`connectMcpConnector` / `disconnectMcpConnector` are `full` for any capable
+remote.
 
-### Signing in works; signing out is the interesting case
+### Signing in, and signing out
 
 Connecting an agent uses the device-code flow that any remote client uses
 (shipped 3.19.0 — see [Signing agents in](provider-login.md)). It has to work:
 there is no desk to fall back to, so a cloud environment with nothing connected
 could otherwise never be made usable.
 
-Signing **out** is currently `host-local`, and that classification was reasoned
-about a desk: revoking a credential affects every other surface using it. In a
-cloud environment, that environment *is* the only surface, so the argument
-inverts. Not yet changed, and recorded here because it is a real difference
-rather than an oversight.
+Signing **out** was classified `host-local` by reasoning about a desk: revoking
+a credential affects every other surface using it. Here the environment *is* the
+only surface, so the argument inverts — and `CLOUD_DISPOSITION` in
+[`src/remote-policy.ts`](../src/remote-policy.ts) now says so: `logout` and
+`githubSignOut` are `full` on a cloud host and `host-local` everywhere else.
+`refreshProviders`, `setTelemetryEnabled` and `setThumbsFeedback` re-home for
+the same reason — each is withheld from a desk because the desk owner has
+another surface, and meaningless to withhold where the browser is the only one.
 
 ## What does not change
 
-Everything else. The host is the same binary running the same code: chat,
-sessions, projects, file browse and edit, worktrees, routines, permission
-prompts and the capability policy all behave exactly as they do on a desk,
-because none of them ever depended on who owned the machine.
+Almost everything. The host is the same binary running the same code: chat,
+sessions, projects, file browse and edit, routines and permission prompts all
+behave exactly as they do on a desk, because none of them ever depended on who
+owned the machine.
 
-Two things are worth knowing anyway:
+The capability policy is the exception, and `CLOUD_DISPOSITION` is the whole of
+it. Three things are worth knowing:
 
-- **`keep-awake.ts` is inert.** It holds an OS wake lock so an idle laptop does
-  not drop the uplink; there is no lid to close in a container, and
-  `systemd-inhibit` is unavailable. It fails silently, which is what that module
-  does by design.
+- **Worktrees do not re-home.** `newWorktreeSession`, `applyWorktree` and
+  `removeWorktree` stay `host-local` and are absent from that table, and the
+  rail hides apply and remove on a remote. On a cloud machine the remote is the
+  only client there is, so those controls are not reachable by the person using
+  it at all. `removeProjectFolder` is host-local here for the same reason.
+- **`keep-awake.ts` never starts.** `shouldKeepAwake` returns false as soon as
+  the host is a cloud one, so the OS wake lock is skipped rather than attempted.
+  That is deliberate and not a failure: a wake lock cannot stop a hypervisor
+  pausing the machine, and what holds a cloud environment up is the uplink's
+  `working` heartbeat. Silent spawn-failure is the desk path, not this one.
 - **Your agent credentials live in the environment.** Sign-in completes there,
   against the vendor, and nothing transits the relay. That is required for Claude
   and good practice for the rest — a token that never moves cannot leak in

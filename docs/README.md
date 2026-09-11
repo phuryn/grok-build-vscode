@@ -12,7 +12,7 @@ Product documentation lives here. Build, test and repo conventions are in
 - [Projects](projects.md) — the three ways to add one, where new folders go, and cloning from GitHub.
 - [Tips on the empty screen](empty-state-tips.md) — what the welcome screen suggests, and the rules it follows.
 - [Signing agents in](provider-login.md) — how Grok, Codex and Claude authenticate, including the headless paths for a machine you only reach remotely.
-- [Running in a cloud environment](cloud-environments.md) — what the host does differently when the machine is one we run: waking for routines, hidden connectors, and what stays exactly the same.
+- [Running in a cloud environment](cloud-environments.md) — what the host does differently when the machine is one we run: waking for routines, which capabilities re-home to the browser, and what stays exactly the same.
 - [Voice setup](voice-setup.md) — dictation, transcription and the hands-free send phrase.
 - [Privacy](privacy.md) — what leaves your machine, and what never does.
 - [Attribution](attribution.md) — licence and third-party notices.
