@@ -672,6 +672,68 @@
     pencil: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/></svg>',
   };
 
+  /**
+   * Every panel this module has made, so it can answer what is on screen.
+   *
+   * The page's Back handling has to know which overlays are open, and it used to
+   * know by NAMING the panels that existed when it was written. A panel added
+   * afterwards is then invisible to it: the provider-config editor shipped in the
+   * same release as that API, was never added, and Back therefore walked off the
+   * page with an unsaved config file on screen. Answering the question here --
+   * where panels are made -- is the only version of it that cannot go stale.
+   */
+  const livePanels = new Set();
+
+  /**
+   * Told whenever the answer to {@link openOverlayPanels} may have changed.
+   *
+   * ONE listener for every panel, present and future, because the alternative
+   * is per-panel wiring -- and per-panel wiring is exactly what let the
+   * provider-config editor open with nobody being told. Counting it correctly
+   * would not have been enough on its own: the page holds a history entry per
+   * open layer and takes one when it HEARS about the layer, so a panel that
+   * opens silently has no entry and Back walks off the page regardless.
+   */
+  const overlayListeners = new Set();
+
+  function onOverlaysChanged(fn) {
+    if (typeof fn === "function") overlayListeners.add(fn);
+  }
+
+  function notifyOverlays() {
+    for (const fn of [...overlayListeners]) {
+      try { fn(); } catch (_) { /* one bad listener must not strand the rest */ }
+    }
+  }
+
+  /**
+   * The overlay panels currently on screen, TOPMOST FIRST.
+   *
+   * Docked panels are deliberately absent: they sit beside the conversation
+   * rather than over it, so nothing is covered and there is nothing for Back to
+   * close. A panel can move between the two while it is open -- narrowing to
+   * phone width raises a docked panel to an overlay -- so this reads the class
+   * every time rather than remembering what it was.
+   */
+  function openOverlayPanels() {
+    const open = [];
+    for (const panel of [...livePanels]) {
+      // A panel whose element has left the document is gone for good; drop it
+      // rather than let the set grow for the life of the page.
+      if (!panel.element.isConnected) { livePanels.delete(panel); continue; }
+      if (!panel.isOpen() || !panel.isOverlay() || panel.element.hidden) continue;
+      open.push(panel);
+    }
+    return open.sort((a, b) => {
+      const za = Number(getComputedStyle(a.element).zIndex) || 0;
+      const zb = Number(getComputedStyle(b.element).zIndex) || 0;
+      if (za !== zb) return zb - za;
+      // Same layer: whichever is later in the document paints over the other.
+      return (a.element.compareDocumentPosition(b.element)
+        & Node.DOCUMENT_POSITION_FOLLOWING) ? 1 : -1;
+    });
+  }
+
   function createFilePanel(options) {
     if (!options || !options.access) throw new Error("file panel requires an access adapter");
     const access = options.access;
@@ -958,8 +1020,9 @@
         panelHost.appendChild(rootEl);
       }
       applyStripShrink();
-      if (overlay !== wasOverlay && typeof options.onPresentationChanged === "function") {
-        options.onPresentationChanged(overlay);
+      if (overlay !== wasOverlay) {
+        if (typeof options.onPresentationChanged === "function") options.onPresentationChanged(overlay);
+        notifyOverlays();
       }
     }
 
@@ -976,6 +1039,7 @@
       syncChangesPolling();
       if (open && !wasOpen && changesMode) void loadChanges({});
       if (typeof options.onOpenChanged === "function") options.onOpenChanged(open);
+      if (open !== wasOpen) notifyOverlays();
     }
 
     function paintMaximize() {
@@ -3950,7 +4014,7 @@
       if (typeof options.onOpenChanged === "function") options.onOpenChanged(false);
     }
 
-    return {
+    const panel = {
       element: rootEl,
       resizer,
       toggleElement: toggle,
@@ -4003,6 +4067,8 @@
       },
       _lastStripPlan: () => lastStripPlan,
     };
+    livePanels.add(panel);
+    return panel;
   }
 
   function iconIdFromTable(name, table, fallback) {
@@ -4074,6 +4140,8 @@
 
   const api = {
     createFilePanel,
+    openOverlayPanels,
+    onOverlaysChanged,
     resolveMarkdownLink,
     fileName,
     relativeCopyPath,

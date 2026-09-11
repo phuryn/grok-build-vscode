@@ -3166,10 +3166,21 @@
     return overlay && !overlay.hidden ? overlay : null;
   }
 
+  // Every overlay file panel, topmost first -- asked of the module that MAKES
+  // panels rather than assembled from the ones this file happens to name. It
+  // named `state.filesBrowse.component` alone, and the provider-config editor
+  // shipped in the same release without ever being added: Back saw no layer,
+  // let the navigation stand, and left the conversation with an unsaved config
+  // file on screen. A list of known panels goes wrong the moment somebody adds
+  // a panel, and that is not an omission the reviewer of the NEW panel would
+  // catch, because it lives in a file they never touched.
+  function openFilePanelLayers() {
+    const panels = window.GrokFilePanel && window.GrokFilePanel.openOverlayPanels;
+    return typeof panels === "function" ? panels() : [];
+  }
+
   function openFilesLayer() {
-    const panel = state.filesBrowse.component;
-    return panel && panel.isOpen() && panel.isOverlay()
-      && panel.element.isConnected && !panel.element.hidden ? panel : null;
+    return openFilePanelLayers()[0] || null;
   }
 
   // Page-local capability: the shell decides what to do with these layers.
@@ -3177,10 +3188,19 @@
   // A dialog above owns this gesture; Back with one up behaves as it always
   // did: it can leave the page. Dialogs do not register Back closers here.
   window.afkpilotLayers = {
+    // WHY `depth` is 0, which the count alone cannot say. The shell has to be
+    // able to tell "nothing is open" from "a dialog owns this gesture": with a
+    // full-screen Add-project form up it was closing the drawer BEHIND the
+    // form, so the press looked like it had done nothing at all.
+    get modalAbove() { return !!document.body.dataset.modalAbove; },
     get depth() {
       if (document.body.dataset.modalAbove) return 0;
+      // Each open overlay COUNTS, rather than "is one open": two can be up at
+      // once -- the project files panel, with Settings then raising the config
+      // editor over it -- and each needs its own entry, or one Back closes
+      // both and the person loses a panel they never dismissed.
       return Number(!!document.getElementById("settings-overlay"))
-        + Number(!!openFilesLayer()) + Number(!!openImageLayer());
+        + openFilePanelLayers().length + Number(!!openImageLayer());
     },
     dismissTop() {
       if (document.body.dataset.modalAbove) return false;
@@ -3214,6 +3234,15 @@
     if (depth === lastLayerDepth) return;
     lastLayerDepth = depth;
     window.dispatchEvent(new CustomEvent("afkpilot-layers"));
+  }
+
+  // Every file panel reports through here, including ones written after this
+  // line. Subscribing to the MODULE rather than passing `onOpenChanged` to each
+  // panel is the point: the provider-config editor was created without that
+  // option and opened in silence, so the page never took a history entry for it
+  // and Back left the conversation. A panel cannot forget to join this.
+  if (window.GrokFilePanel && typeof window.GrokFilePanel.onOverlaysChanged === "function") {
+    window.GrokFilePanel.onOverlaysChanged(reportLayerDepth);
   }
 
   function closeSettingsOverlay() {

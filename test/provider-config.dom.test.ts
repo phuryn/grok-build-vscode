@@ -164,6 +164,50 @@ describe.each(surfaces)("provider config files on %s", (surface) => {
 });
 
 describe("config editor decisions", () => {
+  it("is a layer Back can close, and ANNOUNCES itself so the page takes an entry", async () => {
+    // The layer list used to NAME the panels it knew about, and this editor
+    // shipped in the same release without being added to it. Back saw nothing
+    // open, let the navigation stand, and left the conversation -- with the
+    // config file's unsaved edits going with the document. The same hole that
+    // was closed for the image lightbox one commit earlier, on the overlay
+    // this release added.
+    //
+    // Both halves are asserted, because counting alone would not have fixed
+    // it: the shell holds one history entry PER OPEN LAYER and takes it when
+    // the `afkpilot-layers` event tells it to. A panel that opens silently has
+    // no entry to spend, so Back walks off the page however correct the count.
+    const h = boot("phone", { editProjectFiles: true, editProviderConfigFiles: true });
+    const layers = (h.window as any).afkpilotLayers;
+    const announced: number[] = [];
+    h.window.addEventListener("afkpilot-layers", () => announced.push(layers.depth));
+    await open(h);
+    const panel = h.doc.getElementById("provider-config-panel")!;
+    expect(panel.hidden).toBe(false);
+    expect(layers.depth).toBe(1);
+    expect(announced.at(-1)).toBe(1);
+    expect(layers.dismissTop()).toBe(true);
+    expect(panel.hidden).toBe(true);
+    expect(layers.depth).toBe(0);
+    expect(announced.at(-1)).toBe(0);
+    h.window.happyDOM.abort();
+  });
+
+  it("counts a second overlay rather than hiding it behind the first", async () => {
+    // Project files open, then Settings raises the config editor over them. Two
+    // overlays, so two entries: one Back may not close both, or the person
+    // loses a panel they never dismissed.
+    const h = boot("phone", { browseProjectFiles: true, editProjectFiles: true, editProviderConfigFiles: true });
+    click(h.window, h.doc.getElementById("files-browse-btn")!);
+    expect((h.window as any).afkpilotLayers.depth).toBe(1);
+    await open(h);
+    const layers = (h.window as any).afkpilotLayers;
+    expect(layers.depth).toBe(2);
+    expect(layers.dismissTop()).toBe(true);
+    expect(layers.depth).toBe(1);
+    expect(h.doc.getElementById("files-browse-panel")?.hidden).toBe(false);
+    h.window.happyDOM.abort();
+  });
+
   it("uses the browser panel even when the connected host advertises a VS Code editor", async () => {
     const h = boot("remote", { settingsEditor: true, editProjectFiles: true, editProviderConfigFiles: true });
     await open(h);
