@@ -374,7 +374,7 @@
   function postResumeSession(id, cwd, opts) {
     const msg = { type: "resumeSession", id, cwd: cwd || undefined };
     if (opts && opts.claim) msg.claim = true;
-    vscode.postMessage(msg);
+    vscode.postMessage(msg); if (items.length === 1) { vscode.postMessage({ type: "clearQueuedSends" }); } else { vscode.postMessage({ type: "removeQueuedSend", index }); }
   }
 
   function restoreRememberedRemoteSession() {
@@ -15775,126 +15775,171 @@
 
   function renderQueuedBlocks() {
     let wrap = state.queuedWrapEl;
-    // One visual block: the flush is still one combined prompt. Text is joined
-    // the way it will send; chips from every contribution are shown on it.
     const rejected = !!state.rejectedSubmissionText;
-    const text = rejected ? state.rejectedSubmissionText : queuedSendsText(state.sendQueue);
-    const chips = rejected ? [] : queuedSendsChips(state.sendQueue);
-    if (!text && !chips.length) {
+    const items = rejected
+      ? [{ text: state.rejectedSubmissionText, chips: [] }]
+      : (state.sendQueue || []);
+
+    if (!items.length) {
       if (wrap) wrap.remove();
       state.queuedWrapEl = null;
       return;
     }
+    
     if (!wrap || !wrap.isConnected) {
       wrap = document.createElement("div");
-      wrap.className = "queued-msgs";
+      wrap.className = "queued-msgs-list";
       state.queuedWrapEl = wrap;
     }
     wrap.innerHTML = "";
-    const msg = document.createElement("div");
-    msg.className = "msg user queued";
-    const bubble = document.createElement("div");
-    bubble.className = "msg-bubble";
-    const hdr = document.createElement("div");
-    hdr.className = "queued-hdr";
-    const tag = document.createElement("span");
-    tag.className = "queued-tag";
-    tag.innerHTML = `${ICON.clock}<span>${state.queuedSubmissionRejected || rejected ? "Not sent" : "Queued"}</span>`;
-    tag.title = state.queuedSubmissionRejected || rejected
-      ? "The relay rejected this prompt. Edit it to retry, or remove it."
-      : "Sends when Grok finishes";
-    const actions = document.createElement("span");
-    actions.className = "queued-actions";
-    const editBtn = document.createElement("button");
-    editBtn.className = "queued-action";
-    editBtn.title = "Edit — back to the composer";
-    editBtn.innerHTML = ICON.pencil;
-    // pointerdown for the same reason as Steer below — this whole block moves
-    // under the cursor while the agent streams.
-    editBtn.onpointerdown = (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (rejected) {
-        state.rejectedSubmissionText = "";
-        renderQueuedBlocks();
-      } else {
-        vscode.postMessage({ type: "clearQueuedSends", restore: true });
+    
+    items.forEach((item, index) => {
+      const card = document.createElement("div");
+      card.className = "queued-item msg user queued";
+      card.draggable = !rejected;
+      card.dataset.index = index;
+      
+      if (!rejected) {
+        card.addEventListener("dragstart", (e) => {
+          e.dataTransfer.effectAllowed = "move";
+          e.dataTransfer.setData("text/plain", index.toString());
+          card.style.opacity = "0.5";
+        });
+        card.addEventListener("dragend", () => {
+          card.style.opacity = "1";
+          document.querySelectorAll(".queued-item").forEach(el => {
+            el.classList.remove("drag-over-above", "drag-over-below");
+          });
+        });
+        card.addEventListener("dragover", (e) => {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "move";
+          const rect = card.getBoundingClientRect();
+          const mid = rect.top + rect.height / 2;
+          if (e.clientY < mid) {
+            card.classList.add("drag-over-above");
+            card.classList.remove("drag-over-below");
+          } else {
+            card.classList.add("drag-over-below");
+            card.classList.remove("drag-over-above");
+          }
+        });
+        card.addEventListener("dragleave", () => {
+          card.classList.remove("drag-over-above", "drag-over-below");
+        });
+        card.addEventListener("drop", (e) => {
+          e.preventDefault();
+          card.classList.remove("drag-over-above", "drag-over-below");
+          const fromIndex = parseInt(e.dataTransfer.getData("text/plain"), 10);
+          if (isNaN(fromIndex)) return;
+          let toIndex = index;
+          const rect = card.getBoundingClientRect();
+          if (e.clientY >= rect.top + rect.height / 2) {
+            toIndex += 1;
+          }
+          if (fromIndex < toIndex) toIndex -= 1;
+          if (fromIndex !== toIndex) {
+            vscode.postMessage({ type: "reorderQueuedSends", fromIndex, toIndex });
+          }
+        });
       }
-      input.value = input.value.trim() ? text + "\n\n" + input.value : text;
-      renderInputHighlight();
-      input.focus();
-    };
-    const rmBtn = document.createElement("button");
-    rmBtn.className = "queued-action";
-    rmBtn.title = "Remove from queue";
-    rmBtn.innerHTML = ICON.x;
-    rmBtn.onpointerdown = (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (rejected) {
-        state.rejectedSubmissionText = "";
-        renderQueuedBlocks();
-      } else {
-        vscode.postMessage({ type: "clearQueuedSends" });
+
+      const bubble = document.createElement("div");
+      bubble.className = "msg-bubble";
+      const hdr = document.createElement("div");
+      hdr.className = "queued-hdr";
+      
+      const tag = document.createElement("span");
+      tag.className = "queued-tag";
+      const tagLabel = rejected || state.queuedSubmissionRejected ? "Not sent" : (items.length > 1 ? `Queued #${index + 1}` : "Queued");
+      tag.innerHTML = `${ICON.clock}<span>${tagLabel}</span>`;
+      tag.title = rejected || state.queuedSubmissionRejected
+        ? "The relay rejected this prompt. Edit it to retry, or remove it."
+        : "Sends when Grok finishes";
+      
+      const actions = document.createElement("span");
+      actions.className = "queued-actions";
+      
+      if (!rejected && state.steerSupported && steerableProvider()) {
+        const steerBtn = document.createElement("button");
+        steerBtn.className = "queued-action queued-steer";
+        steerBtn.title = "Steer — submit now without interrupting Grok";
+        steerBtn.innerHTML = `${ICON.cornerDownRight}<span>Steer</span>`;
+        steerBtn.onpointerdown = (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          if (state.sessionSuperseded) return;
+          const msg = { type: "steerSend", text: item.text, fromQueue: true, index };
+          if (item.chips && item.chips.length) msg.chips = item.chips;
+          vscode.postMessage(msg);
+          if (items.length === 1) {
+            vscode.postMessage({ type: "clearQueuedSends" });
+          } else {
+            vscode.postMessage({ type: "removeQueuedSend", index });
+          }
+        };
+        actions.appendChild(steerBtn);
       }
-    };
-    // Steer (#52): send this into the RUNNING turn instead of waiting for it.
-    // Rendered whenever the CLI supports it; `body.turn-busy` (updateSendButton)
-    // does the show/hide, so a replay that delivers queuedSends before agentStart
-    // still ends up with the button once busy lands.
-    // Not for Claude Code: it has no mid-turn interject, so the button would
-    // offer to do something the agent cannot do. Its messages stay scheduled.
-    // Attachments ride the backend's steering content — the host encodes them the
-    // same way as a send. An older CLI that ignores `content` gets the whole
-    // item queued rather than a silent drop.
-    if (state.steerSupported && steerableProvider()) {
-      const steerBtn = document.createElement("button");
-      steerBtn.className = "queued-action queued-steer";
-      steerBtn.title = "Steer — submit now without interrupting Grok";
-      steerBtn.innerHTML = `${ICON.cornerDownRight}<span>Steer</span>`;
-      // pointerdown, NOT click: the queued block is pinned to the end of the
-      // chat and every streamed chunk runs scrollToBottom, so while the agent is
-      // writing prose the button shifts under the cursor between mousedown and
-      // mouseup — and a `click` only fires when both land on the SAME element.
-      // That's why steering was a coin-flip mid-stream but fine during a tool
-      // call (nothing reflows then). pointerdown fires on press, before the
-      // reflow can move anything.
-      steerBtn.onpointerdown = (e) => {
+      
+      const editBtn = document.createElement("button");
+      editBtn.className = "queued-action";
+      editBtn.title = "Edit — back to the composer";
+      editBtn.innerHTML = ICON.pencil;
+      editBtn.onpointerdown = (e) => {
         e.preventDefault();
         e.stopPropagation();
-        if (state.sessionSuperseded) return;
-        // steerSend first so the host can snapshot the queue before this
-        // clear races (webview handlers are not serialized across awaits).
-        const msg = { type: "steerSend", text, fromQueue: true };
-        if (chips.length) msg.chips = chips;
-        vscode.postMessage(msg);
-        vscode.postMessage({ type: "clearQueuedSends" });
+        if (rejected) {
+          state.rejectedSubmissionText = "";
+          renderQueuedBlocks();
+          input.value = input.value.trim() ? item.text + "\\n\\n" + input.value : item.text;
+          renderInputHighlight();
+          input.focus();
+        } else {
+          if (items.length === 1) { vscode.postMessage({ type: "clearQueuedSends", restore: true }); input.value = input.value.trim() ? item.text + "\n\n" + input.value : item.text; renderInputHighlight(); input.focus(); } else { vscode.postMessage({ type: "dequeueSend", index }); input.value = input.value.trim() ? item.text + "\n\n" + input.value : item.text; renderInputHighlight(); input.focus(); }
+        }
       };
-      actions.appendChild(steerBtn);
-    }
-    actions.appendChild(editBtn);
-    actions.appendChild(rmBtn);
-    hdr.appendChild(tag);
-    hdr.appendChild(actions);
-    // Same order as a sent user bubble (`addMessage`): header, then text, then
-    // chips. The pending block is a preview of that bubble, not of the composer.
-    bubble.appendChild(hdr);
-    if (text) {
-      const body = document.createElement("div");
-      body.className = "queued-text";
-      body.textContent = text;
-      body.title = text; // body is line-clamped; full text on hover
-      bubble.appendChild(body);
-    }
-    if (chips.length) {
-      const chipsRow = document.createElement("div");
-      chipsRow.className = "msg-chips";
-      for (const chip of chips) chipsRow.appendChild(makeMsgChipTag(chip.relPath, chip));
-      bubble.appendChild(chipsRow);
-    }
-    msg.appendChild(bubble);
-    wrap.appendChild(msg);
-    appendTranscriptChild(wrap); // (re)pin to the end of the conversation
+      
+      const rmBtn = document.createElement("button");
+      rmBtn.className = "queued-action";
+      rmBtn.title = "Remove from queue";
+      rmBtn.innerHTML = ICON.x;
+      rmBtn.onpointerdown = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (rejected) {
+          state.rejectedSubmissionText = "";
+          renderQueuedBlocks();
+        } else {
+          if (items.length === 1) { vscode.postMessage({ type: "clearQueuedSends" }); } else { vscode.postMessage({ type: "removeQueuedSend", index }); }
+        }
+      };
+      
+      actions.appendChild(editBtn);
+      actions.appendChild(rmBtn);
+      hdr.appendChild(tag);
+      hdr.appendChild(actions);
+      bubble.appendChild(hdr);
+      
+      if (item.text) {
+        const body = document.createElement("div");
+        body.className = "queued-text";
+        body.textContent = item.text;
+        body.title = item.text;
+        bubble.appendChild(body);
+      }
+      
+      if (item.chips && item.chips.length) {
+        const chipsRow = document.createElement("div");
+        chipsRow.className = "msg-chips";
+        for (const chip of item.chips) chipsRow.appendChild(makeMsgChipTag(chip.relPath, chip));
+        bubble.appendChild(chipsRow);
+      }
+      
+      card.appendChild(bubble);
+      wrap.appendChild(card);
+    });
+    
+    appendTranscriptChild(wrap);
     scrollToBottom();
   }
 

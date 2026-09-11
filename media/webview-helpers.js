@@ -50,7 +50,7 @@
     "recheckConnection", "refreshProviders", "retryProviderSession", "listSessions", "listRepoSessions", "selectRepo", "toggleRepoPin", "setRepoArchived", "setRepoColor", "toggleSessionPin", "resumeSession", "renameSession", "deleteSession",
       "clearAllSessions", "pickFile", "mentionQuery", "addMentionFile", "listProjectDir", "readProjectFile", "writeProjectFile", "gitStatus", "gitFileDiff", "gitRun", "pasteImage", "uploadFile", "voiceStart", "voiceStop",
       "remoteVoiceStart", "remoteVoiceChunk", "remoteVoiceStop",
-    "queueSend", "dequeueSend", "clearQueuedSends", "steerSend", "turnFeedback", "forkSession", "setSteerByDefault", "setPromptNav", "setExpandDiffCard",
+    "queueSend", "dequeueSend", "removeQueuedSend", "reorderQueuedSends", "clearQueuedSends", "steerSend", "turnFeedback", "forkSession", "setSteerByDefault", "setPromptNav", "setExpandDiffCard",
     "setSoundNotifications", "setProcessingSound", "setReadRepliesAloud", "setSummarizeRepliesAloud", "setVoiceSendPhrase", "setVoiceKeyterms", "setTelemetryEnabled", "setThumbsFeedback", "summarizeSpeech", "requestImageFull", "requestImageOriginal", "composerFocus",
     "newWorktreeSession", "applyWorktree", "removeWorktree", "rewindSession", "editLastMessage", "uiConfirmAnswer", "workflowControl", "refreshContextDetails",
     "remoteSignIn", "remoteSignOut", "unlinkRemoteDevice", "openRemotePortal",

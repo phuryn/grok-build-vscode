@@ -1392,6 +1392,8 @@ export type WebviewMsg =
   // clients use `clearQueuedSends` for that block; a live host therefore treats
   // this message as the pre-split meaning.
   | { type: "dequeueSend"; index: number }
+  | { type: "removeQueuedSend"; index: number }
+  | { type: "reorderQueuedSends"; fromIndex: number; toIndex: number }
   // `restore` is additive: Stop/Edit set true so queued chips return to the
   // composer. Absent/false discards them (Remove). Older hosts ignore the field
   // and only empty the queue.
@@ -1402,7 +1404,7 @@ export type WebviewMsg =
   // the whole item without losing it. `chips` is additive (same as queueSend).
   // `fromQueue` marks the pending-block button so the host snapshots
   // `queuedSends` before any await (a following `clearQueuedSends` can race).
-  | { type: "steerSend"; text: string; chips?: FileChip[]; fromQueue?: boolean }
+  | { type: "steerSend"; text: string; chips?: FileChip[]; fromQueue?: boolean; index?: number }
   /**
    * Rate the agent turn that just finished in this process. `rating` 0 clears.
    * No bubble index: the host does not reconstruct CLI `turn_number`.
@@ -1497,7 +1499,7 @@ const WEBVIEW_MESSAGE_TYPE_MAP: Record<WebviewMsg["type"], true> = {
   gitStatus: true, gitFileDiff: true, gitRun: true,
   pasteImage: true, uploadFile: true, voiceStart: true,
   voiceStop: true, remoteVoiceStart: true, remoteVoiceChunk: true,
-  remoteVoiceStop: true, queueSend: true, dequeueSend: true, clearQueuedSends: true,
+  remoteVoiceStop: true, queueSend: true, dequeueSend: true, removeQueuedSend: true, reorderQueuedSends: true, clearQueuedSends: true,
   steerSend: true, turnFeedback: true, forkSession: true,
   newWorktreeSession: true, applyWorktree: true, removeWorktree: true,
   rewindSession: true, editLastMessage: true, uiConfirmAnswer: true, workflowControl: true,
