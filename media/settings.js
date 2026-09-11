@@ -1094,10 +1094,10 @@
     {
       id: "promptNav",
       category: "advanced",
-      title: "Experimental: Previous prompt button",
+      title: "Previous prompt button",
       description: "Show a button above the message box that jumps back to your previous prompt and highlights it. This device only.",
       kind: "toggle",
-      defaultValue: false,
+      defaultValue: true,
       get: (s) => !!(s && s.promptNav),
       // Client-local on a remote, host-backed on a desk. Not a nicety: VS
       // Code opens Settings as its own webview, so a localOnly row there
@@ -1608,7 +1608,7 @@
       telemetryEnabled: true,
       thumbsFeedback: false,
       expandDiffCard: false,
-      promptNav: false,
+      promptNav: true,
       providers: [],
       // Host-owned, never latched locally: an older host that ignores
       // refreshProviders leaves this false and the button stays idle rather

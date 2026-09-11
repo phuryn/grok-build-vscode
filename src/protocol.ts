@@ -895,7 +895,7 @@ export type HostMsg =
   | { type: "expandCommandOutputs"; value: boolean }
   // grok.steerByDefault — send-while-busy skips the queue and steers (#52).
   | { type: "steerByDefault"; value: boolean }
-  // grok.promptNav — the experimental Previous-prompt button (#150). Desk
+  // grok.promptNav — the Previous-prompt button (#150). Desk
   // only: a remote keeps its own per-device preference, so this frame is
   // `host-local` outbound and never crosses the relay.
   | { type: "promptNav"; value: boolean }

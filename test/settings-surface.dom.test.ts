@@ -2572,7 +2572,7 @@ describe("the connectors header speaks to the surface it is standing on", () => 
   });
 });
 
-describe("the experimental Previous-prompt row (#150)", () => {
+describe("the Previous-prompt row (#150)", () => {
   it("carries a host message off-remote, because the VS Code settings tab has no apply", () => {
     const api = loadSettings() as any;
     const row = api.ROWS.find((r: { id: string }) => r.id === "promptNav");
@@ -2590,6 +2590,35 @@ describe("the experimental Previous-prompt row (#150)", () => {
     // to make this consistent, and the wrong one: the IDEs are where it is
     // actually tested.
     expect(row.visible).toBeUndefined();
+  });
+
+  it("is on by default in all four places a default lives, and no longer says Experimental", () => {
+    const api = loadSettings() as any;
+    const row = api.ROWS.find((r: { id: string }) => r.id === "promptNav");
+    expect(row.defaultValue).toBe(true);
+    expect(api.defaultSnapshot().promptNav).toBe(true);
+    // Four separate defaults, and flipping only the visible ones is how a
+    // feature ends up on in VS Code and off in the desktop app. The renderer's
+    // own remote fallback lives in prompt-navigation.dom.test.ts, which is
+    // where the storage semantics can actually be exercised.
+    const pkg = JSON.parse(readFileSync(
+      fileURLToPath(new URL("../package.json", import.meta.url)), "utf8",
+    ));
+    const contributed = pkg.contributes.configuration.properties["grok.promptNav"];
+    expect(contributed.default).toBe(true);
+    const desktopDefaults = readFileSync(
+      fileURLToPath(new URL("../src/desktop/config-store.ts", import.meta.url)), "utf8",
+    );
+    expect(desktopDefaults).toMatch(/"grok\.promptNav":\s*true,/);
+    const sidebarSrc = readFileSync(
+      fileURLToPath(new URL("../src/sidebar.ts", import.meta.url)), "utf8",
+    );
+    expect(sidebarSrc).not.toMatch(/promptNav",\s*false\)/);
+
+    // The word is gone from both places a person reads it.
+    expect(row.title).toBe("Previous prompt button");
+    expect(contributed.markdownDescription).not.toMatch(/Experimental/i);
+    expect(contributed.markdownDescription).not.toMatch(/Off by default/i);
   });
 });
 

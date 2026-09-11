@@ -2699,7 +2699,7 @@ export class GrokSidebar {
       if (e.affectsConfiguration("grok.promptNav")) {
         this.post({
           type: "promptNav",
-          value: this.host.getConfiguration("grok").get<boolean>("promptNav", false),
+          value: this.host.getConfiguration("grok").get<boolean>("promptNav", true),
         });
       }
       if (e.affectsConfiguration("grok.soundNotifications")) {
@@ -16320,7 +16320,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       expandCommandOutputs: cfg.get("expandCommandOutputs", false),
       steerByDefault: cfg.get("steerByDefault", false),
       expandDiffCard: cfg.get("expandDiffCard", false),
-      promptNav: cfg.get("promptNav", false),
+      promptNav: cfg.get("promptNav", true),
       soundNotifications: cfg.get("soundNotifications", false),
       processingSound: cfg.get("processingSound", false),
       readRepliesAloud: cfg.get("readRepliesAloud", false),
@@ -20219,7 +20219,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         expandCommandOutputs: cfg.get("expandCommandOutputs", false),
         steerByDefault: cfg.get("steerByDefault", false),
         expandDiffCard: cfg.get("expandDiffCard", false),
-        promptNav: cfg.get("promptNav", false),
+        promptNav: cfg.get("promptNav", true),
         fontScale: this.chatFontScale(),
         soundNotifications: cfg.get("soundNotifications", false),
         processingSound: cfg.get("processingSound", false),

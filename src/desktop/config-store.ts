@@ -38,7 +38,7 @@ export const CONFIG_DEFAULTS: Readonly<Record<string, unknown>> = {
   "grok.expandCommandOutputs": false,
   "grok.expandDiffCard": false,
   "grok.steerByDefault": false,
-  "grok.promptNav": false,
+  "grok.promptNav": true,
   "grok.soundNotifications": false,
   "grok.processingSound": false,
   "grok.readRepliesAloud": false,

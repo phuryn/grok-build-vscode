@@ -49,10 +49,28 @@ function transcript(opts: { remote?: boolean; count?: number; height?: number; o
 }
 
 describe("prompt navigation (#150)", () => {
-  it("is off by default, and off means the plain scroll-to-bottom button and nothing else", () => {
-    // Everyone keeps exactly the control they had before #150 until they opt
-    // in - the shape of the feature is still an open question with the person
-    // who asked for it, so it ships hidden rather than ships wrong.
+  it("is on for a remote that has never had an opinion, and stays off for one that said no", () => {
+    // The upgrade question, and the reason `storedBool` falls back only on a
+    // MISSING key: flipping the default must reach a device that never chose,
+    // and must not reach one that chose. Absence stays absence -- nothing
+    // writes the new default into anybody's storage on the way past.
+    const fresh = transcript({ remote: true, on: false });
+    fresh.scroll(1700);
+    expect(fresh.shown("prompt-prev-btn")).toBe(true);
+    expect(fresh.window.localStorage.getItem("grok.remote.promptNav")).toBeNull();
+
+    const refused = bootWebview({
+      remote: true,
+      beforeScripts: (w) => { (w as any).localStorage.setItem("grok.remote.promptNav", "false"); },
+    });
+    opened.push(refused);
+    expect(refused.doc.getElementById("prompt-prev-btn")!.classList.contains("visible")).toBe(false);
+  });
+
+  it("turned off means the plain scroll-to-bottom button and nothing else", () => {
+    // The preference is ON by default now, so this is the opt-OUT state: a
+    // person who went and turned it off gets exactly the control they had
+    // before #150, with nothing of the feature left behind.
     const h = transcript({ on: false });
     h.scroll(1700);
     expect(h.shown("prompt-prev-btn")).toBe(false);

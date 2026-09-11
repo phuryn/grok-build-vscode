@@ -390,8 +390,8 @@
         },
         "grok.promptNav": {
           "type": "boolean",
-          "default": false,
-          "markdownDescription": "**Experimental.** Show a **Previous prompt** button above the message box: it jumps back to the prompt before the one you are reading and highlights it, so you can find what you asked without scrolling. Off by default while the shape of the control is still being settled with the people who asked for it. On a phone or browser this is a per-device preference and this setting does not apply."
+          "default": true,
+          "markdownDescription": "Show a **Previous prompt** button above the message box: it jumps back to the prompt before the one you are reading and highlights it, so you can find what you asked without scrolling. On a phone or browser this is a per-device preference and this setting does not apply."
         },
         "grok.soundNotifications": {
           "type": "boolean",

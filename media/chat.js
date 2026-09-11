@@ -840,7 +840,10 @@
     // client's own preference; on a desk it comes from the host, because VS
     // Code renders Settings in a SEPARATE webview from the chat and a
     // client-local toggle there can reach nothing at all.
-    promptNav: IS_REMOTE ? storedBool(PROMPT_NAV_KEY, false) : false,
+    // On by default now. `storedBool` falls back only when the key is ABSENT,
+    // so someone who went and turned this off keeps it off; only a device that
+    // never had an opinion picks up the new default.
+    promptNav: IS_REMOTE ? storedBool(PROMPT_NAV_KEY, true) : false,
     // Independent of tool expansion; a remote owns its per-device default.
     expandDiffCard: IS_REMOTE ? storedBool(EXPAND_DIFF_CARD_KEY, false) : false,
     // grok.steerByDefault (persisted, global): when true a message sent while
