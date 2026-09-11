@@ -10,7 +10,7 @@
 
 - **Edit the config file each CLI actually reads.** Gear → **Provider config files** opens `~/.grok/config.toml`, `~/.codex/config.toml` and `~/.claude/settings.json` in the same editor the file panel already uses — from a phone as readily as at the desk. Those three files are the whole list; the credentials that sit beside them are not reachable from here. A CLI reads its config at startup, so the panel offers to restart the conversation you have open once you save, and says plainly that other running sessions keep the settings they started with.
 
-- **Changes wherever there is a repository.** The Changes view and the Changed-files card were gated on Coding purpose. They now appear whenever the conversation has a repository, because cloning one and reading what changed in it is not a coding-only thing to do.
+- **Changes wherever there is a repository.** The Changes view was gated on Coding purpose. It now appears whenever the conversation has a repository, because cloning one and reading what changed in it is not a coding-only thing to do. The Changed-files card at the end of a turn stays Coding-only — it belongs to the turn that made the edits, not to the repository.
 
 ### Changed
 
