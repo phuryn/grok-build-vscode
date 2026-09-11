@@ -60,5 +60,27 @@ describe("VS Code colour tokens are used in the role they were defined for (#139
         .map((d) => d.block.slice(0, d.block.indexOf("{")).trim());
       expect(offenders).toEqual([]);
     });
+
+    it(`${name}: an editor SELECTION colour is never a resting surface`, () => {
+      // `editor.selectionBackground` and its inactive twin mark text the
+      // person highlighted. A theme is therefore entitled to make them solid
+      // and vivid -- that is the job -- and the default dark theme does:
+      // #3A3D41, opaque. Borrowing one to tint a card gives that card a
+      // weight and a hue nothing around it has, and the mistake is invisible
+      // on the relay, which defines no such variable and quietly falls
+      // through to the neutral fallback. So the same card looked right on a
+      // phone and wrong in the IDE, which is how it survived.
+      //
+      // `list.activeSelectionBackground` is deliberately NOT covered: a
+      // selected list row is a selection, and painting it is the role.
+      const offenders = declarations(css)
+        .filter((d) => /var\(\s*--vscode-editor-[a-zA-Z]*[Ss]electionBackground/.test(d.value))
+        // ::selection IS the role. `.gfp-editor::selection` paints the
+        // text the person highlighted with the colour the editor would
+        // have used, which is the whole point of the token.
+        .filter((d) => !/::selection/.test(d.block))
+        .map((d) => `${d.block.slice(0, d.block.indexOf("{")).trim()} { ${d.prop} }`);
+      expect(offenders).toEqual([]);
+    });
   }
 });
