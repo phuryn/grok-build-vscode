@@ -561,6 +561,36 @@
       message: () => ({ type: "openSettings", section: "grok.chatFontScale" }),
     },
     {
+      id: "snapshotShortcut",
+      category: "general",
+      title: "Desktop snapshot shortcut (macOS)",
+      description: "Global shortcut to capture active monitor behind Grok Build and attach image to composer prompt. Default is Disabled.",
+      kind: "select",
+      visible: (_s, _env) => true,
+      options: [
+        { value: "Disabled", label: "Disabled (Default - No permission required)" },
+        { value: "DualCommand", label: "⌘ Left + ⌘ Right (Simultaneous - macOS)" },
+        { value: "CommandOrControl+Shift+S", label: "⌘ + Shift + S" },
+        { value: "CommandOrControl+Alt+S", label: "⌘ + Option + S" },
+        { value: "CommandOrControl+Shift+4", label: "⌘ + Shift + 4" },
+      ],
+      defaultValue: "Disabled",
+      get: (s) => (s && s.snapshotShortcut) || "Disabled",
+      message: (value) => ({ type: "setSnapshotShortcut", value }),
+    },
+    {
+      id: "macPermissions",
+      category: "general",
+      title: "macOS snapshot permissions",
+      description: "Desktop snapshot requires Screen Recording and Input Monitoring permissions to capture screens and listen to global shortcuts.",
+      kind: "mac-permissions",
+      actionLabel: "Open macOS Privacy & Security",
+      keepOpen: true,
+      visible: (_s, _env) => true,
+      message: () => ({ type: "requestMacPermissions" }),
+      checkPermissionsMessage: () => ({ type: "checkMacPermissions" }),
+    },
+    {
       id: "showThinking",
       category: "general",
       title: "Show thinking traces",
@@ -1580,6 +1610,7 @@
       isDesktop: false,
       clientOwnsFontScale: false,
       ttsAvailable: true,
+      platform: (typeof navigator !== "undefined" && navigator.platform && navigator.platform.toLowerCase().indexOf("mac") !== -1) ? "darwin" : (typeof process !== "undefined" && process.platform ? process.platform : "darwin"),
       steerSupported: true,
       providersKnown: false,
       remoteLinked: null,
@@ -1595,6 +1626,7 @@
       showThinking: false,
       expandCommandOutputs: false,
       steerByDefault: false,
+      macPermissions: { screenRecording: false, inputMonitoring: false },
       fontScale: 1,
       soundNotifications: false,
       processingSound: false,
@@ -3049,6 +3081,56 @@
       span.className = "settings-value";
       span.textContent = String(value ?? "—");
       control.appendChild(span);
+    } else if (row.kind === "mac-permissions") {
+      const perms = snapshot.macPermissions || { screenRecording: false, inputMonitoring: false };
+      const statusWrap = document.createElement("div");
+      statusWrap.style.display = "flex";
+      statusWrap.style.flexDirection = "column";
+      statusWrap.style.gap = "6px";
+      statusWrap.style.alignItems = "flex-end";
+
+      const badges = [
+        { label: "Screen & Audio Recording", ok: perms.screenRecording },
+        { label: "Device Control / Input Monitoring", ok: perms.inputMonitoring },
+      ];
+
+      const badgeContainer = document.createElement("div");
+      badgeContainer.style.display = "flex";
+      badgeContainer.style.flexWrap = "wrap";
+      badgeContainer.style.gap = "6px";
+      badgeContainer.style.justifyContent = "flex-end";
+
+      for (const b of badges) {
+        const badge = document.createElement("span");
+        badge.style.fontSize = "11px";
+        badge.style.padding = "2px 6px";
+        badge.style.borderRadius = "4px";
+        badge.style.fontWeight = "500";
+        badge.style.display = "inline-flex";
+        badge.style.alignItems = "center";
+        badge.style.gap = "4px";
+        if (b.ok) {
+          badge.style.background = "rgba(40, 167, 69, 0.15)";
+          badge.style.color = "#4ade80"; // Bright green for dark mode
+          badge.style.border = "1px solid rgba(74, 222, 128, 0.3)";
+          badge.textContent = `✓ ${b.label}: Granted`;
+        } else {
+          badge.style.background = "rgba(220, 53, 69, 0.15)";
+          badge.style.color = "#f87171"; // Bright red for dark mode
+          badge.style.border = "1px solid rgba(248, 113, 113, 0.3)";
+          badge.textContent = `× ${b.label}: Missing`;
+        }
+        badgeContainer.appendChild(badge);
+      }
+
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "settings-action";
+      btn.textContent = rowActionLabel(row, snapshot, env);
+      
+      statusWrap.appendChild(badgeContainer);
+      statusWrap.appendChild(btn);
+      control.appendChild(statusWrap);
     } else if (row.kind === "action") {
       const isGithub = row.id === "githubConnection" || row.id === "githubConnectionRemote";
       const githubStepped = isGithub && (
@@ -3111,6 +3193,8 @@
     }
     return el;
   }
+
+  let macPermissionsPollInterval;
 
   function mount(container, opts) {
     if (!container) throw new Error("GrokSettings.mount requires a container");
@@ -3728,12 +3812,15 @@
             };
             input.onchange = () => addTerm(input.value);
           }
-        } else if (row.kind === "action") {
+        } else if (row.kind === "action" || row.kind === "mac-permissions") {
           const btn = el.querySelector(".settings-action");
           if (!btn) return;
           if (btn.classList.contains("settings-github-token-submit")
             || btn.classList.contains("settings-github-token-cancel")) {
             return;
+          }
+          if (row.kind === "mac-permissions" && typeof row.checkPermissionsMessage === "function") {
+             if (opts.post) opts.post(row.checkPermissionsMessage());
           }
           btn.onclick = (e) => {
             e.stopPropagation();
@@ -3751,6 +3838,12 @@
               runAction(row);
               paint();
               return;
+            }
+            if (row.id === "macPermissions" && typeof row.checkPermissionsMessage === "function") {
+              if (macPermissionsPollInterval) clearInterval(macPermissionsPollInterval);
+              macPermissionsPollInterval = setInterval(() => {
+                 if (opts.post) opts.post(row.checkPermissionsMessage());
+              }, 3000);
             }
             runAction(row);
           };
@@ -4160,9 +4253,21 @@
     }
     paint();
 
+    if (macPermissionsPollInterval) clearInterval(macPermissionsPollInterval);
+    macPermissionsPollInterval = setInterval(() => {
+      const pmRow = ROWS.find((r) => r.id === "macPermissions");
+      if (pmRow && typeof pmRow.checkPermissionsMessage === "function" && typeof opts.post === "function") {
+        opts.post(pmRow.checkPermissionsMessage());
+      }
+    }, 2000);
+
     return {
+      unmount() {
+        if (macPermissionsPollInterval) clearInterval(macPermissionsPollInterval);
+        container.innerHTML = "";
+      },
       update(nextSnapshot, nextEnv) {
-        if (nextSnapshot) snapshot = defaultSnapshot({ ...snapshot, ...nextSnapshot });
+        if (nextSnapshot) snapshot = { ...snapshot, ...nextSnapshot };
         if (nextEnv) Object.assign(env, nextEnv);
         if (githubConnectedNow(snapshot)) githubTokenForm = { open: false, value: "" };
         if (nextSnapshot && Object.prototype.hasOwnProperty.call(nextSnapshot, "githubState")) {

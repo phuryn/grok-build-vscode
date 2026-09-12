@@ -21,6 +21,9 @@ import {
   protocol,
   safeStorage,
   shell,
+  systemPreferences,
+  desktopCapturer,
+  globalShortcut,
   type Menu as ElectronMenu,
   type ProtocolRequest,
 } from "electron";
@@ -678,6 +681,31 @@ async function createApp(): Promise<void> {
   // Packaged builds keep webPreferences.devTools false so this is a no-op path.
   if (allowDevTools) {
     mainWindow.webContents.on("before-input-event", (event, input) => {
+      // Intercept zooming shortcuts: Cmd/Ctrl + Plus, Cmd/Ctrl + Minus.
+      // We prevent the default so Chromium's native zoom (which overrides our CSS zoom) doesn't fire.
+      if (input.control || input.meta) {
+        // Prevent scrolling combined with Ctrl/Cmd (which defaults to native zoom in browsers)
+        if (input.type === "mouseWheel") {
+          event.preventDefault();
+          return;
+        }
+        
+        const key = input.key.toLowerCase();
+        if (key === "+" || key === "=") {
+          event.preventDefault();
+          if (input.type === "keyDown") applyDesktopCssZoom("in");
+          return;
+        } else if (key === "-") {
+          event.preventDefault();
+          if (input.type === "keyDown") applyDesktopCssZoom("out");
+          return;
+        } else if (key === "0") {
+          event.preventDefault();
+          if (input.type === "keyDown") applyDesktopCssZoom("reset");
+          return;
+        }
+      }
+      
       if (!isDesktopDevToolsShortcut(input)) return;
       event.preventDefault();
       mainWindow?.webContents.toggleDevTools();
@@ -694,6 +722,70 @@ async function createApp(): Promise<void> {
       log("refused webview-to-host from non-main sender/frame");
       return;
     }
+    
+    // Intercept mac permissions directly in main process before dispatching to extension host
+    if (message && typeof message === "object" && (message as any).type === "requestMacPermissions" && process.platform === "darwin") {
+      log("Handling requestMacPermissions directly in main process");
+      shell.openExternal("x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture");
+      setTimeout(() => {
+        shell.openExternal("x-apple.systempreferences:com.apple.preference.security?Privacy_InputMonitoring");
+      }, 600);
+      return; // Handled
+    }
+
+    if (message && typeof message === "object" && (message as any).type === "checkMacPermissions" && process.platform === "darwin") {
+      try {
+        log("[checkMacPermissions] Received check request from webview");
+        const screenStatus = systemPreferences.getMediaAccessStatus ? (systemPreferences.getMediaAccessStatus("screen") === "granted") : false;
+        const isAccessibilityTrusted = systemPreferences.isTrustedAccessibilityClient ? systemPreferences.isTrustedAccessibilityClient(false) : false;
+        log(`[checkMacPermissions] Electron native checks: screenStatus=${screenStatus}, isAccessibilityTrusted=${isAccessibilityTrusted}`);
+
+        const binCandidates = [
+          path.join(extensionRoot.replace("app.asar", "app.asar.unpacked"), "resources/macos-dual-cmd-listener"),
+          path.join(process.resourcesPath, "app.asar.unpacked/resources/macos-dual-cmd-listener"),
+          path.join(process.resourcesPath, "resources/macos-dual-cmd-listener"),
+          path.join(__dirname, "../../resources/macos-dual-cmd-listener"),
+          path.join(extensionRoot, "resources/macos-dual-cmd-listener"),
+        ];
+        const binPath = binCandidates.find((p) => !p.includes("app.asar/") && fs.existsSync(p));
+        log(`[checkMacPermissions] resolved binPath: ${binPath || "none"}`);
+        if (binPath) {
+          const cp = require("child_process");
+          cp.execFile(binPath, ["--check-permissions"], (err: any, stdout: string, stderr: string) => {
+            log(`[checkMacPermissions] execFile output err=${err}, stdout=${stdout?.trim()}, stderr=${stderr?.trim()}`);
+            let parsed = { screenRecording: screenStatus, inputMonitoring: isAccessibilityTrusted };
+            if (!err && stdout) {
+              try {
+                const swiftResult = JSON.parse(stdout.trim());
+                parsed.screenRecording = screenStatus || !!swiftResult.screenRecording;
+                parsed.inputMonitoring = !!swiftResult.inputMonitoring || isAccessibilityTrusted;
+              } catch (e) {
+                log(`[checkMacPermissions] JSON parse error: ${(e as Error).message}`);
+              }
+            }
+
+            // Fallback for Spotlight launch: If the app is actively running on macOS, assume permissions granted if swift binary executed cleanly without error.
+            if (!err && stdout && stdout.includes("true")) {
+              parsed.screenRecording = true;
+              parsed.inputMonitoring = true;
+            }
+
+            log(`[checkMacPermissions] final status sent to webview: ${JSON.stringify(parsed)}`);
+            mainWindow?.webContents.send("host-to-webview", { type: "macPermissionsReport", ...parsed });
+          });
+        } else {
+          mainWindow?.webContents.send("host-to-webview", {
+            type: "macPermissionsReport",
+            screenRecording: screenStatus,
+            inputMonitoring: isAccessibilityTrusted
+          });
+        }
+      } catch (err) {
+        log(`checkMacPermissions error: ${(err as Error).message}`);
+      }
+      return;
+    }
+    
     webview?.dispatchMessage(message);
   });
 
@@ -729,6 +821,189 @@ async function createApp(): Promise<void> {
     show() {
       mainWindow?.show();
     },
+  });
+
+  // Screen capture via global shortcut (macOS exclusively supported in UI, but graceful on Windows)
+  let registeredShortcut: string | null = null;
+  let dualCmdProcess: any = null;
+  
+  const triggerSnapshot = async () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+
+    if (process.platform === "darwin") {
+      const status = systemPreferences.getMediaAccessStatus("screen");
+      const isTrusted = systemPreferences.isTrustedAccessibilityClient(false);
+      mainWindow.webContents.send("host-to-webview", { type: "macPermissionStatus", screen: status === "granted", accessibility: isTrusted });
+
+      if (status !== "granted") {
+        mainWindow.webContents.send("host-to-webview", { type: "snapshotPermissionRequested", platform: process.platform });
+        return;
+      }
+    }
+
+    const wasFocused = mainWindow.isFocused();
+    if (wasFocused) {
+      mainWindow.setOpacity(0);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+
+    try {
+      const { screen } = require("electron");
+      const cursorPoint = screen.getCursorScreenPoint();
+      const activeDisplay = screen.getDisplayNearestPoint(cursorPoint);
+
+      const sources = await desktopCapturer.getSources({
+        types: ["screen"],
+        thumbnailSize: { width: activeDisplay.bounds.width, height: activeDisplay.bounds.height },
+      });
+
+      const activeSource = sources.find((s) => s.display_id === activeDisplay.id.toString()) || sources[0];
+
+      if (!activeSource) {
+        log("No screen source found for snapshot");
+        return;
+      }
+
+      const imgBuffer = activeSource.thumbnail.toPNG();
+      const tempPath = path.join(os.tmpdir(), `grok_snapshot_${Date.now()}.png`);
+      fs.writeFileSync(tempPath, imgBuffer);
+      
+      // Register the file for secure dropFile
+      let handle: string | null = null;
+      try {
+        if (webview) {
+          handle = webview.fileSelection.register(tempPath);
+        }
+      } catch (err) {
+        log(`Could not register snapshot handle: ${(err as Error).message}`);
+      }
+
+      // Create a native full-screen transparent flash window across the entire active monitor
+      try {
+        const flashWin = new BrowserWindow({
+          x: activeDisplay.bounds.x,
+          y: activeDisplay.bounds.y,
+          width: activeDisplay.bounds.width,
+          height: activeDisplay.bounds.height,
+          transparent: true,
+          frame: false,
+          alwaysOnTop: true,
+          skipTaskbar: true,
+          focusable: false,
+          hasShadow: false,
+          enableLargerThanScreen: true,
+          webPreferences: {
+            nodeIntegration: false,
+            contextIsolation: true,
+          },
+        });
+        flashWin.setIgnoreMouseEvents(true);
+        const flashHtml = `<!DOCTYPE html><html><body style="margin:0;overflow:hidden;background:rgba(255,255,255,0.85);transition:opacity 0.25s ease-out;opacity:1;" onload="setTimeout(()=>{document.body.style.opacity='0';},40);"></body></html>`;
+        void flashWin.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(flashHtml)}`);
+        setTimeout(() => {
+          if (!flashWin.isDestroyed()) flashWin.destroy();
+        }, 320);
+      } catch (e) {
+        log(`Failed to show native desktop flash overlay: ${(e as Error).message}`);
+      }
+
+      if (wasFocused && mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.setOpacity(1);
+      }
+
+      // Trigger shutter sound and composer attachment animation
+      mainWindow.webContents.send("host-to-webview", { type: "snapshotTriggered" });
+      mainWindow.webContents.send("host-to-webview", { type: "snapshotCompleted", imagePath: tempPath, handle });
+    } catch (e) {
+      log(`snapshot failed: ${(e as Error).message}`);
+    } finally {
+      if (wasFocused && mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.setOpacity(1);
+      }
+    }
+  };
+
+  const registerSnapshotShortcut = (shortcut: string) => {
+    if (registeredShortcut === shortcut && (shortcut === "DualCommand" ? !!dualCmdProcess : true)) {
+      return;
+    }
+
+    if (registeredShortcut && registeredShortcut !== "DualCommand" && registeredShortcut !== "Disabled") {
+      try {
+        globalShortcut.unregister(registeredShortcut);
+      } catch {
+        /* best-effort */
+      }
+    }
+
+    if (dualCmdProcess) {
+      try {
+        dualCmdProcess.kill("SIGTERM");
+      } catch {}
+      dualCmdProcess = null;
+    }
+
+    registeredShortcut = shortcut;
+    
+    if (shortcut === "Disabled" || !shortcut) {
+      return;
+    }
+    
+    if (shortcut === "DualCommand" && process.platform === "darwin") {
+      try {
+        const binCandidates = [
+          path.join(extensionRoot.replace("app.asar", "app.asar.unpacked"), "resources/macos-dual-cmd-listener"),
+          path.join(process.resourcesPath, "app.asar.unpacked/resources/macos-dual-cmd-listener"),
+          path.join(process.resourcesPath, "resources/macos-dual-cmd-listener"),
+          path.join(process.resourcesPath, "macos-dual-cmd-listener"),
+          path.join(__dirname, "../../resources/macos-dual-cmd-listener"),
+          path.join(extensionRoot, "resources/macos-dual-cmd-listener"),
+        ];
+        const binPath = binCandidates.find((p) => !p.includes("app.asar/") && fs.existsSync(p));
+        if (binPath) {
+          const cp = require("child_process");
+          dualCmdProcess = cp.spawn(binPath, [], { stdio: ["ignore", "pipe", "pipe"] });
+          dualCmdProcess.stdout?.on("data", (chunk: Buffer) => {
+            const text = chunk.toString();
+            if (text.includes("DUAL_CMD_TRIGGER")) {
+              void triggerSnapshot();
+            }
+          });
+          dualCmdProcess.on("exit", (code: number | null) => {
+            log(`macos-dual-cmd-listener exited with code ${code}`);
+            dualCmdProcess = null;
+          });
+          log(`Registered Dual Command (Left Cmd + Right Cmd) native listener at ${binPath}`);
+        } else {
+          log("Could not find macos-dual-cmd-listener binary");
+        }
+      } catch (e) {
+        log(`Failed to spawn macos-dual-cmd-listener: ${(e as Error).message}`);
+      }
+    } else {
+      try {
+        const actualShortcut = (shortcut === "DualCommand" && process.platform !== "darwin") 
+            ? "CommandOrControl+Shift+S" 
+            : shortcut;
+            
+        const ok = globalShortcut.register(actualShortcut, () => {
+          void triggerSnapshot();
+        });
+        log(`Registered snapshot shortcut "${actualShortcut}": ${ok}`);
+      } catch (e) {
+        log(`failed to register snapshot global shortcut: ${(e as Error).message}`);
+      }
+    }
+  };
+
+  const initialShortcut = String(config.getValue("grok.snapshotShortcut") || "Disabled");
+  registerSnapshotShortcut(initialShortcut);
+
+  config.onDidChange((e) => {
+    if (e.affectsConfiguration("grok.snapshotShortcut")) {
+      const nextShortcut = String(config.getValue("grok.snapshotShortcut") || "Disabled");
+      registerSnapshotShortcut(nextShortcut);
+    }
   });
 
   // In-app updater on packaged win32/darwin; GitHub notice is the fallback

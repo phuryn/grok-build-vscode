@@ -5,6 +5,84 @@
   let sendWait = null;
   const queuedWaits = new Set();
 
+  // Create flash overlay container at initialization
+  window.addEventListener("DOMContentLoaded", () => {
+    if (!document.getElementById("snapshot-flash")) {
+      const flashOverlay = document.createElement("div");
+      flashOverlay.id = "snapshot-flash";
+      document.body.appendChild(flashOverlay);
+    }
+  });
+
+  // Synthesized shutter sound ("cekrek") using Web Audio API
+  function playShutterSound() {
+    try {
+      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const oscillator = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+
+      oscillator.type = "sine";
+      // Frequency drop simulates mechanical shutter click
+      oscillator.frequency.setValueAtTime(1200, audioCtx.currentTime);
+      oscillator.frequency.exponentialRampToValueAtTime(120, audioCtx.currentTime + 0.08);
+
+      gainNode.gain.setValueAtTime(0.4, audioCtx.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.08);
+
+      oscillator.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+
+      oscillator.start();
+      oscillator.stop(audioCtx.currentTime + 0.08);
+    } catch (e) {
+      console.warn("Audio playback not allowed or failed:", e);
+    }
+  }
+
+  // Smooth animation for captured snapshot flying into the composer
+  function animateSnapshotChip(imagePath, handle) {
+    const flyEl = document.createElement("img");
+    flyEl.src = "file://" + imagePath;
+    flyEl.className = "snapshot-flying-chip";
+
+    // Initial position: center of screen, enlarged
+    flyEl.style.left = "50vw";
+    flyEl.style.top = "50vh";
+    flyEl.style.transform = "translate(-50%, -50%) scale(0.7)";
+    flyEl.style.width = "400px";
+    flyEl.style.height = "auto";
+    flyEl.style.opacity = "1";
+
+    document.body.appendChild(flyEl);
+
+    // Force reflow
+    void flyEl.offsetWidth;
+
+    // Find destination target (composer / file chip container)
+    const composer = document.querySelector(".composer") || document.body;
+    const rect = composer.getBoundingClientRect();
+
+    // Animate scale & fly into input box
+    flyEl.style.left = `${rect.left + 40}px`;
+    flyEl.style.top = `${rect.top + 30}px`;
+    flyEl.style.transform = "translate(0, 0) scale(0.12)";
+    flyEl.style.opacity = "0.2";
+
+    setTimeout(() => {
+      if (flyEl.parentNode) {
+        flyEl.parentNode.removeChild(flyEl);
+      }
+      
+      // Let the backend handle the file attachment to the active session
+      if (handle) {
+        vscode.postMessage({ type: "dropFile", handle, shift: false });
+      } else {
+        vscode.postMessage({ type: "dropFile", path: imagePath, shift: false });
+      }
+      
+    }, 520);
+  }
+
   function preferenceSpec(message) {
     const fields = {
       setAppPurpose: ["appPurpose", "this app to " + (message.value === "coding" ? "Coding" : "Knowledge work")],
@@ -3041,6 +3119,7 @@
       telemetryEnabled: state.telemetryEnabled,
       thumbsFeedback: !!state.thumbsFeedback,
       promptNav: !!state.promptNav,
+      snapshotShortcut: typeof state.snapshotShortcut === "string" ? state.snapshotShortcut : "Disabled",
       expandDiffCard: !!state.expandDiffCard,
       providers: state.providers || [],
       providersChecking: !!state.providersChecking,
@@ -3057,6 +3136,7 @@
       mcpConnectors: state.mcpConnectors,
       mcpRemoteConnect: state.mcpRemoteConnect === true,
       mcpConnectorAuthorization: state.mcpConnectorAuthorization,
+      macPermissions: state.macPermissions,
       routines: state.routines,
       routineProjects: state.routineProjects,
       routineModels: state.routineModels,
@@ -3094,6 +3174,9 @@
         storeRemotePref(EXPAND_DIFF_CARD_KEY, state.expandDiffCard);
         applyExpandDiffCard();
         return;
+      case "snapshotShortcut":
+        state.snapshotShortcut = value;
+        break;
       case "promptNav":
         // Remote only. A desk lets the message through to the host and gets
         // the value back as a `promptNav` frame, which is the one route the
@@ -10011,6 +10094,7 @@
     const el = document.createElement("div");
     el.className = `msg ${role}`;
     el._copyText = text || "";
+    el._chips = chips || [];
     // A steered (interjected) message rides inside the turn that was already
     // running — it is not its own prompt and has no rewind point, so it must be
     // excluded from the bubble→rewind-point mapping (see refreshUserRewindButtons).
@@ -12987,35 +13071,35 @@
       stepSize: CLIENT_FONT_SCALE_STEP,
       key: CLIENT_FONT_SCALE_KEY,
     };
-    window.addEventListener("keydown", (e) => {
-      if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
-      // Ignore when an editable field is composing IME, but allow zoom over inputs
-      // (desktop apps zoom the whole UI regardless of focus).
-      const key = e.key;
-      if (key === "=" || key === "+" || key === "Add") {
-        e.preventDefault();
-        setClientFontScale(stepClientFontScale(state.remoteFontScale, CLIENT_FONT_SCALE_STEP));
-      } else if (key === "-" || key === "Subtract") {
-        e.preventDefault();
-        setClientFontScale(stepClientFontScale(state.remoteFontScale, -CLIENT_FONT_SCALE_STEP));
-      } else if (key === "0" || key === "Digit0" || key === "Numpad0") {
-        // Ctrl/Cmd+0 resets to 100%.
-        if (key === "0" || e.code === "Digit0" || e.code === "Numpad0") {
+    window.addEventListener(
+      "keydown",
+      (e) => {
+        // Require Shift + (Cmd or Ctrl) to zoom in/out with + / -
+        if (!(e.ctrlKey || e.metaKey)) return;
+        const key = e.key;
+        if (e.shiftKey && (key === "+" || key === "=" || key === "Add" || e.code === "Equal")) {
+          e.preventDefault();
+          setClientFontScale(stepClientFontScale(state.remoteFontScale, CLIENT_FONT_SCALE_STEP));
+        } else if (e.shiftKey && (key === "-" || key === "_" || key === "Subtract" || e.code === "Minus")) {
+          e.preventDefault();
+          setClientFontScale(stepClientFontScale(state.remoteFontScale, -CLIENT_FONT_SCALE_STEP));
+        } else if (key === "0" || key === "Digit0" || key === "Numpad0") {
           e.preventDefault();
           setClientFontScale(1);
         }
-      }
-    });
+      },
+      true,
+    );
+
+    // Disable Cmd+Wheel / Ctrl+Wheel zoom completely
     window.addEventListener(
       "wheel",
       (e) => {
-        if (!(e.ctrlKey || e.metaKey)) return;
-        // Continuous scale; prevent Chromium page-zoom fighting us.
-        e.preventDefault();
-        const delta = e.deltaY === 0 ? 0 : e.deltaY > 0 ? -0.05 : 0.05;
-        if (delta) setClientFontScale(stepClientFontScale(state.remoteFontScale, delta));
+        if (e.ctrlKey || e.metaKey) {
+          e.preventDefault();
+        }
       },
-      { passive: false },
+      { passive: false, capture: true },
     );
   }
 
@@ -15804,126 +15888,171 @@
 
   function renderQueuedBlocks() {
     let wrap = state.queuedWrapEl;
-    // One visual block: the flush is still one combined prompt. Text is joined
-    // the way it will send; chips from every contribution are shown on it.
     const rejected = !!state.rejectedSubmissionText;
-    const text = rejected ? state.rejectedSubmissionText : queuedSendsText(state.sendQueue);
-    const chips = rejected ? [] : queuedSendsChips(state.sendQueue);
-    if (!text && !chips.length) {
+    const items = rejected
+      ? [{ text: state.rejectedSubmissionText, chips: [] }]
+      : (state.sendQueue || []);
+
+    if (!items.length) {
       if (wrap) wrap.remove();
       state.queuedWrapEl = null;
       return;
     }
+    
     if (!wrap || !wrap.isConnected) {
       wrap = document.createElement("div");
-      wrap.className = "queued-msgs";
+      wrap.className = "queued-msgs-list";
       state.queuedWrapEl = wrap;
     }
     wrap.innerHTML = "";
-    const msg = document.createElement("div");
-    msg.className = "msg user queued";
-    const bubble = document.createElement("div");
-    bubble.className = "msg-bubble";
-    const hdr = document.createElement("div");
-    hdr.className = "queued-hdr";
-    const tag = document.createElement("span");
-    tag.className = "queued-tag";
-    tag.innerHTML = `${ICON.clock}<span>${state.queuedSubmissionRejected || rejected ? "Not sent" : "Queued"}</span>`;
-    tag.title = state.queuedSubmissionRejected || rejected
-      ? "The relay rejected this prompt. Edit it to retry, or remove it."
-      : "Sends when Grok finishes";
-    const actions = document.createElement("span");
-    actions.className = "queued-actions";
-    const editBtn = document.createElement("button");
-    editBtn.className = "queued-action";
-    editBtn.title = "Edit — back to the composer";
-    editBtn.innerHTML = ICON.pencil;
-    // pointerdown for the same reason as Steer below — this whole block moves
-    // under the cursor while the agent streams.
-    editBtn.onpointerdown = (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (rejected) {
-        state.rejectedSubmissionText = "";
-        renderQueuedBlocks();
-      } else {
-        vscode.postMessage({ type: "clearQueuedSends", restore: true });
+    
+    items.forEach((item, index) => {
+      const card = document.createElement("div");
+      card.className = "queued-item msg user queued";
+      card.draggable = !rejected;
+      card.dataset.index = index;
+      
+      if (!rejected) {
+        card.addEventListener("dragstart", (e) => {
+          e.dataTransfer.effectAllowed = "move";
+          e.dataTransfer.setData("text/plain", index.toString());
+          card.style.opacity = "0.5";
+        });
+        card.addEventListener("dragend", () => {
+          card.style.opacity = "1";
+          document.querySelectorAll(".queued-item").forEach(el => {
+            el.classList.remove("drag-over-above", "drag-over-below");
+          });
+        });
+        card.addEventListener("dragover", (e) => {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "move";
+          const rect = card.getBoundingClientRect();
+          const mid = rect.top + rect.height / 2;
+          if (e.clientY < mid) {
+            card.classList.add("drag-over-above");
+            card.classList.remove("drag-over-below");
+          } else {
+            card.classList.add("drag-over-below");
+            card.classList.remove("drag-over-above");
+          }
+        });
+        card.addEventListener("dragleave", () => {
+          card.classList.remove("drag-over-above", "drag-over-below");
+        });
+        card.addEventListener("drop", (e) => {
+          e.preventDefault();
+          card.classList.remove("drag-over-above", "drag-over-below");
+          const fromIndex = parseInt(e.dataTransfer.getData("text/plain"), 10);
+          if (isNaN(fromIndex)) return;
+          let toIndex = index;
+          const rect = card.getBoundingClientRect();
+          if (e.clientY >= rect.top + rect.height / 2) {
+            toIndex += 1;
+          }
+          if (fromIndex < toIndex) toIndex -= 1;
+          if (fromIndex !== toIndex) {
+            vscode.postMessage({ type: "reorderQueuedSends", fromIndex, toIndex });
+          }
+        });
       }
-      input.value = input.value.trim() ? text + "\n\n" + input.value : text;
-      renderInputHighlight();
-      input.focus();
-    };
-    const rmBtn = document.createElement("button");
-    rmBtn.className = "queued-action";
-    rmBtn.title = "Remove from queue";
-    rmBtn.innerHTML = ICON.x;
-    rmBtn.onpointerdown = (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (rejected) {
-        state.rejectedSubmissionText = "";
-        renderQueuedBlocks();
-      } else {
-        vscode.postMessage({ type: "clearQueuedSends" });
+
+      const bubble = document.createElement("div");
+      bubble.className = "msg-bubble";
+      const hdr = document.createElement("div");
+      hdr.className = "queued-hdr";
+      
+      const tag = document.createElement("span");
+      tag.className = "queued-tag";
+      const tagLabel = rejected || state.queuedSubmissionRejected ? "Not sent" : (items.length > 1 ? `Queued #${index + 1}` : "Queued");
+      tag.innerHTML = `${ICON.clock}<span>${tagLabel}</span>`;
+      tag.title = rejected || state.queuedSubmissionRejected
+        ? "The relay rejected this prompt. Edit it to retry, or remove it."
+        : "Sends when Grok finishes";
+      
+      const actions = document.createElement("span");
+      actions.className = "queued-actions";
+      
+      if (!rejected && state.steerSupported && steerableProvider()) {
+        const steerBtn = document.createElement("button");
+        steerBtn.className = "queued-action queued-steer";
+        steerBtn.title = "Steer — submit now without interrupting Grok";
+        steerBtn.innerHTML = `${ICON.cornerDownRight}<span>Steer</span>`;
+        steerBtn.onpointerdown = (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          if (state.sessionSuperseded) return;
+          const msg = { type: "steerSend", text: item.text, fromQueue: true, index };
+          if (item.chips && item.chips.length) msg.chips = item.chips;
+          vscode.postMessage(msg);
+          if (items.length === 1) {
+            vscode.postMessage({ type: "clearQueuedSends" });
+          } else {
+            vscode.postMessage({ type: "removeQueuedSend", index });
+          }
+        };
+        actions.appendChild(steerBtn);
       }
-    };
-    // Steer (#52): send this into the RUNNING turn instead of waiting for it.
-    // Rendered whenever the CLI supports it; `body.turn-busy` (updateSendButton)
-    // does the show/hide, so a replay that delivers queuedSends before agentStart
-    // still ends up with the button once busy lands.
-    // Not for Claude Code: it has no mid-turn interject, so the button would
-    // offer to do something the agent cannot do. Its messages stay scheduled.
-    // Attachments ride the backend's steering content — the host encodes them the
-    // same way as a send. An older CLI that ignores `content` gets the whole
-    // item queued rather than a silent drop.
-    if (state.steerSupported && steerableProvider()) {
-      const steerBtn = document.createElement("button");
-      steerBtn.className = "queued-action queued-steer";
-      steerBtn.title = "Steer — submit now without interrupting Grok";
-      steerBtn.innerHTML = `${ICON.cornerDownRight}<span>Steer</span>`;
-      // pointerdown, NOT click: the queued block is pinned to the end of the
-      // chat and every streamed chunk runs scrollToBottom, so while the agent is
-      // writing prose the button shifts under the cursor between mousedown and
-      // mouseup — and a `click` only fires when both land on the SAME element.
-      // That's why steering was a coin-flip mid-stream but fine during a tool
-      // call (nothing reflows then). pointerdown fires on press, before the
-      // reflow can move anything.
-      steerBtn.onpointerdown = (e) => {
+      
+      const editBtn = document.createElement("button");
+      editBtn.className = "queued-action";
+      editBtn.title = "Edit — back to the composer";
+      editBtn.innerHTML = ICON.pencil;
+      editBtn.onpointerdown = (e) => {
         e.preventDefault();
         e.stopPropagation();
-        if (state.sessionSuperseded) return;
-        // steerSend first so the host can snapshot the queue before this
-        // clear races (webview handlers are not serialized across awaits).
-        const msg = { type: "steerSend", text, fromQueue: true };
-        if (chips.length) msg.chips = chips;
-        vscode.postMessage(msg);
-        vscode.postMessage({ type: "clearQueuedSends" });
+        if (rejected) {
+          state.rejectedSubmissionText = "";
+          renderQueuedBlocks();
+          input.value = input.value.trim() ? item.text + "\\n\\n" + input.value : item.text;
+          renderInputHighlight();
+          input.focus();
+        } else {
+          if (items.length === 1) { vscode.postMessage({ type: "clearQueuedSends", restore: true }); input.value = input.value.trim() ? item.text + "\n\n" + input.value : item.text; renderInputHighlight(); input.focus(); } else { vscode.postMessage({ type: "dequeueSend", index }); input.value = input.value.trim() ? item.text + "\n\n" + input.value : item.text; renderInputHighlight(); input.focus(); }
+        }
       };
-      actions.appendChild(steerBtn);
-    }
-    actions.appendChild(editBtn);
-    actions.appendChild(rmBtn);
-    hdr.appendChild(tag);
-    hdr.appendChild(actions);
-    // Same order as a sent user bubble (`addMessage`): header, then text, then
-    // chips. The pending block is a preview of that bubble, not of the composer.
-    bubble.appendChild(hdr);
-    if (text) {
-      const body = document.createElement("div");
-      body.className = "queued-text";
-      body.textContent = text;
-      body.title = text; // body is line-clamped; full text on hover
-      bubble.appendChild(body);
-    }
-    if (chips.length) {
-      const chipsRow = document.createElement("div");
-      chipsRow.className = "msg-chips";
-      for (const chip of chips) chipsRow.appendChild(makeMsgChipTag(chip.relPath, chip));
-      bubble.appendChild(chipsRow);
-    }
-    msg.appendChild(bubble);
-    wrap.appendChild(msg);
-    appendTranscriptChild(wrap); // (re)pin to the end of the conversation
+      
+      const rmBtn = document.createElement("button");
+      rmBtn.className = "queued-action";
+      rmBtn.title = "Remove from queue";
+      rmBtn.innerHTML = ICON.x;
+      rmBtn.onpointerdown = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (rejected) {
+          state.rejectedSubmissionText = "";
+          renderQueuedBlocks();
+        } else {
+          if (items.length === 1) { vscode.postMessage({ type: "clearQueuedSends" }); } else { vscode.postMessage({ type: "removeQueuedSend", index }); }
+        }
+      };
+      
+      actions.appendChild(editBtn);
+      actions.appendChild(rmBtn);
+      hdr.appendChild(tag);
+      hdr.appendChild(actions);
+      bubble.appendChild(hdr);
+      
+      if (item.text) {
+        const body = document.createElement("div");
+        body.className = "queued-text";
+        body.textContent = item.text;
+        body.title = item.text;
+        bubble.appendChild(body);
+      }
+      
+      if (item.chips && item.chips.length) {
+        const chipsRow = document.createElement("div");
+        chipsRow.className = "msg-chips";
+        for (const chip of item.chips) chipsRow.appendChild(makeMsgChipTag(chip.relPath, chip));
+        bubble.appendChild(chipsRow);
+      }
+      
+      card.appendChild(bubble);
+      wrap.appendChild(card);
+    });
+    
+    appendTranscriptChild(wrap);
     scrollToBottom();
   }
 
@@ -16780,7 +16909,7 @@
     "initialState", "showThinking", "appPurpose", "expandCommandOutputs",
     "steerByDefault", "promptNav", "expandDiffCard", "steerUnavailable", "soundNotifications", "processingSound",
     "readRepliesAloud", "summarizeRepliesAloud", "fontScale", "voiceConfigured",
-    "providerState", "githubState", "mcpServers", "mcpConnectors", "remoteStatus", "telemetryEnabled", "thumbsFeedback", "grokUpdateStatus", "initialized",
+    "providerState", "githubState", "mcpServers", "mcpConnectors", "remoteStatus", "telemetryEnabled", "thumbsFeedback", "grokUpdateStatus", "initialized", "macPermissionsReport",
   ]);
 
   function handleHostMessage(msg) {
@@ -16848,6 +16977,7 @@
         }
         if (typeof msg.telemetryEnabled === "boolean") state.telemetryEnabled = msg.telemetryEnabled;
         if (typeof msg.thumbsFeedback === "boolean") state.thumbsFeedback = msg.thumbsFeedback;
+        if (typeof msg.snapshotShortcut === "string") state.snapshotShortcut = msg.snapshotShortcut;
         applyThinkingVisibility();
         applyExpandCommandOutputs();
         syncGearPlacement();
@@ -17629,6 +17759,36 @@
       case "imageOriginal": {
         const job = pendingImageCopy;
         if (job && job.fullId === msg.fullId && job.requestId === msg.requestId) job.resolve(msg.src);
+        break;
+      }
+      case "macPermissionsReport": {
+        state.macPermissions = {
+          screenRecording: !!msg.screenRecording,
+          inputMonitoring: !!msg.inputMonitoring
+        };
+        refreshSettingsOverlay();
+        break;
+      }
+      case "snapshotTriggered": {
+        playShutterSound();
+        // Visual flash is now handled natively via Electron frameless window in main.ts
+        // so it flashes the entire desktop monitor, not just inside the app.
+        break;
+      }
+      case "snapshotPermissionRequested": {
+        const osName = msg.platform === "darwin" ? "macOS System Settings" : "OS Settings";
+        const proceed = confirm(`Please grant Screen Recording and Input Monitoring permissions in your ${osName} to use the snapshot feature.\n\nClick OK to open Privacy & Security settings now.`);
+        if (proceed && msg.platform === "darwin") {
+          vscode.postMessage({ type: "requestMacPermissions" });
+        }
+        break;
+      }
+      case "snapshotCompleted": {
+        animateSnapshotChip(msg.imagePath, msg.handle);
+        break;
+      }
+      case "macPermissionStatus": {
+        // Handled silently or update UI state if needed
         break;
       }
       case "historyReplay":
@@ -19678,12 +19838,16 @@
       // yields, and exactly what belongs back in the composer. NOT the rewind
       // result's `prompt_text` — that IS this message, but in raw wire form
       // (envelope + tags still attached).
-      vscode.postMessage({
+      const editMsg = {
         type: "editLastMessage",
         userBubbleIndex: idx,
         text: (msgEl && msgEl._copyText) || "",
         totalUserBubbles: visibleUserBubbleCount(),
-      });
+      };
+      if (msgEl && msgEl._chips && msgEl._chips.length) {
+        editMsg.chips = msgEl._chips;
+      }
+      vscode.postMessage(editMsg);
       return;
     }
     closePopovers();

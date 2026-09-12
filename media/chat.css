@@ -39,6 +39,37 @@
   --repo-color-purple: color-mix(in oklab, oklch(0.64 0.15 305) 72%, var(--vscode-foreground) 28%);
 }
 
+/* Full screen camera flash overlay for desktop snapshot */
+#snapshot-flash {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background-color: #ffffff;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 9999;
+  transition: opacity 0.15s ease-out;
+}
+
+#snapshot-flash.active {
+  opacity: 0.9;
+  transition: opacity 0s;
+}
+
+/* Flying thumbnail image chip animation */
+.snapshot-flying-chip {
+  position: fixed;
+  z-index: 9998;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  border: 1px solid var(--vscode-widget-border, #454545);
+  transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+  pointer-events: none;
+  object-fit: cover;
+}
+
 /* The VS Code panel is a narrow column, and the same gutter that reads as
    comfortable across a browser tab eats a visible slice of every line there ÔÇö
    the two surfaces want different numbers, not one compromise. `desk` is set on
@@ -1978,10 +2009,40 @@ a.onb-action.onb-secondary:hover {
 /* Queued sends (#37): pending user blocks pinned to the end of the chat ÔÇö
    italic + dashed border + clock tag = "composed, not sent yet". Combined into
    one prompt by the host when the session's turn ends. */
-.queued-msgs {
+.queued-msgs, .queued-msgs-list {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+.queued-item {
+  position: relative;
+  transition: opacity 0.2s, transform 0.1s;
+}
+.queued-item[draggable="true"] {
+  cursor: grab;
+}
+.queued-item[draggable="true"]:active {
+  cursor: grabbing;
+}
+.queued-item.drag-over-above::before {
+  content: '';
+  position: absolute;
+  top: -4px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--vscode-focusBorder);
+  border-radius: 1px;
+}
+.queued-item.drag-over-below::after {
+  content: '';
+  position: absolute;
+  bottom: -4px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--vscode-focusBorder);
+  border-radius: 1px;
 }
 /* A 5% tint composites to nothing in forced-colors mode ÔÇö a border is the
    dependable affordance there. */

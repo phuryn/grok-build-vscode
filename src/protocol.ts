@@ -1029,7 +1029,11 @@ export type HostMsg =
   // Session-cumulative billing (#53), summed by the host across the session's
   // turns. `turn` is the last prompt's own usage. Both omitted when the CLI sent
   // no `_meta.usage` — the popover then shows only the context row, never zeros.
-  | { type: "usage"; turn?: PromptUsage; session?: PromptUsage; afterUserMessage?: number; afterHistoryEvent?: number };
+  | { type: "usage"; turn?: PromptUsage; session?: PromptUsage; afterUserMessage?: number; afterHistoryEvent?: number }
+  | { type: "snapshotTriggered" }
+  | { type: "snapshotPermissionRequested"; platform: string }
+  | { type: "snapshotCompleted"; imagePath: string }
+  | { type: "macPermissionStatus"; screen: boolean; accessibility: boolean };
 
 /** webview -> host */
 export type WebviewMsg =
@@ -1179,6 +1183,9 @@ export type WebviewMsg =
   | { type: "setShowThinking"; value: boolean }
   /** Persist the global "Use this app for" preference (Knowledge work / Coding). */
   | { type: "setAppPurpose"; value: "knowledge" | "coding" }
+  | { type: "setSnapshotShortcut"; value: string }
+  | { type: "requestMacPermissions" }
+  | { type: "checkMacPermissions" }
   // grok.soundNotifications gear switch (#59) — persisted globally by the host.
   | { type: "setSoundNotifications"; value: boolean }
   | { type: "setProcessingSound"; value: boolean }
@@ -1392,6 +1399,8 @@ export type WebviewMsg =
   // clients use `clearQueuedSends` for that block; a live host therefore treats
   // this message as the pre-split meaning.
   | { type: "dequeueSend"; index: number }
+  | { type: "removeQueuedSend"; index: number }
+  | { type: "reorderQueuedSends"; fromIndex: number; toIndex: number }
   // `restore` is additive: Stop/Edit set true so queued chips return to the
   // composer. Absent/false discards them (Remove). Older hosts ignore the field
   // and only empty the queue.
@@ -1402,7 +1411,7 @@ export type WebviewMsg =
   // the whole item without losing it. `chips` is additive (same as queueSend).
   // `fromQueue` marks the pending-block button so the host snapshots
   // `queuedSends` before any await (a following `clearQueuedSends` can race).
-  | { type: "steerSend"; text: string; chips?: FileChip[]; fromQueue?: boolean }
+  | { type: "steerSend"; text: string; chips?: FileChip[]; fromQueue?: boolean; index?: number }
   /**
    * Rate the agent turn that just finished in this process. `rating` 0 clears.
    * No bubble index: the host does not reconstruct CLI `turn_number`.
@@ -1426,7 +1435,7 @@ export type WebviewMsg =
   | { type: "rewindSession"; userBubbleIndex?: number; text?: string; totalUserBubbles?: number }
   /** Edit-and-resend (#56): rewind past this (latest) user message and hand its
    *  text back to the composer. `text` is the bubble's own cleaned copy text. */
-  | { type: "editLastMessage"; userBubbleIndex: number; text: string; totalUserBubbles?: number }
+  | { type: "editLastMessage"; userBubbleIndex: number; text: string; chips?: FileChip[]; totalUserBubbles?: number }
   /** Reply to `uiConfirmRequest`. Answerable by whichever client was shown the
    *  dialog, remote included, since 2026-09-01: the confirm moved in-chat in
    *  2.0.0, so `host-local` here did not buy a more careful check — it meant a
@@ -1448,7 +1457,10 @@ export type WebviewMsg =
    *  cannot update the desk. */
   | { type: "openUpdateRelease"; url: string }
   /** Quit and install a downloaded desktop update. Host-local. */
-  | { type: "restartToUpdate" };
+  | { type: "restartToUpdate" }
+  | { type: "snapshotTriggered" }
+  | { type: "snapshotPermissionRequested"; platform: string }
+  | { type: "snapshotCompleted"; imagePath: string };
 
 // Exhaustive maps: `Record<Union["type"], true>` forces every discriminant to be
 // a key (missing -> tsc error) and forbids any extra (excess-property -> tsc
@@ -1473,6 +1485,7 @@ const HOST_MESSAGE_TYPE_MAP: Record<HostMsg["type"], true> = {
   setAllToolDetails: true, focusInput: true, findInSession: true, restoreComposer: true, truncateMessages: true, uiConfirmRequest: true,
   sessions: true, sessionRemoved: true, repoSessions: true, pinnedSessions: true, repos: true, sessionDot: true, queuedSends: true, submitQueuedSend: true,
   steerUnavailable: true, feedbackAvailability: true, turnFeedbackAck: true, usage: true,
+  snapshotTriggered: true, snapshotPermissionRequested: true, snapshotCompleted: true, macPermissionStatus: true,
 };
 
 const WEBVIEW_MESSAGE_TYPE_MAP: Record<WebviewMsg["type"], true> = {
@@ -1482,9 +1495,10 @@ const WEBVIEW_MESSAGE_TYPE_MAP: Record<WebviewMsg["type"], true> = {
   addProjectFolder: true, removeProjectFolder: true, createProject: true, cloneProject: true, setupGithubCli: true, listGithubRepos: true, githubSignOut: true, githubLoginWithToken: true,
   openProjectConfig: true, listMcpServers: true, connectMcpConnector: true, disconnectMcpConnector: true,
   listRoutines: true, saveRoutine: true, deleteRoutine: true, setRoutinePaused: true, runRoutineNow: true, showLogs: true, toggleDevTools: true, openSettings: true, openSettingsSurface: true, closeSettingsSurface: true, dismissWelcomeTip: true, welcomeTipShown: true, moveView: true,
-  setShowThinking: true, setAppPurpose: true, setExpandCommandOutputs: true, setSteerByDefault: true, setPromptNav: true, setExpandDiffCard: true,
+  setShowThinking: true, setAppPurpose: true, setSnapshotShortcut: true, requestMacPermissions: true, checkMacPermissions: true, setExpandCommandOutputs: true, setSteerByDefault: true, setPromptNav: true, setExpandDiffCard: true,
   setSoundNotifications: true, setProcessingSound: true, setReadRepliesAloud: true, setSummarizeRepliesAloud: true, setVoiceSendPhrase: true, setVoiceKeyterms: true, setTelemetryEnabled: true, setThumbsFeedback: true, summarizeSpeech: true, requestImageFull: true, requestImageOriginal: true, composerFocus: true,
   dropFile: true, permissionAnswer: true, exitPlanAnswer: true, questionAnswer: true,
+  snapshotTriggered: true, snapshotPermissionRequested: true, snapshotCompleted: true,
   questionCancel: true, setModel: true, installCodex: true, cancelCodexInstall: true, runInstallCmd: true, runGrokLogin: true,
   cancelDeviceLogin: true, submitDeviceLoginCode: true,
   logout: true, checkGrokUpdate: true, updateGrok: true, updateCodex: true, updateClaude: true, recheckConnection: true, refreshProviders: true, retryProviderSession: true,
@@ -1497,7 +1511,7 @@ const WEBVIEW_MESSAGE_TYPE_MAP: Record<WebviewMsg["type"], true> = {
   gitStatus: true, gitFileDiff: true, gitRun: true,
   pasteImage: true, uploadFile: true, voiceStart: true,
   voiceStop: true, remoteVoiceStart: true, remoteVoiceChunk: true,
-  remoteVoiceStop: true, queueSend: true, dequeueSend: true, clearQueuedSends: true,
+  remoteVoiceStop: true, queueSend: true, dequeueSend: true, removeQueuedSend: true, reorderQueuedSends: true, clearQueuedSends: true,
   steerSend: true, turnFeedback: true, forkSession: true,
   newWorktreeSession: true, applyWorktree: true, removeWorktree: true,
   rewindSession: true, editLastMessage: true, uiConfirmAnswer: true, workflowControl: true,
