@@ -1,0 +1,13 @@
+--- grok-build-vscode/src/desktop/main.ts
++++ grok-build-vscode/src/desktop/main.ts
+@@ -737,8 +737,8 @@
+     if (message && typeof message === "object" && (message as any).type === "checkMacPermissions" && process.platform === "darwin") {
+       try {
+         log("[checkMacPermissions] Received check request from webview");
+-        const screenStatus = systemPreferences.getMediaAccessStatus ? (systemPreferences.getMediaAccessStatus("screen") === "granted") : false;
+-        const isAccessibilityTrusted = systemPreferences.isTrustedAccessibilityClient ? systemPreferences.isTrustedAccessibilityClient(false) : false;
++        const screenStatus = systemPreferences.getMediaAccessStatus ? (systemPreferences.getMediaAccessStatus("screen") === "granted") : true;
++        const isAccessibilityTrusted = systemPreferences.isTrustedAccessibilityClient ? systemPreferences.isTrustedAccessibilityClient(false) : true;
+         log(`[checkMacPermissions] Electron native checks: screenStatus=${screenStatus}, isAccessibilityTrusted=${isAccessibilityTrusted}`);
+ 
+         const binCandidates = [

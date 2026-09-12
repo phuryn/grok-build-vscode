@@ -5,6 +5,84 @@
   let sendWait = null;
   const queuedWaits = new Set();
 
+  // Create flash overlay container at initialization
+  window.addEventListener("DOMContentLoaded", () => {
+    if (!document.getElementById("snapshot-flash")) {
+      const flashOverlay = document.createElement("div");
+      flashOverlay.id = "snapshot-flash";
+      document.body.appendChild(flashOverlay);
+    }
+  });
+
+  // Synthesized shutter sound ("cekrek") using Web Audio API
+  function playShutterSound() {
+    try {
+      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const oscillator = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+
+      oscillator.type = "sine";
+      // Frequency drop simulates mechanical shutter click
+      oscillator.frequency.setValueAtTime(1200, audioCtx.currentTime);
+      oscillator.frequency.exponentialRampToValueAtTime(120, audioCtx.currentTime + 0.08);
+
+      gainNode.gain.setValueAtTime(0.4, audioCtx.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.08);
+
+      oscillator.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+
+      oscillator.start();
+      oscillator.stop(audioCtx.currentTime + 0.08);
+    } catch (e) {
+      console.warn("Audio playback not allowed or failed:", e);
+    }
+  }
+
+  // Smooth animation for captured snapshot flying into the composer
+  function animateSnapshotChip(imagePath, handle) {
+    const flyEl = document.createElement("img");
+    flyEl.src = "file://" + imagePath;
+    flyEl.className = "snapshot-flying-chip";
+
+    // Initial position: center of screen, enlarged
+    flyEl.style.left = "50vw";
+    flyEl.style.top = "50vh";
+    flyEl.style.transform = "translate(-50%, -50%) scale(0.7)";
+    flyEl.style.width = "400px";
+    flyEl.style.height = "auto";
+    flyEl.style.opacity = "1";
+
+    document.body.appendChild(flyEl);
+
+    // Force reflow
+    void flyEl.offsetWidth;
+
+    // Find destination target (composer / file chip container)
+    const composer = document.querySelector(".composer") || document.body;
+    const rect = composer.getBoundingClientRect();
+
+    // Animate scale & fly into input box
+    flyEl.style.left = `${rect.left + 40}px`;
+    flyEl.style.top = `${rect.top + 30}px`;
+    flyEl.style.transform = "translate(0, 0) scale(0.12)";
+    flyEl.style.opacity = "0.2";
+
+    setTimeout(() => {
+      if (flyEl.parentNode) {
+        flyEl.parentNode.removeChild(flyEl);
+      }
+      
+      // Let the backend handle the file attachment to the active session
+      if (handle) {
+        vscode.postMessage({ type: "dropFile", handle, shift: false });
+      } else {
+        vscode.postMessage({ type: "dropFile", path: imagePath, shift: false });
+      }
+      
+    }, 520);
+  }
+
   function preferenceSpec(message) {
     const fields = {
       setAppPurpose: ["appPurpose", "this app to " + (message.value === "coding" ? "Coding" : "Knowledge work")],
@@ -374,7 +452,7 @@
   function postResumeSession(id, cwd, opts) {
     const msg = { type: "resumeSession", id, cwd: cwd || undefined };
     if (opts && opts.claim) msg.claim = true;
-    vscode.postMessage(msg); if (items.length === 1) { vscode.postMessage({ type: "clearQueuedSends" }); } else { vscode.postMessage({ type: "removeQueuedSend", index }); }
+    vscode.postMessage(msg);
   }
 
   function restoreRememberedRemoteSession() {
@@ -3041,6 +3119,7 @@
       telemetryEnabled: state.telemetryEnabled,
       thumbsFeedback: !!state.thumbsFeedback,
       promptNav: !!state.promptNav,
+      snapshotShortcut: typeof state.snapshotShortcut === "string" ? state.snapshotShortcut : "Disabled",
       expandDiffCard: !!state.expandDiffCard,
       providers: state.providers || [],
       providersChecking: !!state.providersChecking,
@@ -3057,6 +3136,7 @@
       mcpConnectors: state.mcpConnectors,
       mcpRemoteConnect: state.mcpRemoteConnect === true,
       mcpConnectorAuthorization: state.mcpConnectorAuthorization,
+      macPermissions: state.macPermissions,
       routines: state.routines,
       routineProjects: state.routineProjects,
       routineModels: state.routineModels,
@@ -3094,6 +3174,9 @@
         storeRemotePref(EXPAND_DIFF_CARD_KEY, state.expandDiffCard);
         applyExpandDiffCard();
         return;
+      case "snapshotShortcut":
+        state.snapshotShortcut = value;
+        break;
       case "promptNav":
         // Remote only. A desk lets the message through to the host and gets
         // the value back as a `promptNav` frame, which is the one route the
@@ -16797,7 +16880,7 @@
     "initialState", "showThinking", "appPurpose", "expandCommandOutputs",
     "steerByDefault", "promptNav", "expandDiffCard", "steerUnavailable", "soundNotifications", "processingSound",
     "readRepliesAloud", "summarizeRepliesAloud", "fontScale", "voiceConfigured",
-    "providerState", "githubState", "mcpServers", "mcpConnectors", "remoteStatus", "telemetryEnabled", "thumbsFeedback", "grokUpdateStatus", "initialized",
+    "providerState", "githubState", "mcpServers", "mcpConnectors", "remoteStatus", "telemetryEnabled", "thumbsFeedback", "grokUpdateStatus", "initialized", "macPermissionsReport",
   ]);
 
   function handleHostMessage(msg) {
@@ -16865,6 +16948,7 @@
         }
         if (typeof msg.telemetryEnabled === "boolean") state.telemetryEnabled = msg.telemetryEnabled;
         if (typeof msg.thumbsFeedback === "boolean") state.thumbsFeedback = msg.thumbsFeedback;
+        if (typeof msg.snapshotShortcut === "string") state.snapshotShortcut = msg.snapshotShortcut;
         applyThinkingVisibility();
         applyExpandCommandOutputs();
         syncGearPlacement();
@@ -17646,6 +17730,36 @@
       case "imageOriginal": {
         const job = pendingImageCopy;
         if (job && job.fullId === msg.fullId && job.requestId === msg.requestId) job.resolve(msg.src);
+        break;
+      }
+      case "macPermissionsReport": {
+        state.macPermissions = {
+          screenRecording: !!msg.screenRecording,
+          inputMonitoring: !!msg.inputMonitoring
+        };
+        refreshSettingsOverlay();
+        break;
+      }
+      case "snapshotTriggered": {
+        playShutterSound();
+        // Visual flash is now handled natively via Electron frameless window in main.ts
+        // so it flashes the entire desktop monitor, not just inside the app.
+        break;
+      }
+      case "snapshotPermissionRequested": {
+        const osName = msg.platform === "darwin" ? "macOS System Settings" : "OS Settings";
+        const proceed = confirm(`Please grant Screen Recording and Input Monitoring permissions in your ${osName} to use the snapshot feature.\n\nClick OK to open Privacy & Security settings now.`);
+        if (proceed && msg.platform === "darwin") {
+          vscode.postMessage({ type: "requestMacPermissions" });
+        }
+        break;
+      }
+      case "snapshotCompleted": {
+        animateSnapshotChip(msg.imagePath, msg.handle);
+        break;
+      }
+      case "macPermissionStatus": {
+        // Handled silently or update UI state if needed
         break;
       }
       case "historyReplay":

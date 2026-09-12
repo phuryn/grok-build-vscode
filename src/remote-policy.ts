@@ -348,6 +348,11 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
   workflowControl: "propose",
   // Donut popover re-fetch — read-only meter, no turn / no mutation.
   refreshContextDetails: "view",
+  // Snapshot events: the desk asks for a snapshot, which involves the OS
+  // capturing the local screen. Never allow a remote to trigger a desktop capture.
+  snapshotTriggered: "host-local",
+  snapshotPermissionRequested: "host-local",
+  snapshotCompleted: "host-local",
   pasteImage: "propose",
   // Host validates the extension/name/bytes before staging under globalStorage.
   uploadFile: "propose",
@@ -521,6 +526,9 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
   // Machine-global disclosure preference in ~/.grok/client-state — the web
   // client inherits and may set it (host-owned store, not VS Code settings).
   setAppPurpose: "propose",
+  setSnapshotShortcut: "host-local",
+  requestMacPermissions: "host-local",
+  checkMacPermissions: "host-local",
   // A remote may spend one extra xAI call to shorten text it is about to speak.
   // The host independently requires that tab's reported TTS + summary prefs.
   summarizeSpeech: "propose",
@@ -687,6 +695,9 @@ export const REMOTE_REQUIRES_BOUND_SESSION: Record<WebviewMsg["type"], boolean> 
   setTelemetryEnabled: false,
   setThumbsFeedback: false,
   setAppPurpose: false,
+  setSnapshotShortcut: false,
+  requestMacPermissions: false,
+  checkMacPermissions: false,
   summarizeSpeech: true,
   requestImageFull: true,
   requestImageOriginal: true,
@@ -697,6 +708,9 @@ export const REMOTE_REQUIRES_BOUND_SESSION: Record<WebviewMsg["type"], boolean> 
   openRemotePortal: false,
   openUpdateRelease: false,
   restartToUpdate: false,
+  snapshotTriggered: false,
+  snapshotPermissionRequested: false,
+  snapshotCompleted: false,
 };
 
 export function remoteRequiresBoundSession(type: WebviewMsg["type"]): boolean {
@@ -1065,6 +1079,10 @@ export const OUTBOUND_DISPOSITION: Record<HostMsg["type"], OutboundDisposition> 
   feedbackAvailability: "mirror",
   turnFeedbackAck: "mirror",
   usage: "mirror",
+  snapshotTriggered: "host-local",
+  snapshotPermissionRequested: "host-local",
+  snapshotCompleted: "host-local",
+  macPermissionStatus: "host-local",
 };
 
 /**
@@ -1228,6 +1246,10 @@ export const OUTBOUND_PROJECT_AUTH: Record<HostMsg["type"], OutboundProjectAuth>
   feedbackAvailability: "scope",
   turnFeedbackAck: "scope",
   usage: "scope",
+  snapshotTriggered: "none",
+  snapshotPermissionRequested: "none",
+  snapshotCompleted: "none",
+  macPermissionStatus: "none",
 };
 
 /**

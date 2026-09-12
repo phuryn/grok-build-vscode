@@ -250,6 +250,12 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
     case "setAppPurpose":
       if (raw.value !== "knowledge" && raw.value !== "coding") return null;
       break;
+    case "setSnapshotShortcut":
+      if (!isString(raw.value)) return null;
+      break;
+    case "requestMacPermissions":
+    case "checkMacPermissions":
+      break;
     case "summarizeSpeech":
       if (!isNumber(raw.requestId) || !isString(raw.text)) return null;
       break;

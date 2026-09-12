@@ -73,6 +73,8 @@ files:
   - "!**/*.{ts,tsx,md}"
 
 asar: true
+asarUnpack:
+  - "resources/macos-dual-cmd-listener"
 
 # macOS only (the hook returns immediately on every other platform).
 afterPack: scripts/adhoc-sign-mac.cjs

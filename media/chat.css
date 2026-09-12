@@ -39,6 +39,37 @@
   --repo-color-purple: color-mix(in oklab, oklch(0.64 0.15 305) 72%, var(--vscode-foreground) 28%);
 }
 
+/* Full screen camera flash overlay for desktop snapshot */
+#snapshot-flash {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background-color: #ffffff;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 9999;
+  transition: opacity 0.15s ease-out;
+}
+
+#snapshot-flash.active {
+  opacity: 0.9;
+  transition: opacity 0s;
+}
+
+/* Flying thumbnail image chip animation */
+.snapshot-flying-chip {
+  position: fixed;
+  z-index: 9998;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  border: 1px solid var(--vscode-widget-border, #454545);
+  transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+  pointer-events: none;
+  object-fit: cover;
+}
+
 /* The VS Code panel is a narrow column, and the same gutter that reads as
    comfortable across a browser tab eats a visible slice of every line there ÔÇö
    the two surfaces want different numbers, not one compromise. `desk` is set on

@@ -11453,6 +11453,21 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         await this.host.getConfiguration("grok")
           .update("promptNav", !!msg.value, "global");
         break;
+      case "setSnapshotShortcut":
+        await this.host.getConfiguration("grok")
+          .update("snapshotShortcut", msg.value, "global");
+        break;
+      case "requestMacPermissions":
+        if (process.platform === "darwin") {
+          this.host.openExternal("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility");
+          setTimeout(() => {
+            this.host.openExternal("x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture");
+          }, 500);
+          setTimeout(() => {
+            this.host.openExternal("x-apple.systempreferences:com.apple.preference.security?Privacy_InputMonitoring");
+          }, 1000);
+        }
+        break;
       case "setSoundNotifications":
         await this.host.getConfiguration("grok")
           .update("soundNotifications", !!msg.value, "global");
@@ -20285,6 +20300,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         steerByDefault: cfg.get("steerByDefault", false),
         expandDiffCard: cfg.get("expandDiffCard", false),
         promptNav: cfg.get("promptNav", true),
+        snapshotShortcut: cfg.get("snapshotShortcut", "Disabled"),
+        macPermissions: (this.host as any).macPermissions || { screenRecording: false, inputMonitoring: false },
         fontScale: this.chatFontScale(),
         soundNotifications: cfg.get("soundNotifications", false),
         processingSound: cfg.get("processingSound", false),
@@ -20365,7 +20382,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       var tts = !!(window.speechSynthesis && window.SpeechSynthesisUtterance);
       var surface = window.GrokSettings.mount(document.getElementById("settings-root"), {
         snapshot: boot.snapshot,
-        env: Object.assign({ ttsAvailable: tts }, boot.env || {}),
+        env: Object.assign({ ttsAvailable: tts, platform: navigator.platform.toLowerCase().indexOf("mac") !== -1 ? "darwin" : (navigator.platform.toLowerCase().indexOf("win") !== -1 ? "win32" : "linux") }, boot.env || {}),
         post: function (msg) { vscode.postMessage(msg); },
         standalone: true,
         category: boot.category,
@@ -20374,6 +20391,14 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       window.addEventListener("message", function (e) {
         var msg = e.data;
         if (!msg || !msg.type || !surface) return;
+        if (msg.type === "macPermissionsReport") {
+          surface.update({
+            macPermissions: {
+              screenRecording: !!msg.screenRecording,
+              inputMonitoring: !!msg.inputMonitoring,
+            }
+          });
+        }
         if (msg.type === "grokUpdateStatus") {
           var next = { grokUpdate: {
             current: msg.current, latest: msg.latest,
