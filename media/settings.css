@@ -1468,3 +1468,105 @@ a.settings-github-flow-open {
   min-width: 0;
   overflow-wrap: anywhere;
 }
+
+/* Hotkey Recorder UI */
+.settings-hotkey-wrap {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.settings-hotkey-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 28px;
+  padding: 2px 8px;
+  background: var(--vscode-input-background, var(--vscode-editor-background));
+  border: 1px solid var(--vscode-input-border, var(--vscode-widget-border, #3c3c3c));
+  border-radius: 4px;
+  cursor: pointer;
+  user-select: none;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.settings-hotkey-badges:hover {
+  border-color: var(--vscode-focusBorder, #007acc);
+}
+
+.settings-hotkey-kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 6px;
+  font-family: var(--vscode-font-family);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 14px;
+  color: var(--vscode-keybindingLabel-foreground, var(--vscode-foreground));
+  background: var(--vscode-keybindingLabel-background, rgba(128, 128, 128, 0.2));
+  border: 1px solid var(--vscode-keybindingLabel-border, rgba(128, 128, 128, 0.35));
+  border-bottom: 2px solid var(--vscode-keybindingLabel-bottomBorder, rgba(128, 128, 128, 0.45));
+  border-radius: 3px;
+  box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.2);
+}
+
+.settings-hotkey-plus {
+  font-size: 11px;
+  opacity: 0.6;
+  user-select: none;
+}
+
+.settings-hotkey-recording {
+  border-color: var(--vscode-focusBorder, #007acc) !important;
+  background: color-mix(in srgb, var(--vscode-focusBorder, #007acc) 18%, transparent) !important;
+  outline: 1px solid var(--vscode-focusBorder, #007acc);
+  animation: pulse-border 1.4s infinite ease-in-out;
+}
+
+.settings-hotkey-prompt {
+  font-size: 11px;
+  font-style: italic;
+  opacity: 0.85;
+}
+
+@keyframes pulse-border {
+  0%, 100% { outline-color: transparent; }
+  50% { outline-color: var(--vscode-focusBorder, #007acc); }
+}
+
+/* Folder Picker UI */
+.settings-folder-wrap {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-width: 100%;
+}
+
+.settings-folder-display {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: var(--vscode-input-background, rgba(0, 0, 0, 0.2));
+  border: 1px solid var(--vscode-input-border, var(--vscode-widget-border, #3c3c3c));
+  border-radius: 4px;
+  font-size: 12px;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-folder-display.is-empty {
+  opacity: 0.65;
+  font-style: italic;
+}
+
+.settings-folder-icon {
+  display: inline-flex;
+  align-items: center;
+  opacity: 0.75;
+}

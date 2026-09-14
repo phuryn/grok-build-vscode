@@ -1223,6 +1223,81 @@
       suspendAudioCtx(ctx);
     }, Math.ceil(lastStop * 1000) + 20);
   }
+
+  function playCameraShutterSound() {
+    const ctx = ensureAudioCtx();
+    if (!ctx) return;
+    audioToneGen += 1;
+    const gen = audioToneGen;
+    if (audioSuspendTimer != null) {
+      clearTimeout(audioSuspendTimer);
+      audioSuspendTimer = null;
+    }
+    if (ctx.state === "suspended") ctx.resume().catch(() => {});
+    const t0 = ctx.currentTime;
+
+    try {
+      // Shutter click 1 (mirror flip up / high crisp tick)
+      const osc1 = ctx.createOscillator();
+      const gain1 = ctx.createGain();
+      osc1.type = "triangle";
+      osc1.frequency.setValueAtTime(1100, t0);
+      if (typeof osc1.frequency.exponentialRampToValueAtTime === "function") {
+        osc1.frequency.exponentialRampToValueAtTime(350, t0 + 0.025);
+      }
+      gain1.gain.setValueAtTime(0.35, t0);
+      if (typeof gain1.gain.exponentialRampToValueAtTime === "function") {
+        gain1.gain.exponentialRampToValueAtTime(0.01, t0 + 0.025);
+      }
+      osc1.connect(gain1);
+      gain1.connect(ctx.destination);
+      osc1.start(t0);
+      osc1.stop(t0 + 0.03);
+
+      // Shutter click 2 (mechanical curtain snap - "cekrek")
+      const t1 = t0 + 0.045;
+      const osc2 = ctx.createOscillator();
+      const gain2 = ctx.createGain();
+      osc2.type = "sine";
+      osc2.frequency.setValueAtTime(340, t1);
+      if (typeof osc2.frequency.exponentialRampToValueAtTime === "function") {
+        osc2.frequency.exponentialRampToValueAtTime(80, t1 + 0.06);
+      }
+      gain2.gain.setValueAtTime(0.45, t1);
+      if (typeof gain2.gain.exponentialRampToValueAtTime === "function") {
+        gain2.gain.exponentialRampToValueAtTime(0.01, t1 + 0.06);
+      }
+      osc2.connect(gain2);
+      gain2.connect(ctx.destination);
+      osc2.start(t1);
+      osc2.stop(t1 + 0.075);
+    } catch {
+      /* best effort audio */
+    }
+
+    audioSuspendTimer = setTimeout(() => {
+      audioSuspendTimer = null;
+      if (gen !== audioToneGen) return;
+      suspendAudioCtx(ctx);
+    }, 200);
+  }
+
+  function triggerSnapshotFlashEffect() {
+    playCameraShutterSound();
+    try {
+      const flash = document.createElement("div");
+      flash.className = "snapshot-screen-flash";
+      document.body.appendChild(flash);
+      flash.addEventListener("animationend", () => {
+        flash.remove();
+      });
+      setTimeout(() => {
+        if (flash.parentNode) flash.remove();
+      }, 350);
+    } catch {
+      /* best effort DOM */
+    }
+  }
   // Play only when the user isn't looking at the Grok panel — the "notify me when
   // I've stepped away" case (#59). A focused, visible panel means they'll see the
   // result without a beep. hasFocus() is false when the editor/another app has
@@ -3158,6 +3233,20 @@
   // full-window overlay; VS Code posts openSettingsSurface for an editor tab.
   let settingsSurface = null;
 
+  function isMacPlatform() {
+    const plat = typeof navigator !== "undefined" ? (navigator.platform || "") : "";
+    if (/Mac|iPhone|iPad|iPod/.test(plat)) return true;
+    const ua = typeof navigator !== "undefined" ? (navigator.userAgent || "") : "";
+    return /Mac OS X/.test(ua);
+  }
+
+  function isWindowsPlatform() {
+    const plat = typeof navigator !== "undefined" ? (navigator.platform || "") : "";
+    if (/Win/.test(plat)) return true;
+    const ua = typeof navigator !== "undefined" ? (navigator.userAgent || "") : "";
+    return /Windows/.test(ua);
+  }
+
   function hostOpensSettingsEditor() {
     return !IS_REMOTE && state.hostCaps && state.hostCaps.settingsEditor === true;
   }
@@ -3166,6 +3255,8 @@
     return {
       isRemote: IS_REMOTE,
       isDesktop: isDesktopHostCaps(),
+      isWindows: isWindowsPlatform(),
+      isMac: isMacPlatform(),
       deviceLogin: state.deviceLoginByProvider,
       clientOwnsFontScale: CLIENT_OWNS_FONT_SCALE,
       ttsAvailable,
@@ -3195,6 +3286,9 @@
       voiceBackendState: state.voiceBackendState,
       telemetryEnabled: state.telemetryEnabled,
       thumbsFeedback: !!state.thumbsFeedback,
+      snapshotAutoAttach: state.snapshotAutoAttach !== false,
+      snapshotSavePath: typeof state.snapshotSavePath === "string" ? state.snapshotSavePath : "",
+      snapshotShortcut: typeof state.snapshotShortcut === "string" && state.snapshotShortcut ? state.snapshotShortcut : (isMacPlatform() ? "Cmd+Alt+S" : "Ctrl+Alt+S"),
       promptNav: !!state.promptNav,
       expandDiffCard: !!state.expandDiffCard,
       providers: state.providers || [],
@@ -3307,6 +3401,15 @@
         break;
       case "thumbsFeedback":
         state.thumbsFeedback = !!value;
+        break;
+      case "snapshotAutoAttach":
+        state.snapshotAutoAttach = !!value;
+        break;
+      case "snapshotSavePath":
+        state.snapshotSavePath = String(value || "");
+        break;
+      case "snapshotShortcut":
+        state.snapshotShortcut = String(value || "");
         break;
       default:
         break;
@@ -7486,6 +7589,7 @@
     // transcript must not grow an empty-state panel on top of it.
     startRailNewTransition(repoCwd, "creating", previousSessionId);
     resetForNewSession();
+    focusComposerIfAllowed();
     vscode.postMessage({ type: "newSession" });
   }
 
@@ -8531,18 +8635,20 @@
   }
 
   function setConversationLoading(active) {
-    // Either branch stamps the empty-state line. A painted conversation must
-    // not pick up Connected / Loading conversation, including when those
-    // messages arrive before clearMessages has marked the nodes.
-    if (welcomeHoldActive()) return;
     if (active) {
-      // Deliberately the only indicator. A second banner above the transcript
-      // used to double it up, and the transcript arrives as one batch anyway \u2014
-      // so the wait that's worth announcing happens while the welcome is still
-      // on screen, and the banner only ever duplicated this line.
-      setWelcomeStatus("Loading conversation", true);
+      if (!welcomeHoldActive()) setWelcomeStatus("Loading conversation", true);
+      let ind = $("transcript-loading-bar");
+      if (!ind && messagesEl) {
+        ind = document.createElement("div");
+        ind.id = "transcript-loading-bar";
+        ind.className = "transcript-loading-indicator";
+        messagesEl.insertBefore(ind, messagesEl.firstChild);
+      }
       return;
     }
+    const ind = $("transcript-loading-bar");
+    if (ind) ind.remove();
+    if (welcomeHoldActive()) return;
     const ver = $("welcome-version");
     if (ver && ver.dataset.status === "Loading conversation") {
       setWelcomeStatus(state.cliVersion ? `Connected \u00b7 v${state.cliVersion}` : "Connected", false);
@@ -16370,12 +16476,18 @@
 
   function renderQueuedBlocks() {
     let wrap = state.queuedWrapEl;
-    // One visual block: the flush is still one combined prompt. Text is joined
-    // the way it will send; chips from every contribution are shown on it.
     const rejected = !!state.rejectedSubmissionText;
-    const text = rejected ? state.rejectedSubmissionText : queuedSendsText(state.sendQueue);
-    const chips = rejected ? [] : queuedSendsChips(state.sendQueue);
-    if (!text && !chips.length) {
+    const items = rejected
+      ? [{ text: state.rejectedSubmissionText, chips: [] }]
+      : (state.sendQueue || []);
+
+    const hasAnyContent = items.some((item) => {
+      const t = typeof item === "string" ? item : item.text;
+      const c = typeof item === "string" ? [] : item.chips;
+      return !!(t && t.trim()) || (c && c.length > 0);
+    });
+
+    if (!hasAnyContent) {
       if (wrap) wrap.remove();
       state.queuedWrapEl = null;
       return;
@@ -16386,110 +16498,155 @@
       state.queuedWrapEl = wrap;
     }
     wrap.innerHTML = "";
-    const msg = document.createElement("div");
-    msg.className = "msg user queued";
-    const bubble = document.createElement("div");
-    bubble.className = "msg-bubble";
-    const hdr = document.createElement("div");
-    hdr.className = "queued-hdr";
-    const tag = document.createElement("span");
-    tag.className = "queued-tag";
-    tag.innerHTML = `${ICON.clock}<span>${state.queuedSubmissionRejected || rejected ? "Not sent" : "Queued"}</span>`;
-    tag.title = state.queuedSubmissionRejected || rejected
-      ? "The relay rejected this prompt. Edit it to retry, or remove it."
-      : "Sends when Grok finishes";
-    const actions = document.createElement("span");
-    actions.className = "queued-actions";
-    const editBtn = document.createElement("button");
-    editBtn.className = "queued-action";
-    editBtn.title = "Edit — back to the composer";
-    editBtn.innerHTML = ICON.pencil;
-    // pointerdown for the same reason as Steer below — this whole block moves
-    // under the cursor while the agent streams.
-    editBtn.onpointerdown = (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (rejected) {
-        state.rejectedSubmissionText = "";
-        renderQueuedBlocks();
-      } else {
-        vscode.postMessage({ type: "clearQueuedSends", restore: true });
+
+    items.forEach((entry, idx) => {
+      const text = typeof entry === "string" ? entry : (entry.text || "");
+      const chips = typeof entry === "string" ? [] : (entry.chips || []);
+      if (!text && !chips.length) return;
+
+      const msg = document.createElement("div");
+      msg.className = "msg user queued queued-item";
+      msg.dataset.index = String(idx);
+
+      if (!rejected && items.length > 1) {
+        msg.draggable = true;
+        msg.addEventListener("dragstart", (e) => {
+          if (e.dataTransfer) {
+            e.dataTransfer.effectAllowed = "move";
+            e.dataTransfer.setData("text/plain", String(idx));
+          }
+          msg.classList.add("dragging");
+        });
+        msg.addEventListener("dragend", () => {
+          msg.classList.remove("dragging");
+          wrap.querySelectorAll(".queued-item").forEach((el) => {
+            el.classList.remove("drag-over-above", "drag-over-below");
+          });
+        });
+        msg.addEventListener("dragover", (e) => {
+          e.preventDefault();
+          if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+          const rect = msg.getBoundingClientRect();
+          const mid = rect.top + rect.height / 2;
+          if (e.clientY < mid) {
+            msg.classList.add("drag-over-above");
+            msg.classList.remove("drag-over-below");
+          } else {
+            msg.classList.add("drag-over-below");
+            msg.classList.remove("drag-over-above");
+          }
+        });
+        msg.addEventListener("dragleave", () => {
+          msg.classList.remove("drag-over-above", "drag-over-below");
+        });
+        msg.addEventListener("drop", (e) => {
+          e.preventDefault();
+          msg.classList.remove("drag-over-above", "drag-over-below");
+          const data = e.dataTransfer ? e.dataTransfer.getData("text/plain") : "";
+          const fromIdx = parseInt(data, 10);
+          let toIdx = idx;
+          const rect = msg.getBoundingClientRect();
+          if (e.clientY >= rect.top + rect.height / 2) {
+            toIdx += 1;
+          }
+          if (fromIdx < toIdx) toIdx -= 1;
+          if (!isNaN(fromIdx) && fromIdx !== toIdx) {
+            vscode.postMessage({ type: "reorderQueuedSends", fromIndex: fromIdx, toIndex: toIdx });
+          }
+        });
       }
-      input.value = input.value.trim() ? text + "\n\n" + input.value : text;
-      renderInputHighlight();
-      input.focus();
-    };
-    const rmBtn = document.createElement("button");
-    rmBtn.className = "queued-action";
-    rmBtn.title = "Remove from queue";
-    rmBtn.innerHTML = ICON.x;
-    rmBtn.onpointerdown = (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (rejected) {
-        state.rejectedSubmissionText = "";
-        renderQueuedBlocks();
-      } else {
-        vscode.postMessage({ type: "clearQueuedSends" });
+
+      const bubble = document.createElement("div");
+      bubble.className = "msg-bubble";
+      const hdr = document.createElement("div");
+      hdr.className = "queued-hdr";
+      const tag = document.createElement("span");
+      tag.className = "queued-tag";
+      const isRejected = rejected || !!state.queuedSubmissionRejected;
+      const tagLabel = isRejected
+        ? "Not sent"
+        : (items.length > 1 ? `Queued #${idx + 1}` : "Queued");
+      tag.innerHTML = `${ICON.clock}<span>${tagLabel}</span>`;
+      tag.title = isRejected
+        ? "The relay rejected this prompt. Edit it to retry, or remove it."
+        : "Sends when Grok finishes";
+
+      const actions = document.createElement("span");
+      actions.className = "queued-actions";
+
+      if (!rejected && state.steerSupported && steerableProvider()) {
+        const steerBtn = document.createElement("button");
+        steerBtn.className = "queued-action queued-steer";
+        steerBtn.title = "Steer — submit now without interrupting Grok";
+        steerBtn.innerHTML = `${ICON.cornerDownRight}<span>Steer</span>`;
+        steerBtn.onpointerdown = (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          if (state.sessionSuperseded) return;
+          const steerMsg = { type: "steerSend", text, fromQueue: true, index: idx };
+          if (chips.length) steerMsg.chips = chips;
+          vscode.postMessage(steerMsg);
+        };
+        actions.appendChild(steerBtn);
       }
-    };
-    // Steer (#52): send this into the RUNNING turn instead of waiting for it.
-    // Rendered whenever the CLI supports it; `body.turn-busy` (updateSendButton)
-    // does the show/hide, so a replay that delivers queuedSends before agentStart
-    // still ends up with the button once busy lands.
-    // Not for Claude Code: it has no mid-turn interject, so the button would
-    // offer to do something the agent cannot do. Its messages stay scheduled.
-    // Attachments ride the backend's steering content — the host encodes them the
-    // same way as a send. An older CLI that ignores `content` gets the whole
-    // item queued rather than a silent drop.
-    if (state.steerSupported && steerableProvider()) {
-      const steerBtn = document.createElement("button");
-      steerBtn.className = "queued-action queued-steer";
-      steerBtn.title = "Steer — submit now without interrupting Grok";
-      steerBtn.innerHTML = `${ICON.cornerDownRight}<span>Steer</span>`;
-      // pointerdown, NOT click: the queued block is pinned to the end of the
-      // chat and every streamed chunk runs scrollToBottom, so while the agent is
-      // writing prose the button shifts under the cursor between mousedown and
-      // mouseup — and a `click` only fires when both land on the SAME element.
-      // That's why steering was a coin-flip mid-stream but fine during a tool
-      // call (nothing reflows then). pointerdown fires on press, before the
-      // reflow can move anything.
-      steerBtn.onpointerdown = (e) => {
+
+      const editBtn = document.createElement("button");
+      editBtn.className = "queued-action";
+      editBtn.title = "Edit — back to the composer";
+      editBtn.innerHTML = ICON.pencil;
+      editBtn.onpointerdown = (e) => {
         e.preventDefault();
         e.stopPropagation();
-        if (state.sessionSuperseded) return;
-        // steerSend first so the host can snapshot the queue before this
-        // clear races (webview handlers are not serialized across awaits).
-        const msg = { type: "steerSend", text, fromQueue: true };
-        if (chips.length) msg.chips = chips;
-        vscode.postMessage(msg);
-        vscode.postMessage({ type: "clearQueuedSends" });
+        if (rejected) {
+          state.rejectedSubmissionText = "";
+          renderQueuedBlocks();
+        } else {
+          vscode.postMessage({ type: "dequeueSend", index: idx });
+        }
+        input.value = input.value.trim() ? text + "\n\n" + input.value : text;
+        renderInputHighlight();
+        input.focus();
       };
-      actions.appendChild(steerBtn);
-    }
-    actions.appendChild(editBtn);
-    actions.appendChild(rmBtn);
-    hdr.appendChild(tag);
-    hdr.appendChild(actions);
-    // Same order as a sent user bubble (`addMessage`): header, then text, then
-    // chips. The pending block is a preview of that bubble, not of the composer.
-    bubble.appendChild(hdr);
-    if (text) {
-      const body = document.createElement("div");
-      body.className = "queued-text";
-      body.textContent = text;
-      body.title = text; // body is line-clamped; full text on hover
-      bubble.appendChild(body);
-    }
-    if (chips.length) {
-      const chipsRow = document.createElement("div");
-      chipsRow.className = "msg-chips";
-      for (const chip of chips) chipsRow.appendChild(makeMsgChipTag(chip.relPath, chip));
-      bubble.appendChild(chipsRow);
-    }
-    msg.appendChild(bubble);
-    wrap.appendChild(msg);
-    appendTranscriptChild(wrap); // (re)pin to the end of the conversation
+      actions.appendChild(editBtn);
+
+      const rmBtn = document.createElement("button");
+      rmBtn.className = "queued-action";
+      rmBtn.title = "Remove from queue";
+      rmBtn.innerHTML = ICON.x;
+      rmBtn.onpointerdown = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (rejected) {
+          state.rejectedSubmissionText = "";
+          renderQueuedBlocks();
+        } else {
+          vscode.postMessage({ type: "removeQueuedSend", index: idx });
+        }
+      };
+      actions.appendChild(rmBtn);
+
+      hdr.appendChild(tag);
+      hdr.appendChild(actions);
+      bubble.appendChild(hdr);
+
+      if (text) {
+        const body = document.createElement("div");
+        body.className = "queued-text";
+        body.textContent = text;
+        body.title = text;
+        bubble.appendChild(body);
+      }
+      if (chips.length) {
+        const chipsRow = document.createElement("div");
+        chipsRow.className = "msg-chips";
+        for (const chip of chips) chipsRow.appendChild(makeMsgChipTag(chip.relPath, chip));
+        bubble.appendChild(chipsRow);
+      }
+      msg.appendChild(bubble);
+      wrap.appendChild(msg);
+    });
+
+    appendTranscriptChild(wrap);
     scrollToBottom();
   }
 
@@ -17420,6 +17577,9 @@
         }
         if (typeof msg.telemetryEnabled === "boolean") state.telemetryEnabled = msg.telemetryEnabled;
         if (typeof msg.thumbsFeedback === "boolean") state.thumbsFeedback = msg.thumbsFeedback;
+        if (typeof msg.snapshotAutoAttach === "boolean") state.snapshotAutoAttach = msg.snapshotAutoAttach;
+        if (typeof msg.snapshotSavePath === "string") state.snapshotSavePath = msg.snapshotSavePath;
+        if (typeof msg.snapshotShortcut === "string") state.snapshotShortcut = msg.snapshotShortcut;
         applyThinkingVisibility();
         applyExpandCommandOutputs();
         syncGearPlacement();
@@ -17702,6 +17862,21 @@
         break;
       case "thumbsFeedback":
         state.thumbsFeedback = !!msg.value;
+        break;
+      case "snapshotAutoAttach":
+        state.snapshotAutoAttach = !!msg.value;
+        refreshSettingsOverlay();
+        break;
+      case "snapshotSavePath":
+        state.snapshotSavePath = typeof msg.value === "string" ? msg.value : "";
+        refreshSettingsOverlay();
+        break;
+      case "snapshotShortcut":
+        state.snapshotShortcut = typeof msg.value === "string" ? msg.value : "";
+        refreshSettingsOverlay();
+        break;
+      case "snapshotTaken":
+        triggerSnapshotFlashEffect();
         break;
       case "speechSummary": {
         const pending = pendingSpeechSummary;

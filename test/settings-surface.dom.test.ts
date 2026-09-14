@@ -1600,15 +1600,15 @@ describe("settings overlay (chat.js)", () => {
         .map((row) => row.id);
     expect(generalIds(fullEnv({ isDesktop: true, isRemote: false }))).toEqual([
       "appPurpose", "chatFontScale", "showThinking", "expandCommandOutputs", "expandDiffCard", "steerByDefault",
-      "telemetryDesktop", "promptNav", "thumbsFeedback",
+      "telemetryDesktop", "promptNav", "thumbsFeedback", "snapshotShortcut", "snapshotAutoAttach", "snapshotSavePath",
     ]);
     expect(generalIds(fullEnv({ isDesktop: false, isRemote: false, clientOwnsFontScale: false }))).toEqual([
       "appPurpose", "openChatFontScale", "showThinking", "expandCommandOutputs", "expandDiffCard", "steerByDefault",
-      "telemetryVsCode", "promptNav", "thumbsFeedback",
+      "telemetryVsCode", "promptNav", "thumbsFeedback", "snapshotShortcut", "snapshotAutoAttach", "snapshotSavePath",
     ]);
     expect(generalIds(fullEnv({ isDesktop: true, isRemote: true }))).toEqual([
       "appPurpose", "chatFontScale", "showThinking", "expandCommandOutputs", "expandDiffCard", "steerByDefault",
-      "telemetryRemote", "promptNav", "thumbsFeedbackRemote",
+      "telemetryRemote", "promptNav", "thumbsFeedbackRemote", "snapshotShortcut", "snapshotAutoAttach", "snapshotSavePath",
     ]);
   });
 
@@ -1679,6 +1679,70 @@ describe("settings overlay (chat.js)", () => {
     expect(status.querySelector(".settings-switch")).toBeNull();
     status.click();
     expect(posted).not.toContainEqual(expect.objectContaining({ type: "setThumbsFeedback" }));
+  });
+
+  it("renders Snapshot settings rows (shortcut, autoAttach toggle and savePath text) under General", () => {
+    const api = loadSettings();
+    const shortcutRow = api.ROWS.find((r: { id: string }) => r.id === "snapshotShortcut") as {
+      id: string;
+      category: string;
+      title: string;
+      defaultValue: string;
+      kind: string;
+    };
+    expect(shortcutRow).toMatchObject({
+      category: "general",
+      title: "Global snapshot shortcut",
+      defaultValue: "Ctrl+Alt+S",
+      kind: "hotkey",
+    });
+
+    const autoRow = api.ROWS.find((r: { id: string }) => r.id === "snapshotAutoAttach") as {
+      id: string;
+      category: string;
+      title: string;
+      defaultValue: boolean;
+      kind: string;
+    };
+    expect(autoRow).toMatchObject({
+      category: "general",
+      title: "Auto-attach screen snapshot",
+      defaultValue: true,
+      kind: "toggle",
+    });
+
+    const pathRow = api.ROWS.find((r: { id: string }) => r.id === "snapshotSavePath") as {
+      id: string;
+      category: string;
+      title: string;
+      defaultValue: string;
+      kind: string;
+    };
+    expect(pathRow).toMatchObject({
+      category: "general",
+      title: "Snapshot save folder",
+      defaultValue: "",
+      kind: "folder",
+    });
+
+    const snapshot = api.defaultSnapshot();
+    expect(snapshot.snapshotShortcut).toBe("Ctrl+Alt+S");
+    expect(snapshot.snapshotAutoAttach).toBe(true);
+    expect(snapshot.snapshotSavePath).toBe("");
+
+    // Verify visibility on Windows vs macOS
+    const winEnv = api.defaultEnv(fullEnv({ isWindows: true, isMac: false }));
+    const macEnv = api.defaultEnv(fullEnv({ isWindows: false, isMac: true }));
+    const winVisible = api.visibleRows(snapshot, winEnv).map((r) => r.id);
+    const macVisible = api.visibleRows(snapshot, macEnv).map((r) => r.id);
+
+    expect(winVisible).toContain("snapshotShortcut");
+    expect(winVisible).toContain("snapshotAutoAttach");
+    expect(winVisible).toContain("snapshotSavePath");
+
+    expect(macVisible).not.toContain("snapshotShortcut");
+    expect(macVisible).not.toContain("snapshotAutoAttach");
+    expect(macVisible).not.toContain("snapshotSavePath");
   });
 });
 

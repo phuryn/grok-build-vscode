@@ -170,6 +170,7 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
     case "refreshSubscriptionUsage":
     case "refreshProviders":
     case "pickFile":
+    case "pickSnapshotFolder":
     case "voiceStart":
     case "remoteVoiceStart":
     case "forkSession":
@@ -253,6 +254,7 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
     case "setExpandDiffCard":
     case "setTelemetryEnabled":
     case "setThumbsFeedback":
+    case "setSnapshotAutoAttach":
     case "composerFocus":
       if (type === "composerFocus") {
         if (!isBoolean(raw.focused)) return null;
@@ -261,6 +263,8 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
       }
       break;
     case "setVoiceSendPhrase":
+    case "setSnapshotSavePath":
+    case "setSnapshotShortcut":
       if (!isString(raw.value)) return null;
       break;
     case "setVoiceKeyterms":
@@ -434,6 +438,7 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
       if (!isString(raw.text)) return null;
       if (raw.chips !== undefined && !Array.isArray(raw.chips)) return null;
       if (!opt(raw.fromQueue, isBoolean)) return null;
+      if (!opt(raw.index, isNumber)) return null;
       break;
     case "clearQueuedSends":
       if (!opt(raw.restore, isBoolean)) return null;
@@ -442,7 +447,11 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
       if (raw.rating !== -1 && raw.rating !== 0 && raw.rating !== 1) return null;
       break;
     case "dequeueSend":
+    case "removeQueuedSend":
       if (!isNumber(raw.index)) return null;
+      break;
+    case "reorderQueuedSends":
+      if (!isNumber(raw.fromIndex) || !isNumber(raw.toIndex)) return null;
       break;
     case "rewindSession":
       if (!opt(raw.userBubbleIndex, isNumber)) return null;

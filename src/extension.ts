@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import { GrokSidebar } from "./sidebar";
+import { handleTakeSnapshotCommand } from "./snapshot-handler";
 import { createVsCodeHost, createVsCodeHostContext, fromVsCodeUri, wrapWebviewView } from "./vscode-host";
 import {
   GROK_VIEW_ID,
@@ -284,6 +285,9 @@ export function activate(context: vscode.ExtensionContext): GrokExtensionApi {
     vscode.commands.registerCommand("grok.logout", () => sidebar.logout()),
     vscode.commands.registerCommand("grok.linkRemote", () => sidebar.linkRemoteDevice()),
     vscode.commands.registerCommand("grok.unlinkRemote", () => sidebar.unlinkRemoteDevice()),
+    vscode.commands.registerCommand("grok.takeSnapshot", () =>
+      handleTakeSnapshotCommand(undefined, sidebar),
+    ),
     vscode.commands.registerCommand("grok.composerForward", () => sidebar.moveComposerCaret("forward")),
     vscode.commands.registerCommand("grok.composerPreviousLine", () => sidebar.moveComposerCaret("previousLine")),
     // Internal debug helper for manually exercising the plan-review card UI

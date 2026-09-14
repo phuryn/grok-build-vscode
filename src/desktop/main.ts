@@ -15,11 +15,13 @@ import {
   app,
   BrowserWindow,
   dialog,
+  globalShortcut,
   ipcMain,
   Menu,
   net,
   protocol,
   safeStorage,
+  screen,
   shell,
   type Menu as ElectronMenu,
   type ProtocolRequest,
@@ -34,6 +36,7 @@ import {
   prepareLogFile,
 } from "./log-file";
 import { GrokSidebar } from "../sidebar";
+import { handleTakeSnapshotCommand } from "../snapshot-handler";
 import { Uri } from "../host";
 import type { HostContext, HostDisposable } from "../host";
 import { ConfigStore, SensitiveConfigStore } from "./config-store";
@@ -731,6 +734,138 @@ async function createApp(): Promise<void> {
     },
   });
 
+  // Global snapshot shortcut management (desktop)
+  let currentRegisteredGlobalShortcut: string | null = null;
+
+  const showDesktopScreenFlash = (): void => {
+    try {
+      const displays = screen.getAllDisplays();
+      for (const display of displays) {
+        const { x, y, width, height } = display.bounds;
+        const flashWin = new BrowserWindow({
+          x,
+          y,
+          width,
+          height,
+          frame: false,
+          transparent: true,
+          alwaysOnTop: true,
+          skipTaskbar: true,
+          resizable: false,
+          movable: false,
+          focusable: false,
+          hasShadow: false,
+          backgroundColor: "#00000000",
+          webPreferences: {
+            nodeIntegration: false,
+            contextIsolation: true,
+            sandbox: true,
+          },
+        });
+        flashWin.setIgnoreMouseEvents(true);
+        void flashWin.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <style>
+              html, body {
+                margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden;
+                background: rgba(255, 255, 255, 0.88);
+                animation: flash 260ms cubic-bezier(0.1, 0.9, 0.2, 1) forwards;
+              }
+              @keyframes flash {
+                0% { opacity: 0.88; }
+                100% { opacity: 0; }
+              }
+            </style>
+          </head>
+          <body></body>
+          </html>
+        `)}`);
+        setTimeout(() => {
+          if (!flashWin.isDestroyed()) {
+            flashWin.close();
+            flashWin.destroy();
+          }
+        }, 320);
+      }
+    } catch (e) {
+      log(`[snapshot] screen flash error: ${(e as Error).message}`);
+    }
+  };
+
+  const updateGlobalSnapshotShortcut = (shortcutPref?: string) => {
+    if (currentRegisteredGlobalShortcut) {
+      try {
+        globalShortcut.unregister(currentRegisteredGlobalShortcut);
+      } catch {
+        /* best-effort */
+      }
+      currentRegisteredGlobalShortcut = null;
+    }
+
+    const raw = typeof shortcutPref === "string" ? shortcutPref.trim() : "";
+    const defaultShortcut = process.platform === "darwin" ? "CommandOrControl+Alt+S" : "Ctrl+Alt+S";
+    const target = raw || defaultShortcut;
+
+    // Convert e.g. "Ctrl+Alt+S" / "Ctrl+Shift+S" / "Alt+S" to Electron Accelerator
+    const accelerator = target
+      .replace(/\bctrl\b/gi, "CommandOrControl")
+      .replace(/\bcmd\b/gi, "CommandOrControl")
+      .replace(/\bopt\b/gi, "Alt")
+      .replace(/\boption\b/gi, "Alt");
+
+    try {
+      const ok = globalShortcut.register(accelerator, async () => {
+        log(`[snapshot] global shortcut triggered: ${accelerator}`);
+        const wasVisible = mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible() && !mainWindow.isMinimized();
+        try {
+          // 1. Hide Grok window so it is NOT captured in the screenshot
+          if (wasVisible && mainWindow) {
+            mainWindow.hide();
+          }
+
+          // Small delay for OS compositor to render the desktop without Grok window
+          await new Promise((r) => setTimeout(r, 120));
+
+          // 2. Capture clean screen and attach into chat composer
+          await handleTakeSnapshotCommand(undefined, sidebar || undefined);
+
+          // 3. Show full-screen white flash across the monitor(s)
+          showDesktopScreenFlash();
+
+          // 4. Restore and focus Grok window
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            if (mainWindow.isMinimized()) mainWindow.restore();
+            mainWindow.show();
+            mainWindow.focus();
+          }
+        } catch (e) {
+          log(`[snapshot] capture failed: ${(e as Error).message}`);
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.show();
+            mainWindow.focus();
+          }
+        }
+      });
+      if (ok) {
+        currentRegisteredGlobalShortcut = accelerator;
+        log(`[snapshot] registered global shortcut: ${accelerator}`);
+      } else {
+        log(`[snapshot] failed to register global shortcut: ${accelerator}`);
+      }
+    } catch (e) {
+      log(`[snapshot] globalShortcut error: ${(e as Error).message}`);
+    }
+  };
+
+  updateGlobalSnapshotShortcut(config.getValue("grok.snapshot.shortcut") as string | undefined);
+  config.onDidChange((e) => {
+    if (e.affectsConfiguration("grok.snapshot.shortcut") || e.affectsConfiguration("grok.snapshot")) {
+      updateGlobalSnapshotShortcut(config.getValue("grok.snapshot.shortcut") as string | undefined);
+    }
+  });
+
   // In-app updater on packaged win32/darwin; GitHub notice is the fallback
   // (and the only path when unpackaged / Linux / check-or-download fails).
   // Failure is silence. Re-check every 12h. In-memory pending frame only —
@@ -837,6 +972,11 @@ if (gotSingleInstanceLock) {
   });
 
   app.on("before-quit", () => {
+    try {
+      globalShortcut.unregisterAll();
+    } catch {
+      /* best-effort */
+    }
     try {
       sidebar?.dispose();
     } catch {

@@ -186,6 +186,10 @@
       {
         "command": "grok.composerPreviousLine",
         "title": "Grok: Composer — Move to Previous Line"
+      },
+      {
+        "command": "grok.takeSnapshot",
+        "title": "Grok: Take Snapshot"
       }
     ],
     "keybindings": [
@@ -193,6 +197,11 @@
         "command": "grok.open",
         "key": "ctrl+;",
         "mac": "cmd+;"
+      },
+      {
+        "command": "grok.takeSnapshot",
+        "key": "ctrl+alt+s",
+        "mac": "cmd+alt+s"
       },
       {
         "command": "grok.insertAtMention",
@@ -302,6 +311,21 @@
           "type": "boolean",
           "default": true,
           "description": "Auto-add the active editor file as a context chip."
+        },
+        "grok.snapshot.shortcut": {
+          "type": "string",
+          "default": "Ctrl+Alt+S",
+          "markdownDescription": "Custom global keyboard shortcut for screen snapshot (e.g. `Ctrl+Alt+S`, `Alt+S`, `Ctrl+Shift+S`). Works system-wide across all applications in Desktop mode."
+        },
+        "grok.snapshot.autoAttach": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Automatically attach screen snapshots taken with **`Ctrl+Alt+S`** / **`Cmd+Alt+S`** directly to the chat composer as an image chip."
+        },
+        "grok.snapshot.savePath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Custom hard disk folder/directory path where screen snapshots are saved on Windows / macOS. Leave empty to use the default system temporary directory (`%TEMP%` / `/tmp`)."
         },
         "grok.mentionIndexLimit": {
           "type": "number",
@@ -510,37 +534,37 @@
     "test:watch": "vitest",
     "test:perf": "vitest run --config vitest.perf.config.ts",
     "compile:integration": "node -e \"require('fs').rmSync('out-integration',{recursive:true,force:true})\" && tsc -p integration/tsconfig.json",
-    "test:integration": "npm run compile && npm run compile:integration && vscode-test",
+    "test:integration": "pnpm run compile && pnpm run compile:integration && vscode-test",
     "test:live": "tsc -p . && node scripts/live-tests.cjs",
-    "desktop": "npm run compile && node scripts/run-desktop.cjs",
-    "desktop-dev": "npm run compile && node scripts/run-desktop.cjs --relay-dev --open-devtools --remote-debugging-port=9333",
-    "test:desktop": "npm run compile && vitest run --config vitest.desktop.config.ts",
+    "desktop": "pnpm run compile && node scripts/run-desktop.cjs",
+    "desktop-dev": "pnpm run compile && node scripts/run-desktop.cjs --relay-dev --open-devtools --remote-debugging-port=9333",
+    "test:desktop": "pnpm run compile && vitest run --config vitest.desktop.config.ts",
     "e2e:composer": "node scripts/composer-layout-check.mjs",
-    "e2e:screens": "npm run compile && node scripts/desk-screens-check.mjs",
-    "e2e:open-timing": "npm run compile && node scripts/open-timing-check.mjs",
+    "e2e:screens": "pnpm run compile && node scripts/desk-screens-check.mjs",
+    "e2e:open-timing": "pnpm run compile && node scripts/open-timing-check.mjs",
     "e2e:hc-colour": "node scripts/hc-colour-screens.mjs",
     "e2e:changes": "node scripts/changes-view-screens.mjs",
     "e2e:panel-flow": "node scripts/panel-flow-screens.mjs",
     "e2e:turn-diff": "node scripts/turn-diff-screens.mjs",
     "e2e:welcome-tip": "node scripts/ide-welcome-tip-screens.mjs",
-    "e2e:gh-unauth": "npm run compile && node scripts/gh-unauth-check.mjs",
+    "e2e:gh-unauth": "pnpm run compile && node scripts/gh-unauth-check.mjs",
     "marketplace:login": "node scripts/marketplace-session.mjs",
     "marketplace:publish": "node scripts/marketplace-publish.mjs",
-    "e2e:lifecycle-host": "npm run compile && node scripts/lifecycle-host.mjs",
-    "smoke:live": "npm run compile && node scripts/live-smoke.mjs",
-    "smoke:acp": "npm run compile && node scripts/acp-smoke.mjs",
+    "e2e:lifecycle-host": "pnpm run compile && node scripts/lifecycle-host.mjs",
+    "smoke:live": "pnpm run compile && node scripts/live-smoke.mjs",
+    "smoke:acp": "pnpm run compile && node scripts/acp-smoke.mjs",
     "telemetry:probe": "tsc -p . && node scripts/telemetry-probe.cjs",
     "check:relay": "node scripts/check-production-relay.mjs",
-    "check:vsix": "npm run compile && node scripts/check-vsix-requires.mjs",
-    "prepackage": "node -e \"const fs=require('fs'); for (const f of fs.readdirSync('.')) if (f.endsWith('.vsix')) fs.unlinkSync(f); fs.rmSync('out',{recursive:true,force:true})\" && npm run check:relay && npm run check:vsix",
+    "check:vsix": "pnpm run compile && node scripts/check-vsix-requires.mjs",
+    "prepackage": "node -e \"const fs=require('fs'); for (const f of fs.readdirSync('.')) if (f.endsWith('.vsix')) fs.unlinkSync(f); fs.rmSync('out',{recursive:true,force:true})\" && pnpm run check:relay && pnpm run check:vsix",
     "package": "vsce package --readme-path README.marketplace.md",
     "publish": "vsce publish --readme-path README.marketplace.md",
     "publish:ovsx": "node scripts/publish-ovsx.mjs",
-    "dist": "npm run compile && electron-builder --publish never",
-    "dist:mac": "npm run compile && electron-builder --mac --publish never",
-    "dist:win": "npm run compile && electron-builder --win --x64 --publish never",
-    "dist:linux": "npm run compile && electron-builder --linux --x64 --publish never -c.extraMetadata.grokCloudBuild=true",
-    "dist:dir": "npm run compile && electron-builder --dir --publish never"
+    "dist": "pnpm run compile && electron-builder --publish never",
+    "dist:mac": "pnpm run compile && electron-builder --mac --publish never",
+    "dist:win": "pnpm run compile && electron-builder --win --x64 --publish never",
+    "dist:linux": "pnpm run compile && electron-builder --linux --x64 --publish never -c.extraMetadata.grokCloudBuild=true",
+    "dist:dir": "pnpm run compile && electron-builder --dir --publish never"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",

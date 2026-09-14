@@ -254,8 +254,15 @@ describe("VSIX excludes desktop app", () => {
 
   it("lockfile records the adapter's declared dependency tree", () => {
     // vsce runs `npm list --production`. A lockfile leaf (tarball, no
-    // dependencies field) lets `npm ci` succeed and then fails that list
+    // dependencies field) lets `npm ci` / `pnpm install` succeed and then fails that list
     // against the installed package.json.
+    if (fs.existsSync(path.join(root, "pnpm-lock.yaml"))) {
+      const pnpmLock = read("pnpm-lock.yaml");
+      expect(pnpmLock).toContain("@agentclientprotocol/codex-acp");
+      expect(pnpmLock).toContain("@openai/codex");
+      expect(pnpmLock).toContain("@agentclientprotocol/sdk");
+      return;
+    }
     const lock = JSON.parse(read("package-lock.json")) as {
       packages: Record<string, { dependencies?: Record<string, string> }>;
     };

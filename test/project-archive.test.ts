@@ -102,7 +102,7 @@ describe("project archive presentation", () => {
         selectedCwd: app, entries: expect.arrayContaining([expect.objectContaining({ cwd: app, archived: true })]),
       });
       sidebar.uplink.broadcastTo.mockClear();
-      sidebar.handleRemoteMessage("phone", { type: "listRepoSessions", cwd: app });
+      await sidebar.handleRemoteMessage("phone", { type: "listRepoSessions", cwd: app });
       expect(sidebar.uplink.broadcastTo).toHaveBeenCalledWith(["phone"], expect.objectContaining({
         type: "repoSessions", cwd: app, entries: [expect.objectContaining({ id: row.id })],
       }), app);

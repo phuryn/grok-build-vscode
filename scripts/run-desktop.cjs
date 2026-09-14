@@ -107,11 +107,15 @@ if (process.argv.includes("--relay-dev")) {
 
 const electronBin = require("electron");
 const mainJs = path.join(__dirname, "..", "out", "desktop", "main.js");
-const child = spawn(electronBin, [mainJs, ...args], {
+const needsShell = typeof electronBin === "string" && /\.(cmd|bat)$/i.test(electronBin);
+const command = needsShell && electronBin.includes(" ") && !electronBin.startsWith('"')
+  ? `"${electronBin}"`
+  : electronBin;
+
+const child = spawn(command, [mainJs, ...args], {
   env,
   stdio: "inherit",
-  // Windows: electron path may be electron.cmd when required — shell helps.
-  shell: process.platform === "win32",
+  shell: needsShell,
 });
 
 child.on("exit", (code, signal) => {

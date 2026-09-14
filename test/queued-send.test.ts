@@ -10,6 +10,7 @@ import {
   queuedSendsContainChipIds,
   queuedSendsMessage,
   queuedSendsText,
+  reorderQueuedSends,
   restoreQueuedChips,
   takeQueuedSendsPrefix,
 } from "../src/queued-send";
@@ -151,11 +152,38 @@ describe("dequeueQueuedSends index meaning by client generation", () => {
   });
 });
 
+describe("reorderQueuedSends", () => {
+  it("reorders elements correctly", () => {
+    const items = [
+      { text: "a", chips: [] },
+      { text: "b", chips: [] },
+      { text: "c", chips: [] },
+    ];
+    expect(reorderQueuedSends(items, 0, 2)).toEqual([
+      { text: "b", chips: [] },
+      { text: "c", chips: [] },
+      { text: "a", chips: [] },
+    ]);
+    expect(reorderQueuedSends(items, 2, 0)).toEqual([
+      { text: "c", chips: [] },
+      { text: "a", chips: [] },
+      { text: "b", chips: [] },
+    ]);
+  });
+
+  it("handles out of bounds or same index gracefully", () => {
+    const items = [{ text: "a", chips: [] }];
+    expect(reorderQueuedSends(items, 0, 0)).toEqual(items);
+    expect(reorderQueuedSends(items, -1, 0)).toEqual(items);
+    expect(reorderQueuedSends(items, 0, 5)).toEqual(items);
+  });
+});
+
 describe("live host keeps the entry-store invariants", () => {
   const sidebarSrc = readFileSync(new URL("../src/sidebar.ts", import.meta.url), "utf8");
 
-  it("dequeueSend from an old webview is the pending block, not index-into-entries", () => {
-    expect(sidebarSrc).toContain("dequeueQueuedSends(s.queuedSends, msg.index, false)");
+  it("dequeueSend removes targeted contribution when index is passed", () => {
+    expect(sidebarSrc).toContain("dequeueQueuedSends(s.queuedSends, idx, true)");
   });
 
   it("reconnect minting uses claimQueuedSendDispatch so image-only text is not dropped", () => {

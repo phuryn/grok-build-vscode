@@ -5,10 +5,15 @@ const env = { ...process.env };
 delete env.ELECTRON_RUN_AS_NODE;
 const electronBin = require("electron");
 const mainScript = path.join(__dirname, "media-range-harness-main.cjs");
-const child = spawn(electronBin, ["--no-sandbox", "--disable-gpu", "--disable-gpu-compositing", mainScript, ...process.argv.slice(2)], {
+const needsShell = typeof electronBin === "string" && /\.(cmd|bat)$/i.test(electronBin);
+const command = needsShell && electronBin.includes(" ") && !electronBin.startsWith('"')
+  ? `"${electronBin}"`
+  : electronBin;
+
+const child = spawn(command, ["--no-sandbox", "--disable-gpu", "--disable-gpu-compositing", mainScript, ...process.argv.slice(2)], {
   env,
   stdio: "inherit",
-  shell: process.platform === "win32",
+  shell: needsShell,
 });
 child.on("exit", (code, signal) => {
   if (signal) process.kill(process.pid, signal);

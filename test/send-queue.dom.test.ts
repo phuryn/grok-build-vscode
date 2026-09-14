@@ -304,7 +304,7 @@ describe("queued blocks — host-owned per session (#37)", () => {
         { text: "and B", chips: [chipB] },
       ],
     });
-    expect(queuedBlocks(doc)).toEqual(["look at A\n\nand B"]);
+    expect(queuedBlocks(doc)).toEqual(["look at A", "and B"]);
     const chipLabels = [...doc.querySelectorAll(".msg.queued .msg-chip")].map((el) => el.textContent);
     expect(chipLabels).toEqual(["Image #1", "Image #2"]);
   });
@@ -326,7 +326,7 @@ describe("queued blocks — host-owned per session (#37)", () => {
     expect(doc.querySelector(".msg.queued .msg-chip")?.textContent).toBe("Image #2");
   });
 
-  it("Edit hands the WHOLE pending message back to the composer (before any draft) and dequeues it", () => {
+  it("Edit hands the pending message back to the composer (before any draft) and dequeues it", () => {
     const { window, posted, doc } = bootWebview();
     const input = $(doc, "input") as HTMLTextAreaElement;
     dispatch(window, { type: "setBusy", value: true });
@@ -336,9 +336,9 @@ describe("queued blocks — host-owned per session (#37)", () => {
     const editBtn = doc.querySelector('.queued-action[title^="Edit"]') as HTMLElement;
     press(window, editBtn);
 
-    expect(posted.find((p) => p.type === "clearQueuedSends")).toEqual({
-      type: "clearQueuedSends",
-      restore: true,
+    expect(posted.find((p) => p.type === "dequeueSend")).toEqual({
+      type: "dequeueSend",
+      index: 0,
     });
     // Queued text is older than the current draft → it goes first.
     expect(input.value).toBe("fix the test\n\nand rerun\n\nhalf-typed draft");
@@ -356,7 +356,7 @@ describe("queued blocks — host-owned per session (#37)", () => {
     const removeBtn = doc.querySelector('.queued-action[title="Remove from queue"]') as HTMLElement;
     press(window, removeBtn);
 
-    expect(posted.find((p) => p.type === "clearQueuedSends")).toEqual({ type: "clearQueuedSends" });
+    expect(posted.find((p) => p.type === "removeQueuedSend")).toEqual({ type: "removeQueuedSend", index: 0 });
   });
 
   it("clicking Stop with messages queued hands them back to the composer and clears the host queue BEFORE cancelling", () => {
@@ -562,12 +562,10 @@ describe("Steer — submit into the running turn (#52)", () => {
     expect(posted.find((p) => p.type === "steerSend")).toMatchObject({
       text: "actually, use async",
       fromQueue: true,
+      index: 0,
     });
     // The whole point of #52: steering is not a disguised Stop.
     expect(types(posted)).not.toContain("cancel");
-    // It leaves the queue, or the host would ALSO flush it at turn end (double send).
-    expect(types(posted)).toContain("clearQueuedSends");
-    expect(types(posted).indexOf("steerSend")).toBeLessThan(types(posted).indexOf("clearQueuedSends"));
   });
 
   it("offers Steer when the queued item has an attachment and carries those chips", () => {

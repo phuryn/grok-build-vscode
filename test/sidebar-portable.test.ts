@@ -30,7 +30,7 @@ describe("sidebar is portable (no vscode module)", () => {
     mkdirSync(tempOut, { recursive: true });
     const tsc = spawnSync(
       process.platform === "win32" ? "npx.cmd" : "npx",
-      ["tsc", "-p", ".", "--outDir", tempOut, "--declaration", "false"],
+      ["tsc", "-p", ".", "--outDir", `"${tempOut}"`, "--declaration", "false"],
       { cwd: root, encoding: "utf8", shell: true },
     );
     if (tsc.status !== 0) {

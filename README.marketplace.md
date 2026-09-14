@@ -320,12 +320,14 @@ VS Code commands (not Grok slash commands):
 | `Grok: Insert @-Mention` | Insert an `@`-mention for the active file into the composer |
 | `Grok: Expand All Tool Details (This Session)` | Open every tool group, command IN/OUT box, and edit inline diff, and keep new ones open — this session only |
 | `Grok: Collapse All Tool Details (This Session)` | Collapse them all, and keep new ones collapsed — this session only |
+| `Grok: Take Snapshot` | Capture a screen snapshot (Windows / macOS) and attach it to the composer |
 | `Grok: Show Logs` | Open the Grok output channel (ACP messages, errors) |
 | `Grok: Log Out` | Sign out of the Grok CLI (`grok logout`) and return to the sign-in screen |
 
 | Key | Action |
 |---|---|
 | `Ctrl+;` / `Cmd+;` | Open Grok sidebar |
+| `Ctrl+Alt+S` / `Cmd+Alt+S` | Take screen snapshot and attach to chat |
 | `Alt+G` | Insert `@`-mention for the active file (when the editor is focused) |
 
 Grok's own **slash commands** (`/imagine`, `/compact`, …) autocomplete in the composer when you type `/`, sourced live from your installed CLI version. Reference snapshot: [docs/SLASH-COMMANDS.md](https://github.com/phuryn/grok-build-vscode/blob/main/docs/SLASH-COMMANDS.md).

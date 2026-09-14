@@ -8,13 +8,23 @@ import { Uri } from "../host";
 
 const SKIP_DIR_NAMES = new Set([
   "node_modules",
+  ".pnpm",
   ".git",
   ".hg",
   ".svn",
   "out",
+  "out-integration",
   "dist",
+  "dist-desktop",
   ".vscode-test",
   "coverage",
+  ".next",
+  ".nuxt",
+  "target",
+  "venv",
+  ".venv",
+  "tmp",
+  "temp",
 ]);
 
 function matchesExclude(relPosix: string, exclude?: string): boolean {
@@ -40,7 +50,8 @@ function matchesExclude(relPosix: string, exclude?: string): boolean {
 }
 
 /**
- * Walk `base` and return file URIs under it, newest-not-sorted (order free).
+ * Walk `base` asynchronously and return file URIs under it, newest-not-sorted (order free).
+ * Uses non-blocking cooperative scheduling to never starve the Electron main loop / Windows Message Pump.
  */
 export async function findFilesUnder(
   base: string,
@@ -48,17 +59,37 @@ export async function findFilesUnder(
   maxResults = 5000,
 ): Promise<Uri[]> {
   const root = path.resolve(base);
-  if (!fs.existsSync(root)) return [];
-  const out: Uri[] = [];
+  try {
+    const st = await fs.promises.stat(root);
+    if (!st.isDirectory()) return [];
+  } catch {
+    return [];
+  }
 
-  const walk = (dir: string): void => {
+  const out: Uri[] = [];
+  let yieldCounter = 0;
+
+  async function walk(dir: string): Promise<void> {
     if (out.length >= maxResults) return;
+
+    yieldCounter++;
+    if (yieldCounter % 30 === 0) {
+      await new Promise<void>((resolve) => {
+        if (typeof setImmediate === "function") {
+          setImmediate(resolve);
+        } else {
+          setTimeout(resolve, 0);
+        }
+      });
+    }
+
     let entries: fs.Dirent[];
     try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
+      entries = await fs.promises.readdir(dir, { withFileTypes: true });
     } catch {
       return;
     }
+
     for (const ent of entries) {
       if (out.length >= maxResults) return;
       const abs = path.join(dir, ent.name);
@@ -66,15 +97,15 @@ export async function findFilesUnder(
         if (SKIP_DIR_NAMES.has(ent.name)) continue;
         const rel = path.relative(root, abs).split(path.sep).join("/");
         if (matchesExclude(rel + "/", exclude) || matchesExclude(rel, exclude)) continue;
-        walk(abs);
+        await walk(abs);
       } else if (ent.isFile()) {
         const rel = path.relative(root, abs).split(path.sep).join("/");
         if (matchesExclude(rel, exclude)) continue;
         out.push(Uri.file(abs));
       }
     }
-  };
+  }
 
-  walk(root);
+  await walk(root);
   return out;
 }

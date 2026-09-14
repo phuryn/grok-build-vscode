@@ -682,6 +682,39 @@
       },
     },
     {
+      id: "snapshotShortcut",
+      category: "general",
+      title: "Global snapshot shortcut",
+      description: "Custom keyboard shortcut to take a screen snapshot (2–3 key combination, e.g. Ctrl+Alt+S, Alt+S, Ctrl+Shift+S). Works globally even when the app is in the background.",
+      kind: "hotkey",
+      defaultValue: "Ctrl+Alt+S",
+      visible: (s, env) => !env || (env.isWindows !== false && !env.isMac),
+      get: (s) => (s && typeof s.snapshotShortcut === "string" && s.snapshotShortcut) ? s.snapshotShortcut : "Ctrl+Alt+S",
+      message: (value) => ({ type: "setSnapshotShortcut", value }),
+    },
+    {
+      id: "snapshotAutoAttach",
+      category: "general",
+      title: "Auto-attach screen snapshot",
+      description: "Automatically attach screen snapshots taken with Ctrl+Alt+S directly to the chat composer as an image chip.",
+      kind: "toggle",
+      defaultValue: true,
+      visible: (s, env) => !env || (env.isWindows !== false && !env.isMac),
+      get: (s) => (s && typeof s.snapshotAutoAttach === "boolean") ? s.snapshotAutoAttach : true,
+      message: (value) => ({ type: "setSnapshotAutoAttach", value }),
+    },
+    {
+      id: "snapshotSavePath",
+      category: "general",
+      title: "Snapshot save folder",
+      description: "Custom hard disk folder path where screen snapshots are saved on Windows. Leave empty to use default system temp.",
+      kind: "folder",
+      defaultValue: "",
+      visible: (s, env) => !env || (env.isWindows !== false && !env.isMac),
+      get: (s) => (s && typeof s.snapshotSavePath === "string") ? s.snapshotSavePath : "",
+      message: (value) => ({ type: "setSnapshotSavePath", value }),
+    },
+    {
       id: "voiceSendPhrase",
       category: "voice",
       title: "Send phrase",
@@ -1568,6 +1601,15 @@
       case "thumbsFeedback":
         next.thumbsFeedback = !!value;
         break;
+      case "snapshotAutoAttach":
+        next.snapshotAutoAttach = !!value;
+        break;
+      case "snapshotSavePath":
+        next.snapshotSavePath = String(value ?? "");
+        break;
+      case "snapshotShortcut":
+        next.snapshotShortcut = String(value ?? "Ctrl+Alt+S");
+        break;
       default:
         break;
     }
@@ -1578,6 +1620,8 @@
     return {
       isRemote: false,
       isDesktop: false,
+      isWindows: true,
+      isMac: false,
       clientOwnsFontScale: false,
       ttsAvailable: true,
       steerSupported: true,
@@ -1605,6 +1649,9 @@
       voiceKeyterms: [],
       telemetryEnabled: true,
       thumbsFeedback: false,
+      snapshotShortcut: "Ctrl+Alt+S",
+      snapshotAutoAttach: true,
+      snapshotSavePath: "",
       expandDiffCard: false,
       promptNav: true,
       providers: [],
@@ -3016,6 +3063,66 @@
       input.setAttribute("aria-label", row.title);
       if (row.placeholder) input.placeholder = row.placeholder;
       control.appendChild(input);
+    } else if (row.kind === "hotkey") {
+      const wrap = document.createElement("div");
+      wrap.className = "settings-hotkey-wrap";
+
+      const badges = document.createElement("div");
+      badges.className = "settings-hotkey-badges";
+      badges.setAttribute("tabindex", "0");
+      badges.setAttribute("role", "button");
+      badges.setAttribute("aria-label", `Current shortcut: ${value || "None"}. Click to record new shortcut.`);
+
+      const parts = String(value || "Ctrl+Alt+S").split("+").filter(Boolean);
+      badges.innerHTML = parts.map((p) => `<kbd class="settings-hotkey-kbd">${escapeHtml(p)}</kbd>`).join('<span class="settings-hotkey-plus">+</span>');
+      wrap.appendChild(badges);
+
+      const recordBtn = document.createElement("button");
+      recordBtn.type = "button";
+      recordBtn.className = "settings-action";
+      recordBtn.textContent = "Record";
+      recordBtn.onclick = (e) => {
+        e.stopPropagation();
+        badges.click();
+      };
+      wrap.appendChild(recordBtn);
+
+      if (value && value !== row.defaultValue) {
+        const resetBtn = document.createElement("button");
+        resetBtn.type = "button";
+        resetBtn.className = "settings-action settings-hotkey-reset";
+        resetBtn.textContent = "Reset";
+        wrap.appendChild(resetBtn);
+      }
+
+      control.appendChild(wrap);
+    } else if (row.kind === "folder") {
+      const wrap = document.createElement("div");
+      wrap.className = "settings-folder-wrap";
+
+      const display = document.createElement("div");
+      display.className = "settings-folder-display" + (value ? "" : " is-empty");
+      display.setAttribute("title", value ? String(value) : "Default system temporary folder (%TEMP%)");
+
+      const folderIcon = `<span class="settings-folder-icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg></span>`;
+      display.innerHTML = `${folderIcon}<span>${escapeHtml(value ? String(value) : "Default (%TEMP%)")}</span>`;
+      wrap.appendChild(display);
+
+      const browseBtn = document.createElement("button");
+      browseBtn.type = "button";
+      browseBtn.className = "settings-action settings-folder-browse";
+      browseBtn.textContent = "Browse…";
+      wrap.appendChild(browseBtn);
+
+      if (value) {
+        const resetBtn = document.createElement("button");
+        resetBtn.type = "button";
+        resetBtn.className = "settings-action settings-folder-reset";
+        resetBtn.textContent = "Reset";
+        wrap.appendChild(resetBtn);
+      }
+
+      control.appendChild(wrap);
     } else if (row.kind === "tags") {
       const wrap = document.createElement("div");
       wrap.className = "settings-tags";
@@ -3754,6 +3861,104 @@
             }
             runAction(row);
           };
+        } else if (row.kind === "hotkey") {
+          const badges = el.querySelector(".settings-hotkey-badges");
+          const resetBtn = el.querySelector(".settings-hotkey-reset");
+          if (badges) {
+            let isRecording = false;
+
+            const startRecording = () => {
+              if (isRecording) return;
+              isRecording = true;
+              badges.classList.add("settings-hotkey-recording");
+              badges.innerHTML = `<span class="settings-hotkey-prompt">Press keys (Esc to cancel)...</span>`;
+              badges.focus();
+            };
+
+            const stopRecording = (nextValue) => {
+              isRecording = false;
+              badges.classList.remove("settings-hotkey-recording");
+              if (typeof nextValue === "string" && nextValue) {
+                commit(row, nextValue);
+              } else {
+                paint();
+              }
+            };
+
+            badges.onclick = (e) => {
+              e.stopPropagation();
+              if (!isRecording) startRecording();
+            };
+
+            badges.onkeydown = (e) => {
+              if (!isRecording) {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  startRecording();
+                }
+                return;
+              }
+              e.preventDefault();
+              e.stopPropagation();
+
+              if (e.key === "Escape") {
+                stopRecording(null);
+                return;
+              }
+
+              const parts = [];
+              if (e.ctrlKey) parts.push("Ctrl");
+              if (e.altKey) parts.push("Alt");
+              if (e.shiftKey) parts.push("Shift");
+              if (e.metaKey) parts.push("Cmd");
+
+              let key = e.key;
+              if (["Control", "Alt", "Shift", "Meta"].includes(key)) {
+                badges.innerHTML = parts.map((p) => `<kbd class="settings-hotkey-kbd">${escapeHtml(p)}</kbd>`).join('<span class="settings-hotkey-plus">+</span>') + `<span class="settings-hotkey-prompt"> + …</span>`;
+                return;
+              }
+
+              // Require at least one modifier OR a dedicated function/special key
+              const isSpecialKey = /^F\d+$/i.test(key) || key === "PrintScreen" || key === "ScrollLock" || key === "Pause" || key === "Insert";
+              if (parts.length === 0 && !isSpecialKey) {
+                badges.innerHTML = `<span class="settings-hotkey-prompt" style="color:var(--vscode-errorForeground,#f48771)">Hold Ctrl, Alt, or Shift + key</span>`;
+                return;
+              }
+
+              if (key === " ") key = "Space";
+              else if (key.length === 1) key = key.toUpperCase();
+              else if (/^f\d+$/i.test(key)) key = key.toUpperCase();
+
+              parts.push(key);
+              const combo = parts.join("+");
+              stopRecording(combo);
+            };
+
+            badges.onblur = () => {
+              if (isRecording) stopRecording(null);
+            };
+          }
+          if (resetBtn) {
+            resetBtn.onclick = (e) => {
+              e.stopPropagation();
+              commit(row, row.defaultValue || "Ctrl+Alt+S");
+            };
+          }
+        } else if (row.kind === "folder") {
+          const browseBtn = el.querySelector(".settings-folder-browse");
+          const resetBtn = el.querySelector(".settings-folder-reset");
+          if (browseBtn) {
+            browseBtn.onclick = (e) => {
+              e.stopPropagation();
+              post({ type: "pickSnapshotFolder" });
+            };
+          }
+          if (resetBtn) {
+            resetBtn.onclick = (e) => {
+              e.stopPropagation();
+              commit(row, "");
+            };
+          }
         }
       });
       function closeKeyForm() {

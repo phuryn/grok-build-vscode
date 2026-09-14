@@ -236,6 +236,7 @@ import {
   queuedSendsHaveContent,
   queuedSendsMessage,
   queuedSendsText,
+  reorderQueuedSends,
   restoreQueuedChips,
   type QueuedSendEntry,
 } from "./queued-send";
@@ -350,6 +351,7 @@ import {
   findSessionCatalogCwd,
   forkDisplayName,
   indexSessions,
+  SessionIndexEntry,
   isEmptySession,
   isPathInside,
   isRepoColor,
@@ -820,6 +822,12 @@ export class GrokSidebar {
    *  one in-flight build. Open tabs are layered on at read time. */
   private mentionIndex: { at: number; rels: string[]; absByRel: Map<string, string> } | null = null;
   private mentionIndexPromise: Promise<{ rels: string[]; absByRel: Map<string, string> }> | null = null;
+  /** In-memory cache for repo catalog to eliminate sync disk stat spikes on session switches. */
+  private repoCatalogCache: { at: number; entries: RepoListEntry[] } | null = null;
+  /** In-memory cache for session indexes per repo cwd. */
+  private sessionIndexCache: Map<string, { at: number; entries: SessionIndexEntry[] }> = new Map();
+  /** Tracks the latest requested local session ID to quickly cancel and bypass stale in-flight loads. */
+  private latestLocalOpenTargetId: string | null = null;
   private readonly remoteMentionIndexes = new Map<string, {
     at: number;
     rels: string[];
@@ -993,6 +1001,10 @@ export class GrokSidebar {
     "configureOpenAiVoice",
     "setTelemetryEnabled",
     "setThumbsFeedback",
+    "setSnapshotAutoAttach",
+    "setSnapshotSavePath",
+    "setSnapshotShortcut",
+    "pickSnapshotFolder",
     "openGlobalConfig",
     "openProviderConfig",
     "openProjectConfig",
@@ -2828,6 +2840,24 @@ export class GrokSidebar {
           this.refreshFeedbackAvailability(session);
         }
       }
+      if (e.affectsConfiguration("grok.snapshot.autoAttach") || e.affectsConfiguration("grok.snapshot")) {
+        this.post({
+          type: "snapshotAutoAttach",
+          value: this.host.getConfiguration("grok").get<boolean>("snapshot.autoAttach", true),
+        });
+      }
+      if (e.affectsConfiguration("grok.snapshot.savePath") || e.affectsConfiguration("grok.snapshot")) {
+        this.post({
+          type: "snapshotSavePath",
+          value: this.host.getConfiguration("grok").get<string>("snapshot.savePath", ""),
+        });
+      }
+      if (e.affectsConfiguration("grok.snapshot.shortcut") || e.affectsConfiguration("grok.snapshot")) {
+        this.post({
+          type: "snapshotShortcut",
+          value: this.host.getConfiguration("grok").get<string>("snapshot.shortcut", "Ctrl+Alt+S"),
+        });
+      }
     });
     const authWatcher = this.host.createFileSystemWatcher(
       resolveGrokHome(process.env),
@@ -4062,8 +4092,10 @@ Only continue if you trust this code.`,
     // Same readiness as handleSend — client without sessionId is still priming.
     if (!sessionReadyForPrompt(session)) return undefined;
     if (session.status === "working" || session.status === "needs-you") return undefined;
+    if (!session.queuedSends.length) return undefined;
     // `""` is a ready image-only queue; `undefined` is "do not flush".
-    return queuedFlushText(session.queuedSends);
+    // Discrete queue: flush only the first item in the queue.
+    return queuedFlushText([session.queuedSends[0]]);
   }
 
   private emitQueuedSends(session: Session): void {
@@ -4117,6 +4149,7 @@ Only continue if you trust this code.`,
     requester?: RemoteRequester,
     requestedChips?: FileChip[],
     fromQueue = false,
+    queueIndex?: number,
   ): Promise<void> {
     const authored = text ?? "";
     const takeQueue = (fromQueue && queuedSendsHaveContent(session.queuedSends))
@@ -4145,11 +4178,22 @@ Only continue if you trust this code.`,
     let contributions: QueuedSendEntry[];
     let fromComposer = false;
     if (takeQueue) {
-      contributions = session.queuedSends.map((item) => ({
-        text: item.text,
-        chips: item.chips.map(cloneChipForQueue),
-      }));
-      session.queuedSends = [];
+      if (typeof queueIndex === "number" && queueIndex >= 0 && queueIndex < session.queuedSends.length) {
+        contributions = [{
+          text: session.queuedSends[queueIndex].text,
+          chips: session.queuedSends[queueIndex].chips.map(cloneChipForQueue),
+        }];
+        session.queuedSends = [
+          ...session.queuedSends.slice(0, queueIndex),
+          ...session.queuedSends.slice(queueIndex + 1),
+        ];
+      } else {
+        contributions = session.queuedSends.map((item) => ({
+          text: item.text,
+          chips: item.chips.map(cloneChipForQueue),
+        }));
+        session.queuedSends = [];
+      }
       session.queuedSendDispatch = undefined;
       session.queuedSendCommit = undefined;
       this.emitQueuedSends(session);
@@ -4167,7 +4211,15 @@ Only continue if you trust this code.`,
 
     const putBackOnQueue = (): void => {
       if (takeQueue) {
-        session.queuedSends = [...contributions, ...session.queuedSends];
+        if (typeof queueIndex === "number" && queueIndex >= 0) {
+          session.queuedSends = [
+            ...session.queuedSends.slice(0, queueIndex),
+            ...contributions,
+            ...session.queuedSends.slice(queueIndex),
+          ];
+        } else {
+          session.queuedSends = [...contributions, ...session.queuedSends];
+        }
         session.queuedSendRequiresRelay = relayFlag;
       } else {
         for (const item of contributions) {
@@ -4178,7 +4230,15 @@ Only continue if you trust this code.`,
     };
     const putBackOnComposer = (): void => {
       if (takeQueue) {
-        session.queuedSends = [...contributions, ...session.queuedSends];
+        if (typeof queueIndex === "number" && queueIndex >= 0) {
+          session.queuedSends = [
+            ...session.queuedSends.slice(0, queueIndex),
+            ...contributions,
+            ...session.queuedSends.slice(queueIndex),
+          ];
+        } else {
+          session.queuedSends = [...contributions, ...session.queuedSends];
+        }
         session.queuedSendRequiresRelay = relayFlag;
         this.emitQueuedSends(session);
         return;
@@ -6024,7 +6084,39 @@ Only continue if you trust this code.`,
     return true;
   }
 
+  private invalidateRepoCatalog(): void {
+    this.repoCatalogCache = null;
+  }
+
+  private invalidateSessionIndex(cwd?: string): void {
+    if (!this.sessionIndexCache) return;
+    if (cwd) {
+      this.sessionIndexCache.delete(normalizeRepoPath(cwd));
+    } else {
+      this.sessionIndexCache.clear();
+    }
+  }
+
+  private cachedIndexSessions(cwd: string, grokHome: string, log: (m: string) => void): SessionIndexEntry[] {
+    const key = normalizeRepoPath(cwd);
+    const now = Date.now();
+    if (!this.sessionIndexCache) {
+      this.sessionIndexCache = new Map();
+    }
+    const hit = this.sessionIndexCache.get(key);
+    if (hit && now - hit.at < 3500) {
+      return hit.entries;
+    }
+    const entries = indexSessions({ fs: defaultFs, grokHome, cwd, log });
+    this.sessionIndexCache.set(key, { at: now, entries });
+    return entries;
+  }
+
   private repoCatalog() {
+    const now = Date.now();
+    if (this.repoCatalogCache && now - this.repoCatalogCache.at < 5000) {
+      return this.repoCatalogCache.entries;
+    }
     const pins = this.state.get<RepoPins>(REPO_PINS_KEY, {});
     const worktreeLabels = new Map<string, string>();
     for (const o of Object.values(this.state.get<SessionMetaOverrides>(SESSION_META_KEY, {}))) {
@@ -6062,17 +6154,16 @@ Only continue if you trust this code.`,
     // project invisible but still authorized — the row would be gone while the
     // phone carried on browsing and editing it.
     const removed = this.removedProjectFolderKeys();
-    if (!removed.size) return discovered;
-    // A folder VS Code actually has OPEN outranks its own tombstone. Removal
-    // refuses to tombstone the open folder, but one written while the folder was
-    // CLOSED still applied when it was opened later: the project vanished from
-    // the rail, `postRepoCatalog` silently selected a different one, so History
-    // and New Session pointed somewhere other than the Explorer — while the root
-    // stayed authorized for remotes the whole time, invisibly. Opening a folder
-    // is a louder statement of intent than having once removed its row.
-    for (const open of this.openWorkspaceFolders()) removed.delete(normalizeRepoPath(open));
-    if (!removed.size) return discovered;
-    return discovered.filter((r) => !removed.has(normalizeRepoPath(r.cwd)));
+    let result: RepoListEntry[];
+    if (!removed.size) {
+      result = discovered;
+    } else {
+      for (const open of this.openWorkspaceFolders()) removed.delete(normalizeRepoPath(open));
+      if (!removed.size) result = discovered;
+      else result = discovered.filter((r) => !removed.has(normalizeRepoPath(r.cwd)));
+    }
+    this.repoCatalogCache = { at: now, entries: result };
+    return result;
   }
 
   /**
@@ -6634,6 +6725,8 @@ Only continue if you trust this code.`,
       // extension host — conversations included. So the folder joins the rail's
       // catalog and nothing else moves: the Explorer, the open folder and every
       // running session stay exactly where they were.
+      this.invalidateRepoCatalog();
+      this.invalidateSessionIndex(resolved);
       await this.rememberExtraProjectFolder(resolved);
       return;
     }
@@ -6642,6 +6735,8 @@ Only continue if you trust this code.`,
       return;
     }
     this.authEpoch++;
+    this.invalidateRepoCatalog();
+    this.invalidateSessionIndex(resolved);
     await this.switchLocalWorkspaceFolder(resolved);
     // 0 → 1 folders is not "browse another project" — there is no conversation
     // to protect. Start one in the folder just added so Add project folder
@@ -7362,6 +7457,8 @@ Only continue if you trust this code.`,
     // has left the authorized set, or a concurrent remote send could still route
     // into a doomed session.
     this.revokeClosedProjectFolder(cwd);
+    this.invalidateRepoCatalog();
+    this.invalidateSessionIndex(cwd);
     if (!this.pool.has(this.focused) && !this.focused.client) {
       this.focused = this.newLocalSession();
       this.emit(this.focused, { type: "clearMessages" });
@@ -7698,6 +7795,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     const next = { ...pins };
     if (pinned) next[key] = { cwd: hit.cwd, pinnedAt: Date.now() };
     else delete next[key];
+    this.invalidateRepoCatalog();
     await this.state.update(REPO_PINS_KEY, next);
     this.postRepoCatalog();
   }
@@ -7712,6 +7810,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     if (!hit) return;
     const archives = this.state.get<RepoArchives>(REPO_ARCHIVES_KEY, {});
     const key = normalizeRepoPath(hit.cwd);
+    this.invalidateRepoCatalog();
     await this.state.update(REPO_ARCHIVES_KEY, {
       ...archives,
       [key]: { cwd: hit.cwd, at: Date.now(), archived },
@@ -7731,6 +7830,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     const next: RepoColors = { ...colors };
     if (color === "") delete next[key];
     else next[key] = { cwd: hit.cwd, color };
+    this.invalidateRepoCatalog();
     await this.state.update(REPO_COLORS_KEY, next);
     this.postRepoCatalog();
   }
@@ -10953,15 +11053,9 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         break;
       }
       case "dequeueSend": {
-        // Old webviews render one pending block and send `index: 0` for Edit /
-        // Remove / Steer. Chip-aware clients use `clearQueuedSends` for that
-        // block, so this message keeps the pre-split meaning: the pending
-        // block, not the first of several entries. Passing `false` is the
-        // capability gate — we cannot see whether a remote honored
-        // `queueSendChips`, and every client that still sends `dequeueSend`
-        // is the old one.
         const s = session;
-        const result = dequeueQueuedSends(s.queuedSends, msg.index, false);
+        const idx = typeof msg.index === "number" ? msg.index : 0;
+        const result = dequeueQueuedSends(s.queuedSends, idx, true);
         if (result) {
           s.queuedSendDispatch = undefined;
           s.queuedSendCommit = undefined;
@@ -10976,11 +11070,33 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         }
         break;
       }
+      case "removeQueuedSend": {
+        const s = session;
+        if (typeof msg.index === "number" && msg.index >= 0 && msg.index < s.queuedSends.length) {
+          s.queuedSends = [
+            ...s.queuedSends.slice(0, msg.index),
+            ...s.queuedSends.slice(msg.index + 1),
+          ];
+          s.queuedSendDispatch = undefined;
+          s.queuedSendCommit = undefined;
+          if (!s.queuedSends.length) s.queuedSendRequiresRelay = false;
+          this.emitQueuedSends(s);
+        }
+        break;
+      }
+      case "reorderQueuedSends": {
+        const s = session;
+        s.queuedSends = reorderQueuedSends(s.queuedSends, msg.fromIndex, msg.toIndex);
+        s.queuedSendDispatch = undefined;
+        s.queuedSendCommit = undefined;
+        this.emitQueuedSends(s);
+        break;
+      }
       case "steerSend":
         if (session.hasHistory && (msg.text.trim() || msg.chips?.length || session.chips.length)) {
           this.reportRemoteMessage(session, origin);
         }
-        await this.steerSend(msg.text, session, requester, msg.chips, msg.fromQueue === true);
+        await this.steerSend(msg.text, session, requester, msg.chips, msg.fromQueue === true, msg.index);
         break;
       case "turnFeedback":
         await this.handleTurnFeedback(msg.rating, session, requester);
@@ -11633,6 +11749,18 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         await this.host.getConfiguration("grok")
           .update("thumbsFeedback", !!msg.value, "global");
         break;
+      case "setSnapshotAutoAttach":
+        await this.host.getConfiguration("grok")
+          .update("snapshot.autoAttach", !!msg.value, "global");
+        break;
+      case "setSnapshotSavePath":
+        await this.host.getConfiguration("grok")
+          .update("snapshot.savePath", typeof msg.value === "string" ? msg.value.trim() : "", "global");
+        break;
+      case "setSnapshotShortcut":
+        await this.host.getConfiguration("grok")
+          .update("snapshot.shortcut", typeof msg.value === "string" ? msg.value.trim() : "", "global");
+        break;
       case "runInstallCmd": {
         // Host-owned confirmation, because this is one of the two messages that
         // run something. The renderer does not supply the command — it is the
@@ -11922,6 +12050,20 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       case "pickFile":
         await this.trackAttach(this.pickFileFromComputer());
         break;
+      case "pickSnapshotFolder": {
+        const picked = await this.host.showOpenDialog({
+          canSelectFiles: false,
+          canSelectFolders: true,
+          canSelectMany: false,
+          openLabel: "Select Snapshot Folder",
+        });
+        if (picked && picked.length && picked[0]) {
+          const folderPath = picked[0];
+          await this.host.getConfiguration("grok")
+            .update("snapshot.savePath", folderPath, "global");
+        }
+        break;
+      }
       case "mentionQuery": {
         // Answer from the TTL-cached index; a failed build degrades to an empty
         // list (the popover just hides) rather than an error surface.
@@ -13300,7 +13442,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     const index = mergeSessionIndexes(
       repoCwds.map((c) => ({
         cwd: c,
-        entries: indexSessions({ fs: defaultFs, grokHome, cwd: c, log }),
+        entries: this.cachedIndexSessions(c, grokHome, log),
       })),
     );
     const mtimeById = new Map(index.map((e) => [e.id, e.mtimeMs]));
@@ -13718,6 +13860,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // A rename changes displayName but not summary.json's mtime, so the mtime-keyed cache would
     // otherwise keep serving the old name. Drop it so the next read rebuilds the entry.
     this.sessionCache.delete(id);
+    this.invalidateSessionIndex();
     for (const adapter of (["codex", "claude"] as const)) {
       const history = this.adapterHistory(adapter);
       if (!history) continue;
@@ -14054,6 +14197,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // directory.
     if (live) live.deleted = true;
     this.sessionCache.delete(id);
+    this.invalidateSessionIndex(cwd);
     this.removePlanReviews(id); // snapshots live outside grok's session dir
     const overrides = this.state.get<SessionMetaOverrides>(SESSION_META_KEY, {});
     await this.removeUploadsForSessions([id], overrides);
@@ -14329,8 +14473,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       this.focused = this.newLocalSession();
       await this.startSession();
     }
+    this.invalidateSessionIndex(cwd);
     this.postSessionsList();
-    // `postSessionsList` only refreshes the project the client has SELECTED, so
     // clearing any other one left the rail showing every row it had just deleted
     // — no confirmation, and a later delete on one of those ghosts failed with a
     // permissions error that was really "this is not there any more".
@@ -15921,6 +16065,16 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     }
   }
 
+  /** Public entry for snapshot command to attach a captured screen snapshot. */
+  public async attachSnapshot(srcPath: string): Promise<Session | false | undefined> {
+    this.post({ type: "snapshotTaken" });
+    const session = await this.importImageFromDisk(srcPath);
+    if (session && session === this.focused) {
+      this.revealAndFocusComposer();
+    }
+    return session;
+  }
+
   /** Copy an on-disk raster image into staging as a vision attachment, keeping
    *  the workspace-relative origin so the prompt tag can carry the real file
    *  identity. Three outcomes, and they are not interchangeable: the owning
@@ -16679,6 +16833,9 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       readRepliesAloud: cfg.get("readRepliesAloud", false),
       telemetryEnabled: cfg.get("telemetry.enabled", true),
       thumbsFeedback: cfg.get("thumbsFeedback", false),
+      snapshotAutoAttach: cfg.get("snapshot.autoAttach", true),
+      snapshotSavePath: cfg.get("snapshot.savePath", ""),
+      snapshotShortcut: cfg.get("snapshot.shortcut", process.platform === "darwin" ? "Cmd+Alt+S" : "Ctrl+Alt+S"),
       appPurpose: this.appPurpose() || DEFAULT_APP_PURPOSE,
       ...(commandLanguage ? { commandLanguage } : {}),
       // For a remote's About page. A phone is looking at neither GUI,
@@ -17846,7 +18003,13 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       wv.postMessage({ type: "clearMessages" });
       if (identity) wv.postMessage(identity);
       wv.postMessage({ type: "historyReplay", active: true });
-      for (const m of session.buffer) wv.postMessage(this.localizeHistoryMessage(m, wv));
+      const batch: HostMsg[] = [];
+      for (const m of session.buffer) {
+        batch.push(this.localizeHistoryMessage(m, wv));
+      }
+      if (batch.length) {
+        wv.postMessage({ type: "historyBatch", messages: batch });
+      }
       wv.postMessage({ type: "historyReplay", active: false });
       for (const m of sessionUiSnapshot(
         session,
@@ -19445,6 +19608,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
    * session and load this one cold from grok's on-disk history into a fresh member.
    */
   private async openSession(id: string, sessionCwd?: string): Promise<void> {
+    this.latestLocalOpenTargetId = id;
     // The user's open starts HERE, not in startSession. See the note there.
     const clock = new OpenClock();
     const claim = this.reserveSessionLoad(id);
@@ -19477,7 +19641,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // Opening a conversation is the other moment the user is looking straight at
     // this repo's history — and the moment the session they just left became
     // abandonable. Only on success: a load that threw has told us nothing.
-    this.sweepEmptySessions(this.sessionCwd(this.focused));
+    // Run sweep asynchronously so it never blocks the main message loop.
+    setImmediate(() => {
+      this.sweepEmptySessions(this.sessionCwd(this.focused));
+    });
     // The history list follows the conversation the LOCAL user just opened.
     // With a rail in VS Code you can open one from another project, and leaving
     // the list on the old project meant reading a conversation from B while the
@@ -19576,6 +19743,9 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   }
 
   private async openSessionReserved(id: string, sessionCwd?: string, clock?: OpenClock): Promise<void> {
+    if (this.latestLocalOpenTargetId && this.latestLocalOpenTargetId !== id) {
+      return;
+    }
     // A session held by a remote tab is not off-limits here: the desk JOINS it
     // — focusSession replays the shared buffer into the webview and already
     // mirrors the replay to remote holders, and emit() keeps serving both
@@ -19620,7 +19790,9 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       this.focused = held;
       this.pool.add(this.focused);
       await this.followSessionWorkspace(this.focused);
-      await this.startSession(id, this.focused, "ensure", clock);
+      await this.startSession(id, this.focused, "ensure", clock, {
+        canReplace: () => !this.latestLocalOpenTargetId || this.latestLocalOpenTargetId === id,
+      });
       this.markRead(this.focused);
       this.postRepoCatalog();
       return;
@@ -20707,6 +20879,9 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         ),
         telemetryEnabled: cfg.get("telemetry.enabled", true),
         thumbsFeedback: cfg.get("thumbsFeedback", false),
+        snapshotAutoAttach: cfg.get("snapshot.autoAttach", true),
+        snapshotSavePath: cfg.get("snapshot.savePath", ""),
+        snapshotShortcut: cfg.get("snapshot.shortcut", process.platform === "darwin" ? "Cmd+Alt+S" : "Ctrl+Alt+S"),
         providers: this.providerStateMessage().providers,
         providersChecking: this.providerRefreshInFlight,
         githubState: this.githubStatePayload(),
