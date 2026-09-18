@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import * as path from "node:path";
 import {
+  ALWAYS_APPROVE_NOTICE_KEY,
   configForcesAlwaysApprove,
   ensureConfigToml,
   globalConfigPath,
@@ -9,6 +10,7 @@ import {
   projectConfigPath,
   PROJECT_CONFIG_STUB,
   readUiPermissionMode,
+  shouldShowAlwaysApproveNotice,
 } from "../src/grok-config";
 
 // A realistic grok config.toml, mirroring the on-disk shape.
@@ -120,6 +122,22 @@ describe("configForcesAlwaysApprove", () => {
     expect(
       configForcesAlwaysApprove({ project: projectWithoutKey, global: CONFIG("always-approve") }),
     ).toBe(true);
+  });
+});
+
+describe("shouldShowAlwaysApproveNotice", () => {
+  it("explains a global standing choice exactly once", () => {
+    expect(shouldShowAlwaysApproveNotice({ source: "global", shown: false })).toBe(true);
+    expect(shouldShowAlwaysApproveNotice({ source: "global", shown: true })).toBe(false);
+  });
+
+  it("does not nag for a project-supplied config (that has its own consent dialog)", () => {
+    expect(shouldShowAlwaysApproveNotice({ source: "project", shown: false })).toBe(false);
+    expect(shouldShowAlwaysApproveNotice({ source: undefined, shown: false })).toBe(false);
+  });
+
+  it("uses a host-local one-shot key, not a client-state file", () => {
+    expect(ALWAYS_APPROVE_NOTICE_KEY).toBe("grok.alwaysApproveNoticeShown");
   });
 });
 

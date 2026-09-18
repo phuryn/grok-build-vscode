@@ -159,11 +159,12 @@ The wire format is the highest-value test surface: ACP changes break everything 
 - ArrowDown + Enter picks the highlighted file (token rewritten, `addMentionFile` posted, popover hidden) without triggering send/queueSend; clicking a row picks too; Escape closes without touching the text
 - `agentStart` shows the shared waiting indicator with provider copy (Grokking / Opening AI), and the composer placeholder switches live between Ask Grok and Ask GPT
 
-### `test/grok-config.test.ts` — config.toml permission-mode reader (15 tests)
+### `test/grok-config.test.ts` — config.toml permission-mode reader (24 tests)
 
 - `readUiPermissionMode` reads `permission_mode` from the `[ui]` table only (ignores other tables, the `[[marketplace.sources]]` array table, comments, CRLF)
 - `isAlwaysApprovePermission` matches the hyphen/underscore spellings grok writes
 - `configForcesAlwaysApprove` applies project-over-global precedence (#31)
+- `shouldShowAlwaysApproveNotice` is true only for a global source that has not been shown; `ALWAYS_APPROVE_NOTICE_KEY` is the host-local one-shot key
 
 ### `test/terminal-manager.test.ts` — terminal handler
 

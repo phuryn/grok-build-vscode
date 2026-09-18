@@ -18,6 +18,8 @@
 // — so nothing may be issued after it. A reveal tried there stole focus and
 // dismissed the picker.
 
+import { ALWAYS_APPROVE_NOTICE_KEY } from "./grok-config";
+
 export const GROK_VIEW_ID = "grok.chat";
 
 /** Projects rail — its own activity-bar container (`grokProjects`). Separate from
@@ -134,13 +136,18 @@ export const SECONDARY_SIDE_BAR_PROBE_KEY = "grok.hostAcceptedSecondarySideBar";
  * run whose correction returned no target, or threw, would find `globalState`
  * non-empty on the second run and skip forever — a gate closed by our own
  * bookkeeping rather than by anything the user did, stranding exactly the fresh
- * install this exists for.
+ * install this exists for. The always-approve notice key is the same class:
+ * we write it the first time a session starts under a global config setting.
  *
  * Everything else counts, including the picker flag: a user who has opened the
  * move picker has plainly used the extension.
  */
 export function isFirstEverRun(storedKeys: readonly string[]): boolean {
-  const selfWritten: readonly string[] = [SECONDARY_SIDE_BAR_PROBE_KEY, VIEW_PLACEMENT_KEY];
+  const selfWritten: readonly string[] = [
+    SECONDARY_SIDE_BAR_PROBE_KEY,
+    VIEW_PLACEMENT_KEY,
+    ALWAYS_APPROVE_NOTICE_KEY,
+  ];
   return storedKeys.every((k) => selfWritten.includes(k));
 }
 

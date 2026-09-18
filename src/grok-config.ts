@@ -130,3 +130,26 @@ export function alwaysApproveSource(input: {
   const globalMode = input.global != null ? readUiPermissionMode(input.global) : undefined;
   return isAlwaysApprovePermission(globalMode) ? "global" : undefined;
 }
+
+/**
+ * globalState key for the "always-approve is set globally" notice. One-shot UI
+ * dismissal: lives in the host memento, not `~/.grok/client-state` (see
+ * persisted-state.ts). Written on our initiative, so `isFirstEverRun` treats
+ * it as bookkeeping rather than as evidence the user has used the extension.
+ */
+export const ALWAYS_APPROVE_NOTICE_KEY = "grok.alwaysApproveNoticeShown";
+
+/**
+ * Whether to tell the user that Auto accept is coming from their own global
+ * config, not a per-session pick they can undo here.
+ *
+ * Project-supplied always-approve has its own consent dialog (opening the
+ * repo is enough to carry it). Prompting again for a setting the user set
+ * themselves, on every launch, trains them to click through.
+ */
+export function shouldShowAlwaysApproveNotice(input: {
+  source: "project" | "global" | undefined;
+  shown: boolean;
+}): boolean {
+  return input.source === "global" && !input.shown;
+}

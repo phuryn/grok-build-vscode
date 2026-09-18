@@ -254,11 +254,13 @@ import {
   resolveMentionAttachmentPath,
 } from "./mention";
 import {
+  ALWAYS_APPROVE_NOTICE_KEY,
   alwaysApproveSource,
   configForcesAlwaysApprove,
   ensureConfigToml,
   globalConfigPath,
   projectConfigPath,
+  shouldShowAlwaysApproveNotice,
 } from "./grok-config";
 import { sessionScopedRoots } from "./auth-roots";
 import { fileUriToPath, parseFileRef, shouldReadFileInline } from "./file-ref";
@@ -3367,12 +3369,22 @@ Only continue if you trust this code.`,
 
   private alwaysApproveNoticeShown = false;
 
-  /** Tell the user once per activation that always-approve is set globally, so
-   *  the "Auto accept" mode they see isn't a per-session choice they can undo
-   *  from the extension (the CLI reads the global config). */
-  private noticeAlwaysApproveOnce(): void {
-    if (this.alwaysApproveNoticeShown) return;
+  /** Tell the user once that always-approve is set globally, so the "Auto
+   *  accept" mode they see isn't a per-session choice they can undo from the
+   *  extension (the CLI reads the global config). Persisted: on desktop this
+   *  is a blocking dialog, and "once per activation" meant every app launch. */
+  private noticeAlwaysApproveOnce(cwd: string = this.workspaceRoot()): void {
+    const shown =
+      this.alwaysApproveNoticeShown || this.state.get<boolean>(ALWAYS_APPROVE_NOTICE_KEY) === true;
+    if (!shouldShowAlwaysApproveNotice({ source: this.autoApproveSource(cwd), shown })) {
+      // Latch only when the notice was already delivered. A project-supplied
+      // config has its own consent dialog and must not consume the one-shot
+      // for a later session that is actually using the global setting.
+      if (shown) this.alwaysApproveNoticeShown = true;
+      return;
+    }
     this.alwaysApproveNoticeShown = true;
+    void this.state.update(ALWAYS_APPROVE_NOTICE_KEY, true);
     const OPEN = "Open config.toml";
     void this.host.showInformationMessage(
       'Grok: "always-approve" is set in your grok config.toml, so tool actions are auto-approved for every session (CLI and extension). The mode shows "Auto accept" to reflect this — the extension can\'t override a global config setting per-session.',
@@ -9848,7 +9860,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // failure (#58) pay a full restart+resend cycle on every prompt. Only a clean
     // turn re-arms it.
     this.emit(session, { type: "modeChanged", modeId: session.autoApprove ? "yolo" : "agent" });
-    if (configAutoApprove) this.noticeAlwaysApproveOnce();
+    if (configAutoApprove) this.noticeAlwaysApproveOnce(this.sessionCwd(session));
     if (resumeId) this.emit(session, { type: "clearMessages" });
 
     // Lock the composer (spinner, disabled) for start() + newSession()/load so a

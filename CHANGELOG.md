@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **The "always-approve is set in your grok config.toml" dialog no longer appears every time you open the app.** It was meant to explain, once, why the mode button says Auto accept when that setting lives in `~/.grok/config.toml` rather than in this session. The flag lived only in memory, so a desktop launch (and a new VS Code window) showed the same dialog again. It is now remembered, and a project that ships its own always-approve config does not get this notice on top of the consent dialog it already has.
+
 ## 4.9.0 — 2026-09-18
 
 **This release is about being asked less and being told more.** A turn that edited five files made you open five tool rows to see what happened to one of them; a permission card asked the same question forty times a session because answering "don't ask again" granted almost nothing; and a workflow reported its progress as a percentage that was really a count of agents spent. Each of those is a place where the app had the information and handed you something else.
