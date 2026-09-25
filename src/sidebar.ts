@@ -1,5 +1,6 @@
 import { MuseBackend } from "./muse-backend";
 import { locateMuseCli, parseMuseVersionOutput } from "./muse-cli-locator";
+import { museInstallCommand } from "./muse-install";
 import type {
   Host,
   HostCancellationToken,
@@ -11970,9 +11971,21 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         await this.host.getConfiguration("grok")
           .update("desktop.tray", !!msg.value, "global");
         break;
+      case "runMuseInstallCmd": {
+        if (origin !== "local") break;
+        if (!(await this.confirmHostExecute(
+          "Install Muse Code?",
+          "This runs Meta's official installer from dev.meta.ai in a terminal. After installation, click Re-check, then Connect Muse Code.",
+          "Install",
+        ))) break;
+        const term = this.host.createTerminal("Install Muse Code");
+        term.show();
+        term.sendText(museInstallCommand(process.platform));
+        break;
+      }
       case "runInstallCmd": {
-        // Host-owned confirmation, because this is one of the two messages that
-        // run something. The renderer does not supply the command — it is the
+        // Host-owned confirmation for installer execution.
+        // The renderer does not supply the command — it is the
         // fixed x.ai installer — so a compromised renderer cannot choose WHAT
         // runs, only trigger it. Confirming closes that anyway: the desktop
         // dispatcher authorizes on "the message came from the main frame", not
@@ -11998,12 +12011,16 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         const provider: AcpProvider = isInternalProvider(msg.provider) ? msg.provider : "grok";
         const cliPath = this.locateProvider(provider);
         if (!cliPath) {
-          this.post({
+          const message: HostMsg = {
             type: "onboarding",
             state: missingProviderState(provider),
             platform: process.platform,
             provider,
-          });
+            ...(provider === "muse" ? { device: { status: "failed" as const, message: "Muse Code is not installed on this machine." } } : {}),
+          };
+          if (clientId) this.sendRemoteClient(clientId, message);
+          else if (provider === "muse") this.postLocal(message);
+          else this.post(message);
           break;
         }
         const renewing = !!this.providerNeedsLogin?.[provider];
@@ -12147,15 +12164,26 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       case "recheckConnection": {
         const provider: AcpProvider = isInternalProvider(msg.provider) ? msg.provider : session.provider;
         if (!this.locateProvider(provider)) {
-          this.post({
+          const message: HostMsg = {
             type: "onboarding",
             state: missingProviderState(provider),
             platform: process.platform,
             provider,
-          });
+            ...(provider === "muse" ? { device: { status: "failed" as const, message: "Muse Code is not installed on this machine." } } : {}),
+          };
+          if (clientId) this.sendRemoteClient(clientId, message);
+          else if (provider === "muse") this.postLocal(message);
+          else this.post(message);
           break;
         }
-        if (!this.hasProviderConsent(provider)) break;
+        if (!this.hasProviderConsent(provider)) {
+          if (provider === "muse") {
+            const message: HostMsg = { type: "onboarding", state: "muse-login", provider, platform: process.platform };
+            if (clientId) this.sendRemoteClient(clientId, message);
+            else this.postLocal(message);
+          }
+          break;
+        }
         // An explicit Re-check supersedes the ladder still running behind a
         // terminal login, so the two cannot probe over each other.
         const pendingLoginProbe = this.loginReprobeTimers?.get(provider);

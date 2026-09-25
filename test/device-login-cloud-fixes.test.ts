@@ -850,7 +850,7 @@ describe("re-checking a connection observes it and never grants it", () => {
     const at = sidebar.indexOf('case "recheckConnection": {');
     expect(at).toBeGreaterThan(-1);
     const body = sidebar.slice(at, sidebar.indexOf('case "', at + 40));
-    const gate = body.indexOf("if (!this.hasProviderConsent(provider)) break;");
+    const gate = body.indexOf("if (!this.hasProviderConsent(provider)) {");
     const probe = body.indexOf("await this.reprobeProviderCredentials(provider)");
     expect(gate).toBeGreaterThan(-1);
     expect(probe).toBeGreaterThan(gate);

@@ -245,13 +245,20 @@ While a device is linked or a local agent turn is in flight, the extension also 
 ## Requirements
 
 - **VS Code** 1.106+ (or a compatible editor on the same base — Cursor 3.x qualifies; Antigravity is still on base 1.104 and keeps the last compatible extension version).
-- **A supported provider CLI** on macOS, Linux, or Windows: Grok Build (`grok`), Codex, Claude Code or Muse Code. Grok ships a native Windows build, so the extension runs natively on all three — no WSL required (WSL2 + Remote-WSL still works if you prefer it). Muse's own installer is macOS/Linux only; its Windows binaries exist but you put the CLI on PATH yourself.
+- **A supported provider CLI** on macOS, Linux, or Windows: Grok Build (`grok`), Codex, Claude Code or Muse Code. Grok and Muse ship native Windows installers, so the extension runs natively on all three — no WSL required (WSL2 + Remote-WSL still works if you prefer it).
 - **A login:** either a **SuperGrok or X Premium+** subscription (`grok login`) or an xAI API key. Either subscription unlocks **Grok Build**; with an API key you also get the **grok-4.x** models and **grok-imagine**. (Grok's free tier does **not** include the CLI agent.)
 - **Voice control** is optional and uses Grok sign-in or an OpenAI API key (Codex sign-in alone does not include transcription) — it just needs [`ffmpeg`](https://ffmpeg.org) to record. Setup + advanced options: [docs/voice-setup.md](docs/voice-setup.md).
 
 ---
 
 ## Install
+
+**Muse Code:** choose **Connect** in Settings → Providers. If Muse is missing, the VS Code / Cursor sidebar and desktop app offer **Install Muse Code**, with a confirmation before Meta's installer runs in a visible terminal. Afterwards, click **Re-check**, then **Connect Muse Code**. You can also install manually:
+
+- **Windows (PowerShell):** `irm https://dev.meta.ai/install.ps1 | iex` — installs to `%LOCALAPPDATA%\Programs\muse\muse.cmd` and adds that directory to your user PATH.
+- **macOS / Linux:** `curl -fsSL https://dev.meta.ai/install.sh | bash` — installs to `~/.local/bin/muse`.
+
+On a phone or remote browser, Muse must be installed on the machine running the workspace; the remote view cannot launch the desk installer.
 
 ### VS Code / Cursor extension
 

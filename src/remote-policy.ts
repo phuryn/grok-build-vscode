@@ -410,6 +410,7 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
   // routing it was a promise the code cannot keep — the remote UI already
   // hides the action (found while documenting what works where, 2026-08-31).
   runInstallCmd: "host-local",
+  runMuseInstallCmd: "host-local",
   // WAS host-local until 2026-08-26, and the reason it moved is worth being
   // precise about: the POLICY did not soften, the IMPLEMENTATION changed.
   //
@@ -639,6 +640,7 @@ export const REMOTE_REQUIRES_BOUND_SESSION: Record<WebviewMsg["type"], boolean> 
   deleteSession: false,
   clearAllSessions: false,
   runInstallCmd: false,
+  runMuseInstallCmd: false,
   runGrokLogin: false,
   cancelDeviceLogin: false,
   submitDeviceLoginCode: false,
@@ -907,6 +909,7 @@ export function repoScopeFor(
  * browser, for one — must NOT be listed here.
  */
 export const DESK_ONLY_CAPABILITIES = [
+  "installMuse",
   "servesMediaRanges",
   // Closing folders stays at the desk; archive is available on every surface.
   "removeProjectFolder",

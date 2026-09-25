@@ -77,6 +77,8 @@ export interface PlanHistoryItem {
 
 /** host -> webview */
 export const HOST_CAPABILITIES = {
+  // A distinct message: old runInstallCmd hosts always install Grok.
+  installMuse: true,
   uploadFile: true,
   remoteVoice: true,
   // Whether `deleteSession` can take the conversation the requester is READING.
@@ -192,6 +194,8 @@ export type HostErrorCode =
 
 /** Host-kind affordances merged into `initialState.capabilities` at post time. */
 export type HostUiCapabilities = {
+  /** Desk-only fixed Muse installer. Absent/false hides the install button. */
+  installMuse?: boolean;
   uploadFile: boolean;
   remoteVoice: boolean;
   deleteActiveSession?: boolean;
@@ -1275,6 +1279,7 @@ export type WebviewMsg =
   | { type: "installCodex" }
   | { type: "cancelCodexInstall" }
   | { type: "runInstallCmd" }
+  | { type: "runMuseInstallCmd" }
   | { type: "runGrokLogin"; provider?: AcpProvider }
   // Stop a headless sign-in the host is running. Only reachable while one is in
   // flight, and it kills a child process this same user started moments ago.
@@ -1558,7 +1563,7 @@ const WEBVIEW_MESSAGE_TYPE_MAP: Record<WebviewMsg["type"], true> = {
   setShowThinking: true, setAppPurpose: true, setExpandCommandOutputs: true, setSteerByDefault: true, setPromptNav: true, setExpandDiffCard: true,
   setSoundNotifications: true, setProcessingSound: true, setReadRepliesAloud: true, setSummarizeRepliesAloud: true, setVoiceSendPhrase: true, setVoiceKeyterms: true, setTelemetryEnabled: true, setThumbsFeedback: true, setDesktopTray: true, summarizeSpeech: true, requestImageFull: true, requestImageOriginal: true, composerFocus: true,
   dropFile: true, permissionAnswer: true, exitPlanAnswer: true, questionAnswer: true,
-  questionCancel: true, setModel: true, installCodex: true, cancelCodexInstall: true, runInstallCmd: true, runGrokLogin: true,
+  questionCancel: true, setModel: true, installCodex: true, cancelCodexInstall: true, runInstallCmd: true, runMuseInstallCmd: true, runGrokLogin: true,
   cancelDeviceLogin: true, submitDeviceLoginCode: true,
   logout: true, checkGrokUpdate: true, updateGrok: true, updateCodex: true, updateClaude: true, recheckConnection: true, refreshProviders: true, retryProviderSession: true,
   listSessions: true, listRepoSessions: true, selectRepo: true, toggleRepoPin: true, toggleSessionPin: true,

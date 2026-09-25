@@ -32,6 +32,7 @@ describe("host <-> webview message contract (src/protocol.ts is the source of tr
 
   it("advertises remote voice as a host protocol capability", () => {
     expect(HOST_CAPABILITIES).toEqual({
+      installMuse: true,
       uploadFile: true,
       remoteVoice: true,
       // Older hosts refuse to delete the conversation the requester is reading,

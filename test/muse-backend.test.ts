@@ -24,12 +24,21 @@ describe("Muse backend boundary", () => {
     expect(locateMuseCli({ platform: "win32", configuredPath: "missing.exe", isExecutable: () => false })).toBeUndefined();
   });
 
-  it("does not probe the POSIX home-bin fallback on Windows", () => {
+  it("checks the Windows installer target, never the POSIX home-bin fallback", () => {
     const checked: string[] = [];
     expect(locateMuseCli({ platform: "win32", env: {}, home: "C:\\Users\\test", which: () => undefined,
-      isExecutable: file => { checked.push(file); return true; },
+      isExecutable: file => { checked.push(file); return false; },
     })).toBeUndefined();
-    expect(checked).toEqual([]);
+    expect(checked).toEqual(["C:\\Users\\test\\AppData\\Local\\Programs\\muse\\muse.cmd"]);
+  });
+
+  it("finds the PowerShell installer shim before the running editor has the new PATH", () => {
+    const binary = "D:\\User data\\Programs\\muse\\muse.cmd";
+    const options = { platform: "win32" as const, env: { LOCALAPPDATA: "D:\\User data", PATH: "" },
+      which: () => undefined, isExecutable: (file: string) => file === binary };
+    expect(locateMuseCli(options)).toBe(binary);
+    expect(locateMuseCli({ ...options, configuredPath: "C:\\missing.exe" })).toBeUndefined();
+    expect(locateMuseCli({ ...options, which: () => "C:\\path\\muse.exe", isExecutable: () => true })).toBe("C:\\path\\muse.exe");
   });
 
   it("checks executability, honours an explicit missing path, and finds the user bin fallback", () => {

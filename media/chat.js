@@ -10476,6 +10476,10 @@
   function renderConnectWizard() {
     if (!connectWizard) return;
     const provider = connectWizard.provider;
+    if (connectWizard.museOnboarding) {
+      connectWizard.body.innerHTML = museOnboardingPanel(connectWizard.museOnboarding.mode, connectWizard.museOnboarding.info);
+      return;
+    }
     // The mirror is the live source, but a confirmed account retires its
     // mirror, so a settled panel keeps its own copy of the last thing it was
     // told rather than falling back to the empty-state offer.
@@ -10493,8 +10497,25 @@
    * Keep the wizard in step with the host, and open it when a flow begins
    * wherever the click came from — the card, Settings, or another tab.
    */
-  function syncConnectWizard(provider, device) {
+  function syncConnectWizard(provider, device, mode, info) {
     if (!provider || (!IS_REMOTE && provider !== "muse")) return;
+    // A missing CLI never started a login flow. Keep its response over Settings
+    // and existing conversations, including bare replies from older hosts.
+    if (provider === "muse" && museAdvertised && mode === "missing-muse"
+      && (device || connectWizard && connectWizard.provider === provider)) {
+      openConnectWizard(provider);
+      connectWizard.museOnboarding = { mode, info: info || {} };
+      renderConnectWizard();
+      return;
+    }
+    if (provider === "muse" && connectWizard && connectWizard.provider === provider) {
+      if (connectWizard.museOnboarding && mode === "muse-login" && !device) {
+        connectWizard.museOnboarding = { mode, info: info || {} };
+        renderConnectWizard();
+        return;
+      }
+      connectWizard.museOnboarding = null;
+    }
     // Only a RUNNING flow opens a wizard. A settled outcome renders wherever
     // the reader already is: in this dialog when one is open (which it is
     // whenever they got here by clicking Connect), and in the card otherwise.
@@ -10566,6 +10587,30 @@
     return !typed;
   }
 
+  function museOnboardingPanel(mode, info) {
+    const provider = (state.providers || []).find(p => p.id === "muse");
+    const reason = provider && provider.unavailableReason;
+    if (reason) return `<div class="onb"><p class="onb-heading">Muse Code</p><p class="onb-desc">${escapeHtml(reason)}</p></div>`;
+    if (mode !== "missing-muse") {
+      if (IS_REMOTE) return remoteConnectPanel(mode, { provider: "muse" }, null);
+      return `<div class="onb"><p class="onb-heading">Connect Muse Code</p>`
+        + `<p class="onb-desc">Press Connect Muse Code to sign in with Meta's CLI.</p>`
+        + `<button class="onb-action" data-act="connectProvider" data-provider="muse">Connect Muse Code</button>`
+        + `<button class="onb-action" data-act="recheckProvider" data-provider="muse">Re-check</button></div>`;
+    }
+    const command = info.platform === "win32"
+      ? "irm https://dev.meta.ai/install.ps1 | iex"
+      : "curl -fsSL https://dev.meta.ai/install.sh | bash";
+    return `<div class="onb"><p class="onb-heading">Muse Code is not installed</p>`
+      + `<p class="onb-desc">${IS_REMOTE
+        ? "Muse Code is not installed on the machine running this workspace. Install it on that machine, then Re-check."
+        : "Install Meta's Muse Code CLI on this computer. When installation finishes, click Re-check, then Connect Muse Code."}</p>`
+      + (!IS_REMOTE ? `<div class="onb-cmd"><code>${escapeHtml(command)}</code><button class="onb-copy" type="button" title="Copy" data-cmd="${escapeHtml(command)}">${ICON.copy}</button></div>` : "")
+      + (!IS_REMOTE && state.hostCaps && state.hostCaps.installMuse === true
+        ? '<button class="onb-action" type="button" data-act="installMuse">Install Muse Code</button>' : "")
+      + '<button class="onb-action onb-secondary" type="button" data-act="recheckProvider" data-provider="muse">Re-check</button></div>';
+  }
+
   function showOnboarding(mode, info, beforeRender) {
     info = info || {};
     if ((info.provider === "muse" || mode === "muse-login" || mode === "missing-muse") && !museAdvertised) return;
@@ -10608,14 +10653,7 @@
       return;
     }
     if ((mode === "muse-login" || mode === "missing-muse") && museAdvertised) {
-      const provider = (state.providers || []).find(p => p.id === "muse");
-      const reason = provider && provider.unavailableReason;
-      onb.innerHTML = `<div class="onb"><p class="onb-heading">Muse Code</p>`
-        + `<p class="onb-desc">${escapeHtml(reason || (mode === "missing-muse"
-          ? "Install Meta's Muse Code CLI on the execution host, then re-check."
-          : "Run muse login on the execution host, then re-check."))}</p>`
-        + (reason ? "" : `${!IS_REMOTE && mode !== "missing-muse" ? '<button class="onb-action" data-act="connectProvider" data-provider="muse">Open Muse sign-in</button>' : ''}<button class="onb-action" data-act="recheckProvider" data-provider="muse">Re-check</button>`)
-        + `</div>`;
+      onb.innerHTML = museOnboardingPanel(mode, info);
       return;
     }
     if (mode === "no-project") {
@@ -20250,7 +20288,7 @@
             // AFTER the mirror: renderConnectWizard reads it, and syncing
             // first painted the previous state every time (caught by driving
             // the states in a browser, 2026-08-31).
-            syncConnectWizard(msg.provider, msg.device);
+            syncConnectWizard(msg.provider, msg.device, msg.state, { platform: msg.platform });
             // The composer card reads the same mirror, and this is the only
             // frame that moves it. Without this call its "Signing in…" state
             // waits for the next providerState -- which is the frame that
@@ -21496,6 +21534,9 @@
       const act = onbAction.dataset.act;
       if (LAUNCH_ACTS.includes(act)) markOnboardingLaunched(act, onbAction.dataset.provider);
       if (act === "runInstall") vscode.postMessage({ type: "runInstallCmd" });
+      else if (act === "installMuse" && !IS_REMOTE && museAvailable && state.hostCaps && state.hostCaps.installMuse === true) {
+        vscode.postMessage({ type: "runMuseInstallCmd" });
+      }
       else if (act === "installCodex") vscode.postMessage({ type: "installCodex" });
       else if (act === "cancelCodexInstall") vscode.postMessage({ type: "cancelCodexInstall" });
       else if (act === "runLogin") vscode.postMessage({ type: "runGrokLogin" });

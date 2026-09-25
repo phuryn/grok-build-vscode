@@ -2,7 +2,7 @@ import { homedir } from "node:os";
 import * as path from "node:path";
 import { findCliOnPath, isCliFile } from "./cli-path";
 
-/** Locate an installed Muse CLI, with the launcher's home-bin fallback on POSIX. */
+/** Locate Muse on PATH or at the official installer's platform-specific target. */
 export function locateMuseCli(options: {
   configuredPath?: string;
   env?: NodeJS.ProcessEnv;
@@ -20,7 +20,12 @@ export function locateMuseCli(options: {
     ? options.which("muse")
     : findCliOnPath("muse", env, platform, executable);
   if (found && executable(found)) return found;
-  if (platform === "win32") return undefined;
+  if (platform === "win32") {
+    // An already-open editor still has its pre-install PATH.
+    const localAppData = env.LOCALAPPDATA || path.win32.join(options.home || env.USERPROFILE || homedir(), "AppData", "Local");
+    const candidate = path.win32.join(localAppData, "Programs", "muse", "muse.cmd");
+    return executable(candidate) ? candidate : undefined;
+  }
   const candidate = path.join(options.home || env.HOME || homedir(), ".local", "bin", "muse");
   return executable(candidate) ? candidate : undefined;
 }

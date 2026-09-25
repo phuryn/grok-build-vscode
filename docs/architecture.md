@@ -250,7 +250,8 @@ When the panel opens (or you click **+** for a new session):
    → PATH. Codex uses `grok.codexCliPath` → PATH → the newest matching OpenAI
    ChatGPT extension bundle → the versioned extension-managed package. Claude
    uses `grok.claudeCliPath` → PATH → well-known user-bin locations. Muse uses
-   `grok.museCliPath` / `MUSE_CODE_EXECUTABLE` → PATH → the POSIX-only `~/.local/bin` fallback.
+   `grok.museCliPath` / `MUSE_CODE_EXECUTABLE` → PATH → the installer's default target:
+   `~/.local/bin/muse` on POSIX or `%LOCALAPPDATA%\Programs\muse\muse.cmd` on Windows.
 2. Spawn `grok agent stdio`, or Node with the selected adapter entry point and
    the located CLI in `CODEX_PATH`, `CLAUDE_CODE_EXECUTABLE` or `MUSE_CODE_EXECUTABLE`.
    Windows Muse `.cmd`/`.bat` launchers use `cmd.exe /d /c` with separate argv

@@ -208,9 +208,9 @@ describe("desktop file roots are session-scoped", () => {
 });
 
 describe("host confirmation on the messages that run something", () => {
-  it("guards both execute-class handlers", () => {
+  it("guards the execute-class handlers", () => {
     const src = sidebarSrc();
-    for (const handler of ['case "runInstallCmd"', 'case "updateGrok"']) {
+    for (const handler of ['case "runInstallCmd"', 'case "runMuseInstallCmd"', 'case "updateGrok"']) {
       const start = src.indexOf(handler);
       expect(start).toBeGreaterThan(0);
       const body = src.slice(start, start + 700);

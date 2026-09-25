@@ -161,6 +161,7 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
     case "closeSettingsSurface":
       break;
     case "runInstallCmd":
+    case "runMuseInstallCmd":
     case "installCodex":
     case "cancelCodexInstall":
     case "checkGrokUpdate":
