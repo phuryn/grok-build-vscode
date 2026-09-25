@@ -2035,7 +2035,15 @@
           }
           return hold(`<code>${code}</code>`);
         })
-        .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_, text, url) => {
+        // A destination with a space stays text — `[see](the docs)` is not a
+        // link — except an absolute local path, which may contain spaces and
+        // one level of parentheses (`Program Files (x86)`). POSIX `/…` (not
+        // `//…`), Windows `X:\` or `X:/`, UNC `\\…`. No newline, quote, or
+        // placeholder. Angle brackets are the CommonMark spelling; this pass
+        // already escaped them to `&lt;`/`&gt;`, and the brackets are not part
+        // of the path. Titles are not parsed: a `"` ends the special case.
+        .replace(/\[([^\]]+)\]\((?:&lt;((?:[A-Za-z]:[\\/]|\\\\|\/(?!\/))(?:[^()\n\x00"]|\([^()\n\x00"]*\))*)&gt;|((?:[A-Za-z]:[\\/]|\\\\|\/(?!\/))(?:[^()\n\x00"]|\([^()\n\x00"]*\))+)|([^)\s]+))\)/g, (_, text, angled, absolute, plain) => {
+          const url = angled ?? absolute ?? plain;
           const pr = parseGitHubPullUrl(unescapeHtml(url));
           // The visible text is the address itself: show the chip, not the raw URL.
           // A named link ([#82](url), [**bold**](url)) stays a normal anchor so

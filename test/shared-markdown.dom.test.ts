@@ -168,6 +168,50 @@ describe("markdown linkification edge cases (#185)", () => {
     );
   });
 
+  it("links an absolute local path that contains spaces, and not a relative one", () => {
+    const path = "/home/user/My Project/README.md";
+    const href = `<a href="${path}">README</a>`;
+    expect(render(`Notes in [README](${path}) today.\n`)).toContain(href);
+    expect(render(`1. Read [README](${path})\n`)).toContain(`<li>Read ${href}`);
+    expect(render(`### [README](${path})\n`)).toContain(`<h3>${href}</h3>`);
+
+    const win = String.raw`C:\Program Files (x86)\App\readme.md`;
+    const fwd = "C:/Program Files (x86)/App/readme.md";
+    const unc = String.raw`\\server\share\My Folder\readme.md`;
+    expect(render(`[app](${win})\n`)).toContain(`<a href="${win}">app</a>`);
+    expect(render(`[app](${fwd})\n`)).toContain(`<a href="${fwd}">app</a>`);
+    expect(render(`[share](${unc})\n`)).toContain(`<a href="${unc}">share</a>`);
+    expect(render(`[readme](</home/user/My Project/README.md>)\n`)).toContain(
+      `<a href="${path}">readme</a>`,
+    );
+
+    const other = "/home/user/Other File.md";
+    expect(render(`[one](${path}) and [two](${other})\n`)).toBe(
+      `<a href="${path}">one</a> and <a href="${other}">two</a>`,
+    );
+    expect(render("[see](the docs)\n")).toBe("[see](the docs)");
+    expect(render("[keep](/home/user/My%20Project/README.md)\n")).toContain(
+      'href="/home/user/My%20Project/README.md"',
+    );
+
+    const literal = render(`Use \`${path}\` as written.\n`);
+    expect(literal).toContain(`<code>${path}</code>`);
+    expect(literal).not.toContain("<a ");
+    const linked = render("`[README](" + path + ")` stays literal\n");
+    expect(linked).not.toContain('href="');
+    expect(linked).toContain(`<code>[README](${path})</code>`);
+  });
+
+  it("opens a spaced local path with the spaces intact", () => {
+    const path = "/home/user/My Project/README.md";
+    const h = bootWebview({ ready: true });
+    const host = h.doc.createElement("div");
+    host.innerHTML = String((h.window as any).__grokRenderMarkdown(`[README](${path})\n`));
+    h.doc.body.appendChild(host);
+    click(h.window, host.querySelector("a")!);
+    expect(h.posted).toContainEqual({ type: "openFile", path });
+  });
+
   it("does not linkify a URL inside a named Markdown link's label", () => {
     for (const url of ["https://example.com/docs", "https://github.com/acme/widgets/pull/17"]) {
       const html = render(`[Read **docs** at ${url} with \`code\`](https://example.org/guide)\n`);
