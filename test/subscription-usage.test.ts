@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
-  grokSubscriptionWindows, claudeSubscriptionWindows, subscriptionCredentialContext,
+  grokSubscriptionWindows, claudeSubscriptionWindows, museSubscriptionWindows, subscriptionCredentialContext,
   SubscriptionUsageBinding, SubscriptionUsageCache, SUBSCRIPTION_USAGE_MIN_INTERVAL_MS,
 } from "../src/subscription-usage";
 import { GrokSidebar } from "../src/sidebar";
@@ -84,6 +84,54 @@ describe("subscription usage normalization and wire", () => {
     expect(claudeSubscriptionWindows(rateUpdate({ rateLimitType: "five_hour" }))).toEqual([]);
     expect(claudeSubscriptionWindows(rateUpdate({ utilization: 0, rateLimitType: "five_hour", resetsAt: "123" }))).toEqual([]);
     expect(claudeSubscriptionWindows(rateUpdate({ utilization: 0, rateLimitType: "toString" }))).toEqual([]);
+  });
+
+  it("reads Muse resetsAtMs as milliseconds, labels both windows, and clamps", () => {
+    const windowReset = Date.parse("2026-09-14T05:00:00.000Z");
+    const weeklyReset = Date.parse("2026-09-21T00:00:00.000Z");
+    // These two readings of the same stamp must stay distinct. The assertion
+    // below is only a pin if multiplying by 1000 would have produced a
+    // different instant.
+    expect(new Date(windowReset).toISOString()).not.toBe(new Date(windowReset * 1000).toISOString());
+    const usage = {
+      tier: "hidden-tier", observedAtMs: now,
+      window: { usedPercent: 150, resetsAtMs: windowReset, windowDurationMins: 300 },
+      weekly: { usedPercent: 0, resetsAtMs: weeklyReset },
+    };
+    expect(museSubscriptionWindows(usage, now)).toEqual([
+      { usedPercent: 100, label: "5-hour", periodType: "window_300m",
+        periodEnd: new Date(windowReset).toISOString(), observedAt: new Date(now).toISOString() },
+      { usedPercent: 0, label: "Weekly", periodType: "weekly",
+        periodEnd: new Date(weeklyReset).toISOString(), observedAt: new Date(now).toISOString() },
+    ]);
+    expect(JSON.stringify(museSubscriptionWindows(usage, now))).not.toContain("hidden-tier");
+  });
+
+  it("drops a malformed Muse window instead of guessing, and keeps the other", () => {
+    const windowReset = Date.parse("2026-09-14T05:00:00.000Z");
+    const weeklyReset = Date.parse("2026-09-21T00:00:00.000Z");
+    const usage = {
+      tier: "hidden-tier",
+      window: { usedPercent: 12, resetsAtMs: windowReset, windowDurationMins: 300 },
+      weekly: { usedPercent: 40, resetsAtMs: weeklyReset },
+    };
+    for (const window of [
+      { usedPercent: "12", resetsAtMs: windowReset, windowDurationMins: 300 },
+      { usedPercent: -1, resetsAtMs: windowReset, windowDurationMins: 300 },
+      { usedPercent: 12, resetsAtMs: windowReset / 1000, windowDurationMins: 0 },
+      { usedPercent: 12, resetsAtMs: "2026-09-14T05:00:00.000Z", windowDurationMins: 300 },
+      undefined,
+    ]) {
+      expect(museSubscriptionWindows({ ...usage, window }, now)).toEqual([
+        { usedPercent: 40, label: "Weekly", periodType: "weekly",
+          periodEnd: new Date(weeklyReset).toISOString(), observedAt: new Date(now).toISOString() },
+      ]);
+    }
+    expect(museSubscriptionWindows({ ...usage, weekly: { usedPercent: 40, resetsAtMs: null } }, now))
+      .toEqual([{ usedPercent: 12, label: "5-hour", periodType: "window_300m",
+        periodEnd: new Date(windowReset).toISOString(), observedAt: new Date(now).toISOString() }]);
+    expect(museSubscriptionWindows(null)).toEqual([]);
+    expect(museSubscriptionWindows({ tier: "hidden-tier" })).toEqual([]);
   });
 });
 
@@ -195,7 +243,7 @@ describe("host subscription lifecycle", () => {
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 
-  it.each(["grok", "claude", "codex"] as const)("popover open refreshes only Grok (%s), without accumulating history", async (provider) => {
+  it.each(["grok", "claude", "codex", "muse"] as const)("popover open refreshes only Grok (%s), without accumulating history", async (provider) => {
     const { sidebar, session, read } = hostHarness(provider);
     await sidebar.onMessage({ type: "refreshSubscriptionUsage" }, "remote", "phone");
     await sidebar.refreshSubscriptionUsage(session);
@@ -204,6 +252,22 @@ describe("host subscription lifecycle", () => {
     if (provider === "grok") expect(sidebar.sendRemoteSession).toHaveBeenLastCalledWith(session, {
       type: "subscriptionUsage", windows: windows(),
     });
+  });
+
+  it("starts each Muse process empty even though the credential key never changes", () => {
+    const { sidebar, session } = hostHarness("muse");
+    expect(subscriptionCredentialContext("muse", process.env)).toBe("muse:cli-owned");
+    expect(subscriptionCredentialContext("muse", { ...process.env, HOME: "/somewhere-else" })).toBe("muse:cli-owned");
+    sidebar.bindSubscriptionUsage(session, process.env);
+    session.subscriptionUsage!.observe(windows());
+    const other = new Session();
+    other.provider = "muse";
+    other.cwd = session.cwd;
+    sidebar.bindSubscriptionUsage(other, process.env);
+    expect(other.subscriptionUsage!.snapshot()).toEqual([]);
+    other.subscriptionUsage!.observe(grokSubscriptionWindows(billing(17), now));
+    expect(session.subscriptionUsage!.snapshot()).toEqual(windows());
+    expect(other.subscriptionUsage!.snapshot()[0].usedPercent).toBe(17);
   });
 
   it("reconnect and history snapshots carry only the latest singular Claude window", () => {

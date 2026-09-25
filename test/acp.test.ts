@@ -15,6 +15,7 @@ import {
 import type { AcpBackend } from "../src/acp-backend";
 import { ClaudeBackend } from "../src/claude-backend";
 import { CodexBackend } from "../src/codex-backend";
+import { MuseBackend } from "../src/muse-backend";
 
 // Unit tests for AcpClient internals that don't need a real subprocess. We
 // stand up the client with a fake writable proc and drive `request`/`onLine`
@@ -389,6 +390,44 @@ describe("AcpClient subscription usage", () => {
         periodEnd: new Date(rate.resetsAt * 1000).toISOString(), observedAt: expect.any(String),
       }]);
     } else expect(observed).not.toHaveBeenCalled();
+  });
+
+  it("emits Muse subscription usage only for the matching Muse session", () => {
+    const usage = {
+      tier: "hidden-tier",
+      observedAtMs: Date.parse("2026-09-14T00:00:00.000Z"),
+      window: { usedPercent: 12, resetsAtMs: Date.parse("2026-09-14T05:00:00.000Z"), windowDurationMins: 300 },
+      weekly: { usedPercent: 140, resetsAtMs: Date.parse("2026-09-21T00:00:00.000Z") },
+    };
+    const { client } = clientWithFakeProc({ backend: new MuseBackend() });
+    client.sessionId = "session";
+    const observed = vi.fn();
+    client.on("subscriptionUsage", observed);
+    const send = (sessionId: string) => (client as any).onLine(JSON.stringify({
+      jsonrpc: "2.0", method: "_muse/subscription_usage", params: { sessionId, usage },
+    }));
+    send("other");
+    expect(observed).not.toHaveBeenCalled();
+    send("session");
+    expect(observed).toHaveBeenCalledOnce();
+    const windows = observed.mock.calls[0][0];
+    expect(windows).toEqual([
+      { usedPercent: 12, label: "5-hour", periodType: "window_300m",
+        periodEnd: new Date(usage.window.resetsAtMs).toISOString(), observedAt: windows[0].observedAt },
+      { usedPercent: 100, label: "Weekly", periodType: "weekly",
+        periodEnd: new Date(usage.weekly.resetsAtMs).toISOString(), observedAt: windows[0].observedAt },
+    ]);
+    expect(JSON.stringify(windows)).not.toContain("hidden-tier");
+    expect(Number.isFinite(Date.parse(windows[0].observedAt))).toBe(true);
+
+    const other = clientWithFakeProc({ backend: new ClaudeBackend() }).client;
+    other.sessionId = "session";
+    const claude = vi.fn();
+    other.on("subscriptionUsage", claude);
+    (other as any).onLine(JSON.stringify({
+      jsonrpc: "2.0", method: "_muse/subscription_usage", params: { sessionId: "session", usage },
+    }));
+    expect(claude).not.toHaveBeenCalled();
   });
 });
 

@@ -32,6 +32,18 @@ provider probes or model turns to obtain capacity.
   may omit reset time and never supplies period start here: these remain absent,
   with an explicit “Reset time not reported.” when necessary. A new Claude
   process starts empty, even if another process reported a window previously.
+- Muse: MSP `usage/read` after each completed turn, and the `usage/changed`
+  notification, which carries no session id. The adapter forwards the raw
+  payload as `_muse/subscription_usage` `{sessionId, usage}` only once a
+  session exists. A failed read is logged and does not fail the turn. An
+  omitted `usage` member (nothing observed yet) sends nothing, so it does not
+  clear a window already on screen. `museSubscriptionWindows` keeps the
+  rolling window and the weekly block. `usedPercent` is already 0..100 and is
+  clamped by `percentage()`. `resetsAtMs` is epoch milliseconds — Claude and
+  Codex reset fields are Unix seconds. The rolling window's label is
+  `codexWindowLabel(windowDurationMins)` (300 is "5-hour"); the weekly block
+  is "Weekly". A malformed window is dropped. `tier` is not shown. The
+  popover does not trigger a read. A new Muse process starts empty.
 - Codex supplies no ACP subscription surface. There is no fallback to `/status`
   or `/usage`, nor any Codex-specific acquisition path.
 
@@ -46,7 +58,10 @@ amounts, unified-billing flags, or billing-period dates. In particular,
 Grok reads share a memory-only cache under an opaque digest of the credential
 context: provider, effective auth home, relevant environment overrides, and auth
 file contents. Claude observations stay process-local because OS keychain
-identity is not portably readable. Digests and credentials never cross the wire.
+identity is not portably readable. Muse's credential key is the constant
+`muse:cli-owned` — the host does not read Muse's credential file — so its
+observations are process-local too. A shared cache would show one login's
+windows on the next process. Digests and credentials never cross the wire.
 Sign-out or a credential failure invalidates bindings; subsequent snapshots and
 events also check for file/environment changes and discard late responses.
 Unreadable credential files cannot yield a reusable context.
@@ -57,8 +72,9 @@ on credential-file token rotation; distinguishing rotation from an account switc
 without a portable identity contract is left to the provider. An external switch
 held only in Claude's OS keychain requires restarting that CLI session.
 
-`refreshSubscriptionUsage` requests a read on a real popover open, and the host
-also reads at session startup. Grok's minimum interval is 60 seconds, including
+`refreshSubscriptionUsage` reads on a real popover open, and at session
+startup, for Grok (the billing RPC) and Codex (the rollout file). Claude and
+Muse are not read from the popover. Grok's minimum interval is 60 seconds, including
 failed attempts, with in-flight coalescing. There are no refresh timers: auxiliary
 ACP responses re-arm pending prompt idle timers, so polling would mask a hung
 prompt. Existing `refreshContextDetails` traffic does not refresh subscription
@@ -75,5 +91,6 @@ so reconnects and focus changes cannot recover old billing snapshots.
 `subscription-usage.test.ts`, `subscription-usage.dom.test.ts`, and the ACP client
 tests cover normalization, explicit remote field omissions, unsupported methods,
 credential changes and late responses, cache coalescing without timers, the
-Claude update/envelope distinction, singular replacement, empty states, independent
+Claude update/envelope distinction, Muse millisecond resets and per-process
+caches, singular replacement, empty states, independent
 context occupancy, both app purposes, and reconnect snapshots.

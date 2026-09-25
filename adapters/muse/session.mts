@@ -280,6 +280,7 @@ export class MuseSession {
       pending.early.clear();
       const terminal = await completed;
       await this.updates;
+      await this.readSubscriptionUsage();
       this.log(`Muse turn completed: ${JSON.stringify({ turnId: terminal.turnId, terminal: terminal.terminal })}`);
       if (terminal.terminal === "completed") return { stopReason: "end_turn" };
       if (terminal.terminal === "cancelled") return { stopReason: "cancelled" };
@@ -301,7 +302,38 @@ export class MuseSession {
     if (!this.sessionId || id !== this.sessionId) throw new Error("Unknown Muse session");
   }
 
+  /** MSP `usage/read` after a turn, and `usage/changed` (no session id). The
+   *  host maps the raw payload. A failed read is logged and never fatal. */
+  private async readSubscriptionUsage(): Promise<void> {
+    if (!this.sessionId) return;
+    try {
+      const result = await this.connection().request("usage/read", {});
+      const usage = result?.usage;
+      if (usage && typeof usage === "object") await this.publishSubscriptionUsage(usage as Record<string, any>);
+    } catch (error) {
+      this.log(`Muse usage/read failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  private publishSubscriptionUsage(usage: Record<string, any>): Promise<void> {
+    const sessionId = this.sessionId;
+    if (!sessionId) return Promise.resolve();
+    try {
+      return Promise.resolve(this.client.notify("_muse/subscription_usage", { sessionId, usage })).catch(error => {
+        this.log(`Muse subscription usage was not delivered: ${error instanceof Error ? error.message : String(error)}`);
+      });
+    } catch (error) {
+      this.log(`Muse subscription usage was not delivered: ${error instanceof Error ? error.message : String(error)}`);
+      return Promise.resolve();
+    }
+  }
+
   private notification(method: string, params: Record<string, any>): void {
+    // `usage/changed` carries no session id, so the check below would drop it.
+    if (method === "usage/changed") {
+      if (this.sessionId) void this.publishSubscriptionUsage(params);
+      return;
+    }
     if (params.sessionId !== this.sessionId) return;
     if (this.replayBuffer) { this.replayBuffer.push({ method, params }); return; }
     if (method === "turn/started") this.activeTurnId = params.turnId;

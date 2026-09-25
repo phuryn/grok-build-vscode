@@ -19588,11 +19588,12 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     const cwd = this.sessionCwd(session);
     const key = subscriptionCredentialContext(provider, env);
     const caches = this.subscriptionUsageCaches ??= new Map();
-    // Claude can authenticate via an opaque OS keychain. Keep its observations
-    // process-local so a replacement cannot inherit a different login's window.
-    // Grok and Codex both write their login to a file the key already hashes,
-    // so a swap changes the key and the shared cache is safe for them.
-    let cache = provider === "claude" ? new SubscriptionUsageCache() : caches.get(key);
+    // Claude can authenticate via an opaque OS keychain. Muse's credential key
+    // never changes (`muse:cli-owned`), so a shared cache would carry one
+    // login's windows into the next process. Keep both process-local. Grok
+    // and Codex write their login to a file the key already hashes, so a swap
+    // changes the key and the shared cache is safe for them.
+    let cache = provider === "claude" || provider === "muse" ? new SubscriptionUsageCache() : caches.get(key);
     if (!cache) caches.set(key, cache = new SubscriptionUsageCache());
     session.subscriptionUsage = new SubscriptionUsageBinding(cache, key, () =>
       subscriptionCredentialContext(provider, provider === "grok"
@@ -19624,9 +19625,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     const client = session.client;
     this.publishSubscriptionUsage(session);
     if (!binding) return;
-    // Claude has no pull at all: its windows arrive on the rate-limit event
-    // that rides a turn, so `observe()` is the only writer and there is
-    // nothing to refresh here.
+    // Claude and Muse are not pulled from the popover. Claude's window
+    // arrives on the rate-limit event that rides a turn; Muse's adapter
+    // reads after a turn and on usage/changed. `observe()` is the only
+    // writer for both.
     if (session.provider === "codex") {
       // A file read, not an RPC — Codex's adapter does not forward the account
       // windows it receives, so the rollout is the only structured source.

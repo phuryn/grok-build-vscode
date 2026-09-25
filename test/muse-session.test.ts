@@ -46,7 +46,8 @@ function setup() {
   const logs: string[] = [], fatal = vi.fn(), spawn = vi.fn((_options: { command: string; args: string[] }) => handshake);
   const session = new MuseSession(client as any, message => logs.push(message), fatal, spawn as any);
   const event = (method: string, params: any = {}) => notify({ method, params: { sessionId: "session", ...params } });
-  return { session, spawn, handshake, client, logs, fatal, event, admission, exited, closed, command, connection, description, protocolError: (e: Error) => protocolError(e) };
+  const raw = (method: string, params: Record<string, any> = {}) => notify({ method, params });
+  return { session, spawn, handshake, client, logs, fatal, event, raw, admission, exited, closed, command, connection, description, protocolError: (e: Error) => protocolError(e) };
 }
 
 async function ready() {
@@ -201,6 +202,53 @@ describe("Muse CLI spawn", () => {
     expect({ command, args }).toEqual({
       command: executable, args: ["serve"],
     });
+  });
+});
+
+describe("Muse subscription usage", () => {
+  const usage = {
+    tier: "hidden-tier", observedAtMs: 1_700_000_000_000,
+    window: { usedPercent: 12, resetsAtMs: 1_700_000_300_000, windowDurationMins: 300 },
+    weekly: { usedPercent: 40, resetsAtMs: 1_700_600_000_000 },
+  };
+
+  it("sends usage after a turn and on usage/changed, and nothing without a session", async () => {
+    const s = setup();
+    await s.session.initialize();
+    s.raw("usage/changed", usage);
+    expect(s.client.notify).not.toHaveBeenCalled();
+
+    await s.session.newSession("/workspace", []);
+    s.connection.request.mockResolvedValueOnce({ usage });
+    const prompt = s.session.prompt("session", [{ type: "text", text: "hello" }]);
+    s.admission.resolve({ status: "accepted", turnId: "turn", startedNewTurn: true });
+    s.event("turn/completed", { turnId: "turn", terminal: "completed" });
+    await expect(prompt).resolves.toEqual({ stopReason: "end_turn" });
+    expect(s.connection.request).toHaveBeenCalledWith("usage/read", {});
+    expect(s.client.notify).toHaveBeenCalledWith("_muse/subscription_usage", { sessionId: "session", usage });
+
+    s.client.notify.mockClear();
+    s.command.mockResolvedValueOnce({ status: "accepted", turnId: "next", startedNewTurn: true } as any);
+    s.connection.request.mockResolvedValueOnce({});
+    const quiet = s.session.prompt("session", [{ type: "text", text: "again" }]);
+    s.event("turn/completed", { turnId: "next", terminal: "completed" });
+    await expect(quiet).resolves.toEqual({ stopReason: "end_turn" });
+    expect(s.client.notify).not.toHaveBeenCalled();
+
+    s.raw("usage/changed", usage);
+    expect(s.client.notify).toHaveBeenCalledWith("_muse/subscription_usage", { sessionId: "session", usage });
+  });
+
+  it("logs a failed usage read and still finishes the turn", async () => {
+    const s = await ready();
+    s.connection.request.mockRejectedValueOnce(new Error("usage unavailable"));
+    const prompt = s.session.prompt("session", [{ type: "text", text: "hello" }]);
+    s.admission.resolve({ status: "accepted", turnId: "turn", startedNewTurn: true });
+    s.event("turn/completed", { turnId: "turn", terminal: "completed" });
+    await expect(prompt).resolves.toEqual({ stopReason: "end_turn" });
+    expect(s.fatal).not.toHaveBeenCalled();
+    expect(s.logs).toContain("Muse usage/read failed: usage unavailable");
+    expect(s.client.notify.mock.calls.some((call: any[]) => call[0] === "_muse/subscription_usage")).toBe(false);
   });
 });
 

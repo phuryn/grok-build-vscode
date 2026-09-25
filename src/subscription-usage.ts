@@ -149,6 +149,38 @@ export function codexSubscriptionWindows(rateLimits: any, observedAt: string): S
     .filter((window): window is SubscriptionWindow => window !== undefined);
 }
 
+/** `resetsAtMs` is epoch milliseconds. Claude's `resetsAt` and Codex's
+ *  `resets_at` are Unix seconds — multiplying this stamp puts the reset
+ *  tens of thousands of years out. `usedPercent` is already 0..100. `tier`
+ *  stays off the wire. A window we cannot label is dropped, not guessed. */
+function musePeriodEnd(resetsAtMs: unknown): string | undefined {
+  if (typeof resetsAtMs !== "number" || !Number.isFinite(resetsAtMs) || resetsAtMs <= 0) return undefined;
+  const reset = new Date(resetsAtMs);
+  return Number.isFinite(reset.getTime()) ? reset.toISOString() : undefined;
+}
+
+export function museSubscriptionWindows(usage: any, now = Date.now()): SubscriptionWindow[] {
+  if (!usage || typeof usage !== "object") return [];
+  const observedAt = new Date(now).toISOString();
+  const windows: SubscriptionWindow[] = [];
+  const rolling = usage.window;
+  const rollingPercent = percentage(rolling?.usedPercent);
+  const rollingLabel = codexWindowLabel(rolling?.windowDurationMins);
+  const rollingEnd = musePeriodEnd(rolling?.resetsAtMs);
+  if (rollingPercent !== undefined && rollingLabel && rollingEnd) {
+    windows.push({ usedPercent: rollingPercent, label: rollingLabel,
+      periodType: `window_${rolling.windowDurationMins}m`, periodEnd: rollingEnd, observedAt });
+  }
+  const weekly = usage.weekly;
+  const weeklyPercent = percentage(weekly?.usedPercent);
+  const weeklyEnd = musePeriodEnd(weekly?.resetsAtMs);
+  if (weeklyPercent !== undefined && weeklyEnd) {
+    windows.push({ usedPercent: weeklyPercent, label: "Weekly", periodType: "weekly",
+      periodEnd: weeklyEnd, observedAt });
+  }
+  return windows;
+}
+
 export const SUBSCRIPTION_USAGE_MIN_INTERVAL_MS = 60_000;
 
 /** Shared only by processes with the same effective credential context. No timers. */
