@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { bootWebview, click, dispatch } from "./webview-harness";
 import { INTERNAL_PROVIDERS, supportsCompaction } from "../src/acp-backend";
@@ -113,13 +114,28 @@ describe("Muse host advertisement", () => {
     expect(h.posted.some(m => m.provider === "muse")).toBe(false);
   });
 
-  it.each([false, true])("offers the host's Muse catalog and verbatim description (remote=%s)", remote => {
+  it.each([false, true])("keeps Muse's data-use notice verbatim in the tooltip (remote=%s)", remote => {
     const h = bootWebview({ remote });
     dispatch(h.window, { type: "providerState", providers: [{ id: "grok", connected: true }, { id: "muse", connected: true }] });
     catalog(h);
     click(h.window, h.doc.getElementById("gear-btn"));
-    expect(h.doc.getElementById("gear-popover")?.textContent).toContain(description);
-    expect(h.doc.querySelectorAll(".model-picker-row")).toHaveLength(2);
+    const rows = [...h.doc.querySelectorAll(".model-picker-row")];
+    expect(rows).toHaveLength(2);
+    const muse = rows.find(row => row.querySelector(".model-picker-description"));
+    expect(muse?.getAttribute("title")).toBe(description);
+    expect(muse?.querySelector(".model-picker-description")?.textContent).toBe(description);
+  });
+
+  it("hides the inline notice except where hover tooltips do not exist", () => {
+    // happy-dom does not evaluate media queries, so the rule text is the check.
+    const css = readFileSync(new URL("../media/chat.css", import.meta.url), "utf8");
+    const body = (selector: string) => {
+      const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      return css.match(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`))?.[1] ?? "";
+    };
+    expect(body(".model-picker-description")).toMatch(/display\s*:\s*none/);
+    const touch = css.slice(css.indexOf("@media (hover: none) {\n  .model-picker-description"));
+    expect(touch.slice(0, touch.indexOf("}"))).toMatch(/display\s*:\s*block/);
   });
 
   it("does not offer models when the execution host reports the provider unavailable", () => {

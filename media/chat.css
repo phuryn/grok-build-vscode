@@ -6635,4 +6635,9 @@ body.host-wait-visible .gfp-panel.gfp-overlay { bottom: var(--host-wait-height, 
 }
 
 .model-picker-row:has(.model-picker-description) { flex-wrap: wrap; }
-.model-picker-description { flex-basis: 100%; white-space: normal; text-align: left; font-size: 12px; line-height: 1.4; color: var(--muted); }
+/* The row tooltip already carries this text. Inline only where a hover
+   tooltip does not exist: it is a disclosure about the user's data. */
+.model-picker-description { display: none; flex-basis: 100%; white-space: normal; text-align: left; font-size: 12px; line-height: 1.4; color: var(--muted); }
+@media (hover: none) {
+  .model-picker-description { display: block; }
+}
