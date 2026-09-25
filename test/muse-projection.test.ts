@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Projection } from "../adapters/muse/projection.mts";
+import { commandOutputForToolCall } from "../src/acp-dispatch";
 
 describe("Muse raw notification projection", () => {
   it("appends live text and authoritative suffixes without duplicating or rewriting a prefix", () => {
@@ -34,9 +35,33 @@ describe("Muse raw notification projection", () => {
         }
         const expected = status === "inProgress" ? "in_progress" : status === "completed" ? "completed" : "failed";
         expect(updates.at(-1)).toMatchObject({ status: expected,
-          rawOutput: expected === "failed" ? { message: `Muse tool ended with status: ${status}` } : undefined });
+          rawOutput: expected === "failed" ? { message: `Muse reported "${status}" without a reason.` } : undefined });
       }
     });
+
+  it.each([false, true])("prefers a reported failure reason over summary, output, then a bare status (history=%s)", history => {
+    const output = ["one", "two", "", "  ", "three", "four", "five", "six", "seven", "eight", "nine", "ten"].join("\n");
+    const cases: { extra: Record<string, unknown>; message: string; status?: string }[] = [
+      { extra: { failureReason: " permission denied ", fallbackText: "summary", visibleOutput: output }, message: "permission denied" },
+      { extra: { failureReason: "  ", fallbackText: " summary ", visibleOutput: output }, message: "summary" },
+      { extra: { fallbackText: "\n", visibleOutput: output }, message: ["three", "four", "five", "six", "seven", "eight", "nine", "ten"].join("\n") },
+      { extra: { visibleOutput: "\n  \n" }, message: 'Muse reported "failed" without a reason.' },
+      { extra: {}, status: "rejected", message: 'Muse reported "rejected" without a reason.' },
+    ];
+    for (const { extra, message, status = "failed" } of cases) {
+      const updates: any[] = [];
+      const p = new Projection(u => updates.push(u), () => {});
+      const item = { itemId: "tool", kind: "toolCall", tool: "bash", revision: 2, status, ...extra };
+      if (history) p.acceptHistory(item);
+      else {
+        p.accept("item/started", { item: { ...item, revision: 1, status: "inProgress", failureReason: undefined, fallbackText: undefined, visibleOutput: undefined } });
+        p.accept("item/completed", { item });
+      }
+      const failed = updates.filter(u => u.status === "failed");
+      expect(failed).toHaveLength(1);
+      expect(failed[0].rawOutput).toEqual({ message });
+    }
+  });
 
   it.each([
     ['{"command":"echo example","timeout":123}', { command: "echo example", timeout: 123 }],
@@ -63,8 +88,26 @@ describe("Muse raw notification projection", () => {
     p.accept("item/delta", { itemId: "reminder", field: "text", delta: "hidden delta" });
     p.accept("item/completed", { item: { itemId: "reminder", kind: "reminderChild", revision: 2, text: "hidden final" } });
     expect(updates.filter(u => u.sessionUpdate === "agent_message_chunk")).toEqual([]);
-    expect(updates.filter(u => u.content).map(u => u.content[0].content.text)).toEqual(["one", "one two"]);
-    expect(updates.at(-1)).toMatchObject({ toolCallId: "call", status: "completed" });
+    expect(updates.filter(u => u.content).map(u => u.content[0].content.text)).toEqual(["one", "one two", "one two"]);
+    expect(updates.at(-1)).toMatchObject({ toolCallId: "call", status: "completed",
+      rawOutput: { output: "one two" },
+      content: [{ type: "content", content: { type: "text", text: "one two" } }] });
     expect(logs).toEqual([]);
+  });
+
+  it("carries a resumed command's output where replay reads it", () => {
+    const updates: any[] = [];
+    const p = new Projection(u => updates.push(u), () => {});
+    p.acceptHistory({ itemId: "tool", callId: "call", kind: "toolCall", tool: "bash", revision: 1,
+      status: "completed", args: JSON.stringify({ command: "echo hello" }), visibleOutput: "hello\n" });
+    const call = updates.find(u => u.status === "completed");
+    expect(call).toMatchObject({
+      rawOutput: { output: "hello\n" },
+      content: [{ type: "content", content: { type: "text", text: "hello\n" } }],
+    });
+    expect(commandOutputForToolCall(call, { replaying: true })).toMatchObject({
+      command: "echo hello", output: "hello\n", cancelled: false,
+    });
+    expect(commandOutputForToolCall(call, { replaying: false })).toBeNull();
   });
 });

@@ -9,6 +9,23 @@ interface ItemState {
   toolCallId?: string;
 }
 
+const MUSE_FAILURE_OUTPUT_LINES = 8;
+
+/** The row already names the tool. Show why it stopped: the reported reason,
+ *  the server's one-line summary, else the tail of what the tool printed. */
+function museToolFailureMessage(item: Record<string, any>): string {
+  const reason = typeof item.failureReason === "string" ? item.failureReason.trim() : "";
+  if (reason) return reason;
+  const fallback = typeof item.fallbackText === "string" ? item.fallbackText.trim() : "";
+  if (fallback) return fallback;
+  if (typeof item.visibleOutput === "string") {
+    const lines = item.visibleOutput.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+    if (lines.length) return lines.slice(-MUSE_FAILURE_OUTPUT_LINES).join("\n");
+  }
+  const status = typeof item.status === "string" && item.status.trim() ? item.status.trim() : "failed";
+  return `Muse reported "${status}" without a reason.`;
+}
+
 /** A single session's raw MSP stream, independent of transport and SDK folds. */
 export class Projection {
   private readonly items = new Map<string, ItemState>();
@@ -81,14 +98,21 @@ export class Projection {
       const first = !state.toolCallId;
       state.toolCallId = item.callId || id;
       // MSP's open enum has exactly one nonterminal value. ACP has no
-      // terminal-unknown status: use its non-success terminal and preserve
-      // the reported outcome as generic text, including future MSP values.
+      // terminal-unknown status: use its non-success terminal. The reason
+      // stays on rawOutput.message, which is what the row reads first.
       const status = item.status === "inProgress" ? "in_progress"
         : item.status === "completed" ? "completed" : "failed";
+      // Output has to ride the update whose status is completed. The row
+      // fills its output box only from that update, and a later content-only
+      // update is not merged.
+      const visible = status === "completed" && typeof item.visibleOutput === "string" ? item.visibleOutput : undefined;
       this.emit({ sessionUpdate: first ? "tool_call" : "tool_call_update",
         toolCallId: state.toolCallId!, title: item.tool || "Muse tool",
         kind: item.tool === "bash" ? "execute" : "other", status, rawInput: parseToolInput(item.args),
-        rawOutput: status === "failed" ? { message: `Muse tool ended with status: ${item.status}` } : undefined });
+        rawOutput: status === "failed" ? { message: museToolFailureMessage(item) }
+          : visible !== undefined ? { output: visible } : undefined,
+        ...(visible !== undefined ? { content: [{ type: "content", content: { type: "text", text: visible } }] } : {}),
+      });
       if (typeof item.visibleOutput === "string") this.append(state, id, "output", item.visibleOutput);
     } else if (item.kind === "agentMessage" && typeof item.text === "string") {
       this.append(state, id, "text", item.text);
