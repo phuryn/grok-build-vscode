@@ -32,6 +32,21 @@ import { fileURLToPath } from "node:url";
 const root = path.dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
 const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
 const EXTENSION = pkg.displayName || pkg.name;
+// The publisher page lists the extension under the display name of the version
+// ALREADY published. A release that renames it (4.12.0: "Grok Build for VS Code
+// (Community)" -> "GUI for Grok Build & Muse Code") must still find its row, so
+// ask the gallery what is listed under the id, and accept either name.
+const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+async function listedDisplayName() {
+  try {
+    const res = await fetch("https://marketplace.visualstudio.com/_apis/public/gallery/extensionquery", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json;api-version=7.2-preview.1" },
+      body: JSON.stringify({ filters: [{ criteria: [{ filterType: 7, value: `${pkg.publisher}.${pkg.name}` }] }], flags: 914 }),
+    });
+    return (await res.json())?.results?.[0]?.extensions?.[0]?.displayName || "";
+  } catch { return ""; }
+}
 const PUBLISHER = pkg.publisher;
 const VERSION = pkg.version;
 
@@ -80,7 +95,13 @@ try {
   });
   await page.waitForTimeout(2500);
 
-  const rowFor = () => page.locator("[role='row']", { hasText: EXTENSION }).first();
+  const listed = await listedDisplayName();
+  const NAMES = [...new Set([EXTENSION, listed].filter(Boolean))];
+  if (listed && listed !== EXTENSION) log(`listed as "${listed}"; this upload renames it to "${EXTENSION}"`);
+  const isOurRow = (text) => NAMES.some((n) => text.includes(n));
+  const rowFor = () => page.locator("[role='row']").filter({
+    hasText: new RegExp(NAMES.map(escapeRegExp).join("|")),
+  }).first();
   const before = (await rowFor().textContent()).replace(/\s+/g, " ").trim();
   log(`row before: ${before}`);
   if (before.includes(VERSION)) {
@@ -157,7 +178,7 @@ try {
       announced = true;
       log("puzzle solved — uploading");
     }
-    const row = seen.rows.find((t) => t.includes(EXTENSION));
+    const row = seen.rows.find((t) => isOurRow(t));
     if (row) after = row;
     if (after.includes(VERSION)) break;
     // Once the dialog closes the upload has been submitted; keep polling the
