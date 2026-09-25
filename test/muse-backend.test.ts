@@ -1,7 +1,7 @@
 import { AcpClient } from "../src/acp";
 import { describe, expect, it } from "vitest";
 import * as path from "node:path";
-import { MuseBackend } from "../src/muse-backend";
+import { MuseBackend, withMuseCredentialBackend } from "../src/muse-backend";
 import { locateMuseCli } from "../src/muse-cli-locator";
 import { ACP_PROVIDERS, INTERNAL_PROVIDERS, isAcpProvider, isInternalProvider, supportsSessionDeletion, supportsModeSwitching, usesPerCallContextOccupancy } from "../src/acp-backend";
 
@@ -12,10 +12,23 @@ describe("Muse backend boundary", () => {
     expect(backend.provider).toBe("muse");
     expect(spec.command).toBe(process.execPath);
     expect(spec.args[0]).toBe(path.resolve(__dirname, "../src/muse-adapter/main.mjs"));
-    expect(spec.env).toEqual({ TEST: "kept", ELECTRON_RUN_AS_NODE: "1", MUSE_CODE_EXECUTABLE: "/bin/muse" });
+    expect(spec.env).toEqual({ ...withMuseCredentialBackend({ TEST: "kept" }), ELECTRON_RUN_AS_NODE: "1", MUSE_CODE_EXECUTABLE: "/bin/muse" });
     expect(spec.shell).toBe(false);
     expect(ACP_PROVIDERS).toEqual(["grok", "codex", "claude"]);
     expect(isAcpProvider("muse")).toBe(false);
+  });
+
+  // Muse 1.4.0 cannot save a sign-in to the keychain off macOS
+  // (meta-models/muse-code-sdk#38); its file store saves normally.
+  it("forces Muse's file credential store off macOS, and only there", () => {
+    expect(withMuseCredentialBackend({ A: "1" }, "win32")).toEqual({ A: "1", TBH_CREDENTIAL_BACKEND: "file" });
+    expect(withMuseCredentialBackend({ A: "1" }, "linux")).toEqual({ A: "1", TBH_CREDENTIAL_BACKEND: "file" });
+    expect(withMuseCredentialBackend({ A: "1" }, "darwin")).toEqual({ A: "1" });
+    expect(withMuseCredentialBackend({ TBH_CREDENTIAL_BACKEND: "keychain" }, "linux"))
+      .toEqual({ TBH_CREDENTIAL_BACKEND: "keychain" });
+    const backend = new MuseBackend();
+    const spec = backend.spawn({ cliPath: "/bin/muse", cwd: "/w", env: {} });
+    expect(spec.env?.TBH_CREDENTIAL_BACKEND).toBe(process.platform === "darwin" ? undefined : "file");
   });
 
   it("honours an explicit Windows executable", () => {

@@ -1,6 +1,22 @@
 import * as path from "node:path";
 import type { AcpBackend, BackendConfigState, BackendSpawnOptions } from "./acp-backend";
 
+/**
+ * Muse 1.4.0 saves a new sign-in to the OS keychain on Windows and Linux too,
+ * and the save fails ("keychain write failed (internal error -2147483648)"),
+ * so nobody who was not already signed in can sign in. Forcing its file store
+ * saves normally; that file is what 1.3.0 wrote and what 1.4.0 still reads.
+ * macOS keeps its real Keychain. A value the person set themselves wins.
+ * Drop this once https://github.com/meta-models/muse-code-sdk/issues/38 is fixed.
+ */
+export function withMuseCredentialBackend(
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform = process.platform,
+): NodeJS.ProcessEnv {
+  if (platform === "darwin" || env.TBH_CREDENTIAL_BACKEND) return env;
+  return { ...env, TBH_CREDENTIAL_BACKEND: "file" };
+}
+
 /** Runs the installed vendor CLI through our ACP adapter. */
 export class MuseBackend implements AcpBackend<"muse"> {
   readonly provider = "muse" as const;
@@ -11,7 +27,7 @@ export class MuseBackend implements AcpBackend<"muse"> {
     return {
       command: process.execPath,
       args: [path.join(__dirname, "muse-adapter", "main.mjs")],
-      env: { ...options.env, ELECTRON_RUN_AS_NODE: "1", MUSE_CODE_EXECUTABLE: options.cliPath },
+      env: { ...withMuseCredentialBackend(options.env), ELECTRON_RUN_AS_NODE: "1", MUSE_CODE_EXECUTABLE: options.cliPath },
       shell: false,
     };
   }

@@ -1,4 +1,4 @@
-import { MuseBackend } from "./muse-backend";
+import { MuseBackend, withMuseCredentialBackend } from "./muse-backend";
 import { locateMuseCli, parseMuseVersionOutput } from "./muse-cli-locator";
 import { museInstallCommand } from "./muse-install";
 import type {
@@ -2214,7 +2214,8 @@ export class GrokSidebar {
           message: deviceLoginFailureText(provider, result.failure, displayName),
         });
       },
-    }, undefined, undefined, { needsCode: !!plan.needsCode });
+    }, undefined, provider === "muse" ? withMuseCredentialBackend(process.env) : undefined,
+    { needsCode: !!plan.needsCode });
     if (!settled) {
       if (handle) {
         entry.handle = handle;
