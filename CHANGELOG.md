@@ -2,17 +2,17 @@
 
 ## 4.12.0 — 2026-09-25
 
-**Links you can click, and Muse Code you can install.** Pull request and web addresses in a reply open from the chat, and a machine without Muse Code now offers to install it instead of doing nothing when you press Connect. The extension is also listed under a new name, **GUI for Grok Build & Muse Code**, because it is not only for VS Code and it drives four agents.
+**Links you can click, and Muse Code you can install.** Pull request and web addresses in a reply's text open from the chat, and a machine without Muse Code now offers to install it instead of doing nothing when you press Connect. The extension is also listed under a new name, **GUI for Grok Build & Muse Code**, because it is not only for VS Code and it drives four agents.
 
 ### Added
 
-- **A pull request address is a button, and other web addresses are links.** A GitHub pull URL renders as a chip with the PR number and the repository, whether it stands alone or sits in a sentence (`abierto: https://github.com/owner/repo/pull/17`). Any other `http` or `https` address in the reply is a link. Clicking either opens it in the browser. An address inside a code span stays literal; one in bold, or written as `<https://…>`, becomes a clean link without the markup leaking into it. Thanks to [@mateolafalce](https://github.com/mateolafalce) ([#185](https://github.com/phuryn/grok-build-vscode/pull/185)), who also reported it (#184).
-- **Install Muse Code from the app.** When Muse is not installed, its panel shows Meta's install command and an **Install Muse Code** button that runs Meta's official installer in a terminal after you confirm — on macOS and Linux, and on Windows too, where Meta's PowerShell installer puts `muse` on your PATH. Then click **Re-check** and **Connect**. Pressing Connect on a machine without Muse now says so, instead of briefly showing something and leaving you where you were.
+- **A pull request address is a button, and other web addresses are links.** A GitHub pull URL renders as a chip with the PR number and the repository, whether it stands alone or sits in a sentence (`abierto: https://github.com/owner/repo/pull/17`). Any other bare `http` or `https` address in the text is a link. Clicking either opens it in the browser. An address inside a code span or a code block stays literal; one in bold, or written as `<https://…>`, becomes a clean link without the markup leaking into it; and a Markdown link whose label contains an address stays one link, to its target. Thanks to [@mateolafalce](https://github.com/mateolafalce) ([#185](https://github.com/phuryn/grok-build-vscode/pull/185)), who also reported it (#184).
+- **Install Muse Code from the app.** In VS Code, Cursor and the desktop app, when Muse is not installed its panel shows Meta's install command and an **Install Muse Code** button that runs Meta's official installer in a terminal after you confirm — on macOS and Linux, and on Windows too, where Meta's PowerShell installer puts `muse` on your PATH. Then click **Re-check** and **Connect**. From a phone or browser, the panel says Muse is not installed on that machine, since the install has to run there. On every surface, pressing Connect on a machine without Muse now says so, instead of briefly showing something and leaving you where you were.
 
 ### Changed
 
 - **Listed as "GUI for Grok Build & Muse Code".** The two agents it names are the ones with no graphical interface of their own; the listing now names Codex and Claude Code as well, since all four run in the same window. The extension's ID is unchanged, so it keeps updating in place.
-- **"View All" opens a tab with a name.** A long command or its output used to open in a tab titled with its first line of code; it is now **Script** or **Output**, and opening several gives each its own tab (#175).
+- **"View All" opens a tab with a name in VS Code and Cursor.** A long command or its output used to open in a tab titled with its first line of code; it is now **Script** or **Output**, and opening several gives each its own tab (#175). The desktop app and phones keep their in-app views.
 
 ### Fixed
 
