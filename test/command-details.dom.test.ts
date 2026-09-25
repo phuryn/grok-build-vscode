@@ -206,7 +206,7 @@ describe("command details (#41)", () => {
     expect((row.querySelector(".tool-cmd") as HTMLElement).classList.contains("command-full")).toBe(true);
   });
 
-  it("caps long IN/OUT previews at six lines and opens the full text in named Script and Output editors", () => {
+  it("caps long IN/OUT previews at six lines and opens the full text in untitled editors", () => {
     const { window, doc, posted } = bootWebview();
     const command = Array.from({ length: 8 }, (_, i) => `command ${i + 1}`).join("\n");
     const output = Array.from({ length: 9 }, (_, i) => `output ${i + 1}`).join("\n");
@@ -233,8 +233,8 @@ describe("command details (#41)", () => {
     expect(details.querySelector(".tool-cmd")!.textContent).toBe(command);
     expect(details.querySelector(".tool-cmd-output")!.textContent).toBe(output);
     expect(posted.filter((m: any) => m.type === "openText")).toEqual([
-      { type: "openText", filename: "Script", content: command },
-      { type: "openText", filename: "Output", content: output },
+      { type: "openText", content: command },
+      { type: "openText", content: output },
     ]);
   });
 
@@ -257,8 +257,8 @@ describe("command details (#41)", () => {
     click(window, viewAll[0]);
     click(window, viewAll[1]);
     expect(posted.filter((m: any) => m.type === "openText")).toEqual([
-      { type: "openText", filename: "Script", content: command, language: "powershell" },
-      { type: "openText", filename: "Output", content: output },
+      { type: "openText", content: command, language: "powershell" },
+      { type: "openText", content: output },
     ]);
   });
 
@@ -282,8 +282,8 @@ describe("command details (#41)", () => {
       click(window, viewAll[0]);
       click(window, viewAll[1]);
       expect(posted.filter((m: any) => m.type === "openText")).toEqual([
-        { type: "openText", filename: "Script", content: command, language: commandLanguage },
-        { type: "openText", filename: "Output", content: output },
+        { type: "openText", content: command, language: commandLanguage },
+        { type: "openText", content: output },
       ]);
     },
   );
@@ -302,7 +302,7 @@ describe("command details (#41)", () => {
     click(window, doc.querySelector(".tool-flat.has-details") as HTMLElement);
     click(window, doc.querySelector(".command-view-all") as HTMLButtonElement);
     expect(posted.filter((m: any) => m.type === "openText")).toEqual([
-      { type: "openText", filename: "Script", content: command },
+      { type: "openText", content: command },
     ]);
   });
 

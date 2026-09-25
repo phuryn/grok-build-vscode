@@ -649,7 +649,7 @@ export interface Host {
    *
    * `suggestedFilename` is a save-as hint from an additive `openText.filename`.
    * Desktop honors it with the OS save dialog (cancel writes nothing). VS Code
-   * uses it to name the untitled tab. Desktop View all uses the in-app preview.
+   * ignores it and still opens an untitled tab. Omit it for command View all.
    */
   openUntitledText(content: string, language?: string, suggestedFilename?: string): Thenable<void>;
   /**

@@ -12,7 +12,6 @@
 ### Changed
 
 - **Listed as "GUI for Grok Build & Muse Code".** The two agents it names are the ones with no graphical interface of their own; the listing now names Codex and Claude Code as well, since all four run in the same window. The extension's ID is unchanged, so it keeps updating in place.
-- **"View All" opens a tab with a name in VS Code and Cursor.** A long command or its output used to open in a tab titled with its first line of code; it is now **Script** or **Output**, and opening several gives each its own tab (#175). The desktop app and phones keep their in-app views.
 
 ### Fixed
 

@@ -12339,9 +12339,6 @@
             return;
           }
           const message = { type: "openText", content: fullText };
-          // A filename names the VS Code tab; on older desktop hosts without
-          // previewInApp it requests Save As instead of opening their viewer.
-          if (!IS_DESKTOP_CLIENT) message.filename = className === "tool-cmd" ? "Script" : "Output";
           if (openLanguage) message.language = openLanguage;
           vscode.postMessage(message);
         };

@@ -2276,7 +2276,6 @@ suite("VS Code host adapter URI surface", () => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const hostMod = require("../out/vscode-host") as {
     createVsCodeHost: (output: vscode.OutputChannel) => {
-      openUntitledText(content: string, language?: string, suggestedFilename?: string): Thenable<void>;
       asRelativePath(uri: PortableUri): string;
       fs: {
         readFile(uri: PortableUri): Promise<Uint8Array>;
@@ -2336,52 +2335,6 @@ suite("VS Code host adapter URI surface", () => {
 
   suiteTeardown(() => {
     output?.dispose();
-  });
-
-  test("View All names Script and Output tabs without changing their contents", async () => {
-    for (const [name, content, language] of [
-      ["Script", "printf 'hello'\nprintf 'world'\n", "shellscript"],
-      ["Output", "first\r\nsecond\r\n", undefined],
-    ] as const) {
-      const filename = path.join(vscode.workspace.workspaceFolders![0].uri.fsPath, name);
-      assert.ok(!fs.existsSync(filename));
-      await host.openUntitledText(content, language, filename);
-      const doc = vscode.window.activeTextEditor!.document;
-      try {
-        assert.strictEqual(doc.isUntitled, true);
-        assert.strictEqual(path.basename(doc.fileName), name);
-        assert.strictEqual(vscode.window.tabGroups.activeTabGroup.activeTab!.label, name);
-        assert.strictEqual(doc.getText(), content);
-        if (language) assert.strictEqual(doc.languageId, language);
-        assert.ok(!fs.existsSync(filename), "View All must not write a file");
-      } finally {
-        await vscode.commands.executeCommand("workbench.action.revertAndCloseActiveEditor");
-      }
-    }
-  });
-
-  test("named untitled previews preserve earlier documents, including simultaneous opens", async () => {
-    const filename = path.join(vscode.workspace.workspaceFolders![0].uri.fsPath, "Script");
-    await host.openUntitledText("original\n", "shellscript", filename);
-    const original = vscode.window.activeTextEditor!.document;
-    try {
-      await Promise.all([
-        host.openUntitledText("second\n", "shellscript", filename),
-        host.openUntitledText("third\n", "shellscript", filename),
-      ]);
-      const docs = vscode.workspace.textDocuments.filter((doc) => doc.isUntitled
-        && /^Script(?: \(\d+\))?$/.test(path.basename(doc.fileName)));
-      assert.strictEqual(docs.length, 3);
-      assert.strictEqual(original.getText(), "original\n");
-      assert.deepStrictEqual(docs.map((doc) => doc.getText()).sort(), ["original\n", "second\n", "third\n"]);
-      assert.deepStrictEqual(docs.map((doc) => path.basename(doc.fileName)).sort(), ["Script", "Script (2)", "Script (3)"]);
-    } finally {
-      for (const doc of vscode.workspace.textDocuments.filter((doc) => doc.isUntitled
-        && /^Script(?: \(\d+\))?$/.test(path.basename(doc.fileName)))) {
-        await vscode.window.showTextDocument(doc);
-        await vscode.commands.executeCommand("workbench.action.revertAndCloseActiveEditor");
-      }
-    }
   });
 
   test("authority survives fromVsCodeUri → toVsCodeUri", () => {

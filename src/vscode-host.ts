@@ -7,7 +7,6 @@
  * implements Host without this file existing at all).
  */
 import * as vscode from "vscode";
-import * as path from "node:path";
 import {
   ensureConfigToml,
   globalConfigPath,
@@ -205,9 +204,6 @@ export function createVsCodeHost(
   output: vscode.OutputChannel,
   context?: vscode.ExtensionContext,
 ): Host {
-  // Reserve names before awaiting VS Code, so simultaneous View All clicks
-  // cannot insert into the same untitled document.
-  const openingUntitled = new Set<string>();
   // `capabilities` is assembled synchronously when the webview announces itself,
   // but the only way to ask whether the host honoured our container contribution
   // is `getCommands`, which is async. So: seed from what the last run learned,
@@ -507,36 +503,9 @@ export function createVsCodeHost(
     async openHostResolvedPath(fsPath: string) {
       await vscode.commands.executeCommand("vscode.open", vscode.Uri.file(fsPath));
     },
-    async openUntitledText(content: string, language?: string, suggestedFilename?: string) {
-      if (!suggestedFilename) {
-        const doc = await vscode.workspace.openTextDocument(untitledTextOpenOptions(content, language));
-        await vscode.window.showTextDocument(doc);
-        return;
-      }
-      const base = vscode.Uri.file(suggestedFilename).with({ scheme: "untitled" });
-      const ext = path.posix.extname(base.path);
-      const stem = base.path.slice(0, base.path.length - ext.length);
-      let uri = base;
-      for (let n = 2; openingUntitled.has(uri.toString())
-        || vscode.workspace.textDocuments.some((doc) => doc.uri.toString() === uri.toString()); n++) {
-        uri = base.with({ path: `${stem} (${n})${ext}` });
-      }
-      openingUntitled.add(uri.toString());
-      try {
-        let doc = await vscode.workspace.openTextDocument(uri);
-        const edit = new vscode.WorkspaceEdit();
-        // An empty editor inherits files.eol; keep the supplied text's line
-        // endings instead of turning LF command output into CRLF on Windows.
-        edit.set(uri, [
-          vscode.TextEdit.setEndOfLine(content.includes("\r\n") ? vscode.EndOfLine.CRLF : vscode.EndOfLine.LF),
-          vscode.TextEdit.insert(new vscode.Position(0, 0), content),
-        ]);
-        if (!await vscode.workspace.applyEdit(edit)) throw new Error("Could not open text preview");
-        if (language) doc = await vscode.languages.setTextDocumentLanguage(doc, language);
-        await vscode.window.showTextDocument(doc);
-      } finally {
-        openingUntitled.delete(uri.toString());
-      }
+    async openUntitledText(content: string, language?: string) {
+      const doc = await vscode.workspace.openTextDocument(untitledTextOpenOptions(content, language));
+      await vscode.window.showTextDocument(doc);
     },
     async openDiff(left: Uri, right: Uri, title: string, options?: HostTextShowOptions) {
       await vscode.commands.executeCommand(

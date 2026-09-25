@@ -32,10 +32,9 @@ function out(command: string, output: string) {
   return { type: "commandOutput", command, output, exitCode: 0, truncated: false };
 }
 
-function bootPreview(opts: { preview?: boolean; commandLanguage?: string; desktop?: boolean } = {}) {
+function bootPreview(opts: { preview?: boolean; commandLanguage?: string } = {}) {
   const h = bootWebview({
     beforeScripts: (window) => {
-      if (opts.desktop) (window as any).grokDesktopShell = {};
       (window as unknown as { eval: (src: string) => void }).eval(highlightSrc);
     },
   });
@@ -94,12 +93,12 @@ describe("preview overlay — View all", () => {
     click(window, buttons[0]);
     expect(doc.getElementById("preview-overlay")).toBeNull();
     expect(posted.filter((m) => m.type === "openText")).toEqual([
-      { type: "openText", filename: "Script", content: LONG_CMD, language: "powershell" },
+      { type: "openText", content: LONG_CMD, language: "powershell" },
     ]);
   });
 
   it("opens a highlighted overlay and does not post openText when previewInApp is set", () => {
-    const { window, doc, posted } = bootPreview({ desktop: true });
+    const { window, doc, posted } = bootPreview();
     openLongCommand(window);
     click(window, viewAllButtons(doc)[0]);
     const overlay = doc.getElementById("preview-overlay");
@@ -112,19 +111,6 @@ describe("preview overlay — View all", () => {
     expect(overlay!.querySelector(".preview-open-panel")).toBeNull();
     expect(posted.filter((m) => m.type === "openText")).toHaveLength(0);
     expect(posted.filter((m) => m.type === "readProjectFile")).toHaveLength(0);
-  });
-
-  it("keeps an older desktop's View All on its viewer path, not Save As", () => {
-    const { window, doc, posted } = bootPreview({ desktop: true, preview: false });
-    openLongCommand(window);
-    const buttons = viewAllButtons(doc);
-    click(window, buttons[0]);
-    click(window, buttons[1]);
-    expect(doc.getElementById("preview-overlay")).toBeNull();
-    expect(posted.filter((m) => m.type === "openText")).toEqual([
-      { type: "openText", content: LONG_CMD, language: "powershell" },
-      { type: "openText", content: LONG_OUT },
-    ]);
   });
 
   it("closes on Escape", () => {
