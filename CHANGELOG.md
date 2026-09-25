@@ -1,5 +1,13 @@
 # Changelog
 
+## 4.12.1 — 2026-09-25
+
+**A workaround for Muse Code 1.4.0 failing to save a sign-in.**
+
+### Fixed
+
+- **Connecting Muse Code on Windows and Linux no longer fails because Muse can't store the sign-in.** Muse Code 1.4.0 can fail right after you approve the sign-in code, with `keychain write failed`, and Connect then ended in "sign-in did not complete". We've seen it on Windows 11 and on headless Linux, both from this app and from a plain terminal. On Windows and Linux, when this app signs you in to Muse or starts it, it now asks Muse to keep the sign-in in its own file, `~/.config/muse/auth.json` (where Muse 1.3.0 kept it), instead of the system keychain. It doesn't do this if you've set `TBH_CREDENTIAL_BACKEND` yourself. We've confirmed on Windows and on Linux that this lets 1.4.0 save the sign-in normally. macOS is unchanged. We've reported the bug to Meta ([meta-models/muse-code-sdk#38](https://github.com/meta-models/muse-code-sdk/issues/38)). Until it's fixed, `muse login` in your own terminal may still fail. Connect from the app instead, or run `TBH_CREDENTIAL_BACKEND=file muse login` (PowerShell: `$env:TBH_CREDENTIAL_BACKEND='file'; muse login`).
+
 ## 4.12.0 — 2026-09-25
 
 **Links you can click, and Muse Code you can install.** Pull request and web addresses in a reply's text open from the chat, and a machine without Muse Code now offers to install it instead of doing nothing when you press Connect. The extension is also listed under a new name, **GUI for Grok Build & Muse Code**, because it is not only for VS Code and it drives four agents.
