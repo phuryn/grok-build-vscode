@@ -16,7 +16,7 @@ Both speak JSON-RPC to `grok agent stdio` (and to **Codex**, **Claude Code** and
 
 No manual setup on either host: onboarding **walks you through installing the `grok` CLI and signing in** — with a **SuperGrok or X Premium+ subscription**, or an **xAI API key**.
 
-![Grok Build in the VS Code sidebar, running Grok](docs/screenshots/grok_4.5.png)
+![Grok Build in VS Code, choosing Grok 4.7 and its reasoning effort](docs/screenshots/grok_4.7.png)
 
 ![Grok Build Desktop — projects, the conversation with an image generated inline, and the file panel](docs/screenshots/grok-desktop.webp)
 

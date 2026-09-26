@@ -27,9 +27,9 @@ The GUI for **Grok Build CLI** (incl. **Grok 4.7**) and **Meta's Muse Code**, ri
 
 No manual setup: the extension **walks you through installing the \`grok\` CLI and signing in** — with a **SuperGrok or X Premium+ subscription**, or an **xAI API key** — right from the sidebar, one click per step.
 
-![Grok Build in the VS Code sidebar, running Grok](https://raw.githubusercontent.com/phuryn/grok-build-vscode/main/docs/screenshots/grok_4.5.png)
+![Grok Build in VS Code, choosing Grok 4.7 and its reasoning effort](https://raw.githubusercontent.com/phuryn/grok-build-vscode/main/docs/screenshots/grok_4.7.png)
 
-![Generated image rendered inline from /imagine](https://raw.githubusercontent.com/phuryn/grok-build-vscode/main/docs/screenshots/imagine.webp)
+![The Projects rail beside a conversation running a deep-research workflow, with context and subscription usage open](https://raw.githubusercontent.com/phuryn/grok-build-vscode/main/docs/screenshots/rail.png)
 
 ---
 
