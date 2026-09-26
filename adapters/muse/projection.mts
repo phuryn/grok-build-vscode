@@ -104,12 +104,16 @@ export class Projection {
         : item.status === "completed" ? "completed" : "failed";
       // Output has to ride the update whose status is completed. The row
       // fills its output box only from that update, and a later content-only
-      // update is not merged.
-      const visible = status === "completed" && typeof item.visibleOutput === "string" ? item.visibleOutput : undefined;
+      // update is not merged. A failed command also carries `output` (what
+      // it printed, or "") beside `message`. Replay commandOutput has no
+      // toolCallId and is served to the oldest row with that command which
+      // has not received output yet, so every run emits its own.
+      const printed = typeof item.visibleOutput === "string" ? item.visibleOutput : undefined;
+      const visible = status === "completed" ? printed : undefined;
       this.emit({ sessionUpdate: first ? "tool_call" : "tool_call_update",
         toolCallId: state.toolCallId!, title: item.tool || "Muse tool",
         kind: item.tool === "bash" ? "execute" : "other", status, rawInput: parseToolInput(item.args),
-        rawOutput: status === "failed" ? { message: museToolFailureMessage(item) }
+        rawOutput: status === "failed" ? { message: museToolFailureMessage(item), output: printed ?? "" }
           : visible !== undefined ? { output: visible } : undefined,
         ...(visible !== undefined ? { content: [{ type: "content", content: { type: "text", text: visible } }] } : {}),
       });

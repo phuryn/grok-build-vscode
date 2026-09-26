@@ -35,7 +35,9 @@ describe("Muse raw notification projection", () => {
         }
         const expected = status === "inProgress" ? "in_progress" : status === "completed" ? "completed" : "failed";
         expect(updates.at(-1)).toMatchObject({ status: expected,
-          rawOutput: expected === "failed" ? { message: `Muse reported "${status}" without a reason.` } : undefined });
+          rawOutput: expected === "failed"
+            ? { message: `Muse reported "${status}" without a reason.`, output: "" }
+            : undefined });
       }
     });
 
@@ -59,7 +61,10 @@ describe("Muse raw notification projection", () => {
       }
       const failed = updates.filter(u => u.status === "failed");
       expect(failed).toHaveLength(1);
-      expect(failed[0].rawOutput).toEqual({ message });
+      expect(failed[0].rawOutput).toEqual({
+        message,
+        output: typeof extra.visibleOutput === "string" ? extra.visibleOutput : "",
+      });
     }
   });
 
@@ -109,5 +114,31 @@ describe("Muse raw notification projection", () => {
       command: "echo hello", output: "hello\n", cancelled: false,
     });
     expect(commandOutputForToolCall(call, { replaying: false })).toBeNull();
+  });
+
+  it("a failed or cancelled resumed command yields its own replay output and keeps its reason", () => {
+    const project = (item: Record<string, unknown>) => {
+      const updates: any[] = [];
+      new Projection(u => updates.push(u), () => {}).acceptHistory(item);
+      return updates.find(u => u.status === "failed");
+    };
+    const failed = project({
+      itemId: "fail", callId: "fail", kind: "toolCall", tool: "bash", revision: 1, status: "failed",
+      failureReason: "exit 1", args: JSON.stringify({ command: "npm test" }), visibleOutput: "1 failed\n",
+    });
+    expect(failed.rawOutput.message).toBe("exit 1");
+    expect(commandOutputForToolCall(failed, { replaying: true })).toEqual({
+      command: "npm test", output: "1 failed\n", exitCode: null, truncated: false, cancelled: false, agentSawCut: true,
+    });
+    expect(commandOutputForToolCall(failed, { replaying: false })).toBeNull();
+
+    const cancelled = project({
+      itemId: "stop", callId: "stop", kind: "toolCall", tool: "bash", revision: 1, status: "cancelled",
+      args: JSON.stringify({ command: "npm test" }),
+    });
+    expect(cancelled.rawOutput.message).toBe('Muse reported "cancelled" without a reason.');
+    expect(commandOutputForToolCall(cancelled, { replaying: true })).toEqual({
+      command: "npm test", output: "", exitCode: null, truncated: false, cancelled: false, agentSawCut: true,
+    });
   });
 });
