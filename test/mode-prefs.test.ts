@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { modeToRemember, rememberedEffort, startsInYolo } from "../src/mode-prefs";
+import { modeToRemember, rememberedEffort, sessionModes, startsInYolo } from "../src/mode-prefs";
 import { GrokSidebar } from "../src/sidebar";
 import { Session } from "../src/session";
 
@@ -21,6 +21,13 @@ describe("remembered mode preference (#25)", () => {
   it("never pre-applies the remembered mode on a resume (those are verdict-driven)", () => {
     expect(startsInYolo("yolo", true)).toBe(false);
     expect(startsInYolo("agent", true)).toBe(false);
+  });
+
+  it("offers Plan to Grok and Claude only", () => {
+    expect(sessionModes("grok")).toEqual(["agent", "plan", "yolo"]);
+    expect(sessionModes("claude")).toEqual(["agent", "plan", "yolo"]);
+    expect(sessionModes("codex")).toEqual(["agent", "yolo"]);
+    expect(sessionModes("muse")).toEqual(["agent", "yolo"]);
   });
 });
 

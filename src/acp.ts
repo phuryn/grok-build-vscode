@@ -157,6 +157,8 @@ export interface PermissionOption {
   optionId: string;
   kind: string; // "allow_always" | "allow_once" | "reject_once" | ...
   name: string;
+  /** Muse stamps its own scope here: `once`, `session`, or `localPersistent`. */
+  _meta?: { scope?: string; [key: string]: unknown } | null;
 }
 
 export interface PermissionRequest {

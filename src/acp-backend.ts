@@ -11,18 +11,21 @@ export function isInternalProvider(value: unknown): value is AcpProvider {
 }
 
 // Exhaustive: each new provider must explicitly opt into implemented actions.
+// `modeSwitching` means the CLI has a mode command. `autoAccept` means the host
+// may answer routine approvals. Muse has the second and not the first.
 const PROVIDER_ACTIONS: Record<AcpProvider, {
   deleteHistory: boolean;
   compact: boolean;
   adapterHistory: boolean;
   modeSwitching: boolean;
+  autoAccept: boolean;
   perCallContext: boolean;
   clientMcp: boolean;
 }> = {
-  grok: { deleteHistory: true, compact: true, adapterHistory: false, modeSwitching: true, perCallContext: false, clientMcp: true },
-  codex: { deleteHistory: true, compact: true, adapterHistory: true, modeSwitching: true, perCallContext: true, clientMcp: true },
-  claude: { deleteHistory: true, compact: true, adapterHistory: true, modeSwitching: true, perCallContext: true, clientMcp: true },
-  muse: { deleteHistory: false, compact: false, adapterHistory: true, modeSwitching: false, perCallContext: false, clientMcp: false },
+  grok: { deleteHistory: true, compact: true, adapterHistory: false, modeSwitching: true, autoAccept: true, perCallContext: false, clientMcp: true },
+  codex: { deleteHistory: true, compact: true, adapterHistory: true, modeSwitching: true, autoAccept: true, perCallContext: true, clientMcp: true },
+  claude: { deleteHistory: true, compact: true, adapterHistory: true, modeSwitching: true, autoAccept: true, perCallContext: true, clientMcp: true },
+  muse: { deleteHistory: false, compact: false, adapterHistory: true, modeSwitching: false, autoAccept: true, perCallContext: false, clientMcp: false },
 };
 
 /**
@@ -59,6 +62,10 @@ export function supportsSessionDeletion(provider: AcpProvider): boolean {
 
 export function supportsModeSwitching(provider: AcpProvider): boolean {
   return actionsFor(provider).modeSwitching;
+}
+
+export function supportsAutoAccept(provider: AcpProvider): boolean {
+  return actionsFor(provider).autoAccept;
 }
 
 export function usesPerCallContextOccupancy(provider: AcpProvider): boolean {

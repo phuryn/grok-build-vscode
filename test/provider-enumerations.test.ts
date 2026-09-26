@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { INTERNAL_PROVIDERS, ACP_PROVIDERS, isInternalProvider, supportsClientMcpServers, supportsCompaction, supportsHistoryDeletion, supportsModeSwitching, usesAdapterHistory, usesPerCallContextOccupancy } from "../src/acp-backend";
+import { INTERNAL_PROVIDERS, ACP_PROVIDERS, isInternalProvider, supportsAutoAccept, supportsClientMcpServers, supportsCompaction, supportsHistoryDeletion, supportsModeSwitching, usesAdapterHistory, usesPerCallContextOccupancy } from "../src/acp-backend";
 import { PROVIDER_ORDER, connectedProviderIds, providerDisplayName } from "../src/provider-ui";
 import { parseWebviewMsg } from "../src/desktop/webview-msg-validate";
 import { parseRelayFrame } from "../src/remote-frames";
@@ -100,6 +100,7 @@ describe("provider registration across surfaces", () => {
     expect(supportsHistoryDeletion(absent)).toBe(true);
     expect(supportsCompaction(absent)).toBe(true);
     expect(supportsModeSwitching(absent)).toBe(true);
+    expect(supportsAutoAccept(absent)).toBe(true);
     expect(usesPerCallContextOccupancy(absent)).toBe(false);
     expect(supportsClientMcpServers(absent)).toBe(true);
     // Not a special case for `undefined`: anything off the table reads as the

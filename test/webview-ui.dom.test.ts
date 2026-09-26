@@ -841,6 +841,11 @@ describe("mode picker (the plan-gate entry path)", () => {
     expect((pop as any).hidden).toBe(false);
     const labels = [...pop.querySelectorAll(".mode-item-label")].map((l) => l.textContent);
     expect(labels).toEqual(["Agent mode", "Plan mode", "Auto accept"]);
+    expect([...pop.querySelectorAll(".mode-item-desc")].map((l) => l.textContent)).toEqual([
+      "Grok acts directly, asking approval only for changes it judges sensitive",
+      "Grok explores and proposes a plan; file writes and commands are blocked until you approve it",
+      "Grok automatically approves all permission requests (YOLO)",
+    ]);
 
     const planItem = [...pop.querySelectorAll(".mode-popover-item")]
       .find((el) => el.querySelector(".mode-item-label")!.textContent === "Plan mode") as HTMLElement;
@@ -864,6 +869,10 @@ describe("mode picker (the plan-gate entry path)", () => {
     const labels = [...$(doc, "mode-popover").querySelectorAll(".mode-item-label")]
       .map((label) => label.textContent);
     expect(labels).toEqual(["Agent mode", "Auto accept"]);
+    expect([...$(doc, "mode-popover").querySelectorAll(".mode-item-desc")].map((label) => label.textContent)).toEqual([
+      "Codex acts directly, asking approval only for changes it judges sensitive",
+      "Codex automatically approves all permission requests (YOLO)",
+    ]);
   });
 
   it("disables only Plan with the host's version reason, then re-enables it", () => {

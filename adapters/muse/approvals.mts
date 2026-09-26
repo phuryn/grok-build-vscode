@@ -17,12 +17,14 @@ export function permissionOptions(choices: Choice[]): PermissionOption[] {
     const allow = ["approved", "approvedForSession", "approvedPolicyAmendment"].includes(choice.decision);
     const deny = ["denied", "deniedPolicyAmendment", "abort", "timedOut"].includes(choice.decision);
     if ((!allow && !deny) || !["once", "session", "localPersistent"].includes(choice.scope)) return [];
-    // ACP has no session-scoped kind. Keep the scope in the label and preserve
-    // Muse's exact choice id; never advertise a session grant as allow_always.
+    // ACP has no session-scoped kind. Keep the scope in the label and in
+    // `_meta.scope`, and preserve Muse's exact choice id. Never advertise a
+    // session grant as allow_always — Auto accept reads the scope, not the kind.
     return [{ optionId: choice.choiceId, name: `${choice.label} (${choice.scope})`,
       kind: choice.scope === "localPersistent"
         ? (allow ? "allow_always" : "reject_always")
-        : (allow ? "allow_once" : "reject_once") }];
+        : (allow ? "allow_once" : "reject_once"),
+      _meta: { scope: choice.scope } }];
   });
 }
 

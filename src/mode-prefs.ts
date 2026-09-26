@@ -24,6 +24,13 @@ export function startsInYolo(defaultMode: string | undefined, isResume: boolean)
   return !isResume && defaultMode === "yolo";
 }
 
+/** Modes this session's picker offers. Codex's plan review is outside this menu; Muse has no Plan. */
+export function sessionModes(provider: string): ModeId[] {
+  return provider === "codex" || provider === "muse"
+    ? ["agent", "yolo"]
+    : ["agent", "plan", "yolo"];
+}
+
 export const EFFORT_PREFS_KEY = "grok.defaultEffortByProvider";
 export type EffortPrefs = Record<string, string>;
 

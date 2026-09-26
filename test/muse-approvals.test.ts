@@ -25,10 +25,10 @@ describe("Muse permission correlation", () => {
 
   it("preserves offered ids and does not advertise a session grant as persistent", () => {
     expect(permissionOptions(request.availableChoices)).toEqual([
-      { optionId: once.choiceId, name: "Allow (once)", kind: "allow_once" },
-      { optionId: session.choiceId, name: "Allow this session (session)", kind: "allow_once" },
-      { optionId: persistent.choiceId, name: "Save rule (localPersistent)", kind: "allow_always" },
-      { optionId: deny.choiceId, name: "Deny (once)", kind: "reject_once" },
+      { optionId: once.choiceId, name: "Allow (once)", kind: "allow_once", _meta: { scope: "once" } },
+      { optionId: session.choiceId, name: "Allow this session (session)", kind: "allow_once", _meta: { scope: "session" } },
+      { optionId: persistent.choiceId, name: "Save rule (localPersistent)", kind: "allow_always", _meta: { scope: "localPersistent" } },
+      { optionId: deny.choiceId, name: "Deny (once)", kind: "reject_once", _meta: { scope: "once" } },
     ]);
   });
 

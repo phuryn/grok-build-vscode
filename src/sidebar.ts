@@ -20,7 +20,7 @@ import * as path from "node:path";
 import { spawn } from "node:child_process";
 import { AcpClient, EffortLevel, ExitPlanRequest, PermissionRequest, QuestionRequest } from "./acp";
 import type { AcpProvider, BackendSessionListEntry } from "./acp-backend";
-import { usesAdapterHistory, isInternalProvider, INTERNAL_PROVIDERS, supportsSessionDeletion, supportsHistoryDeletion, supportsModeSwitching, supportsClientMcpServers, usesPerCallContextOccupancy } from "./acp-backend";
+import { usesAdapterHistory, isInternalProvider, INTERNAL_PROVIDERS, supportsSessionDeletion, supportsHistoryDeletion, supportsModeSwitching, supportsAutoAccept, supportsClientMcpServers, usesPerCallContextOccupancy } from "./acp-backend";
 import { CODEX_ACP_ADAPTER_VERSION, CodexBackend, isCodexCredentialError } from "./codex-backend";
 import { locateCodexCli, resolveCodexHome } from "./codex-cli-locator";
 import { readCodexSubscriptionWindows } from "./codex-usage";
@@ -80,6 +80,7 @@ import {
   finishQueuedSendCommit,
   runExclusiveHistoryLoad,
   pendingPermissionOptions,
+  pickAutoAcceptOption,
   preferredPermissionAllowOption,
   rehydrateBusyChrome,
   sessionHasWorkInFlight,
@@ -97,7 +98,7 @@ import { summarizeForSpeech } from "./speech-summary";
 import type { PromptResultMeta, PromptUsage, SessionInfoContext } from "./acp-dispatch";
 import { MediaRef, adapterCompactSignal, adapterContextOccupancy, agentTimestampMsFromMeta, autoCompactStartedNote, childStreamFromRoute, commandOutputForToolCall, commandOutputFromLiveTerminal, contextUsedFromCompactNotification, enforceCompleteSessionCost, errorDetail, gateZeroTokenMeta, isAuthErrorText, isCredentialError, isIncompatibleAgentError, isResumeNotFound, isRateLimitError, isSubagentLifecycleUpdate, occupancyFromAdapterTurn, parseSessionInfoContext, permissionOutcomeFor, promptErrorText, rateLimitNoticeText, sessionInfoCacheFresh, sumUsage, summarizeBackgroundCommand, usageIsRealMeasurement, type UpdateRoute } from "./acp-dispatch";
 import { createMcpPrepareState, prepareMcpToolCall } from "./mcp-tool";
-import { EFFORT_PREFS_KEY, configWriteTarget, modeToRemember, rememberedEffort, startsInYolo, type EffortPrefs } from "./mode-prefs";
+import { EFFORT_PREFS_KEY, configWriteTarget, modeToRemember, rememberedEffort, sessionModes, startsInYolo, type EffortPrefs } from "./mode-prefs";
 import { beginAuthRecovery, oauthShadowsXaiApiKey } from "./auth-recovery";
 import {
   WELCOME_TIPS_KEY,
@@ -3398,7 +3399,7 @@ See design doc for the full state machine diagram.`;
     });
 
     // Make the bottom mode button reflect Plan during the manual test.
-    this.post({ type: "modeChanged", modeId: "plan" });
+    this.post({ type: "modeChanged", modeId: "plan", modes: sessionModes(this.focused.provider) });
   }
 
   /**
@@ -3413,7 +3414,11 @@ See design doc for the full state machine diagram.`;
   }
 
   private postMode(session: Session = this.focused): void {
-    const message: HostMsg = { type: "modeChanged", modeId: this.displayMode(session) };
+    const message: HostMsg = {
+      type: "modeChanged",
+      modeId: this.displayMode(session),
+      modes: sessionModes(session.provider),
+    };
     if (session === this.focused) this.view?.webview.postMessage(message);
     this.sendRemoteSession(session, message);
   }
@@ -3568,7 +3573,6 @@ Only continue if you trust this code.`,
     session: Session = this.focused,
     requester?: RemoteRequester,
   ): Promise<void> {
-    if (!supportsModeSwitching(session.provider)) return;
     // Agent/plan/yolo are mutually exclusive. Plan = client write/exec gate;
     // YOLO = auto-approve. Both ride on top of the CLI's agent mode, except
     // Plan which also tells the CLI to plan instead of act. The mode button only
@@ -3577,6 +3581,30 @@ Only continue if you trust this code.`,
     // setMode throws "no session" (and for Plan that error is surfaced to the user).
     // The mode button is disabled while busy; this backstops the toggle-mode command.
     if (!session.client || !session.client.sessionId || session.priming) return;
+    // No CLI mode command (Muse). Agent is that CLI's own default — send nothing.
+    // Auto accept is our flag only. Plan would promise a write block it does not have.
+    if (!supportsModeSwitching(session.provider)) {
+      if (!supportsAutoAccept(session.provider)) return;
+      if (modeId === "plan") {
+        this.reportRequester(
+          requester,
+          "warning",
+          `${providerDisplayName(session.provider)} does not offer Plan mode.`,
+        );
+        return;
+      }
+      const remember = modeToRemember(modeId);
+      if (remember) void this.rememberGrokConfig("defaultMode", remember);
+      if (modeId === "yolo") {
+        session.autoApprove = true;
+        this.setPlanActive(session, false);
+        this.autoApprovePendingPermissions(session);
+        return;
+      }
+      session.autoApprove = false;
+      this.setPlanActive(session, false);
+      return;
+    }
     if (modeId === "plan" && !session.planModeAvailable) {
       // Unverified probe: re-check now rather than forcing a session restart.
       // A verified-old CLI is latched and stays refused.
@@ -4145,9 +4173,8 @@ Only continue if you trust this code.`,
     // Auto accept is not a verdict on a plan-review card. Same rule as
     // autoApprovePendingPermissions, including after a failed mode RPC
     // that already cleared the Plan bit.
-    if (supportsModeSwitching(session.provider) && session.autoApprove && !planActive && !isPlanReviewPermission(req.toolCall?.kind)) {
-      const opt = req.options.find((o) => o.kind === "allow_always") ??
-                  req.options.find((o) => o.kind === "allow_once");
+    if (supportsAutoAccept(session.provider) && session.autoApprove && !planActive && !isPlanReviewPermission(req.toolCall?.kind)) {
+      const opt = pickAutoAcceptOption(req.options, session.provider);
       if (opt) { client.respondPermission(req.id, opt.optionId); return; }
     }
     // This flag engages the HOST's own command grants, which replace the CLI's
@@ -4246,14 +4273,14 @@ Only continue if you trust this code.`,
    *  unread plan, and the card must stay answerable. A card with no allow
    *  option is left for the user as well. */
   private autoApprovePendingPermissions(session: Session): void {
-    if (!supportsModeSwitching(session.provider)) return;
+    if (!supportsAutoAccept(session.provider)) return;
     const client = session.client;
     if (!client || session.pendingPermissions.size === 0) return;
     let resolved = 0;
     // Snapshot first — persistPermissionAnswer mutates pendingPermissions.
     for (const [requestId, pending] of [...session.pendingPermissions]) {
       if (isPlanReviewPermission(pending.toolKind)) continue;
-      const opt = preferredPermissionAllowOption(pending, session.planActive);
+      const opt = preferredPermissionAllowOption(pending, session.planActive, session.provider);
       if (!opt) continue;
       if (!client.respondPermission(requestId, opt.optionId)) continue;
       this.emit(session, { type: "permissionResolved", requestId, optionId: opt.optionId });
@@ -10016,7 +10043,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // toolbar shows the right one from the first paint — no Agent → Auto accept
     // flash while the session spins up and primes. Resumed sessions stay
     // verdict-driven (plan-restore decides), so they don't pre-apply it.
-    const rememberedYolo = supportsModeSwitching(session.provider) && startsInYolo(
+    const rememberedYolo = supportsAutoAccept(session.provider) && startsInYolo(
       this.host.getConfiguration("grok").get<string>("defaultMode", ""),
       !!resumeId,
     );
@@ -10069,7 +10096,11 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // calls startSession as its own retry, and a reset would let an entitlement
     // failure (#58) pay a full restart+resend cycle on every prompt. Only a clean
     // turn re-arms it.
-    this.emit(session, { type: "modeChanged", modeId: session.autoApprove ? "yolo" : "agent" });
+    this.emit(session, {
+      type: "modeChanged",
+      modeId: session.autoApprove ? "yolo" : "agent",
+      modes: sessionModes(session.provider),
+    });
     if (configAutoApprove) this.noticeAlwaysApproveOnce(this.sessionCwd(session));
     if (resumeId) this.emit(session, { type: "clearMessages" });
 

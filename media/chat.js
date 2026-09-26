@@ -578,6 +578,9 @@
     codexInstall: { phase: "idle", receivedBytes: 0, totalBytes: 0, reason: "" },
     availableModels: [],
     currentModeId: "agent",
+    // Null until a host sends `modeChanged.modes`. Absent means the old rule:
+    // Muse's button hidden, Codex without Plan.
+    offeredModes: null,
     effort: "",
     cwd: "",
     contextWindow: 200000,
@@ -1126,21 +1129,9 @@
   };
 
   const MODE_META = {
-    agent: {
-      icon: ICON.bot,
-      label: "Agent mode",
-      desc: "Grok acts directly, asking approval only for changes it judges sensitive",
-    },
-    plan: {
-      icon: ICON.listTree,
-      label: "Plan mode",
-      desc: "Grok explores and proposes a plan; file writes and commands are blocked until you approve it",
-    },
-    yolo: {
-      icon: ICON.zap,
-      label: "Auto accept",
-      desc: "Grok automatically approves all permission requests (YOLO)",
-    },
+    agent: { icon: ICON.bot, label: "Agent mode" },
+    plan: { icon: ICON.listTree, label: "Plan mode" },
+    yolo: { icon: ICON.zap, label: "Auto accept" },
   };
 
   // Three blinking dots — the tool rows' in-progress animation, reused by every
@@ -1373,18 +1364,38 @@
     return `${h}:${m.toString().padStart(2, "0")} ${ampm}`;
   }
 
+  // Advertised `modes` wins. Absent (an older host) keeps today's rule.
+  function offeredModeIds() {
+    if (Array.isArray(state.offeredModes)) return state.offeredModes;
+    if (state.activeProvider === "muse") return [];
+    return Object.keys(MODE_META).filter((id) => id !== "plan" || state.activeProvider !== "codex");
+  }
+
+  function modeDescription(id) {
+    const name = providerDisplayName(state.activeProvider);
+    if (state.activeProvider === "muse") {
+      if (id === "agent") return `Follows ${name}'s own approval rules`;
+      if (id === "yolo") return `Answers every approval ${name} raises. This may look the same as Agent, because ${name} asks rarely by default`;
+    }
+    if (id === "plan") return `${name} explores and proposes a plan; file writes and commands are blocked until you approve it`;
+    if (id === "yolo") return `${name} automatically approves all permission requests (YOLO)`;
+    return `${name} acts directly, asking approval only for changes it judges sensitive`;
+  }
+
   // The title carries the mode name because the label beside the glyph is the
   // first thing dropped in a narrow composer — take the id from the caller so
   // the tooltip can never name a different mode than the icon is showing.
   function modeButtonTitle(modeId) {
     const meta = MODE_META[modeId] || MODE_META.agent;
     if (state.busyLocked) return `${meta.label} — available once the session is ready`;
-    if (!state.planModeAvailable) return `${meta.label} — Pick mode — ${state.planModeUnavailableReason}`;
+    if (offeredModeIds().includes("plan") && !state.planModeAvailable) {
+      return `${meta.label} — Pick mode — ${state.planModeUnavailableReason}`;
+    }
     return `${meta.label} — Pick mode`;
   }
 
   function updateModeBtn(modeId) {
-    modeBtn.hidden = state.activeProvider === "muse";
+    modeBtn.hidden = offeredModeIds().length === 0;
     const meta = MODE_META[modeId] || MODE_META.agent;
     modeBtn.innerHTML = `${meta.icon}<span class="btn-label">${escapeHtml(meta.label)}</span>`;
     modeBtn.classList.toggle("plan-active", modeId === "plan");
@@ -4901,19 +4912,19 @@
   }
 
   function openModePopover() {
-    if (state.activeProvider === "muse") return;
+    const offered = offeredModeIds();
+    if (!offered.length) return;
     if (!modePopover.hidden) { closePopovers(); return; }
     closePopovers();
     modePopover.innerHTML = "";
-    for (const [id, meta] of Object.entries(MODE_META)) {
-      // Plan is Grok's extension-owned plan gate. Codex owns its own plan
-      // review permission flow, so showing this item there is both inert and
-      // misleading.
-      if (id === "plan" && state.activeProvider === "codex") continue;
+    for (const id of offered) {
+      const meta = MODE_META[id];
       const el = document.createElement("div");
       const active = id === state.currentModeId;
       // Verified-old CLI: hard-disable Plan. Unverified probe: keep it clickable
       // so the host re-checks on pick instead of forcing a session restart (#105).
+      // The note exists only on a Plan row, so a menu that does not offer Plan
+      // cannot show it.
       const planUnavailable = id === "plan" && !state.planModeAvailable;
       const planRecheckable = planUnavailable && state.planModeRecheckable;
       const disabled = !!meta.disabled || (planUnavailable && !planRecheckable);
@@ -4925,7 +4936,7 @@
         `<span class="mode-item-icon">${meta.icon}</span>` +
         `<span class="mode-item-body">` +
           `<span class="mode-item-label">${escapeHtml(meta.label)}</span>` +
-          `<span class="mode-item-desc">${escapeHtml(meta.desc)}</span>` +
+          `<span class="mode-item-desc">${escapeHtml(modeDescription(id))}</span>` +
           (disabledNote ? `<span class="mode-item-disabled-note">${escapeHtml(disabledNote)}</span>` : "") +
         `</span>` +
         (active ? '<span class="popover-check">✓</span>' : "");
@@ -19229,6 +19240,9 @@
         state.subscriptionWindows = [];
         state.currentModelId = msg.currentModelId;
         state.activeProvider = msg.provider === "codex" || msg.provider === "claude" || msg.provider === "muse" && museAvailable ? msg.provider : "grok";
+        // modeChanged is posted before session, so the button was painted for
+        // the previous provider. Repaint once this frame names the new one.
+        updateModeBtn(state.currentModeId);
         renderQueuedBlocks();
         syncFeedbackButtons();
         syncProviderVoice();
@@ -19308,6 +19322,9 @@
       }
       case "modeChanged":
         state.currentModeId = msg.modeId;
+        state.offeredModes = Array.isArray(msg.modes)
+          ? msg.modes.filter((id) => Object.hasOwn(MODE_META, id))
+          : null;
         updateModeBtn(msg.modeId);
         break;
       case "openModePopover":

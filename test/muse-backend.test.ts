@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import * as path from "node:path";
 import { MuseBackend, withMuseCredentialBackend } from "../src/muse-backend";
 import { locateMuseCli } from "../src/muse-cli-locator";
-import { ACP_PROVIDERS, INTERNAL_PROVIDERS, isAcpProvider, isInternalProvider, supportsSessionDeletion, supportsModeSwitching, usesPerCallContextOccupancy } from "../src/acp-backend";
+import { ACP_PROVIDERS, INTERNAL_PROVIDERS, isAcpProvider, isInternalProvider, supportsAutoAccept, supportsSessionDeletion, supportsModeSwitching, usesPerCallContextOccupancy } from "../src/acp-backend";
 
 describe("Muse backend boundary", () => {
   it("spawns the installed ESM entry under Node with the user's executable", () => {
@@ -70,6 +70,7 @@ it("keeps legacy wire ids frozen while internal capabilities distinguish Muse", 
   expect(isInternalProvider("muse")).toBe(true);
   expect(supportsSessionDeletion("muse")).toBe(false);
   expect(supportsModeSwitching("muse")).toBe(false);
+  expect(supportsAutoAccept("muse")).toBe(true);
   expect(usesPerCallContextOccupancy("muse")).toBe(false);
   expect(() => new MuseBackend().setMode("s", "yolo")).toThrow("unavailable");
   expect(new MuseBackend().setReasoningEffort("s", undefined, "ultra")).toEqual({

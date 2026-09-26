@@ -3,6 +3,7 @@ import type { HostMsg } from "./protocol";
 import type { FileChip } from "./chips";
 import { permissionOptionsForPlan } from "./plan-gate";
 import type { AcpProvider } from "./acp-backend";
+import { sessionModes } from "./mode-prefs";
 import type { SubscriptionUsageBinding } from "./subscription-usage";
 import type { TelemetrySessionOrigin } from "./telemetry";
 import {
@@ -19,6 +20,8 @@ export interface PendingPermissionOption {
   optionId: string;
   kind: string;
   name: string;
+  /** Muse's own scope, when the adapter stamped one. */
+  _meta?: { scope?: string; [key: string]: unknown } | null;
 }
 
 export interface PendingPermission {
@@ -64,15 +67,41 @@ export function pendingPermissionOptions(
   return planActive ? pending.planOptions : pending.options;
 }
 
+type AutoAcceptOption = {
+  optionId: string;
+  kind: string;
+  _meta?: { scope?: unknown } | null;
+};
+
+/**
+ * The allow Auto accept may send. Grok, Codex and Claude prefer `allow_always`.
+ * Muse must not: `allow_always` is a permanent config grant, and a session-scoped
+ * choice is advertised as `allow_once`, so kind alone would outlive Agent.
+ */
+export function pickAutoAcceptOption<T extends AutoAcceptOption>(
+  options: readonly T[],
+  provider?: string,
+  excludeOptionId?: string,
+): T | undefined {
+  const usable = excludeOptionId
+    ? options.filter((option) => option.optionId !== excludeOptionId)
+    : options;
+  if (provider === "muse") {
+    return usable.find((option) => option.kind === "allow_once" && option._meta?.scope === "once");
+  }
+  return usable.find((option) => option.kind === "allow_always")
+    ?? usable.find((option) => option.kind === "allow_once");
+}
+
 export function preferredPermissionAllowOption(
   pending: PendingPermission,
   planActive: boolean,
+  provider?: string,
 ): PendingPermissionOption | undefined {
   const options = pendingPermissionOptions(pending, planActive);
   // Auto accept may answer pending cards, but only a deliberate card answer
   // may create a program grant; the CLI also cannot interpret our option id.
-  return options.find((option) => option.kind === "allow_always" && option.optionId !== pending.commandGrant?.optionId)
-    ?? options.find((option) => option.kind === "allow_once");
+  return pickAutoAcceptOption(options, provider, pending.commandGrant?.optionId);
 }
 
 /**
@@ -646,7 +675,7 @@ export function sessionUiSnapshot(
   if (session.client?.currentModelId) {
     messages.push({ type: "modelChanged", modelId: session.client.currentModelId });
   }
-  messages.push({ type: "modeChanged", modeId });
+  messages.push({ type: "modeChanged", modeId, modes: sessionModes(session.provider) });
   messages.push({
     type: "planModeAvailability",
     available: session.planModeAvailable,

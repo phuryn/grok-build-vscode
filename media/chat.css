@@ -4050,6 +4050,10 @@ textarea#input {
   white-space: nowrap;
 }
 .toolbar-btn svg { width: 16px; height: 16px; flex: none; }
+/* Author `display: inline-flex` above beats the UA `[hidden]` rule, same
+   trap as .icon-btn. A hidden mode button would still paint. */
+#mode-btn[hidden],
+.toolbar-btn[hidden] { display: none; }
 .toolbar-btn:hover { background: var(--vscode-toolbar-hoverBackground); }
 /* Bar-icon primitive: every ICON-ONLY action in the top areas (and, via
    matching rules, the file-panel strip / viewer / rail chrome). Glyph 20×20
