@@ -3545,9 +3545,11 @@ body.hide-turn-diff-summary .turn-diff-summary { display: none; }
 .workflow-output-body h1, .msg.agent .body h1,
 .workflow-output-body h2, .msg.agent .body h2,
 .workflow-output-body h3, .msg.agent .body h3,
+.workflow-output-body h4, .msg.agent .body h4,
 .desk-ft-md h1, .files-browse-md h1,
 .desk-ft-md h2, .files-browse-md h2,
-.desk-ft-md h3, .files-browse-md h3 {
+.desk-ft-md h3, .files-browse-md h3,
+.desk-ft-md h4, .files-browse-md h4 {
   margin: 16px 0 8px;
   font-weight: 600;
   line-height: 1.3;
@@ -3555,12 +3557,15 @@ body.hide-turn-diff-summary .turn-diff-summary { display: none; }
 .workflow-output-body h1, .msg.agent .body h1, .desk-ft-md h1, .files-browse-md h1 { font-size: 1.4em; }
 .workflow-output-body h2, .msg.agent .body h2, .desk-ft-md h2, .files-browse-md h2 { font-size: 1.25em; }
 .workflow-output-body h3, .msg.agent .body h3, .desk-ft-md h3, .files-browse-md h3 { font-size: 1.1em; }
+.workflow-output-body h4, .msg.agent .body h4, .desk-ft-md h4, .files-browse-md h4 { font-size: 1em; }
 .workflow-output-body > h1:first-child, .msg.agent .body > h1:first-child,
 .workflow-output-body > h2:first-child, .msg.agent .body > h2:first-child,
 .workflow-output-body > h3:first-child, .msg.agent .body > h3:first-child,
+.workflow-output-body > h4:first-child, .msg.agent .body > h4:first-child,
 .desk-ft-md > h1, .files-browse-md > h1:first-child,
 .desk-ft-md > h2, .files-browse-md > h2:first-child,
-.desk-ft-md > h3, .files-browse-md > h3:first-child { margin-top: 0; }
+.desk-ft-md > h3, .files-browse-md > h3:first-child,
+.desk-ft-md > h4, .files-browse-md > h4:first-child { margin-top: 0; }
 .workflow-output-body ul, .msg.agent .body ul,
 .workflow-output-body ol, .msg.agent .body ol,
 .desk-ft-md ul, .files-browse-md ul,

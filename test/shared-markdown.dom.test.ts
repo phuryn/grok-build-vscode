@@ -9,8 +9,18 @@
  * its own coverage: deleting it would leave the panel silently degraded to its
  * fallback rather than failing anything.
  */
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { bootWebview, click } from "./webview-harness";
+
+const chatCss = readFileSync(new URL("../media/chat.css", import.meta.url), "utf8");
+
+// Same idea as test/nested-scroll.test.ts. A selector may share its rule with
+// others, so the match runs from that selector through the declaration block.
+function ruleBody(selector: string): string {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return chatCss.match(new RegExp(`${escaped}\\s*,?[^{]*\\{([^}]*)\\}`))?.[1] ?? "";
+}
 
 function render(md: string): string {
   const h = bootWebview({ ready: true });
@@ -318,5 +328,85 @@ describe("markdown: code spans and hrefs are literal (#143)", () => {
     // garbage, so assert the restore pass is total.
     const NUL = new RegExp(String.fromCharCode(0));
     expect(render("`a` `b` [c](d) *e*\n")).not.toMatch(NUL);
+  });
+});
+
+/**
+ * A file path written as a heading is still a link. The anchor is produced —
+ * the label shows, the raw markdown does not — but the browser client then
+ * paints every non-http anchor under #messages as inherited text and turns
+ * hit-testing off (`#messages a:not([href^="http"])`). A heading whose whole
+ * content is that path reads as an ordinary heading. happy-dom does not
+ * compute styles, so the treatment is asserted on the stylesheet, the same
+ * way nested-scroll asserts a rule body.
+ */
+describe("a link inside a heading stays a link", () => {
+  function mount(md: string) {
+    const h = bootWebview({ ready: true });
+    const host = h.doc.createElement("div");
+    host.className = "msg agent";
+    const body = h.doc.createElement("div");
+    body.className = "body";
+    body.innerHTML = String((h.window as any).__grokRenderMarkdown(md));
+    host.appendChild(body);
+    h.doc.getElementById("messages")!.appendChild(host);
+    return { h, body };
+  }
+
+  it("renders the spaced angle-bracket file headings as anchors and opens the path", () => {
+    const agents = "/home/user/My Project/fde-template/AGENTS.md";
+    const coverage = "/home/user/My Project/fde-template/docs/test-coverage.md";
+    const { h, body } = mount(
+      [
+        `### 1. [AGENTS.md](<${agents}>)`,
+        `### 3. [test-coverage.md](<${coverage}>)`,
+      ].join("\n") + "\n",
+    );
+    const headings = [...body.querySelectorAll("h3")];
+    expect(headings.map((el) => el.textContent)).toEqual([
+      "1. AGENTS.md",
+      "3. test-coverage.md",
+    ]);
+    const links = headings.map((el) => el.querySelector("a"));
+    expect(links[0]?.getAttribute("href")).toBe(agents);
+    expect(links[1]?.getAttribute("href")).toBe(coverage);
+    click(h.window, links[1]!);
+    expect(h.posted).toContainEqual({ type: "openFile", path: coverage });
+
+    // A phone or browser cannot open a file on the host, so the browser
+    // client deliberately paints non-http anchors as inert text
+    // (`#messages a:not([href^="http"])`). A heading link must not outrank
+    // that: a tappable link that does nothing is worse than plain text.
+    expect(chatCss).not.toMatch(/#messages h[1-4] a/);
+    expect(ruleBody(".files-browse-md h3")).toMatch(/margin\s*:\s*16px 0 8px/);
+    expect(ruleBody(".files-browse-md h3")).toMatch(/font-weight\s*:\s*600/);
+    expect(ruleBody(".files-browse-md h3")).not.toMatch(/\bcolor\s*:/);
+    expect(chatCss).toContain(".files-browse-md h1 { font-size: 1.4em; }");
+    expect(chatCss).toContain(".files-browse-md h2 { font-size: 1.25em; }");
+    expect(chatCss).toContain(".files-browse-md h3 { font-size: 1.1em; }");
+  });
+
+  it("links a bare spaced path and an https address from h1 through h4", () => {
+    const bare = "/home/user/My Project/a.md";
+    const url = "https://example.com/docs";
+    for (const marks of ["#", "##", "###", "####"]) {
+      const level = marks.length;
+      const { h, body } = mount(`${marks} [a](${bare})\n${marks} [docs](${url})\n`);
+      const headings = [...body.querySelectorAll(`h${level}`)];
+      expect(headings).toHaveLength(2);
+      expect(headings[0].querySelector("a")?.getAttribute("href")).toBe(bare);
+      expect(headings[1].querySelector("a")?.getAttribute("href")).toBe(url);
+      click(h.window, headings[0].querySelector("a")!);
+      click(h.window, headings[1].querySelector("a")!);
+      expect(h.posted).toContainEqual({ type: "openFile", path: bare });
+      expect(h.posted).toContainEqual({ type: "openUrl", url });
+    }
+  });
+
+  it("still leaves a relative destination and a code span literal inside a heading", () => {
+    expect(render("### [see](the docs)\n")).toBe("<h3>[see](the docs)</h3>");
+    const literal = render("### Use `a b` as written.\n");
+    expect(literal).toContain("<h3>Use <code>a b</code> as written.</h3>");
+    expect(literal).not.toContain("<a ");
   });
 });

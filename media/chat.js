@@ -2207,7 +2207,7 @@
         continue;
       }
 
-      const hm = line.match(/^(#{1,3}) (.+)$/);
+      const hm = line.match(/^(#{1,4}) (.+)$/);
       if (hm) {
         closeFrom(0);
         out += `<h${hm[1].length}>${inline(hm[2])}</h${hm[1].length}>`;
@@ -2272,7 +2272,7 @@
   // containers in chat.css. Code deliberately never gets dir=auto: chat.css
   // pins pre/code LTR. Runs after every innerHTML = renderMarkdown(...).
   function applyAutoDir(root) {
-    for (const el of root.querySelectorAll("ul, ol, li, h1, h2, h3, td, th")) {
+    for (const el of root.querySelectorAll("ul, ol, li, h1, h2, h3, h4, td, th")) {
       el.setAttribute("dir", "auto");
     }
   }
