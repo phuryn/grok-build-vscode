@@ -6669,6 +6669,37 @@
     }
   }
 
+  // Composer text belongs to a conversation, independently of transcript replay.
+  const composerDrafts = new Map();
+  let composerSessionId = null;
+
+  function switchComposerDraft(sessionId) {
+    if (composerSessionId === sessionId) return;
+    if (composerSessionId !== null) {
+      if (input.value) composerDrafts.set(composerSessionId, input.value);
+      else composerDrafts.delete(composerSessionId);
+    }
+    if (composerSessionId !== null || typeof sessionId === "symbol") {
+      input.value = composerDrafts.get(sessionId) || "";
+    }
+    composerSessionId = sessionId;
+    slashPopover.hidden = true;
+    hideMention();
+    renderInputHighlight();
+  }
+
+  function confirmComposerSession(sessionId) {
+    // A new conversation has no host id while the user is already typing.
+    if (typeof composerSessionId === "symbol"
+        && state.railExpectedIdentity?.kind === "new") {
+      if (!railIdentitySatisfies(sessionId)) return;
+      composerDrafts.delete(composerSessionId);
+      composerSessionId = sessionId;
+      return;
+    }
+    switchComposerDraft(sessionId);
+  }
+
   /**
    * Replace any in-flight transition. One at a time; a new click bumps the
    * token so a late frame for the old one cannot complete or clear the new.
@@ -6702,6 +6733,7 @@
         // as confirmation of a conversation the host had not created yet.
         knownIds: railKnownSessionIds(),
       };
+    if (fields.kind === "new") switchComposerDraft(Symbol("new-session"));
     // Highlight without a veil would claim conversation X while Y is still on
     // screen and fully actionable. Pair them so the click is visibly owned.
     veilTranscriptForPendingOpen();
@@ -19282,6 +19314,7 @@
           && (prev.repoCwd || "") === (next.repoCwd || ""));
         state.sessionName = next;
         // Host-confirmed identity only. Optimistic rail clicks never write here.
+        confirmComposerSession(msg.sessionId);
         state.activeSessionId = msg.sessionId;
         // May complete a resume (id match) or bind a new-session resolved id.
         noteRailTransitionSessionName(msg);
@@ -20471,6 +20504,7 @@
           // Still an identity frame for the rail transition — activeId is this
           // tab's, even when the popover is about to re-request a filtered page.
           if (msg.activeId !== undefined) {
+            confirmComposerSession(msg.activeId || null);
             state.activeSessionId = msg.activeId || null;
             noteRailTransitionSessions(msg, entries);
             noteHostIdentityKnown(msg.activeId || null);
@@ -20504,6 +20538,7 @@
           // noteHostIdentityKnown is deliberately NOT here — this handler's
           // noteRailTransitionSessions runs at the end (it needs the adopted
           // rows), and the latch has to be read after it. See below.
+          confirmComposerSession(msg.activeId || null);
           state.activeSessionId = msg.activeId || null;
           if (state.activeSessionId) {
             const activeEntry = entries.find((entry) => entry.id === state.activeSessionId)

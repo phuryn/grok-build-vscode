@@ -695,3 +695,38 @@ describe("6. missing Codex recovery loop in real Electron", () => {
     expect(await eventually(page, () => currentModelLabel(page), (value) => /GPT 5\.6 Sol/i.test(value), "warmed Codex model")).toMatch(/GPT 5\.6 Sol/i);
   });
 });
+
+
+describe.each(["grok", "codex"] as const)("Desktop composer drafts (%s)", (provider) => {
+  let flow: FlowApp;
+  beforeAll(async () => {
+    flow = await launchFlowApp({
+      config: provider === "codex" ? { "grok.codexCliPath": codexCli } : { "grok.cliPath": grokCli },
+      connections: {},
+    });
+  }, 90_000);
+  afterAll(async () => { await flow?.cleanup(); });
+
+  it("restores the draft belonging to each session selected in the rail", async () => {
+    const { page } = flow;
+    await connectFromOnboarding(page, provider);
+    const send = provider === "codex" ? sendCodexAndAnswer : sendGrok;
+    await send(page, "First conversation");
+    const activeId = () => page.locator("#projects-rail .rail-session.active").getAttribute("data-session-id");
+    const firstId = await eventually(page, activeId,
+      (value) => !!value && !value.startsWith("pending-new:"), "first conversation identity");
+    await page.locator("#input").fill("Draft A");
+    await newSession(page);
+    expect(await page.locator("#input").inputValue()).toBe("");
+    await send(page, "Second conversation");
+    const secondId = await eventually(page, activeId,
+      (value) => !!value && value !== firstId && !value.startsWith("pending-new:"), "second conversation identity");
+    await page.locator("#input").fill("Draft B");
+    await page.locator('#projects-rail .rail-session[data-session-id="' + firstId + '"]').click();
+    await eventually(page, () => page.locator("#input").inputValue(),
+      (value) => value === "Draft A", "first conversation draft");
+    await page.locator('#projects-rail .rail-session[data-session-id="' + secondId + '"]').click();
+    await eventually(page, () => page.locator("#input").inputValue(),
+      (value) => value === "Draft B", "second conversation draft");
+  });
+});
