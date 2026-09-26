@@ -18,7 +18,7 @@ No manual setup on either host: onboarding **walks you through installing the `g
 
 ![Grok Build in VS Code, choosing Grok 4.7 and its reasoning effort](docs/screenshots/grok_4.7.png)
 
-![Grok Build Desktop — projects, the conversation with an image generated inline, and the file panel](docs/screenshots/grok-desktop.webp)
+![The Projects rail beside a conversation running a deep-research workflow, with context and subscription usage open](docs/screenshots/rail.png)
 
 ---
 
