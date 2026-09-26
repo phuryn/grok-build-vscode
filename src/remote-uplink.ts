@@ -117,6 +117,8 @@ export interface RemoteUplinkOptions {
    * the uplink refuses to send (fail closed).
    */
   auth: RemoteUplinkAuth;
+  /** The uplink socket opened and sent hello (including reconnects). */
+  onConnected?: () => void;
   /** A browser connection is ready to receive its client-specific snapshot. */
   onClientReady?: (clientId: string, tabToken?: string) => void;
   /** A specific browser connection has left the relay. */
@@ -195,6 +197,34 @@ export class RemoteUplink {
     this.sendWorking();
     this.workingTimer = setInterval(() => this.sendWorking(), WORKING_HEARTBEAT_MS);
     this.workingTimer.unref?.();
+  }
+
+  /** Await the socket write before the process is allowed to exit. */
+  maintenance(): Promise<void> {
+    return this.writeBeforeExit({ t: "maintenance", holdMs: 3_600_000 });
+  }
+
+  async publishCloudUpdate(msg: Extract<HostMsg, { type: "cloudHostUpdateState" }>): Promise<void> {
+    if (!this.authorizeWrite(msg, undefined)) throw new Error("Update state is not authorized");
+    if (!this.connected && msg.state !== "updating") return;
+    await this.writeBeforeExit(hostFrame(msg));
+  }
+
+  private writeBeforeExit(frame: unknown): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const ws = this.ws;
+      if (this.disposed || !ws || ws.readyState !== WebSocket.OPEN) return reject(new Error("Uplink disconnected"));
+      const timer = setTimeout(() => reject(new Error("Uplink write timed out")), 5_000);
+      try {
+        ws.send(JSON.stringify(frame), (error) => {
+          clearTimeout(timer);
+          if (error) reject(error); else resolve();
+        });
+      } catch (error) {
+        clearTimeout(timer);
+        reject(error);
+      }
+    });
   }
 
   /** Best-effort: a heartbeat is worth nothing if losing one can throw. */
@@ -377,6 +407,7 @@ export class RemoteUplink {
       // ours to print into an output channel the user may paste anywhere.
       this.opts.log(`[remote] uplink connected to ${redactRelayUrl(this.opts.relayUrl)}`);
       ws.send(JSON.stringify(helloFrame(this.opts.deviceName, this.opts.client)));
+      this.opts.onConnected?.();
     });
     ws.on("message", (raw) => {
       const frame = parseRelayFrame(raw.toString());

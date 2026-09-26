@@ -79,6 +79,8 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
       break;
     case "configureOpenAiVoice":
       break;
+    case "cloudHostUpdate":
+      return Object.keys(raw).length === 1 ? { type: "cloudHostUpdate" } : null;
     case "ready":
       if (!opt(raw.tabToken, isString)) return null;
       break;

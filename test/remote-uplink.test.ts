@@ -22,7 +22,7 @@ const wsMock = vi.hoisted(() => {
     emit(event: string, ...args: any[]) {
       for (const fn of this.handlers.get(event) ?? []) fn(...args);
     }
-    send(raw: string) { this.sent.push(raw); }
+    send(raw: string, done?: (error?: Error) => void) { this.sent.push(raw); done?.(); }
     close() {}
   }
   return { FakeWebSocket, sockets };
@@ -60,6 +60,29 @@ function makeUplink(overrides: Partial<ConstructorParameters<typeof RemoteUplink
 
 describe("RemoteUplink client identity and targeted sends", () => {
   beforeEach(() => { wsMock.sockets.length = 0; });
+
+  it("writes the one-hour maintenance frame and waits for the socket callback", async () => {
+    const uplink = makeUplink(); uplink.start();
+    const ws = wsMock.sockets[0];
+    let complete: (() => void) | undefined;
+    ws.send = (raw: string, done: () => void) => { ws.sent.push(raw); complete = done; };
+    let finished = false;
+    const sent = uplink.maintenance().then(() => { finished = true; });
+    await Promise.resolve(); expect(finished).toBe(false);
+    expect(JSON.parse(ws.sent[0])).toEqual({ t: "maintenance", holdMs: 3_600_000 });
+    complete!(); await sent; expect(finished).toBe(true);
+    uplink.dispose();
+  });
+
+  it("propagates asynchronous socket write failure so the host will not exit", async () => {
+    const uplink = makeUplink(); uplink.start();
+    wsMock.sockets[0].send = (_raw: string, done: (error: Error) => void) => {
+      queueMicrotask(() => done(new Error("write failed")));
+    };
+    await expect(uplink.maintenance()).rejects.toThrow("write failed");
+    uplink.dispose();
+    await expect(uplink.maintenance()).rejects.toThrow();
+  });
 
   it("logs an outbound frame refused while the uplink is disconnected", () => {
     const logs: string[] = [];

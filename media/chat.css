@@ -6650,3 +6650,22 @@ body.host-wait-visible .gfp-panel.gfp-overlay { bottom: var(--host-wait-height, 
 @media (hover: none) {
   .model-picker-description { display: block; }
 }
+
+/* Created only after a cloud host advertises the update capability. */
+.cloud-host-update-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, .25));
+}
+.cloud-host-update-banner button {
+  flex-shrink: 0;
+  border: 0;
+  background: transparent;
+  color: var(--vscode-textLink-foreground, #3794ff);
+  font: inherit;
+  cursor: pointer;
+}

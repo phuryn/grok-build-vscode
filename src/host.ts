@@ -557,6 +557,8 @@ export interface Host {
    * updater; desktop wires this to electron-updater's quitAndInstall.
    */
   installAppUpdate?(): void;
+  /** Cloud BOOT handoff: normal process quit, never stop the service. */
+  exitCloudHost?(): void;
 
   // ── Filesystem ─────────────────────────────────────────────────────────
   readonly fs: HostFileSystem;

@@ -626,6 +626,7 @@ async function createApp(): Promise<void> {
     remoteActions,
     getAuthContext: () => authContext.get?.(),
     installAppUpdate: () => updateActions.install?.(),
+    exitCloudHost: () => app.quit(),
     onWorkspaceRootChanged: (root) => {
       // File-tree panel boots once against api.root(); rebind so the visible
       // tree matches the active project (otherwise reads resolve against B

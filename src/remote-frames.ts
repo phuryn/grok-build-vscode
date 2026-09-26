@@ -63,7 +63,14 @@ export type UplinkFrame =
    * does not recognise the frame, drops it, and says nothing. Sending it is
    * therefore safe against every relay this extension can reach.
    */
-  | { t: "working" };
+  | { t: "working" }
+  /**
+   * "I am about to exit to update myself. Keep this machine running until my uplink comes back, or holdMs."
+   * Clamp holdMs to (0, 3_600_000]. Release on a new uplink hello or at the cap.
+   * Additive: older relays drop it silently; REMOTE_PROTO_VERSION does not move.
+   * The relay learns only "hold this machine", never why or whether it is idle.
+   */
+  | { t: "maintenance"; holdMs: number };
 
 /** relay -> extension */
 export type RelayFrame =
@@ -194,6 +201,8 @@ function parseRemoteWebviewMsg(msg: unknown): WebviewMsg | null {
   const value = msg as Record<string, unknown>;
   if (typeof value.type !== "string" || !WEBVIEW_TYPE_SET.has(value.type)) return null;
   switch (value.type) {
+    case "cloudHostUpdate":
+      return Object.keys(value).length === 1 ? { type: "cloudHostUpdate" } : null;
     case "connectMcpConnector":
       if (typeof value.id !== "string" || (value.key !== undefined && typeof value.key !== "string")
         || (value.readOnly !== undefined && typeof value.readOnly !== "boolean")) return null;

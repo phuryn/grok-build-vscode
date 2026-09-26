@@ -496,8 +496,9 @@ function terminalShell(): string | true {
  * stdout+stderr is captured into a single rolling buffer respecting
  * `outputByteLimit`.
  */
-/** Injectable seams for tests — production callers pass nothing. */
+/** Process seams and the host's admission gate. */
 export interface TerminalManagerDeps {
+  beforeCreate?: () => void;
   execFileImpl?: typeof execFile;
   platform?: NodeJS.Platform;
   /** Injected so a test can assert the GROUP is signalled, not just the shell. */
@@ -545,6 +546,7 @@ export class TerminalManager {
   }
 
   create(params: TerminalCreateParams, owner?: object): { terminalId: string } {
+    this.deps.beforeCreate?.();
     const env = this.envFromParams(params.env);
     const cwd = params.cwd || process.cwd();
     const byteLimit = params.outputByteLimit ?? DEFAULT_BYTE_LIMIT;

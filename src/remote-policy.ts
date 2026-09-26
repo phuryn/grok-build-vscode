@@ -552,6 +552,7 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
   openRemotePortal: "host-local",
   // Desktop update notice click-through — a phone cannot update the desk.
   openUpdateRelease: "host-local",
+  cloudHostUpdate: "host-local",
   restartToUpdate: "host-local",
 };
 
@@ -714,6 +715,7 @@ export const REMOTE_REQUIRES_BOUND_SESSION: Record<WebviewMsg["type"], boolean> 
   unlinkRemoteDevice: false,
   openRemotePortal: false,
   openUpdateRelease: false,
+  cloudHostUpdate: false,
   restartToUpdate: false,
 };
 
@@ -739,6 +741,7 @@ const TIER_RANK: Record<RemoteTier, number> = { "read-only": 0, propose: 1, full
  * has to be added deliberately. Everything not listed keeps its desk answer.
  */
 const CLOUD_DISPOSITION: Partial<Record<WebviewMsg["type"], InboundDisposition>> = {
+  cloudHostUpdate: "full",
   logout: "full",
   githubSignOut: "full",
 
@@ -991,6 +994,7 @@ export const OUTBOUND_DISPOSITION: Record<HostMsg["type"], OutboundDisposition> 
   grokUpdateStatus: "mirror",
   // Desk-only installer notice / restart — a remote has nothing useful to do with it.
   updateAvailable: "host-local",
+  cloudHostUpdateState: "mirror",
   updateReady: "host-local",
   initialized: "mirror",
   cliUpdating: "mirror",
@@ -1143,6 +1147,7 @@ export const OUTBOUND_PROJECT_AUTH: Record<HostMsg["type"], OutboundProjectAuth>
   thumbsFeedback: "none",
   grokUpdateStatus: "none",
   updateAvailable: "none",
+  cloudHostUpdateState: "none",
   updateReady: "none",
   cliUpdating: "none",
   onboarding: "none",

@@ -390,6 +390,8 @@ export type QueuedSend = {
 };
 
 export type HostMsg =
+  | { type: "cloudHostUpdateState"; installed: string | null; latest: string | null;
+      state: "current" | "available" | "queued" | "updating" | "failed"; mandatory?: true; error?: string }
   | ({ type: "providerConfigContent"; requestId?: string; provider: "grok" | "codex" | "claude"; relPath: string;
       /** On a miss, path presence opts into create-on-save. Older hosts omit it. */
       absPath?: string; text?: string; stamp?: { mtimeMs: number; size: number } }
@@ -1080,6 +1082,7 @@ export type HostMsg =
 
 /** webview -> host */
 export type WebviewMsg =
+  | { type: "cloudHostUpdate" }
   | { type: "ready"; tabToken?: string }
   // Browser-owned remote preferences reported for session_start telemetry.
   | { type: "remotePreferences"; fontScale: number; readRepliesAloud: boolean; summarizeRepliesAloud?: boolean; usesTouch: boolean }
@@ -1534,7 +1537,7 @@ export type WebviewMsg =
 // error). The runtime arrays are just the keys, so they can never drift from the
 // union without failing the build.
 const HOST_MESSAGE_TYPE_MAP: Record<HostMsg["type"], true> = {
-  initialState: true, moveViewHint: true, welcomeTips: true, projectSetup: true, githubState: true, githubRepos: true, providerState: true, mcpServers: true, mcpConnectors: true, mcpConnectorAuthorization: true, routines: true, codexInstallProgress: true, planModeAvailability: true, showThinking: true, appPurpose: true, fontScale: true, grokUpdateStatus: true, updateAvailable: true, updateReady: true, telemetryEnabled: true, thumbsFeedback: true,
+  cloudHostUpdateState: true, initialState: true, moveViewHint: true, welcomeTips: true, projectSetup: true, githubState: true, githubRepos: true, providerState: true, mcpServers: true, mcpConnectors: true, mcpConnectorAuthorization: true, routines: true, codexInstallProgress: true, planModeAvailability: true, showThinking: true, appPurpose: true, fontScale: true, grokUpdateStatus: true, updateAvailable: true, updateReady: true, telemetryEnabled: true, thumbsFeedback: true,
   initialized: true, cliUpdating: true, session: true, sessionName: true, modelChanged: true,
   modeChanged: true, openModePopover: true, voiceState: true, voiceConfigured: true,
   voicePartial: true, voiceSubmit: true, voiceTranscript: true, voiceError: true,
@@ -1584,7 +1587,7 @@ const WEBVIEW_MESSAGE_TYPE_MAP: Record<WebviewMsg["type"], true> = {
   refreshContextDetails: true,
   refreshSubscriptionUsage: true,
   remoteSignIn: true, remoteSignOut: true, unlinkRemoteDevice: true, openRemotePortal: true,
-  openUpdateRelease: true, restartToUpdate: true,
+  cloudHostUpdate: true, openUpdateRelease: true, restartToUpdate: true,
 };
 
 export const HOST_MESSAGE_TYPES: readonly HostMsg["type"][] = Object.keys(HOST_MESSAGE_TYPE_MAP) as HostMsg["type"][];

@@ -1288,6 +1288,26 @@
       },
     },
     {
+      id: "aboutCloudHostUpdate",
+      category: "about",
+      title: "Cloud host update",
+      kind: "action",
+      actionLabel: "Update now",
+      visible: (s, env) => !!(env && env.isRemote && s.cloudHostUpdate &&
+        ["available", "failed"].includes(s.cloudHostUpdate.state) && s.cloudHostUpdate.installed && s.cloudHostUpdate.latest),
+      describe: (s) => s.cloudHostUpdateText,
+      message: () => ({ type: "cloudHostUpdate" }),
+    },
+    {
+      id: "aboutCloudHostUpdateStatus",
+      category: "about",
+      title: "Cloud host update",
+      kind: "status",
+      visible: (s, env) => !!(env && env.isRemote && s.cloudHostUpdate &&
+        !(["available", "failed"].includes(s.cloudHostUpdate.state) && s.cloudHostUpdate.installed && s.cloudHostUpdate.latest)),
+      describe: (s) => s.cloudHostUpdateText,
+    },
+    {
       id: "aboutHostProduct",
       category: "about",
       title: (s) => (s && s.hostKind === "desktop") ? "Grok Build Desktop" : "Grok Build extension",

@@ -76,7 +76,8 @@ describe("turn end refreshes the project preview", () => {
   });
 
   it("stamps ordering optimistically before prompt and reasserts it at turn end", () => {
-    const start = src.indexOf("private async handleSend(");
+    // handleSend is now an admission wrapper; the turn body it runs is here.
+    const start = src.indexOf("private async handleAdmittedSend(");
     expect(start).toBeGreaterThan(-1);
     const body = src.slice(start, src.indexOf("\n  private ", start + 1));
     const prompt = body.indexOf("await client.prompt(");

@@ -211,6 +211,7 @@ export interface ElectronHostOptions {
   onWorkspaceFoldersChanged?: (roots: string[], active: string | undefined) => void;
   /** Packaged desktop: quit and install a downloaded app update. */
   installAppUpdate?: () => void;
+  exitCloudHost?: () => void;
   /**
    * The file this app is writing its log to, once one exists.
    *
@@ -573,6 +574,7 @@ export function createElectronHost(opts: ElectronHostOptions): Host {
     onWorkspaceRootChanged,
     onWorkspaceFoldersChanged,
     installAppUpdate,
+    exitCloudHost,
   } = opts;
   const configListeners = config; // store owns change events
   let activeEditor: HostTextEditor | undefined;
@@ -993,6 +995,7 @@ export function createElectronHost(opts: ElectronHostOptions): Host {
       if (!win || win.isDestroyed()) return;
       win.webContents.toggleDevTools();
     },
+    exitCloudHost,
     installAppUpdate() {
       installAppUpdate?.();
     },

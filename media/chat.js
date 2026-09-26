@@ -754,6 +754,8 @@
     sessionSuperseded: null,
     /** Desktop update rail — `updateAvailable` (notice) or `updateReady` (restart). */
     appUpdate: null,
+    cloudHostUpdate: null,
+    cloudHostUpdateOutcome: "",
     repoPreviews: {},
     repoPreviewsAsked: {},
     repoPreviewErrors: {},
@@ -3379,6 +3381,8 @@
       providers: state.providers || [],
       providersChecking: !!state.providersChecking,
       githubState: state.githubState || undefined,
+      cloudHostUpdate: state.cloudHostUpdate,
+      cloudHostUpdateText: cloudHostUpdateText(),
       extVersion: state.extVersion,
       cliVersion: state.cliVersion,
       hostKind: state.hostKind,
@@ -3634,6 +3638,7 @@
         // the Routines page would sit there looking like the button did
         // nothing. Remember that one is outstanding; the relay's refusal below
         // is its answer.
+        if (msg && msg.type === "cloudHostUpdate") { requestCloudHostUpdate(); return; }
         if (msg && msg.type === "saveRoutine") state.routineSavePending = true;
         if (!postPreference(msg)) vscode.postMessage(msg);
         else refreshSettingsOverlay();
@@ -4324,6 +4329,135 @@
    * `updateReady` — same capability pattern as pin control + `pinnedSessions`.
    * VS Code never posts either; no IS_DESKTOP gate.
    */
+  const CLOUD_UPDATE_REQUEST_KEY = "grok.cloudHostUpdate:" + REMOTE_STORAGE_SUFFIX;
+  let cloudUpdateRequest = null;
+  let cloudUpdateTimer = null;
+  let cloudUpdateConnection = hostWait.snapshot() ? hostWait.snapshot().connection : null;
+  if (IS_REMOTE) {
+    try { cloudUpdateRequest = JSON.parse(sessionStorage.getItem(CLOUD_UPDATE_REQUEST_KEY) || "null"); }
+    catch (_) { /* Storage can be unavailable. */ }
+    if (cloudUpdateRequest && typeof cloudUpdateRequest === "object" &&
+        typeof cloudUpdateRequest.installed === "string" && typeof cloudUpdateRequest.latest === "string") {
+      cloudUpdateRequest.reconnecting = true;
+      armCloudUpdateDeadline();
+    } else cloudUpdateRequest = null;
+  }
+
+  function saveCloudUpdateRequest() {
+    try {
+      if (cloudUpdateRequest) sessionStorage.setItem(CLOUD_UPDATE_REQUEST_KEY, JSON.stringify(cloudUpdateRequest));
+      else sessionStorage.removeItem(CLOUD_UPDATE_REQUEST_KEY);
+    } catch (_) { /* Private browsing. */ }
+  }
+
+  function armCloudUpdateDeadline() {
+    clearTimeout(cloudUpdateTimer);
+    if (!cloudUpdateRequest || !cloudUpdateRequest.started || cloudUpdateRequest.timedOut) return;
+    cloudUpdateTimer = setTimeout(() => {
+      cloudUpdateRequest.timedOut = true;
+      state.cloudHostUpdateOutcome = "The cloud host has not confirmed its update after 15 minutes. Try reconnecting.";
+      saveCloudUpdateRequest();
+      // An outcome is a notice about our request, not a capability advertisement.
+      // With no frame on this connection, the update controls remain absent.
+      if (!state.cloudHostUpdate) addError(state.cloudHostUpdateOutcome);
+      renderCloudHostUpdate();
+      refreshSettingsOverlay();
+    }, Math.max(0, cloudUpdateRequest.started + 15 * 60_000 - Date.now()));
+  }
+
+  function requestCloudHostUpdate() {
+    const update = state.cloudHostUpdate;
+    if (!update || !["available", "failed"].includes(update.state) || !update.installed || !update.latest) return;
+    cloudUpdateRequest = { installed: update.installed, latest: update.latest, started: null, reconnecting: false };
+    state.cloudHostUpdateOutcome = "";
+    saveCloudUpdateRequest();
+    vscode.postMessage({ type: "cloudHostUpdate" });
+  }
+
+  function forgetCloudHostUpdate() {
+    if (!IS_REMOTE) return;
+    state.cloudHostUpdate = null;
+    if (cloudUpdateRequest) {
+      cloudUpdateRequest.reconnecting = true;
+      if (!cloudUpdateRequest.started) cloudUpdateRequest.started = Date.now();
+      saveCloudUpdateRequest();
+      armCloudUpdateDeadline();
+    }
+    renderCloudHostUpdate();
+    refreshSettingsOverlay();
+  }
+
+  function receiveCloudHostUpdate(msg) {
+    if (!IS_REMOTE) return;
+    state.cloudHostUpdate = msg;
+    if (msg.state === "updating") {
+      if (!cloudUpdateRequest) cloudUpdateRequest = { installed: msg.installed, latest: msg.latest };
+      if (!cloudUpdateRequest.started) cloudUpdateRequest.started = Date.now();
+      saveCloudUpdateRequest();
+      armCloudUpdateDeadline();
+    } else if (cloudUpdateRequest && cloudUpdateRequest.reconnecting && msg.state !== "queued") {
+      const newer = (a, b) => {
+        if (!/^\d+\.\d+\.\d+$/.test(a || "") || !/^\d+\.\d+\.\d+$/.test(b || "")) return false;
+        const aa = a.split(".").map(Number), bb = b.split(".").map(Number);
+        for (let i = 0; i < 3; i++) if (aa[i] !== bb[i]) return aa[i] > bb[i];
+        return true;
+      };
+      state.cloudHostUpdateOutcome = msg.installed !== cloudUpdateRequest.installed && newer(msg.installed, cloudUpdateRequest.latest)
+        ? "Updated to " + msg.installed
+        : "The cloud host came back " + (msg.installed ? "on " + msg.installed : "without an installed version") + ". The update was not confirmed.";
+      cloudUpdateRequest = null;
+      clearTimeout(cloudUpdateTimer);
+      saveCloudUpdateRequest();
+    }
+    renderCloudHostUpdate();
+  }
+
+  function cloudHostUpdateText() {
+    const update = state.cloudHostUpdate;
+    if (!update) return "";
+    if (update.state === "failed" && update.error
+        && (!state.cloudHostUpdateOutcome.startsWith("Updated to ") || cloudUpdateRequest)) return update.error;
+    if (state.cloudHostUpdateOutcome) return state.cloudHostUpdateOutcome;
+    switch (update.state) {
+      case "available": return "Update available — " + update.latest;
+      case "queued": return (update.mandatory ? "Required update — " : "") + "Will update when the agent is idle";
+      case "updating": return "Updating the cloud host… Reconnecting when it is ready.";
+      case "failed": return update.error || "The cloud host update failed. Please try again.";
+      default: return update.installed
+        ? (update.latest ? "Up to date · " : "Installed · ") + update.installed
+        : "No installed cloud release to update";
+    }
+  }
+
+  function renderCloudHostUpdate() {
+    let banner = document.getElementById("cloud-host-update-banner");
+    const update = state.cloudHostUpdate;
+    if (!IS_REMOTE || !update || (update.state === "current" && !state.cloudHostUpdateOutcome)) {
+      if (banner) banner.remove();
+      return;
+    }
+    if (!banner) {
+      const composer = document.querySelector(".composer");
+      if (!composer) return;
+      banner = document.createElement("div");
+      banner.id = "cloud-host-update-banner";
+      banner.className = "cloud-host-update-banner";
+      banner.setAttribute("role", "status");
+      composer.insertBefore(banner, composer.firstChild);
+    }
+    banner.replaceChildren();
+    const text = document.createElement("span");
+    text.textContent = cloudHostUpdateText();
+    banner.appendChild(text);
+    if (["available", "failed"].includes(update.state) && update.installed && update.latest) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = "Update now";
+      button.onclick = requestCloudHostUpdate;
+      banner.appendChild(button);
+    }
+  }
+
   function renderAppUpdateAffordance() {
     const foot = document.querySelector("#projects-rail .rail-foot");
     if (!foot) return;
@@ -18670,7 +18804,7 @@
   ]);
 
   const SETTINGS_LIVE_MSGS = new Set([
-    "initialState", "showThinking", "appPurpose", "expandCommandOutputs",
+    "cloudHostUpdateState", "initialState", "showThinking", "appPurpose", "expandCommandOutputs",
     "steerByDefault", "promptNav", "expandDiffCard", "steerUnavailable", "soundNotifications", "processingSound",
     "readRepliesAloud", "summarizeRepliesAloud", "fontScale", "voiceConfigured",
     "providerState", "githubState", "mcpServers", "mcpConnectors", "remoteStatus", "telemetryEnabled", "thumbsFeedback", "grokUpdateStatus", "initialized",
@@ -18684,6 +18818,9 @@
       return;
     }
     switch (msg.type) {
+      case "cloudHostUpdateState":
+        receiveCloudHostUpdate(msg);
+        break;
       case "initialState":
         state.useCtrlEnter = msg.useCtrlEnter;
         state.effort = msg.effort || "";
@@ -18767,6 +18904,7 @@
         // more detail and with the phase attached. Answering both would abandon
         // the in-flight reads twice for one reconnection.
         if (hostWait.snapshot()) break;
+        forgetCloudHostUpdate();
         onRemoteHostReachable(null);
         break;
       case "hostLink":
@@ -18776,6 +18914,10 @@
         // free to receive, so the strip can say what is happening without a
         // `git status` riding on every flap of a phone's radio.
         if (!msg.link) break;
+        if (!msg.link.reachable || (cloudUpdateConnection !== null && cloudUpdateConnection !== msg.link.connection)) {
+          forgetCloudHostUpdate();
+        }
+        cloudUpdateConnection = msg.link.connection;
         if (msg.link.reachable) onRemoteHostReachable(msg.link);
         else noteRemoteFileDisconnect();
         break;
