@@ -2,7 +2,7 @@
   "name": "grok-vscode-phuryn",
   "displayName": "GUI for Grok Build & Muse Code",
   "description": "GUI for Grok Build (incl. Grok 4.7) and Muse Code — and for Codex and Claude Code in the same window. Remote Control from your phone, voice control, multiple sessions, images and videos, Mermaid diagrams, and LaTeX. Works with SuperGrok, X Premium+, and xAI API key. Fair Source (FSL-1.1-MIT). Not affiliated with or endorsed by SpaceXAI (formerly xAI), Meta, OpenAI or Anthropic.",
-  "version": "4.13.0",
+  "version": "4.13.1",
   "publisher": "PawelHuryn",
   "author": {
     "name": "Pawe\u0142 Huryn",

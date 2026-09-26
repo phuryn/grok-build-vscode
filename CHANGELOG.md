@@ -1,5 +1,14 @@
 # Changelog
 
+## 4.13.1 — 2026-09-26
+
+**Connect uses the sign-in your agent's CLI already has.**
+
+### Fixed
+
+- **Connecting an agent no longer makes you sign in again** (#171). At the computer, Connect, in the agent chooser or in Settings → Providers, now checks whether Grok, Codex, Claude Code or Muse Code is already signed in on this machine, and if it is, connects with that sign-in. Before, it started a fresh sign-in anyway (for Grok, Codex and Claude Code, a terminal running the CLI's login, which opens your browser) and showed a sign-in panel even when the CLI was signed in. It shows "Checking…" while it looks. If the CLI isn't signed in, you get that agent's sign-in panel, and nothing opens until you press its sign-in button.
+- **Muse Code's sign-in page opens only when you click it.** At the desk it used to open in your browser by itself, and clicking the link on its card did nothing. The link now opens it, and nothing else does.
+
 ## 4.13.0 — 2026-09-26
 
 **Muse Code works properly now.** Muse arrived in 4.11, but much of it didn't work: the mode button did nothing, usage never showed, and a failed tool never said why. This release fixes those.

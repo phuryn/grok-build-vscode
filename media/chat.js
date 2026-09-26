@@ -10166,6 +10166,14 @@
   function applyOnboardingLaunchState() {
     const onb = $("welcome-onboarding");
     if (!onb) return;
+    if (state.onboardingChecking) {
+      const btn = onb.querySelector(`[data-act="connectProvider"][data-provider="${state.onboardingChecking}"]`);
+      if (btn) {
+        btn.disabled = true;
+        btn.setAttribute("aria-busy", "true");
+        (btn.querySelector("small") || btn).textContent = "Checking…";
+      }
+    }
     if (state.onboardingRanMode !== state.onboardingMode) return;
     const ran = state.onboardingRan || [];
     const launched = state.onboardingLaunched || [];
@@ -10479,6 +10487,7 @@
     document.addEventListener("keydown", onKey, true);
     document.body.appendChild(overlay);
     connectWizard = { provider, overlay, panel, body, onKey, opener: opener || document.activeElement };
+    if (!IS_REMOTE) connectWizard.checking = !(state.providers || []).some(p => p.id === provider && p.connected);
     // Nothing has come back from the host yet — and on a cloud machine the
     // first frame is seconds away. Open on "starting" rather than repainting
     // the offer that was just clicked, which read as a click that did nothing
@@ -10503,6 +10512,18 @@
     // mirror, so a settled panel keeps its own copy of the last thing it was
     // told rather than falling back to the empty-state offer.
     const device = state.deviceLoginByProvider[provider] || connectWizard.lastDevice;
+    if (!IS_REMOTE && !state.deviceLoginByProvider[provider] && !connectWizard.settled) {
+      const command = provider === "claude" ? "claude auth login" : `${provider} login`;
+      const launched = connectWizard.launched;
+      connectWizard.body.innerHTML = connectWizard.checking
+        ? `<div class="onb"><p class="onb-heading">Checking…</p><p class="onb-desc">Checking the CLI's existing sign-in.</p></div>`
+        : provider === "muse" ? museOnboardingPanel("muse-login", {})
+        : `<div class="onb"><p class="onb-heading">Sign in to continue</p>`
+          + `<p class="onb-desc">${launched ? "Finish signing in in the terminal, then continue here." : "Start sign-in with the CLI when you are ready."}</p>`
+          + `<button class="onb-action" data-act="connectProvider" data-provider="${provider}">Open terminal &amp; run <code>${command}</code></button>`
+          + `<button class="onb-action onb-secondary" data-act="recheckProvider" data-provider="${provider}">Re-check connection</button></div>`;
+      return;
+    }
     // `ver` is null on purpose: the welcome status line belongs to the welcome
     // card, and a modal must not rewrite it.
     connectWizard.body.innerHTML = remoteConnectPanel(
@@ -10517,7 +10538,17 @@
    * wherever the click came from — the card, Settings, or another tab.
    */
   function syncConnectWizard(provider, device, mode, info) {
-    if (!provider || (!IS_REMOTE && provider !== "muse")) return;
+    if (!provider) return;
+    if (!IS_REMOTE && connectWizard && connectWizard.provider === provider) {
+      connectWizard.checking = false;
+      connectWizard.launched = !!(info && info.launched);
+      if (!device && provider !== "muse") {
+        if (mode === "provider-connected" || !CONNECT_ONBOARDING_MODES[mode]) closeConnectWizard();
+        else renderConnectWizard();
+        return;
+      }
+    }
+    if (!IS_REMOTE && provider !== "muse") return;
     // A missing CLI never started a login flow. Keep its response over Settings
     // and existing conversations, including bare replies from older hosts.
     if (provider === "muse" && museAdvertised && mode === "missing-muse"
@@ -10528,7 +10559,7 @@
       return;
     }
     if (provider === "muse" && connectWizard && connectWizard.provider === provider) {
-      if (connectWizard.museOnboarding && mode === "muse-login" && !device) {
+      if ((connectWizard.museOnboarding || !IS_REMOTE) && mode === "muse-login" && !device) {
         connectWizard.museOnboarding = { mode, info: info || {} };
         renderConnectWizard();
         return;
@@ -10612,9 +10643,10 @@
     if (reason) return `<div class="onb"><p class="onb-heading">Muse Code</p><p class="onb-desc">${escapeHtml(reason)}</p></div>`;
     if (mode !== "missing-muse") {
       if (IS_REMOTE) return remoteConnectPanel(mode, { provider: "muse" }, null);
-      return `<div class="onb"><p class="onb-heading">Connect Muse Code</p>`
-        + `<p class="onb-desc">Press Connect Muse Code to sign in with Meta's CLI.</p>`
-        + `<button class="onb-action" data-act="connectProvider" data-provider="muse">Connect Muse Code</button>`
+      const connected = provider && provider.connected;
+      return `<div class="onb"><p class="onb-heading">${connected ? "Sign in to Muse Code" : "Connect Muse Code"}</p>`
+        + `<p class="onb-desc">${connected ? "Start sign-in with Meta's CLI, then open the link shown here." : "Use Meta's CLI's existing sign-in."}</p>`
+        + `<button class="onb-action" data-act="connectProvider" data-provider="muse">${connected ? "Sign in with Muse Code" : "Connect Muse Code"}</button>`
         + `<button class="onb-action" data-act="recheckProvider" data-provider="muse">Re-check</button></div>`;
     }
     const command = info.platform === "win32"
@@ -10801,7 +10833,7 @@
       onb.innerHTML =
         `<div class="onb">` +
           `<p class="onb-heading">Complete <code>codex login</code></p>` +
-          `<p class="onb-desc">Finish the sign-in flow in the terminal, then continue here.</p>` +
+          `<p class="onb-desc">Open a terminal to sign in with the Codex CLI, then continue here.</p>` +
           `<button class="onb-action onb-secondary" type="button" data-act="connectProvider" data-provider="codex">Open terminal &amp; run <code>codex login</code></button>` +
           `<button class="onb-action" type="button" data-act="recheckProvider" data-provider="codex">Done - connect Codex</button>` +
         `</div>`;
@@ -18838,6 +18870,9 @@
         // sends no frame at all, and a locally-set flag would spin forever.
         // Absent means idle, which is also what every pre-refresh host means.
         state.providersChecking = msg.checking === true;
+        if (!IS_REMOTE && connectWizard && state.providers.some(p => p.id === connectWizard.provider && p.connected && p.needsLogin !== true)) {
+          closeConnectWizard();
+        }
         renderCodexUpdateNudge();
         refreshSettingsOverlay();
         // Connecting an additional account happens from the gear while the
@@ -20281,6 +20316,7 @@
         resetForNewSession();
         break;
       case "onboarding":
+          if (!msg.provider || msg.provider === state.onboardingChecking) state.onboardingChecking = "";
           // Record the host-launched terminal BEFORE rendering, so the panel is
           // painted with the done mark already on rather than flashing an
           // untouched button first.
@@ -20310,7 +20346,7 @@
             // AFTER the mirror: renderConnectWizard reads it, and syncing
             // first painted the previous state every time (caught by driving
             // the states in a browser, 2026-08-31).
-            syncConnectWizard(msg.provider, msg.device, msg.state, { platform: msg.platform });
+            syncConnectWizard(msg.provider, msg.device, msg.state, { platform: msg.platform, launched: msg.launched });
             // The composer card reads the same mirror, and this is the only
             // frame that moves it. Without this call its "Signing in…" state
             // waits for the next providerState -- which is the frame that
@@ -21550,11 +21586,23 @@
       return;
     }
     const onbAction = e.target.closest(".onb-action");
-    if (onbAction) {
+    if (onbAction && (IS_REMOTE || !onbAction.matches("a[href]"))) {
       e.preventDefault();
       e.stopPropagation();
       const act = onbAction.dataset.act;
-      if (LAUNCH_ACTS.includes(act)) markOnboardingLaunched(act, onbAction.dataset.provider);
+      const connecting = !IS_REMOTE && act === "connectProvider"
+        && !(state.providers || []).some(p => p.id === onbAction.dataset.provider && p.connected);
+      if (connecting) {
+        state.onboardingChecking = onbAction.dataset.provider;
+        onbAction.disabled = true;
+        onbAction.setAttribute("aria-busy", "true");
+        (onbAction.querySelector("small") || onbAction).textContent = "Checking…";
+        if (connectWizard && connectWizard.provider === onbAction.dataset.provider) {
+          connectWizard.museOnboarding = null;
+          connectWizard.checking = true;
+          renderConnectWizard();
+        }
+      } else if (LAUNCH_ACTS.includes(act)) markOnboardingLaunched(act, onbAction.dataset.provider);
       if (act === "runInstall") vscode.postMessage({ type: "runInstallCmd" });
       else if (act === "installMuse" && !IS_REMOTE && museAvailable && state.hostCaps && state.hostCaps.installMuse === true) {
         vscode.postMessage({ type: "runMuseInstallCmd" });

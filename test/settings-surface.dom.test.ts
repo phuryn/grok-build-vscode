@@ -2846,12 +2846,12 @@ describe("settings: the GitHub token path matches what the host will accept", ()
   it("offers Re-check connection once a desk provider row starts a terminal sign-in", () => {
     const { root, posted } = mountAt("providers", {
       snapshot: {
-        providers: [{ id: "grok", connected: false, needsLogin: false }],
+        providers: [{ id: "grok", connected: true, needsLogin: true }],
       },
     });
     posted.length = 0;
     const connect = root.querySelector('[data-id="providerGrok"] .settings-action') as HTMLButtonElement;
-    expect(connect.textContent).toBe("Connect");
+    expect(connect.textContent).toBe("Sign in again");
     connect.click();
     expect(posted).toContainEqual({ type: "runGrokLogin", provider: "grok" });
     expect(root.querySelector('[data-id="providerGrok"] .settings-action')?.textContent)

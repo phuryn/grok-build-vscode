@@ -100,7 +100,7 @@ function loginSidebar(needsLogin: Record<string, boolean>) {
   sidebar.host = { appendLine: vi.fn(), createTerminal: vi.fn(() => ({ show: vi.fn() })) };
   // Connect is where consent is stated, so the real setProviderConnected runs
   // here and needs somewhere to persist to (#171).
-  sidebar.providerConnectionState = {};
+  sidebar.providerConnectionState = Object.fromEntries(Object.keys(needsLogin).map(provider => [provider, true]));
   sidebar.state = { get: (_key: string, fallback: unknown) => fallback, update: vi.fn(async () => {}) };
   sidebar.postProviderState = vi.fn();
   sidebar.invalidateSubscriptionUsage = vi.fn();
@@ -108,6 +108,8 @@ function loginSidebar(needsLogin: Record<string, boolean>) {
   sidebar.newFocusedSession = vi.fn(async () => {});
   sidebar.post = vi.fn();
   sidebar.startDeviceLogin = vi.fn(async () => {});
+  sidebar.probeProviderVersion = vi.fn(async () => undefined);
+  sidebar.deviceLoginCredentialReady = vi.fn(async () => false);
   // Connect starts the terminal watcher, whose probe is a real model warm-up
   // that spawns the vendor's ACP adapter. A harness must never do that: on
   // macOS CI the spawn failed with ENOENT and escaped as an uncaught
@@ -119,12 +121,14 @@ function loginSidebar(needsLogin: Record<string, boolean>) {
 
 describe("signing in from a conversation that is being refused", () => {
   it.each(["grok", "codex", "claude"])("keeps %s desk sign-in in its CLI terminal", async provider => {
-    const { sidebar } = loginSidebar({});
+    const { sidebar } = loginSidebar({ [provider]: true });
     await sidebar.onMessage({ type: "runGrokLogin", provider }, "local");
     expect(sidebar.host.createTerminal).toHaveBeenCalledWith(expect.objectContaining({
       shellArgs: provider === "claude" ? ["auth", "login"] : ["login"],
     }));
     expect(sidebar.startDeviceLogin).not.toHaveBeenCalled();
+    expect(sidebar.deviceLoginCredentialReady).not.toHaveBeenCalled();
+    expect(sidebar.post).toHaveBeenCalledWith(expect.objectContaining({ provider, launched: true }));
   });
 
   // Pressing Connect states CONSENT. It proves nothing about the credential,
@@ -134,7 +138,7 @@ describe("signing in from a conversation that is being refused", () => {
   // credential the person came to create. An unsteered review found this on
   // the desk path, where it is the FIRST thing every user does after upgrading
   // (saved connections are cleared once, so everyone presses Connect again).
-  it.each(["grok", "codex", "claude"])(
+  it.each(["grok", "codex", "claude", "muse"])(
     "leaves %s awaiting its sign-in rather than reporting a healthy account",
     async provider => {
       const { sidebar } = loginSidebar({});
@@ -155,6 +159,12 @@ describe("signing in from a conversation that is being refused", () => {
       // and never restores it, so no such frame may ever be sent.
       expect(frames.filter(f => f.connected && !f.needsLogin)).toEqual([]);
       expect(frames.some(f => f.connected && f.needsLogin)).toBe(true);
+      expect(sidebar.host.createTerminal).not.toHaveBeenCalled();
+      expect(sidebar.startDeviceLogin).not.toHaveBeenCalled();
+      const panel = sidebar.post.mock.calls.at(-1)[0];
+      expect(panel).toMatchObject({ type: "onboarding", provider,
+        state: provider === "grok" ? "auth-required" : `${provider}-login` });
+      expect(panel).not.toHaveProperty("launched");
     },
   );
 
@@ -166,8 +176,8 @@ describe("signing in from a conversation that is being refused", () => {
     expect(sidebar.host.createTerminal).not.toHaveBeenCalled();
   });
 
-  it("routes desk Muse sign-in through the device flow with browser opening", async () => {
-    const { sidebar, session } = loginSidebar({});
+  it("routes explicit desk Muse sign-in through the device card", async () => {
+    const { sidebar, session } = loginSidebar({ muse: true });
     sidebar.locateProvider.mockReturnValue("/usr/bin/muse");
     await sidebar.onMessage({ type: "runGrokLogin", provider: "muse" }, "local");
     expect(sidebar.startDeviceLogin).toHaveBeenCalledWith("muse", "/usr/bin/muse", undefined, { remote: false });
@@ -212,7 +222,7 @@ describe("signing in from a conversation that is being refused", () => {
  */
 describe("a desk terminal sign-in finishes without being asked twice", () => {
   it.each(["grok", "codex", "claude"])("re-probes %s after the terminal opens", async provider => {
-    const { sidebar } = loginSidebar({});
+    const { sidebar } = loginSidebar({ [provider]: true });
     sidebar.reprobeProviderCredentials = vi.fn(async () => true);
 
     await sidebar.onMessage({ type: "runGrokLogin", provider }, "local");
@@ -234,5 +244,114 @@ describe("a desk terminal sign-in finishes without being asked twice", () => {
     await Promise.resolve();
 
     expect(sidebar.reprobeProviderCredentials).not.toHaveBeenCalled();
+  });
+});
+
+describe("Connect adopts the CLI's existing sign-in", () => {
+  it.each(["grok", "codex", "claude", "muse"])("adopts %s only after consent and credential proof", async provider => {
+    const { sidebar, session } = loginSidebar({});
+    session.provider = provider as Session["provider"];
+    session.hasHistory = false;
+    const frames: Array<{ connected: boolean; needsLogin: boolean }> = [];
+    sidebar.postProviderState = () => frames.push({
+      connected: sidebar.hasProviderConsent(provider), needsLogin: !!sidebar.providerNeedsLogin[provider],
+    });
+    sidebar.deviceLoginCredentialReady = vi.fn(async () => {
+      expect(sidebar.hasProviderConsent(provider)).toBe(true);
+      expect(sidebar.providerNeedsLogin[provider]).toBe(true);
+      expect(sidebar.state.update).toHaveBeenCalledWith("grok.providerConnections.v2", { [provider]: true });
+      expect(frames.filter(f => f.connected && !f.needsLogin)).toEqual([]);
+      return true;
+    });
+    // Drive the same adoption path as Re-check, including its confirmation.
+    sidebar.retargetNeedsProviderSessions = vi.fn(async () => new Set());
+    sidebar.usableProviders = () => sidebar.providerNeedsLogin[provider] ? [] : [provider];
+    sidebar.startSession = vi.fn(async () => {});
+    sidebar.postSessionsList = vi.fn();
+    sidebar.emit = vi.fn();
+
+    await sidebar.onMessage({ type: "runGrokLogin", provider }, session, "local");
+
+    expect(sidebar.deviceLoginCredentialReady).toHaveBeenCalledWith(provider, true);
+    expect(sidebar.providerNeedsLogin[provider]).toBe(false);
+    expect(sidebar.startSession).toHaveBeenCalledWith(undefined, session);
+    expect(sidebar.emit).toHaveBeenCalledWith(session, expect.objectContaining({ state: "provider-connected", provider }));
+    expect(sidebar.host.createTerminal).not.toHaveBeenCalled();
+    expect(sidebar.startDeviceLogin).not.toHaveBeenCalled();
+    expect(sidebar.post.mock.calls.some(([m]: any[]) => m.launched)).toBe(false);
+  });
+
+  it.each(["grok", "codex", "claude", "muse"])("offers explicit %s sign-in when checking throws", async provider => {
+    const { sidebar } = loginSidebar({});
+    sidebar.deviceLoginCredentialReady.mockRejectedValue(new Error("Cannot check"));
+    await sidebar.onMessage({ type: "runGrokLogin", provider }, "local");
+    expect(sidebar.providerNeedsLogin[provider]).toBe(true);
+    expect(sidebar.post.mock.calls.at(-1)[0]).not.toHaveProperty("launched");
+    expect(sidebar.host.createTerminal).not.toHaveBeenCalled();
+    expect(sidebar.startDeviceLogin).not.toHaveBeenCalled();
+  });
+
+  it.each(["grok", "codex", "claude", "muse"])("ignores a late %s check after disconnect, even after reconnect", async provider => {
+    const { sidebar } = loginSidebar({});
+    let finish!: (ready: boolean) => void;
+    sidebar.deviceLoginCredentialReady.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    const pending = sidebar.onMessage({ type: "runGrokLogin", provider }, "local");
+    await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+    const signal = sidebar.providerRunSignal(provider);
+    sidebar.disposeAdapterHistoryClient = vi.fn(async () => {});
+    sidebar.setProviderConnectedInMemory(provider, false);
+    expect(signal.aborted).toBe(true);
+    sidebar.setProviderConnectedInMemory(provider, true);
+    finish(true);
+    await pending;
+    expect(sidebar.providerNeedsLogin[provider]).toBe(true);
+    expect(sidebar.host.createTerminal).not.toHaveBeenCalled();
+    expect(sidebar.startDeviceLogin).not.toHaveBeenCalled();
+    expect(sidebar.post).not.toHaveBeenCalled();
+  });
+
+  // The ORDER rule publishes needs-login before the check answers. Painted as
+  // connected, that frame drew "needs you to sign in again" over an account
+  // that was signed in all along, and its Sign in button fell through to the
+  // login terminal mid-check (independent review, round 1).
+  it.each(["grok", "codex", "claude", "muse"])(
+    "keeps %s reading as not connected, and ignores a second press, until its check answers",
+    async provider => {
+      const { sidebar } = loginSidebar({});
+      sidebar.locatedProviders = () => ({ grok: true, codex: true, claude: true, muse: true });
+      sidebar.providerCliVersions = {};
+      const frames: any[] = [];
+      sidebar.postProviderState = () => {
+        const message = GrokSidebar.prototype["providerStateMessage"].call(sidebar);
+        frames.push({ ...message.providers.find((p: any) => p.id === provider), checking: message.checking === true });
+      };
+      sidebar.adoptSessionsForConnectedProvider = vi.fn(async () => {});
+      let finish!: (ready: boolean) => void;
+      sidebar.deviceLoginCredentialReady = vi.fn(() => new Promise<boolean>(resolve => { finish = resolve; }));
+
+      const first = sidebar.onMessage({ type: "runGrokLogin", provider }, "local");
+      await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+      expect(frames.length).toBeGreaterThan(0);
+      expect(frames.every(f => f.connected === false && f.checking)).toBe(true);
+
+      await sidebar.onMessage({ type: "runGrokLogin", provider }, "local");
+      expect(sidebar.deviceLoginCredentialReady).toHaveBeenCalledTimes(1);
+      expect(sidebar.host.createTerminal).not.toHaveBeenCalled();
+
+      finish(true);
+      await first;
+      expect(frames.some(f => f.connected && f.needsLogin)).toBe(false);
+      expect(frames.at(-1)).toMatchObject({ connected: true, checking: false });
+      expect(frames.at(-1)).not.toHaveProperty("needsLogin");
+      expect(sidebar.adoptSessionsForConnectedProvider).toHaveBeenCalledTimes(1);
+      expect(sidebar.host.createTerminal).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["grok", "codex", "claude", "muse"])("leaves remote %s Connect on the device flow", async provider => {
+    const { sidebar } = loginSidebar({});
+    await sidebar.onMessage({ type: "runGrokLogin", provider }, "remote");
+    expect(sidebar.startDeviceLogin).toHaveBeenCalledWith(provider, "/usr/bin/claude", undefined);
+    expect(sidebar.deviceLoginCredentialReady).not.toHaveBeenCalled();
   });
 });

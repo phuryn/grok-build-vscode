@@ -437,6 +437,18 @@ describe("running one", () => {
 });
 
 describe("claude auth status over the spawn seam", () => {
+  it("passes consent cancellation to the child and skips a withdrawn consent", async () => {
+    const { io, child, calls } = fakeIo();
+    const controller = new AbortController();
+    const pending = probeClaudeAuthStatus("/bin/claude", io, {}, controller.signal);
+    expect(calls[0][2]).toMatchObject({ signal: controller.signal, windowsHide: true });
+    controller.abort();
+    // Node's spawn reports AbortError when its signal kills the child.
+    child.emit("error", new Error("AbortError"));
+    await expect(pending).resolves.toBeUndefined();
+    await expect(probeClaudeAuthStatus("/bin/claude", io, {}, controller.signal)).resolves.toBeUndefined();
+    expect(calls).toHaveLength(1);
+  });
   it("treats loggedIn true as success", async () => {
     const { io, child } = fakeIo();
     const pending = probeClaudeAuthStatus("/bin/claude", io, {});

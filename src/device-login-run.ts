@@ -232,7 +232,9 @@ export function probeClaudeAuthStatus(
   cliPath: string,
   io?: DeviceLoginIo,
   env?: NodeJS.ProcessEnv,
+  signal?: AbortSignal,
 ): Promise<boolean | undefined> {
+  if (signal?.aborted) return Promise.resolve(undefined);
   const spawnIo = io ?? REAL_IO;
   const runEnv = env ?? process.env;
   return new Promise((resolve) => {
@@ -250,6 +252,7 @@ export function probeClaudeAuthStatus(
         stdio: ["ignore", "pipe", "pipe"],
         env: deviceLoginEnv(runEnv),
         windowsHide: true,
+        signal,
       });
     } catch {
       done(undefined);

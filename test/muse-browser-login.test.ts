@@ -9,7 +9,7 @@ vi.mock("../src/device-login-run", async importOriginal => ({
 
 describe("sign-in browser ownership", () => {
   it.each([
-    ["muse", false, true], ["muse", true, false],
+    ["muse", false, false], ["muse", true, false],
     ["claude", false, false], ["claude", true, false],
     ["grok", true, false], ["codex", true, false],
   ] as const)("%s remote=%s opens browser=%s and retains the card", async (provider, remote, opens) => {
@@ -32,4 +32,3 @@ describe("sign-in browser ownership", () => {
     expect(frame.device).toMatchObject({ status: "waiting", url: "https://example.com/device", code: "ABCD-EFGH" });
   });
 });
-

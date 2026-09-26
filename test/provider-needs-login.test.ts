@@ -164,12 +164,14 @@ describe("an agent that will not authenticate", () => {
     try {
       const sidebar = makeSidebar();
       // Fail until the fourth probe: the person is still in the browser.
+      sidebar.providerConnectionState.grok = true;
+      sidebar.providerNeedsLogin.grok = true;
       let calls = 0;
       sidebar.reprobeProviderCredentials = vi.fn(async () => ++calls >= 4);
 
       await sidebar.onMessage({ type: "runGrokLogin", provider: "grok" }, "local");
       await Promise.resolve();
-      // Connect IS the consent, so the flag is saved before anything is run.
+      // This is explicit sign-in on an already connected provider.
       expect(sidebar.providerConnectionState.grok).toBe(true);
       expect(sidebar.host.createTerminal).toHaveBeenCalled();
       expect(sidebar.reprobeProviderCredentials).toHaveBeenCalledTimes(1);

@@ -12,9 +12,11 @@ phone and on a machine with no screen.
 
 It depends on where you press the button, and the difference is deliberate.
 
-**At the computer** — VS Code, Cursor, or the desktop app — **Settings →
-Providers → Connect** opens a terminal there and runs the agent's own login
-command:
+**At the computer** — VS Code, Cursor, or the desktop app — **Connect** (the
+agent chooser, or **Settings → Providers**) first checks whether the agent's CLI
+is already signed in. If it is, that sign-in is used and nothing opens. If it is
+not, the agent's sign-in panel appears, and only its sign-in button opens a
+terminal there and runs the agent's own login command:
 
 | Agent | Command | Credential lands in |
 |---|---|---|
@@ -23,7 +25,9 @@ command:
 | Claude Code | `claude auth login` | `~/.claude/` (or the OS keychain) |
 
 A terminal is the better affordance there, because the CLI opens your browser
-for you.
+for you — after you have pressed the button that asks it to. Muse Code has no
+terminal step: its sign-in card shows the vendor's link and code, and the link
+opens when you click it.
 
 **From a phone or browser**, there is no terminal to look at, so the same button
 runs the agent's **headless device-code flow** instead and shows you the URL and

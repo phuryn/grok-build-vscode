@@ -983,6 +983,8 @@ export class GrokSidebar {
    *  same as disconnected: the CLI is installed and the user meant to use it,
    *  so the answer is a sign-in action, not hiding the agent. */
   private providerNeedsLogin: Partial<Record<AcpProvider, boolean>> = {};
+  /** First Connect presses still checking the CLI's existing sign-in. */
+  private providerConnectChecks = new Set<AcpProvider>();
   /** Last `providerState` refresh. `reportSessionStart` reads these flags; it
    *  never rediscovers CLIs on the first-send path. Null until the first
    *  refresh so an unsnapshotted send OMITS the flags instead of reporting a
@@ -1862,7 +1864,7 @@ export class GrokSidebar {
     for (const session of this.remoteClients.detachedActiveValues()) rearm(session);
   }
 
-  private async warmConnectedCodexModels(): Promise<boolean> {
+  private async warmConnectedCodexModels(requireProof = false): Promise<boolean> {
     if (!this.hasProviderConsent("codex")) return false;
     const signal = this.providerRunSignal("codex");
     const cliPath = this.locateProvider("codex");
@@ -1892,7 +1894,7 @@ export class GrokSidebar {
       // but only when the failure IS about credentials.
       if (isCodexCredentialError(error)) {
         this.setProviderNeedsLogin("codex", true);
-      } else {
+      } else if (!requireProof) {
         // Anything else says nothing about the sign-in, and leaving a stale
         // needs-login standing made Codex permanently unusable: it never
         // cleared, so it stayed out of the model picker and out of the
@@ -1905,7 +1907,7 @@ export class GrokSidebar {
     }
   }
 
-  private async warmConnectedClaudeModels(): Promise<boolean> {
+  private async warmConnectedClaudeModels(requireProof = false): Promise<boolean> {
     if (!this.hasProviderConsent("claude")) return false;
     const signal = this.providerRunSignal("claude");
     const cliPath = this.locateProvider("claude");
@@ -1932,7 +1934,7 @@ export class GrokSidebar {
       this.host.appendLine(`[claude] model-cache warm-up failed: ${(error as Error).message}`);
       if (isClaudeCredentialError(error)) {
         this.setProviderNeedsLogin("claude", true);
-      } else {
+      } else if (!requireProof) {
         // Anything else says nothing about the sign-in, and a stale needs-login
         // left standing made Codex permanently unusable in exactly this way: it
         // never cleared, so the account stayed out of the model picker and out
@@ -1945,8 +1947,10 @@ export class GrokSidebar {
   }
 
   /** Explicit credential observation. Unlike history refresh this never obeys
-   * the listing freshness clock, so a completed sign-in is visible at once. */
-  private async reprobeProviderCredentials(provider: AcpProvider): Promise<boolean> {
+   * the listing freshness clock, so a completed sign-in is visible at once.
+   * First Connect requires proof: unrelated probe failures must not publish
+   * a healthy account before the user has ever signed in here. */
+  private async reprobeProviderCredentials(provider: AcpProvider, requireProof = false): Promise<boolean> {
     if (!this.hasProviderConsent(provider)) return false;
     const signal = this.providerRunSignal(provider);
     // MSP exposes no credential-status operation. A catalog read cannot prove sign-in.
@@ -1958,7 +1962,7 @@ export class GrokSidebar {
       const probes = (this.providerModelProbes ??= new Map());
       const pending = probes.get(provider) ?? new Set<Promise<boolean>>();
       probes.set(provider, pending);
-      const probe = provider === "codex" ? this.warmConnectedCodexModels() : this.warmConnectedClaudeModels();
+      const probe = provider === "codex" ? this.warmConnectedCodexModels(requireProof) : this.warmConnectedClaudeModels(requireProof);
       pending.add(probe);
       try { return await probe; } finally { pending.delete(probe); }
     }
@@ -2166,11 +2170,6 @@ export class GrokSidebar {
           code: prompt.code,
           ...(prompt.needsCode ? { needsCode: true } : {}),
         });
-        if (!opts.remote && provider === "muse") {
-          void Promise.resolve(this.host.openExternal(prompt.url)).catch(() => {
-            // The card retains the URL if the OS cannot launch a browser.
-          });
-        }
       },
       onDone: (result) => {
         settled = true;
@@ -2373,20 +2372,20 @@ export class GrokSidebar {
    * file presence confirms that a credential landed, not that it is valid.
    * Any later authentication failure uses the normal needs-login path.
    */
-  private async deviceLoginCredentialReady(provider: AcpProvider): Promise<boolean> {
+  private async deviceLoginCredentialReady(provider: AcpProvider, requireProof = false): Promise<boolean> {
     if (!this.hasProviderConsent(provider)) return false;
     const signal = this.providerRunSignal(provider);
     if (provider === "muse") return this.providerCredentialFilePresent(provider);
     if (provider === "claude") {
       const cliPath = this.locateProvider("claude");
       if (!cliPath) return false;
-      const loggedIn = await probeClaudeAuthStatus(cliPath);
+      const loggedIn = await probeClaudeAuthStatus(cliPath, undefined, undefined, signal);
       if (signal.aborted) return false;
       if (loggedIn === true) return true;
       if (loggedIn === false) return false;
-      return this.reprobeProviderCredentials(provider);
+      return this.reprobeProviderCredentials(provider, requireProof);
     }
-    return this.reprobeProviderCredentials(provider);
+    return this.reprobeProviderCredentials(provider, requireProof);
   }
 
   /** Does the provider's own credential file exist? Deliberately shallow —
@@ -2427,7 +2426,7 @@ export class GrokSidebar {
    * REMOVED IN 4.11.1 AND RESTORED THE SAME DAY. #171 says we never run an
    * agent the person has not connected, and this ladder was read as exactly
    * the speculative polling that rule forbids. It is not. It starts only from
-   * the Connect press, one line after consent is recorded, and every probe it
+   * an explicit sign-in press after consent is recorded, and every probe it
    * makes goes through `reprobeProviderCredentials`, which returns false
    * without consent and runs under `providerRunSignal` — so disconnecting
    * mid-ladder aborts it. It observes work the person just asked for, which is
@@ -2501,7 +2500,10 @@ export class GrokSidebar {
   }
 
   private providerStateMessage(): Extract<HostMsg, { type: "providerState" }> {
-    const connected = this.providerConnections();
+    // A first Connect still checking the CLI's existing sign-in reads as not
+    // connected yet; see `runGrokLogin`.
+    const connected: ProviderConnections = { ...this.providerConnections() };
+    for (const provider of this.providerConnectChecks ?? []) connected[provider] = false;
     const located = this.locatedProviders();
     const versions = this.providerCliVersions ?? {};
     const needsLogin = this.providerNeedsLogin ?? {};
@@ -2549,7 +2551,9 @@ export class GrokSidebar {
           } : {}),
         },
       ],
-      ...(this.providerRefreshInFlight ? { checking: true } : {}),
+      // A first Connect's credential check is the same wait as a Refresh, and
+      // this is the only busy signal a desk Settings row gets while it runs.
+      ...(this.providerRefreshInFlight || this.providerConnectChecks?.size ? { checking: true } : {}),
     };
   }
 
@@ -12055,28 +12059,68 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           else this.post(message);
           break;
         }
+        // A press that lands while a first Connect is still checking is the
+        // same request again, not a sign-in: consent is already recorded, so it
+        // would otherwise fall through to the login terminal below.
+        if (origin !== "remote" && this.providerConnectChecks?.has(provider)) break;
+        const connecting = !this.hasProviderConsent(provider);
         const renewing = !!this.providerNeedsLogin?.[provider];
-        // Consent is the press. The CREDENTIAL is not proven by it, and the two
-        // must not be collapsed: every surface reads `connected && !needsLogin`
-        // as a healthy account, so recording consent alone made Settings clear
-        // the bar that finishes the sign-in and offer Sign out in its place --
-        // and Sign out runs the vendor logout, destroying the credential the
-        // person pressed Connect to create. Each flow below clears this the
-        // moment it has evidence.
-        //
-        // ORDER IS THE WHOLE FIX. Marking it afterwards was no fix at all:
-        // `setProviderConnected` posts a frame of its own, Settings reads that
-        // first frame as a finished account and drops the Re-check bar, and the
-        // later frame never puts it back. The flag has to be true BEFORE the
-        // first frame that says connected.
-        this.setProviderNeedsLogin(provider, true);
-        await this.setProviderConnected(provider, true);
-        if (!this.hasProviderConsent(provider)) break;
-        // Remote users read the URL on their own device. Muse also needs the
-        // captured URL on the desk because its CLI does not open a browser.
-        if (origin === "remote") {
-          await this.startDeviceLogin(provider, cliPath, clientId);
-          break;
+        // Until the check below answers, providerState keeps reporting this
+        // agent as not connected. Otherwise the needs-login frame the ORDER rule
+        // requires is painted as "needs you to sign in again" for an account
+        // that may be signed in already -- the prompt #171 is about -- and its
+        // Sign in button opens the CLI login and the browser mid-check.
+        const checkingConnect = connecting && origin !== "remote";
+        if (checkingConnect) (this.providerConnectChecks ??= new Set()).add(provider);
+        try {
+          // Consent is the press. The CREDENTIAL is not proven by it, and the two
+          // must not be collapsed: every surface reads `connected && !needsLogin`
+          // as a healthy account, so recording consent alone made Settings clear
+          // the bar that finishes the sign-in and offer Sign out in its place --
+          // and Sign out runs the vendor logout, destroying the credential the
+          // person pressed Connect to create. Each flow below clears this the
+          // moment it has evidence.
+          //
+          // ORDER IS THE WHOLE FIX. Marking it afterwards was no fix at all:
+          // `setProviderConnected` posts a frame of its own, Settings reads that
+          // first frame as a finished account and drops the Re-check bar, and the
+          // later frame never puts it back. The flag has to be true BEFORE the
+          // first frame that says connected.
+          this.setProviderNeedsLogin(provider, true);
+          await this.setProviderConnected(provider, true);
+          if (!this.hasProviderConsent(provider)) break;
+          // Remote users read the URL on their own device. Muse also needs the
+          // captured URL on the desk because its CLI does not open a browser.
+          if (origin === "remote") {
+            await this.startDeviceLogin(provider, cliPath, clientId);
+            break;
+          }
+          if (connecting) {
+            const signal = this.providerRunSignal(provider);
+            let ready = false;
+            try { ready = await this.deviceLoginCredentialReady(provider, true); } catch { /* Offer explicit sign-in. */ }
+            // Answered: from here the frame may say connected, before the panel
+            // or a session start that follows it. A proven credential is cleared
+            // while still masked, so no frame ever shows it needing a sign-in.
+            if (ready && !signal.aborted) this.setProviderNeedsLogin(provider, false);
+            this.providerConnectChecks?.delete(provider);
+            this.postProviderState();
+            if (signal.aborted) break;
+            if (ready) {
+              await this.adoptSessionsForConnectedProvider(provider, session);
+            } else {
+              if (session.hasHistory && this.workspaceRoot() && !renewing) {
+                await this.newFocusedSession(origin);
+              }
+              if (signal.aborted) break;
+              this.post({ type: "onboarding", state: providerLoginState(provider), provider, platform: process.platform });
+            }
+            break;
+          }
+        } finally {
+          // Any exit before the check answered (no consent, a throw) must not
+          // leave the agent masked as not connected.
+          if (checkingConnect && this.providerConnectChecks?.delete(provider)) this.postProviderState();
         }
         if (provider === "muse") {
           await this.startDeviceLogin(provider, cliPath, clientId, { remote: false });

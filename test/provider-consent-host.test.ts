@@ -97,6 +97,23 @@ function noAgentWork() {
 }
 
 describe("stored connection consent at the host boundary (#171)", () => {
+  it.each(INTERNAL_PROVIDERS)("restores %s consent after restart without another sign-in panel", async provider => {
+    const saved = { "grok.providerConnections.v2": { [provider]: true } };
+    const { s } = coldHost(false, undefined, saved);
+    s.locateProvider = vi.fn(() => process.execPath);
+    s.probeProviderVersion = vi.fn(async () => undefined);
+    s.refreshModelsIfCliChanged = vi.fn(async () => {});
+    s.startSession = vi.fn(async () => {});
+    s.postSessionsList = vi.fn();
+    s.sweepEmptySessions = vi.fn();
+    expect(s.providerNeedsLogin).toEqual({});
+    s.postInitialState();
+    await Promise.resolve();
+    expect(s.hasProviderConsent(provider)).toBe(true);
+    expect(s.focused.provider).toBe(provider);
+    expect(s.startSession).toHaveBeenCalledWith(undefined, s.focused, "ensure");
+    expect(s.post.mock.calls.some(([m]: any[]) => m.type === "onboarding")).toBe(false);
+  });
   it("cold chat and Projects ready/visibility plus previews never start installed, signed-in Claude", async () => {
     const { s, state } = coldHost();
     s.providerCredentialFilePresent = vi.fn(() => true);

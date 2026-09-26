@@ -3845,6 +3845,7 @@
               return;
             }
             if (row.provider && !(env && env.isRemote)
+              && providerOf(snapshot, row.provider).connected
               && !providerConnectedNow(snapshot, row.provider)) {
               PROVIDER_TERMINAL.id = row.provider;
               runAction(row);

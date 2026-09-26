@@ -38,6 +38,15 @@ The goal of layers (1)+(2) is to make the protocol surface and UI logic regressi
   real Re-check and login actions, including a delayed successful probe. Remote
   policy tests prove durable Re-check is refused while retrying an already-connected
   session remains available.
+- A first desk Connect adopts an existing sign-in only on positive evidence:
+  `deviceLoginCredentialReady(provider, true)`, where `requireProof` keeps a
+  non-credential probe failure from clearing `needsLogin` (the device-login call
+  omits it and clears it). `test/connect-credential-policy.test.ts` pins that
+  policy per agent, including inconclusive probes. `test/auth-renewal-resumes.test.ts`
+  drives the press: no terminal, device flow or `launched` panel follows it,
+  `providerState` reports the agent as not connected (with `checking`) until the
+  check answers, a repeat press is ignored, and an explicit sign-in on a connected
+  agent keeps the terminal and ladder.
 - **For Grok, Codex and Claude, only a credential the ACCOUNT accepted may lower `needsLogin`.** A started
   ACP process and a listing that came back are not evidence — both complete
   cleanly against a dead token, which is what made the offer flash and vanish on
