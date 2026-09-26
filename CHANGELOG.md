@@ -1,5 +1,28 @@
 # Changelog
 
+## 4.13.0 — 2026-09-26
+
+**Muse Code works properly now.** Muse arrived in 4.11, but much of it didn't work: the mode button did nothing, usage never showed, and a failed tool never said why. This release fixes those.
+
+### Added
+
+- **Agent and Auto accept for Muse Code.** The mode button on a Muse session now works. It offers **Agent** and **Auto accept**, the same two Codex offers. Plan isn't offered on Muse, because this app can't make Muse hold back file edits.
+  - **Agent** leaves Muse's own approval settings in charge of what it asks you.
+  - **Auto accept** approves each request Muse makes with a one-time allow. If Muse offers only a lasting allow, you're asked instead. It never gives Muse a lasting "always allow", so switching back to Agent leaves no permission behind.
+  - A new Muse session starts in the mode you last chose, like the other agents. A reopened one starts in Agent.
+- **Muse Code subscription usage.** The usage popover now shows Muse's current usage window and its weekly window. They appear once Muse reports them, usually after your first reply.
+
+### Fixed
+
+- **A failed Muse tool says why.** The row used to say only "Muse tool ended with status: failed". It now shows the reason Muse gave. If Muse gave none, it shows Muse's summary, or else the last lines the command printed.
+- **Muse commands show their output.** A command that completes shows what it printed. When you reopen a conversation, every command shows its output, including failed ones.
+- **Links to files in folders with spaces.** A link to a full path containing spaces is now a link instead of raw text, in paragraphs, lists and headings. That covers `[README.md](/home/me/My Project/README.md)` and the `[README.md](</home/me/My Project/README.md>)` form. A relative path with spaces stays plain text. From a phone or a browser, links to files on your machine still show as plain text, because they can't be opened from there. In VS Code and the desktop app, they open the file.
+- **`####` headings** now render as headings instead of showing the hashes.
+
+### Changed
+
+- **Contributor models in the Muse model picker.** Where you can hover, with a mouse or trackpad, Meta's data-use notice is now in the tooltip. On a touch screen with no hover, it stays under the model name.
+
 ## 4.12.1 — 2026-09-25
 
 **A workaround for Muse Code 1.4.0 failing to save a sign-in.**
