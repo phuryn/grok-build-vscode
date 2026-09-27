@@ -14490,6 +14490,10 @@
       renderDelegationResult(output, outputText, "workflow-output-body");
     }
     const roster = el.querySelector(".workflow-roster");
+    // Pausing a Grok run cancels its in-flight agent while the run itself stays
+    // paused and resumable, so that agent is paused, not stopped.
+    const runPaused = !u.done && /paus/i.test(u.phase || "");
+    const shownState = (agent) => runPaused && /^(cancelled|canceled)$/.test(agent.state || "") ? "paused" : agent.state;
     roster.hidden = !u.agents?.length;
     el.querySelector(".workflow-agents").hidden = roster.hidden;
     const existing = new Map([...roster.children].filter((row) => row._agentKey).map((row) => [row._agentKey, row]));
@@ -14499,7 +14503,7 @@
       row.className = "workflow-agent";
       row._agentKey = key;
       row.dataset.agentIndex = String(i);
-      row.dataset.state = agent.state || "unknown";
+      row.dataset.state = shownState(agent) || "unknown";
       const activity = workflowAgentActivity(record, agent);
       // A finished run has nothing behind the row worth opening -- the detail
       // is the live activity line, which reads "tokens moved" and no more.
@@ -14532,9 +14536,9 @@
           chevron.innerHTML = detail.hidden ? ICON.chevronRight : ICON.chevronDown;
         };
       }
-      row.querySelector(".workflow-state-marker").dataset.state = workflowAgentState(agent.state);
+      row.querySelector(".workflow-state-marker").dataset.state = workflowAgentState(shownState(agent));
       row.querySelector(".workflow-agent-name").textContent = workflowAgentName(agent);
-      row.querySelector(".workflow-agent-state").textContent = [agent.state ? workflowAgentStateLabel(agent.state) : "",
+      row.querySelector(".workflow-agent-state").textContent = [agent.state ? workflowAgentStateLabel(shownState(agent)) : "",
         agent.tokensUsed > 0 ? `${compactTokens(agent.tokensUsed)} tokens` : ""].filter(Boolean).join(" · ");
       row.querySelector(".workflow-agent-activity").textContent = activity;
       return row;

@@ -282,7 +282,9 @@ describe("the captured workflow lifecycle", () => {
   });
   it("observes a cancelled state transition without portraying it as ongoing work", () => {
     const h = replay(); h.frame(4); h.frame(5);
-    expect(text(h, ".workflow-agent-state")).toBe("stopped");
+    // Frame 5 is the pause: Grok cancels the in-flight agent, the run stays resumable.
+    expect(text(h, ".workflow-agent-state")).toBe("paused");
+    expect(h.doc.querySelector(".workflow-agent .workflow-state-marker")!.getAttribute("data-state")).toBe("paused");
     expect(text(h, ".workflow-agent-activity")).toBe("state changed 0s ago \u00b7 no token activity observed");
     h.advance(12000); h.frame(5);
     expect(text(h, ".workflow-agent-activity")).toBe("state changed 12s ago \u00b7 no token activity observed");
