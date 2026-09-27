@@ -105,6 +105,8 @@ describe("provider delegation through the existing presentation wire", () => {
       const card = h.doc.querySelector(".subagent-card")!;
       expect(card.classList.contains("subagent-done")).toBe(true);
       expect(card.querySelector(".subagent-stream")?.textContent).toContain("4");
+      expect(card.querySelector(".subagent-result-body")?.textContent).toBe("4");
+      expect(card.querySelector(".subagent-result .msg-copy-btn")).not.toBeNull();
       expect(card.querySelector(".subagent-title")?.textContent).toBe("Arithmetic");
       expect(h.doc.querySelector("#messages")?.textContent).not.toMatch(/Start subagent|Complete subagent/);
     }
@@ -121,7 +123,8 @@ describe("provider delegation through the existing presentation wire", () => {
       expect(card.classList.contains("subagent-done")).toBe(true);
       expect(card.querySelector(".subagent-result")?.textContent).toContain("4");
       expect(card.querySelector(".subagent-result")?.textContent).not.toMatch(/hand-back|agentId|usage/);
-      expect(card.querySelector(".subagent-time")?.textContent).toMatch(/2s.*tokens/);
+      expect(card.querySelector(".subagent-time")?.textContent).toBe("0:01");
+      expect(card.querySelector(".delegation-meta")?.textContent).toContain("tokens");
     }
     expect(s.buffer.some(m => m.type === "childStream")).toBe(false);
   });
@@ -144,8 +147,8 @@ describe("provider delegation through the existing presentation wire", () => {
       await frame(h);
       expect(h.doc.querySelectorAll(".workflow-card")).toHaveLength(1);
       expect(h.doc.querySelector(".workflow-pin")).toBeNull();
-      expect(h.doc.querySelector(".workflow-card")?.textContent).not.toMatch(/running|no recent updates|no update since/);
-      expect(h.doc.querySelector(".workflow-card")?.textContent).toContain(phase === "load" ? "done" : "launched");
+      expect(h.doc.querySelector(".workflow-card")?.textContent).not.toMatch(/no recent updates|no update since/);
+      expect(h.doc.querySelector(".workflow-card")?.textContent).toContain(phase === "load" ? "done" : "running");
       expect(h.doc.querySelectorAll(".run-progress-btn")).toHaveLength(0);
       expect(h.doc.querySelector("#messages")?.textContent).not.toContain("<task-notification>");
       expect(h.doc.querySelector("#messages")?.textContent).toContain("alpha beta");
@@ -217,7 +220,7 @@ describe("provider delegation through the existing presentation wire", () => {
     const card = s.desk.doc.querySelector(".subagent-card")!;
     expect(card.classList.contains("subagent-done")).toBe(true);
     expect(card.querySelector(".subagent-stream")?.textContent).toContain("4");
-    expect(card.querySelector(".subagent-time")?.textContent).toContain("2s");
+    expect(card.querySelector(".subagent-time")?.textContent).toBe("0:02");
   });
 
   it("all reused messages remain mirrored and session-scoped", () => {
@@ -232,7 +235,7 @@ it.each(["completed", "failed"])("Claude upgrades the receipt in place and finis
   const s = setup("claude");
   s.accept(claudeAsyncWire[1]);
   const card = s.desk.doc.querySelector(".workflow-card");
-  expect(card?.textContent).toContain("launched");
+  expect(card?.textContent).toContain("running");
   s.accept(claudeAsyncWire[0]);
   for (const update of claudeAsyncWire.slice(2, 5)) s.accept(update);
   expect(s.desk.doc.querySelector(".workflow-card")).toBe(card);
@@ -286,7 +289,7 @@ it.each(["completed", "failed", "stopped"])("Claude phase progression and parall
   }
   s.accept({ ...claudeAsyncWire[6], state: terminal });
   for (const h of [s.desk, s.phone, s.reopen()]) {
-    expect(h.doc.querySelector(".workflow-report-state")?.textContent).toBe(terminal === "completed" ? "done" : terminal === "stopped" ? "cancelled" : "failed");
+    expect(h.doc.querySelector(".workflow-report-state")?.textContent).toBe(terminal === "completed" ? "done" : terminal === "stopped" ? "stopped" : "failed");
     expect([...h.doc.querySelectorAll(".workflow-agent")].map(el => (el as HTMLElement).dataset.state)).toEqual(["done", "done", "done", "done", terminal === "completed" ? "done" : terminal === "stopped" ? "cancelled" : terminal]);
     expect(h.doc.querySelector(".workflow-card")?.textContent).not.toMatch(/unknown|\?/);
   }
@@ -336,8 +339,8 @@ it.each(["live", "load"])("Claude %s uses the launched name and description with
   s.accept({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "The workflow finished." } });
   for (const h of [s.desk, s.phone, s.reopen()]) {
     expect(h.doc.querySelector(".workflow-card")?.textContent).toContain("greeting-demo");
-    expect(h.doc.querySelector(".workflow-card")?.textContent).toContain("launched");
-    expect(h.doc.querySelector(".workflow-card")?.textContent).toContain("Write then shorten");
+    expect(h.doc.querySelector(".workflow-card")?.textContent).toContain("running");
+    expect(h.doc.querySelector(".workflow-card")?.textContent).not.toContain("Write then shorten");
     expect(h.doc.querySelector(".workflow-pin, .workflow-receipt, .run-progress-btn")).toBeNull();
   }
   s.accept({ sessionUpdate: "user_message_chunk", content: { type: "text", text:

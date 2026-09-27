@@ -2576,15 +2576,14 @@ body.thinking-hidden .msg.thinking { display: none; }
 }
 .generated-media-btn.copied { color: var(--vscode-charts-green, #4ec9b0); }
 
-/* Subagent delegation row ÔÇö same typography as the tool rows, with a purple
-   accent marking "delegated work" (one level up from a single tool call). */
+/* Delegated work uses one quiet card on every surface. */
 .subagent-card {
   font-size: var(--vscode-font-size);
   color: var(--vscode-descriptionForeground);
   padding: 5px 10px;
   margin: 4px var(--pad);
-  border-left: 2px solid var(--vscode-charts-purple, #b180d7);
-  background: var(--vscode-textBlockQuote-background, rgba(177, 128, 215, 0.08));
+  border-left: 2px solid var(--vscode-charts-blue, #3794ff);
+  background: var(--vscode-textBlockQuote-background, rgba(55, 148, 255, 0.08));
   border-radius: 0 6px 6px 0;
 }
 /* A failed subagent reads as failed at a glance ÔÇö red left border + red
@@ -2611,7 +2610,6 @@ body.thinking-hidden .msg.thinking { display: none; }
 .subagent-card .subagent-row.expandable { cursor: pointer; }
 .subagent-card .subagent-badge { display: inline-flex; flex: none; }
 .subagent-card .subagent-label { font-weight: 600; flex: none; }
-.subagent-card .subagent-sep { flex: none; opacity: 0.7; }
 .subagent-card .subagent-title {
   min-width: 0;
   overflow: hidden;
@@ -2666,12 +2664,6 @@ body.thinking-hidden .msg.thinking { display: none; }
   opacity: 0.8;
   font-size: 0.9em;
 }
-.subagent-card .subagent-result-label {
-  font-size: 0.92em;
-  font-weight: 600;
-  color: var(--vscode-descriptionForeground);
-  margin-bottom: 4px;
-}
 .subagent-card .subagent-result {
   margin-top: 5px;
   /* Balance the bottom edge: the last paragraph's margin is collapsed below,
@@ -2680,13 +2672,11 @@ body.thinking-hidden .msg.thinking { display: none; }
   padding-bottom: 3px;
   overflow-wrap: anywhere;
   color: var(--vscode-foreground);
-  opacity: 0.9;
 }
 .subagent-card .subagent-result > *:first-child { margin-top: 0; }
 .subagent-card .subagent-result > *:last-child { margin-bottom: 0; }
 
-/* Workflow / Goal / Deep-research progress (P2-10) ÔÇö teal accent to distinguish
-   from purple subagent cards. Same density as subagent rows. */
+/* Workflow / Goal / Deep-research progress. */
 .run-progress-card {
   --run-progress-fill: var(--vscode-textBlockQuote-background, rgba(55, 148, 255, 0.08));
   font-size: var(--vscode-font-size);
@@ -2797,9 +2787,7 @@ body.thinking-hidden .msg.thinking { display: none; }
    density; a card sitting on top of the composer gets room to breathe. */
 .workflow-pin-run {
   margin: 0 0 6px;
-  padding: 10px 11px;
-  border-left-width: 3px;
-  border-radius: 6px;
+  padding: 5px 10px;
   overflow: clip;
   /* Composite the card tint over its surface once; the sticky header inherits
      this opaque fill so scrolling text cannot show through or darken it. */
@@ -2807,8 +2795,6 @@ body.thinking-hidden .msg.thinking { display: none; }
 }
 .workflow-pin-run:last-child { margin-bottom: 0; }
 .workflow-expanded[hidden], .workflow-dots[hidden], .workflow-phases[hidden], .workflow-roster[hidden], .workflow-agent-detail[hidden], .workflow-blocked[hidden], .workflow-chevron[hidden] { display: none; }
-/* Reads immediately under the receipt, because it is what qualifies it. */
-.workflow-blocked { color: var(--vscode-editorWarning-foreground, #cca700); }
 .workflow-tool-marker[hidden] { display: none; }
 .workflow-card .run-progress-row,
 .workflow-pin-run .run-progress-row { flex-wrap: wrap; align-items: baseline; }
@@ -2820,7 +2806,7 @@ body.thinking-hidden .msg.thinking { display: none; }
 }
 .workflow-card .run-progress-phase,
 .workflow-pin-run .run-progress-phase { flex: 0 1 auto; overflow-wrap: anywhere; }
-.workflow-receipt, .workflow-agent-activity { font-size: 0.9em; opacity: 0.8; }
+.workflow-agent-activity { font-size: 0.9em; opacity: 0.8; }
 .workflow-phases {
   display: flex;
   flex-wrap: wrap;
@@ -2857,17 +2843,13 @@ body.thinking-hidden .msg.thinking { display: none; }
    share this row, which clipped "Stop" off the right edge of a phone, and the
    chevron hung below it on top of the receipt line. */
 .workflow-heading { display: block; }
-.workflow-report-body > .workflow-heading { display: none; }
-.workflow-timing { display: flex; }
 .workflow-output {
   margin-top: 12px;
-  padding-top: 9px;
-  border-top: 1px solid var(--vscode-editorWidget-border, #555);
   color: var(--vscode-foreground);
   overflow-wrap: anywhere;
   min-width: 0;
 }
-.workflow-output-label { display: block; margin-bottom: 6px; }
+
 .workflow-output-body > :first-child { margin-top: 0; }
 .workflow-output-body > :last-child { margin-bottom: 0; }
 .workflow-output-body pre { overflow-x: auto; }
@@ -2875,15 +2857,15 @@ body.thinking-hidden .msg.thinking { display: none; }
   position: sticky;
   top: 0;
   z-index: 1;
-  margin: 0 -11px;
-  padding: 0 11px;
+  margin: 0 -10px;
+  padding: 0 10px;
   background: inherit;
 }
 .workflow-heading > .workflow-pin-toggle { display: flex; width: 100%; margin: 0; padding: 0; }
 .workflow-heading .run-progress-row { align-items: center; gap: 9px; }
 .workflow-chevron, .workflow-agent-chevron { display: inline-flex; flex: none; align-self: center; opacity: 0.7; }
 .workflow-chevron svg, .workflow-agent-chevron svg { width: 12px; height: 12px; }
-.workflow-pin .workflow-receipt { margin-top: 3px; }
+
 /* The composer is directly below, so the controls need a real target and air
    above them rather than the transcript card's 6px. */
 .workflow-pin .run-progress-actions { margin-top: 9px; gap: 7px; }
@@ -2898,11 +2880,7 @@ body.thinking-hidden .msg.thinking { display: none; }
 .workflow-dot[data-state="failed"] { background: var(--vscode-errorForeground); border-color: var(--vscode-errorForeground); opacity: 1; }
 .workflow-dot[data-state="cancelled"] { opacity: 0.7; }
 .workflow-dot[aria-current="step"] { border: 2px solid var(--vscode-charts-blue, #3794ff); opacity: 1; }
-/* A row, so the icon sits beside the name the way a tool line's does, and
-   the ellipsis lands on the text rather than clipping the icon off. */
-.workflow-marker { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
-.workflow-marker > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.workflow-card:not(.run-progress-done) { border: 0; padding: 4px 0; background: none; }
+
 .workflow-report-toggle { cursor: pointer; font-weight: 600; display: flex; align-items: center; gap: 9px; }
 /* The native disclosure triangle sits on the LEFT and is not our chevron; the
    summary draws its own on the right so a finished card matches a live one. */
@@ -2933,6 +2911,48 @@ body.thinking-hidden .msg.thinking { display: none; }
      needs the same target as the live card's disclosure -- a coarse pointer
      cannot reliably hit a line of text. */
   .workflow-pin-toggle, .workflow-agent-toggle, .workflow-report-toggle, .workflow-pin .run-progress-btn { min-height: 36px; }
+}
+
+/* Shared header slots retain the same order and alignment at phone widths. */
+.delegation-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  list-style: none;
+}
+.delegation-header::-webkit-details-marker { display: none; }
+.delegation-header.expandable { cursor: pointer; }
+.delegation-header[aria-disabled="true"] { cursor: default; }
+.delegation-header:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 3px; }
+.delegation-header .delegation-icon { display: inline-flex; flex: none; }
+.delegation-header .delegation-icon svg { width: 14px; height: 14px; }
+.delegation-header .delegation-kind { flex: none; font-weight: 600; }
+.delegation-header .delegation-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 400; }
+.delegation-header .delegation-status { flex: none; font-weight: 400; font-size: .92em; opacity: .8; }
+.delegation-header .delegation-time { margin-left: auto; flex: none; font-variant-numeric: tabular-nums; font-size: .92em; opacity: .8; }
+.delegation-header .delegation-chevron { display: inline-flex; flex: none; }
+.delegation-chevron svg { width: 12px; height: 12px; }
+.delegation-chevron.is-open { transform: rotate(90deg); }
+.delegation-header .delegation-time[hidden] + .delegation-chevron { margin-left: auto; }
+.delegation-header [hidden], .delegation-meta[hidden], .workflow-steps[hidden], .workflow-agents[hidden], .run-progress-actions[hidden] { display: none; }
+.workflow-card .delegation-header, .workflow-pin-run .delegation-header { flex-wrap: nowrap; gap: 6px; align-items: center; }
+.delegation-meta { margin-top: 8px; font-size: .88em; opacity: .7; }
+.delegation-section-label { margin-top: 10px; font-size: .88em; opacity: .7; }
+.subagent-stream::before { content: "Activity"; font-size: .88em; opacity: .7; }
+.delegation-result .msg-actions { opacity: 1; }
+.workflow-phases { flex-direction: column; align-items: flex-start; }
+.workflow-phase { border: 0; padding: 0; }
+.subagent-failed .delegation-status, .run-progress-failed .delegation-status { color: var(--vscode-errorForeground); }
+@media (hover: none), (pointer: coarse) {
+  .delegation-header { min-height: 36px; }
 }
 
 .tool-group {
@@ -4894,7 +4914,7 @@ body.dragging { outline: 2px dashed var(--vscode-focusBorder); outline-offset: -
 .card .plan-toggle:hover { text-decoration: underline; }
 
 /* ---------- question card (ask_user_question) ---------- */
-.card.question { border-left-color: var(--vscode-charts-purple, #b180d7); }
+.card.question { border-left-color: var(--vscode-charts-blue, #3794ff); }
 /* "Grok is asking" / "You answered" reads as a small label so the question
    itself is the prominent line. */
 .card.question .card-title {

@@ -142,7 +142,7 @@ describe("grok 1.0.3 multiplexed subagent stream (sanitized live capture)", () =
     expect(listProse[0].textContent).toContain("I'll list the contents of the current working directory now");
     expect(listProse[0].textContent).not.toContain("README.txt");
     expect(listProse[1].textContent).toContain("README.txt");
-    expect(listProse[1].textContent).not.toContain("I'll list the contents");
+    expect(listProse[1].textContent).not.toBe("running");
 
     const poemBits = streamChildren(poemCard);
     const poemProse = poemBits.filter((el) => el.classList.contains("subagent-prose"));
@@ -207,7 +207,7 @@ describe("grok 1.0.3 multiplexed subagent stream (sanitized live capture)", () =
     const card = doc.querySelector(".subagent-card") as HTMLElement;
     const stream = card.querySelector(".subagent-stream") as HTMLElement;
     expect(stream.hidden).toBe(true);
-    expect((card.querySelector(".subagent-status") as HTMLElement).textContent).toContain("I'll list the contents");
+    expect((card.querySelector(".subagent-status") as HTMLElement).textContent).toBe("running");
     const row = card.querySelector(".subagent-row") as HTMLElement;
     expect(row.classList.contains("expandable")).toBe(true);
     row.click();

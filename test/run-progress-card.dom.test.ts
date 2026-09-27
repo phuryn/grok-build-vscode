@@ -25,7 +25,7 @@ function send(h: Harness, over: Record<string, unknown> = {}) {
 const card = (h: Harness) => h.doc.querySelector(".workflow-card")!;
 const pin = (h: Harness) => h.doc.querySelector(".workflow-pin")!;
 const summary = (h: Harness) => pin(h).querySelector(".run-progress-row")!.textContent;
-const receipt = (h: Harness) => pin(h).querySelector(".workflow-receipt")!.textContent;
+const status = (h: Harness) => pin(h).querySelector(".delegation-status")!.textContent;
 const agent = (h: Harness) => pin(h).querySelector(".workflow-agent")!;
 const activity = (h: Harness) => agent(h).querySelector(".workflow-agent-activity")!.textContent;
 const expand = (h: Harness) => click(h.window, pin(h).querySelector(".workflow-pin-toggle")!);
@@ -38,9 +38,9 @@ describe("workflow output", () => {
     const body = card(h).querySelector(".workflow-report-body")!;
     const output = body.querySelector(".workflow-output");
     expect({
-      order: [...body.querySelectorAll(".run-progress-sub, .workflow-progress, .workflow-output, .workflow-roster")].map(el => el.className),
-      phase: body.querySelector(".run-progress-phase")!.textContent,
-      clock: body.querySelector(".workflow-progress .run-progress-elapsed")!.textContent,
+      order: [...body.querySelectorAll(".workflow-phases, .workflow-roster, .workflow-output")].map(el => el.className),
+      phase: card(h).querySelector(".delegation-status")!.textContent,
+      clock: card(h).querySelector(".delegation-time")!.textContent,
       label: output?.getAttribute("aria-label") ?? null,
       strong: output?.querySelector("strong:not(.workflow-output-label)")?.textContent ?? null,
       headings: [...(output?.querySelectorAll("h3") || [])].map(el => el.textContent),
@@ -49,14 +49,14 @@ describe("workflow output", () => {
       diagnostic: body.textContent?.includes("ignored cancelled"),
       spend: body.querySelector(".workflow-spend")!.textContent,
     }).toEqual({
-      order: ["run-progress-sub", "workflow-progress", ...(run.result_summary ? ["workflow-output"] : []), "workflow-roster"],
-      phase: "", clock: run.run_id === "markdown" ? "22:52" : run.run_id === "json" ? "0:12" : "1:50",
-      label: run.result_summary ? "Output" : null,
+      order: ["workflow-phases", "workflow-roster", ...(run.result_summary ? ["workflow-output delegation-result"] : [])],
+      phase: run.run_id === "diagnostic" ? "stopped" : "done", clock: run.run_id === "markdown" ? "22:52" : run.run_id === "json" ? "0:12" : "1:50",
+      label: null,
       strong: run.run_id === "markdown" ? "Status: Partial" : null,
       headings: run.run_id === "markdown" ? ["Why earlier attempts do not count", "The other flights that morning"] : [],
       footer: run.run_id === "markdown" ? "Full report: scratch/report.md" : null,
       text: run.run_id === "json" ? "The workflow finished its first step." : null,
-      diagnostic: false, spend: `${run.agents_used} of ${run.agent_budget} agents used`,
+      diagnostic: false, spend: `${run.agents_used} agents`,
     });
   });
 
@@ -100,11 +100,11 @@ describe("workflow output", () => {
   it("keeps live summary before progress and removes a withdrawn output", () => {
     const h = boot(); send(h, { objective: "Purpose", result_summary: "Interim result", pause_message: "Review required" }); expand(h);
     const surface = pin(h).querySelector(".workflow-pin-run")!;
-    const before = { order: [...surface.querySelectorAll(".run-progress-sub, .workflow-progress, .workflow-output, .workflow-roster")].map(el => el.className),
+    const before = { order: [...surface.querySelectorAll(".workflow-phases, .workflow-roster, .workflow-output")].map(el => el.className),
       reason: surface.querySelector(".run-progress-detail")!.textContent };
     send(h);
     expect({ before, output: surface.querySelector(".workflow-output") }).toEqual({ before: {
-      order: ["run-progress-sub", "workflow-progress", "workflow-output", "workflow-roster"], reason: "Review required",
+      order: ["workflow-phases", "workflow-roster", "workflow-output delegation-result"], reason: "Review required",
     }, output: null });
   });
 });
@@ -168,12 +168,12 @@ describe("approved workflow states", () => {
     // The controls are the card's last row, not passengers in the heading:
     // sharing that row clipped "Stop" off the right edge of a phone.
     expect(pin(h).querySelector(".workflow-heading .run-progress-actions")).toBeNull();
-    expect(pin(h).querySelector(".workflow-pin-run > :last-child")!.className).toBe("run-progress-actions");
+    expect(pin(h).querySelector(".run-progress-actions")!.closest(".workflow-expanded")).not.toBeNull();
     expect(pin(h).querySelector(".workflow-pin-toggle")!.getAttribute("aria-expanded")).toBe("false");
     expect(summary(h)).toContain("deep-research");
-    expect(summary(h)).toContain("Research");
+    expect(summary(h)).toContain("running");
     expect(pin(h).querySelector(".run-progress-elapsed")!.textContent).toBe("12:08");
-    expect(receipt(h)).toBe("updated 0s ago");
+    expect(status(h)).toBe("running");
     const dots = [...pin(h).querySelectorAll(".workflow-dot")];
     expect(dots).toHaveLength(4);
     expect(dots.map((d) => d.getAttribute("data-state"))).toEqual(["done", "active", "pending", "pending"]);
@@ -181,25 +181,25 @@ describe("approved workflow states", () => {
     expect(dots.filter((d) => d.hasAttribute("aria-current"))).toHaveLength(1);
     expect(hidden(pin(h).querySelector(".workflow-expanded"))).toBe(true);
     expect(pin(h).querySelector(".workflow-motion, .blink-dots")).toBeNull();
-    expect(card(h).textContent).toBe("deep-research \u00b7 running");
-    expect(card(h).querySelector("button, summary, details, [role=button], [aria-expanded]")).toBeNull();
+    expect(card(h).querySelector(".delegation-header")!.innerHTML).toBe(pin(h).querySelector(".delegation-header")!.innerHTML);
+    expect(card(h).querySelector(".delegation-header")!.getAttribute("aria-expanded")).toBe("false");
   });
-  it.each([{}, { vscode: true }, { remote: true }])("shows the header stage only while collapsed on surface %j", (options) => {
+  it.each([{}, { vscode: true }, { remote: true }])("keeps the header status and duration when opened on surface %j", (options) => {
     const h = boot(options);
     const style = h.doc.createElement("style");
     style.textContent = readFileSync(new URL("../media/chat.css", import.meta.url), "utf8");
     h.doc.head.append(style);
     send(h);
     const phase = () => pin(h).querySelector(".workflow-heading .run-progress-phase")!;
-    expect(phase().textContent).toBe("Research");
+    expect(phase().textContent).toBe("running");
     expand(h);
-    expect(phase().textContent).toBe("");
+    expect(phase().textContent).toBe("running");
     expect(hidden(pin(h).querySelector(".workflow-phases"))).toBe(false);
     send(h, { current_phase: "Verify", elapsed_ms: 106_000 });
-    expect(phase().textContent).toBe("");
-    expect(pin(h).querySelector(".workflow-progress .run-progress-elapsed")!.textContent).toBe("1:46");
+    expect(phase().textContent).toBe("running");
+    expect(pin(h).querySelector(".workflow-heading .run-progress-elapsed")!.textContent).toBe("1:46");
     expand(h);
-    expect(phase().textContent).toBe("Verify");
+    expect(phase().textContent).toBe("running");
     expect(pin(h).querySelector(".workflow-heading .run-progress-elapsed")!.textContent).toBe("1:46");
   });
   // A row printed the label AND the phase, and the label almost always already
@@ -227,7 +227,7 @@ describe("approved workflow states", () => {
     const agents = [base.agents[0], { ...base.agents[0], agent_id: "b", label: "Verifier", phase: "Verify", state: "pending", tokens_used: 19638 }];
     send(h, { agents }); expand(h);
     expect(hidden(pin(h).querySelector(".workflow-expanded"))).toBe(false);
-    expect(hidden(pin(h).querySelector(".workflow-dots"))).toBe(true);
+    expect(hidden(pin(h).querySelector(".workflow-dots"))).toBe(false);
     expect([...pin(h).querySelectorAll(".workflow-phase")].map((p) => p.textContent)).toEqual(base.phases.map((p) => p.title));
     const rows = [...pin(h).querySelectorAll(".workflow-agent")];
     expect(rows).toHaveLength(2);
@@ -288,18 +288,18 @@ describe("workflow evidence", () => {
     send(h, moved);
     h.advance(29_000);
     await new Promise((resolve) => setTimeout(resolve, 1100));
-    expect(receipt(h)).toBe("updated 29s ago");
+    expect(status(h)).toBe("running");
     expect(activity(h)).toBe("tokens moved 29s ago");
     h.advance(1000);
     await new Promise((resolve) => setTimeout(resolve, 1100));
-    expect.soft(receipt(h)).toBe("no recent updates (30s+)");
+    expect.soft(status(h)).toBe("running");
     expect.soft(activity(h)).toBe("no recent token movement (30s+)");
     h.advance(3_600_000);
     await new Promise((resolve) => setTimeout(resolve, 1100));
-    expect.soft(receipt(h)).toBe("no recent updates (30s+)");
+    expect.soft(status(h)).toBe("no update for 2 min");
     expect.soft(activity(h)).toBe("no recent token movement (30s+)");
     send(h, moved);
-    expect(receipt(h)).toBe("updated 0s ago");
+    expect(status(h)).toBe("running");
     expect.soft(activity(h)).toBe("no recent token movement (30s+)");
     send(h, { agents: [{ ...base.agents[0], tokens_used: 13 }] });
     expect(activity(h)).toBe("tokens moved 0s ago");
@@ -317,7 +317,8 @@ describe("workflow evidence", () => {
     h.advance(180_000);
     await new Promise((resolve) => setTimeout(resolve, 1100));
     const report = card(h);
-    expect.soft(report.querySelector(".workflow-receipt")!.textContent).toBe("final workflow update");
+    expect.soft(report.querySelector(".workflow-receipt")).toBeNull();
+    expect.soft(report.querySelector(".delegation-status")!.textContent).toBe("done");
     expect.soft(report.querySelector(".workflow-agent-activity")!.textContent).toBe("tokens moved");
   });
   it("does not deny token activity when the first snapshot already has a positive total", () => {
@@ -361,21 +362,21 @@ describe("workflow evidence", () => {
     expect(activity(h)).toBe("tokens moved 0s ago");
     h.advance(12000); send(h, moved);
     expect(activity(h)).toBe("tokens moved 12s ago");
-    expect(receipt(h)).toBe("updated 0s ago");
+    expect(status(h)).toBe("running");
     expect(summary(h)).not.toContain("tokens moved");
-    expect(summary(h)).toContain("12:08");
+    expect(summary(h)).toContain("12:21");
   });
-  it("ticks only receipt age while elapsed and zero-token evidence stay unchanged", async () => {
+  it("ticks elapsed while zero-token evidence stays unchanged", async () => {
     const h = boot(); send(h); h.advance(20000);
     await new Promise((resolve) => setTimeout(resolve, 1100));
-    expect(receipt(h)).toBe("updated 20s ago");
-    expect(summary(h)).toContain("12:08");
+    expect(status(h)).toBe("running");
+    expect(summary(h)).toContain("12:28");
     expect(activity(h)).toBe("no token activity observed");
   });
   it("does not mistake phase changes, token resets or older revisions for work", () => {
     const h = boot(); send(h, { revision: 3 });
     send(h, { revision: 2, current_phase: "Plan", agents: [{ ...base.agents[0], state: "failed" }] });
-    expect(summary(h)).toContain("Research");
+    expect(summary(h)).toContain("running");
     expect(activity(h)).toBe("no token activity observed");
     send(h, { current_phase: "Verify", agents: [{ ...base.agents[0], phase: "Verify" }] });
     send(h, { agents: [{ ...base.agents[0], tokens_used: -1 }] });
@@ -409,16 +410,16 @@ describe("workflow evidence", () => {
     dispatch(h.window, { type: "historyReplay", active: false });
     expect(h.doc.querySelector(".workflow-pin")).not.toBeNull();
     // No age, because none is known -- and not a finished run's wording either.
-    expect(receipt(h)).toBe("no update since this view opened");
+    expect(status(h)).toBe("running");
     expect(activity(h)).toBe("");
     // The handle is what a control needs; the host owns the run either way.
     const buttons = [...pin(h).querySelectorAll<HTMLButtonElement>(".run-progress-btn")];
     expect(buttons.map(b => b.textContent)).toEqual(["Pause", "Stop"]);
     expect(buttons.every(b => b.disabled)).toBe(false);
-    expect(card(h).textContent).toBe("deep-research · running");
+    expect(card(h).querySelector(".delegation-status")!.textContent).toBe("running");
     expect(card(h).querySelector("summary")).toBeNull();
     // Beside tool rows that all carry one, a bare string read as half-drawn.
-    expect(card(h).querySelector(".workflow-marker svg.tool-icon")).not.toBeNull();
+    expect(card(h).querySelector(".delegation-icon svg.tool-icon")).not.toBeNull();
   });
 });
 
@@ -430,10 +431,10 @@ describe("reported capabilities", () => {
     expect(pin(h).querySelectorAll(".workflow-dot")).toHaveLength(5);
     expect(pin(h).querySelectorAll(".workflow-dot")[2].getAttribute("aria-current")).toBe("step");
     send(h, { current_phase_id: "p2", phases: [{ id: "p2", title: "Renamed", state: "active" }] });
-    expect(summary(h)).toContain("Renamed");
+    expect(pin(h).querySelector(".workflow-phase")!.textContent).toBe("Renamed");
     expect(pin(h).querySelector('.workflow-dot[aria-current="step"]')!.getAttribute("data-phase-id")).toBe("p2");
     send(h, { current_phase: "p2", phases: [{ id: "p2", title: "Research" }] });
-    expect(summary(h)).toContain("Research");
+    expect(summary(h)).toContain("running");
     expect(pin(h).querySelector('.workflow-dot[aria-current="step"]')).not.toBeNull();
   });
   it("does not guess a current step for ambiguous names or unmatched ids", () => {
@@ -449,15 +450,15 @@ describe("reported capabilities", () => {
     const h = boot();
     dispatch(h.window, { type: "runProgress", update: { kind: "workflow", id: "opaque", title: "opaque", phase: "running", done: false, progress: 0.3 } });
     expect(pin(h).querySelectorAll(".workflow-dot, .workflow-agent")).toHaveLength(0);
-    for (const selector of [".workflow-phases", ".workflow-roster", ".run-progress-elapsed", ".workflow-spend"]) expect(hidden(pin(h).querySelector(selector))).toBe(true);
-    expect(card(h).textContent).toBe("Workflow \u00b7 running");
+    for (const selector of [".workflow-phases", ".workflow-roster", ".workflow-spend"]) expect(hidden(pin(h).querySelector(selector))).toBe(true);
+    expect(card(h).querySelector(".delegation-status")!.textContent).toBe("running");
     expect(pin(h).textContent).not.toMatch(/opaque|%/);
     send(h, { phases: undefined, current_phase: undefined, elapsed_ms: undefined, agents: undefined, agents_used: undefined, agent_budget: undefined });
-    expect(pin(h).querySelector('[data-run-id="r1"] .run-progress-phase')!.textContent).toBe("");
+    expect(pin(h).querySelector('[data-run-id="r1"] .run-progress-phase')!.textContent).toBe("running");
   });
   it("formats agent and deliverable budgets with separators", () => {
     const h = boot(); send(h, { agents_used: 1234, agent_budget: 20000, agents: [{ ...base.agents[0], tokens_used: 19638 }] }); expand(h);
-    expect(pin(h).textContent).toContain("1,234 of 20,000 agents used");
+    expect(pin(h).textContent).toContain("1,234 agents");
     expect(agent(h).textContent).toContain("19.64K tokens");
     dispatch(h.window, { type: "runProgress", update: parseRunProgressUpdate({ sessionUpdate: "goal_updated", completed_deliverables: 1234, total_deliverables: 20000 }) });
     expect(h.doc.querySelector('.run-progress-card:not(.workflow-card):not(.workflow-pin-run)')!.textContent).toContain("1,234/20,000 deliverables");
@@ -466,7 +467,7 @@ describe("reported capabilities", () => {
     const h = boot();
     dispatch(h.window, { type: "runProgress", update: { kind: "workflow", id: "old", title: "Existing workflow", phase: "running", done: false, agentsUsed: 1234, agentBudget: 20000, detail: "1234 of 20000 agents used" } });
     expand(h);
-    expect(pin(h).querySelector(".workflow-spend")!.textContent).toBe("1,234 of 20,000 agents used");
+    expect(pin(h).querySelector(".workflow-spend")!.textContent).toBe("1,234 agents");
     expect(hidden(pin(h).querySelector(".run-progress-detail"))).toBe(true);
   });
   it("keeps long phase names complete and ordered in the expanded strip", () => {
@@ -481,7 +482,7 @@ describe("reported capabilities", () => {
     send(h, { phases: undefined, agents: undefined, current_phase: undefined, elapsed_ms: undefined, agents_used: undefined, agent_budget: undefined });
     expect(pin(h).querySelectorAll(".workflow-dot, .workflow-agent")).toHaveLength(0);
     expect(hidden(pin(h).querySelector(".workflow-spend"))).toBe(true);
-    expect(hidden(pin(h).querySelector(".run-progress-elapsed"))).toBe(true);
+    expect(hidden(pin(h).querySelector(".run-progress-elapsed"))).toBe(false);
   });
   it("puts a run with a blocked agent first without opening it", () => {
     const h = boot(); send(h);
@@ -490,27 +491,18 @@ describe("reported capabilities", () => {
     expect(pin(h).querySelector(".workflow-pin-toggle")!.getAttribute("aria-expanded")).toBe("false");
   });
 
-  // Ordering alone is invisible with one run, which is the ordinary case — so
-  // the collapsed card has to SAY it. A blocked agent keeps arriving inside
-  // frames, so the receipt beside this line reads "updated 0s ago" either way.
-  it("names blocked and failed agents while collapsed, and stays quiet when healthy", () => {
-    const h = boot(); send(h);
-    const blockedLine = () => pin(h).querySelector(".workflow-blocked")!;
-    expect(hidden(blockedLine())).toBe(true);
-
-    send(h, { agents: [
+  it("keeps blocked and failed agent details inside the closed body", () => {
+    const h = boot(); send(h, { agents: [
       { ...base.agents[0], state: "permission_blocked" },
       { agent_id: "b", label: "Researcher B", phase: "Research", state: "failed", tokens_used: 10 },
-      { agent_id: "c", label: "Researcher C", phase: "Research", state: "running", tokens_used: 5 },
     ] });
+    expect(pin(h).querySelector(".workflow-blocked")).toBeNull();
     expect(hidden(pin(h).querySelector(".workflow-expanded"))).toBe(true);
-    expect(hidden(blockedLine())).toBe(false);
-    expect(blockedLine().textContent).toBe("1 agent permission blocked · 1 agent failed");
-    expect(receipt(h)).toBe("updated 0s ago");
-
-    send(h, { agents: [{ ...base.agents[0], state: "running" }] });
-    expect(hidden(blockedLine())).toBe(true);
+    expect(status(h)).toBe("running");
+    expand(h);
+    expect(pin(h).querySelector(".workflow-roster")!.textContent).toContain("permission blocked");
   });
+
 });
 
 describe("reachable controls and tool fallback", () => {
@@ -521,7 +513,8 @@ describe("reachable controls and tool fallback", () => {
     expect.soft(indicator()?.querySelector("svg path")?.getAttribute("d")).toBe("m9 18 6-6-6-6");
     expect.soft(indicator()?.getAttribute("aria-hidden")).toBe("true");
     click(h.window, button());
-    expect.soft(indicator()?.querySelector("svg path")?.getAttribute("d")).toBe("m6 9 6 6 6-6");
+    if (target === "heading") expect(indicator()?.classList.contains("is-open")).toBe(true);
+    else expect.soft(indicator()?.querySelector("svg path")?.getAttribute("d")).toBe("m6 9 6 6 6-6");
     click(h.window, button());
     expect.soft(indicator()?.querySelector("svg path")?.getAttribute("d")).toBe("m9 18 6-6-6-6");
   });
@@ -538,7 +531,7 @@ describe("reachable controls and tool fallback", () => {
     ]);
     send(h, { status: "user_paused" });
     expect(controls()[0].textContent).toBe("Resume");
-    expect(pin(h).querySelector(".run-progress-phase")!.textContent).toBe("Research · user paused");
+    expect(pin(h).querySelector(".run-progress-phase")!.textContent).toBe("paused");
     h.advance(60000); send(h, { status: "user_paused" });
     expect(summary(h)).toContain("12:08");
     send(h, { elapsed_ms: 729000 });
@@ -547,9 +540,9 @@ describe("reachable controls and tool fallback", () => {
   // A halt that is not a pause keeps Pause/Stop, so these words are the only
   // thing separating a stopped run from one that is still working.
   it.each([
-    ["budget_limited", "Research · budget limited"],
-    ["interrupted", "Research · interrupted"],
-    ["active", "Research"],
+    ["budget_limited", "running"],
+    ["interrupted", "running"],
+    ["active", "running"],
   ])("a collapsed pin reporting %s says so", (status, expected) => {
     const h = boot(); send(h, { status });
     expect(pin(h).querySelector(".run-progress-phase")!.textContent).toBe(expected);

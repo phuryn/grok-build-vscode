@@ -48,8 +48,8 @@ describe("old host output compatibility", () => {
     expect({ output: h.doc.querySelector(".workflow-output"), pin: h.doc.querySelector(".workflow-pin"),
       detail: text(h, ".run-progress-detail"), summary: text(h, ".run-progress-sub"),
       spend: text(h, ".workflow-spend"), open: (h.doc.querySelector("details") as HTMLDetailsElement).open,
-    }).toEqual({ output: null, pin: null, detail: "", summary: run.objective,
-      spend: `${run.agents_used} of ${run.agent_budget} agents used`, open: false });
+    }).toEqual({ output: null, pin: null, detail: "", summary: "",
+      spend: `${run.agents_used} agents`, open: false });
   });
 });
 
@@ -194,7 +194,7 @@ describe("completion without a terminal notification", () => {
       expect([...h.doc.querySelectorAll("details")].map(el => el.open)).toEqual([false, false]);
       expect([...h.doc.querySelectorAll(".workflow-phase")].map(el => el.getAttribute("data-state")))
         .toEqual(Array(8).fill("done"));
-      expect([...h.doc.querySelectorAll(".run-progress-elapsed")].map(el => el.textContent)).toEqual(["4:39", "4:39"]);
+      expect([...h.doc.querySelectorAll(".delegation-time")].map(el => el.textContent)).toEqual(["4:39", "4:39"]);
       expect(h.doc.querySelector(".workflow-agent button, .workflow-agent-chevron")).toBeNull();
       const count = session.buffer.length;
       sidebar.refreshWorkflowCompletions(session);
@@ -251,9 +251,9 @@ describe("the captured workflow lifecycle", () => {
     dispatch(h.window, { type: "historyReplay", active: false });
     expect(h.doc.querySelector(".workflow-pin, .workflow-marker, [aria-current=step]")).toBeNull();
     expect(text(h, ".workflow-report-name")).toBe("deep-research");
-    expect(text(h, ".workflow-card .run-progress-elapsed")).toBe("6:30");
+    expect(text(h, ".workflow-card .delegation-time")).toBe("6:30");
     expect(text(h, ".workflow-card .workflow-output-body")).toBe("Partial");
-    expect(text(h, ".workflow-card .workflow-spend")).toBe("6 of 16 agents used");
+    expect(text(h, ".workflow-card .workflow-spend")).toBe("6 agents");
     expect(h.doc.querySelectorAll('.workflow-phase[data-state="done"]')).toHaveLength(4);
   });
 
@@ -277,7 +277,7 @@ describe("the captured workflow lifecycle", () => {
       expect(text(h, ".workflow-agent-activity")).not.toMatch(/tokens moved|state changed/);
       expect(h.doc.querySelector(".workflow-card .blink-dots")).toBeNull();
     }
-    expect(text(h, ".workflow-pin .run-progress-phase")).toBe("Plan · user paused");
+    expect(text(h, ".workflow-pin .run-progress-phase")).toBe("paused");
     expect([...h.doc.querySelectorAll(".workflow-pin .run-progress-btn")].map((b) => b.textContent)).toEqual(["Resume", "Stop"]);
   });
   it("observes a cancelled state transition without portraying it as ongoing work", () => {
@@ -287,13 +287,13 @@ describe("the captured workflow lifecycle", () => {
     h.advance(12000); h.frame(5);
     expect(text(h, ".workflow-agent-activity")).toBe("state changed 12s ago \u00b7 no token activity observed");
     expect(h.doc.querySelector(".workflow-motion")).toBeNull();
-    expect(text(h, ".workflow-receipt")).toBe("updated 0s ago");
+    expect(h.doc.querySelector(".workflow-receipt")).toBeNull();
   });
   it("ends the pin on stop while retaining the reported duration and roster in the transcript", () => {
     const h = replay(); frames.forEach((_, i) => h.frame(i));
     expect(h.doc.querySelector(".workflow-pin")).toBeNull();
     expect(text(h, ".workflow-card .run-progress-phase")).toBe("");
-    expect(text(h, ".workflow-card .run-progress-elapsed")).toBe("0:00");
+    expect(text(h, ".workflow-card .delegation-time")).toBe("0:00");
     expect(text(h, ".workflow-agent-state")).toBe("cancelled · 0 tokens");
     expect(h.doc.querySelector(".workflow-card")!.classList.contains("run-progress-cancelled")).toBe(true);
     expect(h.doc.querySelectorAll(".workflow-card .run-progress-btn")).toHaveLength(0);

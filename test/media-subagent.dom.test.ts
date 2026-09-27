@@ -521,7 +521,7 @@ describe("subagent row (spawn_subagent tool call, grok 0.2.93 wire shape)", () =
     expect(card).not.toBeNull();
     expect(card.textContent).toContain("Subagent");
     expect(card.textContent).toContain("Read math.js and summarize add() in one sentence");
-    expect(card.querySelector(".blink-dots")).not.toBeNull();
+    expect(card.querySelector(".blink-dots")).toBeNull();
     expect(messages(doc).querySelector(".tool-group")).toBeNull();
   });
 
@@ -533,7 +533,7 @@ describe("subagent row (spawn_subagent tool call, grok 0.2.93 wire shape)", () =
     const card = messages(doc).querySelector(".subagent-card")!;
     expect(card.classList.contains("subagent-done")).toBe(true);
     expect(card.querySelector(".blink-dots")).toBeNull();
-    expect(card.querySelector(".subagent-time")!.textContent).toBe("· 7s");
+    expect(card.querySelector(".subagent-time")!.textContent).toBe("0:07");
     // the update must NOT leak into the generic tool group
     expect(messages(doc).querySelector(".tool-group")).toBeNull();
 

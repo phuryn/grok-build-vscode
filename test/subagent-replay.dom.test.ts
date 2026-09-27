@@ -56,7 +56,7 @@ describe("composer-agent mixed 10-tools + 5-subagents session (real wire replay)
     expect(first.querySelector(".subagent-title")!.textContent).toBe("Demo subagent file count");
     const body = first.querySelector(".subagent-result") as HTMLElement;
     expect(body.hidden).toBe(true); // collapsed until clicked
-    expect(body.textContent).toContain("Output of the subagent:");
+    expect(body.textContent).not.toContain("Output of the subagent:");
     // The CLI envelope is stripped from the child's words.
     expect(body.textContent).not.toContain("This is the output of the subagent:");
     expect(body.textContent).not.toContain("<response>");
@@ -105,7 +105,7 @@ describe("composer-agent mixed 10-tools + 5-subagents session (real wire replay)
     expect(card.classList.contains("subagent-done")).toBe(true);
     expect(card.classList.contains("subagent-failed")).toBe(true);
     // Visible on the row itself (red via .subagent-failed CSS), no expand needed.
-    expect((card.querySelector(".subagent-time") as HTMLElement).textContent).toContain("failed");
+    expect((card.querySelector(".subagent-status") as HTMLElement).textContent).toBe("failed");
     expect((card.querySelector(".subagent-result") as HTMLElement).textContent).toContain("tool crashed");
   });
 
@@ -148,7 +148,7 @@ describe("composer-agent mixed 10-tools + 5-subagents session (real wire replay)
     const card = cards[0];
     expect(card.classList.contains("subagent-done")).toBe(true);
     expect(card.querySelector(".subagent-title")!.textContent).toBe("Quick subagent smoke test");
-    expect(card.querySelector(".subagent-time")!.textContent).toBe("· 19s"); // 18778ms rounded
+    expect(card.querySelector(".subagent-time")!.textContent).toBe("0:18"); // 18778ms rounded
     const body = card.querySelector(".subagent-result") as HTMLElement;
     expect(body.textContent).toContain("Subagent smoke test ran successfully.");
     // The poller's own "[subagent:general-purpose] …" row must NOT appear.
@@ -171,7 +171,7 @@ describe("composer-agent mixed 10-tools + 5-subagents session (real wire replay)
     });
     const card = doc.querySelector(".subagent-card")! as HTMLElement;
     expect(card.classList.contains("subagent-failed")).toBe(true);
-    expect(card.querySelector(".subagent-time")!.textContent).toContain("failed");
+    expect(card.querySelector(".subagent-status")!.textContent).toBe("failed");
     expect(card.classList.contains("subagent-cancelled")).toBe(false);
   });
 
@@ -186,7 +186,7 @@ describe("composer-agent mixed 10-tools + 5-subagents session (real wire replay)
     const card = doc.querySelector(".subagent-card")! as HTMLElement;
     expect(card.classList.contains("subagent-cancelled")).toBe(true);
     expect(card.classList.contains("subagent-failed")).toBe(false);
-    expect(card.querySelector(".subagent-time")!.textContent).toContain("cancelled");
+    expect(card.querySelector(".subagent-status")!.textContent).toBe("stopped");
   });
 
   it("the lifecycle event is a completion backstop when the tool channel never completes", () => {
@@ -201,7 +201,7 @@ describe("composer-agent mixed 10-tools + 5-subagents session (real wire replay)
       },
     });
     const card = doc.querySelector(".subagent-card")!;
-    expect(card.querySelector(".blink-dots")).not.toBeNull();
+    expect(card.querySelector(".blink-dots")).toBeNull();
 
     dispatch(window, { type: "subagentUpdate", update: { sessionUpdate: "subagent_spawned", subagent_id: "c9" } });
     dispatch(window, {
@@ -210,7 +210,7 @@ describe("composer-agent mixed 10-tools + 5-subagents session (real wire replay)
     });
     expect(card.classList.contains("subagent-done")).toBe(true);
     expect(card.querySelector(".blink-dots")).toBeNull();
-    expect(card.querySelector(".subagent-time")!.textContent).toBe("· 2s");
+    expect(card.querySelector(".subagent-time")!.textContent).toBe("0:02");
     const body = card.querySelector(".subagent-result") as HTMLElement;
     expect(body.textContent).toContain("All counted.");
     expect(body.textContent).not.toContain("<response>");
@@ -252,7 +252,7 @@ describe("composer-agent mixed 10-tools + 5-subagents session (real wire replay)
     const card = doc.querySelector(".subagent-card")!;
     // Still running — the ack is not the result.
     expect(card.classList.contains("subagent-done")).toBe(false);
-    expect(card.querySelector(".blink-dots")).not.toBeNull();
+    expect(card.querySelector(".blink-dots")).toBeNull();
 
     // The poller (a DIFFERENT toolCallId) completes with the real output.
     dispatch(window, {
@@ -274,7 +274,7 @@ describe("composer-agent mixed 10-tools + 5-subagents session (real wire replay)
       },
     });
     expect(card.classList.contains("subagent-done")).toBe(true);
-    expect(card.querySelector(".subagent-time")!.textContent).toBe("· 70s");
+    expect(card.querySelector(".subagent-time")!.textContent).toBe("1:10");
     expect(card.querySelector(".subagent-result")!.textContent).toContain("Hi! I'm a Grok Build subagent.");
     expect(card.querySelector(".subagent-result")!.textContent).not.toContain("started in background");
     expect(card.querySelector(".subagent-result")!.textContent).not.toContain("subagent_meta");
