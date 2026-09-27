@@ -1,5 +1,21 @@
 # Changelog
 
+## 4.13.3 — 2026-09-28
+
+**One card for a running workflow, and steps you can read at a glance.**
+
+### Changed
+
+- **One card for a running workflow.** It is pinned above the message box, and the place where it started keeps a one-line trace instead of a second copy. When the run finishes, the card lands where it started.
+- **Unpin a workflow.** The pin button at the end of an opened workflow card puts the card back where the workflow started, with its controls, and the choice is remembered. A phone keeps its own choice.
+- **Colours and words that mean something.** A workflow's header dots, steps and agents share one marker: green done, blue in progress, grey next, red failed. The steps run across with arrows, and the one in progress is bold. Every agent's rows use the same status words (done, running, failed, stopped), whichever agent reports them.
+
+### Fixed
+
+- **A reopened Grok workflow sits after the row that launched it**, not above it.
+- **A Grok workflow that returns JSON shows it in the card**, instead of no result.
+- **"Sending your message" clears once the message has gone through.** On a phone or browser it could stay up, "waiting for confirmation", after the message had already been sent and answered, until the next one.
+
 ## 4.13.2 — 2026-09-27
 
 **Subagents and workflows show up for every agent, and cloud machines can update themselves.**
