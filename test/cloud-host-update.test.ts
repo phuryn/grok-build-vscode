@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { CloudHostUpdate, cloudHostIsIdle, cloudUpdateMandatory, installedCloudHostVersion, parseCloudHostUpdateAttempt, type CloudHostUpdateAttempt } from "../src/cloud-host-update";
+import { CloudHostUpdate, cloudHostIsIdle, cloudUpdateMandatory, installedCloudHostVersion, parseCloudHostUpdateAttempt, removeCloudHostUpdateStamps, type CloudHostUpdateAttempt } from "../src/cloud-host-update";
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, unlinkSync, rmdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Session } from "../src/session";
 import { allowFromRemote, mayDeliverRemoteHostMsg, remoteRequiresBoundSession } from "../src/remote-policy";
 import { parseWebviewMsg } from "../src/desktop/webview-msg-validate";
@@ -9,6 +12,37 @@ import { TerminalManager } from "../src/terminal-manager";
 const updates: CloudHostUpdate[] = [];
 beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(1_000_000); });
 afterEach(() => { updates.splice(0).forEach((u) => u.dispose()); vi.useRealTimers(); });
+
+it.each([true, false])("clears both real BOOT stamps before exit (stamps exist=%s)", async present => {
+  const home = mkdtempSync(join(tmpdir(), "host-stamps-"));
+  const app = join(home, "afkpilot");
+  mkdirSync(app);
+  const stamps = [join(app, ".afkpilot-host-checked"), join(home, ".afkpilot-agents-updated")];
+  try {
+    if (present) for (const file of stamps) writeFileSync(file, "checked");
+    const h = setup({ removeStamp: () => removeCloudHostUpdateStamps(home) });
+    await h.update.check(); h.update.request();
+    await vi.waitFor(() => expect(h.exit).toHaveBeenCalledOnce());
+    expect(stamps.map(existsSync)).toEqual([false, false]);
+    await removeCloudHostUpdateStamps(home); // repeated / missing is fine
+  } finally {
+    for (const file of stamps) if (existsSync(file)) unlinkSync(file);
+    rmdirSync(app); rmdirSync(home);
+  }
+});
+
+it("keeps the host running if the agents stamp cannot be removed", async () => {
+  const home = mkdtempSync(join(tmpdir(), "host-stamps-error-"));
+  const stamp = join(home, ".afkpilot-agents-updated");
+  mkdirSync(stamp); // unlink rejects a directory on all supported platforms
+  try {
+    const h = setup({ removeStamp: () => removeCloudHostUpdateStamps(home) });
+    await h.update.check(); h.update.request();
+    await vi.waitFor(() => expect(h.update.snapshot.state).toBe("failed"));
+    expect(h.exit).not.toHaveBeenCalled();
+    expect(existsSync(stamp)).toBe(true);
+  } finally { rmdirSync(stamp); rmdirSync(home); }
+});
 
 function setup(overrides: Partial<ConstructorParameters<typeof CloudHostUpdate>[0]> = {}) {
   const events: string[] = [];

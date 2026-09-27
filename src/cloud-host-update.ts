@@ -1,4 +1,15 @@
 import type { HostMsg } from "./protocol";
+import { promises as fs } from "node:fs";
+import * as path from "node:path";
+
+/** BOOT rechecks the host and reinstalls agent CLIs after this handoff. */
+export async function removeCloudHostUpdateStamps(home: string): Promise<void> {
+  for (const stamp of [path.join(home, "afkpilot", ".afkpilot-host-checked"),
+    path.join(home, ".afkpilot-agents-updated")]) {
+    try { await fs.unlink(stamp); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+  }
+}
 
 export type CloudHostUpdateState = Extract<HostMsg, { type: "cloudHostUpdateState" }>;
 const HOUR = 3_600_000;

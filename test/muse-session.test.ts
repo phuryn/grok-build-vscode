@@ -9,6 +9,8 @@ import { AcpClient } from "../src/acp";
 import { MuseBackend } from "../src/muse-backend";
 import { MspError } from "@muse-code/sdk";
 import { RequestError } from "@agentclientprotocol/sdk";
+import { adapterListEntry } from "../src/provider-ui";
+import museListing from "./fixtures/muse-session-list.json";
 
 // The session tests inject a fake SDK connection; no vendor executable is used.
 vi.mock("@muse-code/sdk", async importOriginal => ({
@@ -62,6 +64,52 @@ async function ready() {
   const result = await s.session.newSession("/workspace", []);
   return { ...s, result };
 }
+
+describe("Muse blank session history", () => {
+  // session/list from the Run 3 binary/store, with paths, IDs and prompts scrubbed.
+  // The blank row has a NUMBER zero; title/firstUserPrompt are omitted, not null.
+  it("hides the real blank listing shape before it reaches rail/history, including a fresh catalog client", async () => {
+    for (let reopen = 0; reopen < 2; reopen++) {
+      const s = setup();
+      await s.session.initialize(); // catalog only: no session/start or prompt
+      s.connection.request.mockResolvedValue(museListing as any);
+      const result = await new MuseBackend().listSessions(async (_method, params) =>
+        JSON.parse(JSON.stringify(await s.session.listSessions(params.cwd, params.cursor))), "/example/project");
+      const rows = result.sessions.map(entry => adapterListEntry(entry, {}, "muse"));
+      expect(rows.map(row => row.id)).toEqual(["muse-parallel-demo", "muse-sequential-demo"]);
+      expect(rows.map(row => row.numMessages)).toEqual([1, 1]);
+      expect(rows.every(row => !row.displayName.startsWith("Untitled"))).toBe(true);
+      expect(s.command).not.toHaveBeenCalled();
+    }
+  });
+
+  it.each([
+    { firstUserPrompt: "Interrupted before the first turn completed" },
+    { title: "A conversation with content" },
+    { lastActivityAt: "2026-09-27T05:45:52.000000Z" },
+    { activeTurnId: "in-flight" },
+    { status: "running" },
+    { forkedFrom: { sessionId: "source", viewCursor: "opaque" } },
+    { turnCount: 1 },
+    { turnCount: undefined },
+    { activeTurnId: undefined },
+    { forkedFrom: undefined },
+  ])("preserves zero-turn content or uncertain metadata: %j", async content => {
+    const s = setup(); await s.session.initialize();
+    const row = { ...museListing.sessions[2], ...content };
+    s.connection.request.mockResolvedValue({ sessions: [row], nextCursor: null } as any);
+    expect((await s.session.listSessions("/example/project")).sessions).toHaveLength(1);
+  });
+
+  it("continues pagination through an entirely blank page", async () => {
+    const s = setup(); await s.session.initialize();
+    s.connection.request.mockResolvedValueOnce({ sessions: [museListing.sessions[2]], nextCursor: "next" } as any)
+      .mockResolvedValueOnce({ sessions: [museListing.sessions[0]], nextCursor: null } as any);
+    const result = await new MuseBackend().listSessions((_method, params) => s.session.listSessions(params.cwd, params.cursor), "/example/project");
+    expect(result.sessions.map(row => row.sessionId)).toEqual(["muse-parallel-demo"]);
+    expect(s.connection.request).toHaveBeenLastCalledWith("session/list", { workspaceRoot: "/example/project", cursor: "next", limit: 200 });
+  });
+});
 
 describe("Muse reasoning effort", () => {
   const levels = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"] as const;

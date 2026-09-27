@@ -12,6 +12,7 @@ import type {
   BackendUpdate,
 } from "./acp-backend";
 import { adapterContextOccupancy } from "./acp-dispatch";
+import { ClaudeWorkflows } from "./claude-workflows";
 
 export const CLAUDE_ACP_ADAPTER_PACKAGE = "@agentclientprotocol/claude-agent-acp";
 export const CLAUDE_ACP_ADAPTER_VERSION = packageManifest.dependencies[CLAUDE_ACP_ADAPTER_PACKAGE];
@@ -362,31 +363,14 @@ export class ClaudeBackend implements AcpBackend {
   }
 
   normalizePromptResult(result: any): any { return normalizeClaudePromptResult(result); }
-  private readonly workflowLaunches = new Map<string, any>();
+  private readonly workflows = new ClaudeWorkflows();
   normalizeUpdate(update: any, meta: any): BackendUpdate {
+    if (["async_task_spawned", "async_task_progress", "async_task_state_update"].includes(update?.sessionUpdate)) {
+      return { workflowUpdate: this.workflows.accept(update) };
+    }
     const result = normalizeClaudeUpdate(update, meta);
-    const launch = result.workflowUpdate;
-    if (launch) {
-      const previous = this.workflowLaunches.get(launch.run_id);
-      if (launch.name === "Workflow" && previous) launch.name = previous.name;
-      const output = typeof update.rawOutput === "string" ? update.rawOutput : "";
-      const taskId = update._meta?.claudeCode?.toolResponse?.taskId
-        ?? /^Workflow launched in background\. Task ID:\s*(\S+)/.exec(output)?.[1];
-      for (const key of [update.toolCallId, taskId, launch.run_id]) {
-        if (typeof key === "string" && key) this.workflowLaunches.set(key, launch);
-      }
-    }
-    if (result.notice) {
-      const text = update.content.text as string;
-      const ids = ["task-id", "tool-use-id", "run-id"].map(tag =>
-        new RegExp(`<${tag}>([^<]+)</${tag}>`).exec(text)?.[1]?.trim());
-      const matches = ids.map(id => id && this.workflowLaunches.get(id)).filter(Boolean);
-      const status = /<status>([^<]*)<\/status>/.exec(text)?.[1];
-      if (matches.length && matches.every(match => match.run_id === matches[0].run_id)
-          && status && /^(completed|failed|cancelled|stopped)$/.test(status)) {
-        result.workflowUpdate = { ...matches[0], status };
-      }
-    }
+    if (result.workflowUpdate) result.workflowUpdate = this.workflows.launch(update, result.workflowUpdate);
+    if (result.notice) result.workflowUpdate = this.workflows.notification(update.content.text);
     return result;
   }
   normalizePermissionParams(params: any): any { return normalizeClaudePermissionParams(params); }

@@ -2893,6 +2893,7 @@ body.thinking-hidden .msg.thinking { display: none; }
 .workflow-dots { display: inline-flex; flex-wrap: wrap; gap: 5px; align-items: center; }
 .workflow-dot { width: 7px; height: 7px; border: 1px solid currentColor; border-radius: 50%; opacity: 0.45; }
 .workflow-dot[data-state="unknown"] { border-style: dashed; }
+.workflow-agent-dot[data-state="active"] { border: 2px solid var(--vscode-charts-blue, #3794ff); opacity: 1; }
 .workflow-dot[data-state="done"], .workflow-dot[data-state="complete"], .workflow-dot[data-state="completed"] { background: var(--vscode-charts-green, #4ec9b0); border-color: var(--vscode-charts-green, #4ec9b0); opacity: 1; }
 .workflow-dot[data-state="failed"] { background: var(--vscode-errorForeground); border-color: var(--vscode-errorForeground); opacity: 1; }
 .workflow-dot[data-state="cancelled"] { opacity: 0.7; }

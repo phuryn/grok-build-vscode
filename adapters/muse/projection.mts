@@ -35,6 +35,7 @@ function workflowUpdate(item: Record<string, any>): Record<string, any> | undefi
     status: item.status === "inProgress" ? "running" : item.status === "completed" ? "completed"
       : item.status === "cancelled" ? "cancelled" : "failed",
     controlsAvailable: false,
+    agentProgressDots: true,
     result_summary: typeof summary === "string" ? summary : undefined,
     agents: children.filter((child: any) => child && typeof child.childId === "string").map((child: any, i: number) => ({
       agent_id: child.childId, label: `Agent ${i + 1}`,

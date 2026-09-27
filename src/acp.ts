@@ -275,7 +275,7 @@ export const GROK_IMAGE_READ_MIN_VERSION: [number, number, number] = [1, 0, 4];
  * handshake. A missed version probe must not silently drop client fs: on
  * 0.2.117 that can blank plan review (`planContent: null`) and may also stop
  * write delegation. Codex retains delegated fs and opts into subagent sessions;
- * Claude and Muse keep the default handshake.
+ * Claude opts into background task updates; Muse keeps the default handshake.
  */
 export function acpClientCapabilities(
   provider: AcpProvider,
@@ -283,9 +283,11 @@ export function acpClientCapabilities(
   versionVerified = false,
 ): AcpClientCapabilities {
   // codex-acp's bundled ACP schema strips `subagents` before its native gate.
-  // AIR metadata survives that parser. asyncTasks is a separate, unused opt-in.
+  // AIR metadata survives that parser. Codex's separate asyncTasks opt-in stays off.
   if (provider === "codex") return { ...ACP_DELEGATED_FS_CAPABILITIES, subagents: {},
     _meta: { jetbrains: { air: { version: 1, capabilities: ["nativeSubagentSessions"] } } } };
+  if (provider === "claude") return { ...ACP_DELEGATED_FS_CAPABILITIES,
+    _meta: { jetbrains: { air: { version: 1, capabilities: ["asyncTasks"] } } } };
   if (provider !== "grok") return ACP_DELEGATED_FS_CAPABILITIES;
   if (!versionVerified) return ACP_DELEGATED_FS_CAPABILITIES;
   const parsed = parseGrokVersion(grokVersion ?? "");

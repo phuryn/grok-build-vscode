@@ -14,6 +14,16 @@ export const REASONING_EFFORTS = ["none", "minimal", "low", "medium", "high", "x
 const RESUME_RETRY_DELAY_MS = 300;
 const RESUME_RETRY_WINDOW_MS = 10_000;
 
+/** turnCount counts completed turns, not prompts. Keep unfinished work and
+ *  forks; creation/resume bookkeeping can advance updatedAt on a blank row. */
+function isBlankMuseSession(session: Record<string, any>): boolean {
+  const hasText = (value: unknown) => typeof value === "string" && !!value.trim();
+  return session.turnCount === 0 && session.activeTurnId === null
+    && session.forkedFrom === null && session.status !== "running"
+    && !hasText(session.firstUserPrompt) && !hasText(session.title)
+    && !hasText(session.lastActivityAt);
+}
+
 /**
  * How long a closing adapter waits for `muse serve` to actually exit. The host
  * gives every adapter three seconds before it kills the tree, so this stays
@@ -172,7 +182,7 @@ export class MuseSession {
       ...(cwd ? { workspaceRoot: cwd } : {}), ...(cursor ? { cursor } : {}), limit: 200,
     });
     if (!Array.isArray(result.sessions)) throw new Error("Muse session/list returned no sessions");
-    return { sessions: result.sessions.map((s: any) => ({ sessionId: s.sessionId, cwd: s.workspaceRoot,
+    return { sessions: result.sessions.filter((s: any) => !isBlankMuseSession(s)).map((s: any) => ({ sessionId: s.sessionId, cwd: s.workspaceRoot,
       title: s.title || s.firstUserPrompt, updatedAt: s.updatedAt,
       _meta: { createdAt: s.createdAt, turnCount: s.turnCount, modelId: s.modelId, branch: s.branch } })),
       nextCursor: result.nextCursor as string | null };

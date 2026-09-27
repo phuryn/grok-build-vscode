@@ -1,4 +1,4 @@
-import { CloudHostUpdate, cloudHostIsIdle, installedCloudHostVersion, parseCloudHostUpdateAttempt, CLOUD_UPDATE_REFUSAL } from "./cloud-host-update";
+import { CloudHostUpdate, cloudHostIsIdle, installedCloudHostVersion, parseCloudHostUpdateAttempt, removeCloudHostUpdateStamps, CLOUD_UPDATE_REFUSAL } from "./cloud-host-update";
 import { MuseBackend, withMuseCredentialBackend } from "./muse-backend";
 import { locateMuseCli, parseMuseVersionOutput } from "./muse-cli-locator";
 import { museInstallCommand } from "./muse-install";
@@ -1302,10 +1302,7 @@ export class GrokSidebar {
         if (!this.uplink) return Promise.reject(new Error("No uplink for maintenance hold"));
         return this.uplink.maintenance();
       },
-      removeStamp: async () => {
-        try { await fs.promises.unlink(path.join(app, ".afkpilot-host-checked")); }
-        catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
-      },
+      removeStamp: () => removeCloudHostUpdateStamps(os.homedir()),
       exit: () => this.host.exitCloudHost!(),
     });
   }

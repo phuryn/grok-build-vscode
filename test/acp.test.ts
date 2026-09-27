@@ -990,7 +990,9 @@ describe("acpClientCapabilities", () => {
       _meta: { jetbrains: { air: { version: 1, capabilities: ["nativeSubagentSessions"] } } } });
     expect(acpClientCapabilities("codex", "1.0.4", true)).toEqual({ ...ACP_DELEGATED_FS_CAPABILITIES, subagents: {},
       _meta: { jetbrains: { air: { version: 1, capabilities: ["nativeSubagentSessions"] } } } });
-    for (const provider of ["grok", "claude", "muse"] as const) {
+    expect(acpClientCapabilities("claude")).toEqual({ ...ACP_DELEGATED_FS_CAPABILITIES,
+      _meta: { jetbrains: { air: { version: 1, capabilities: ["asyncTasks"] } } } });
+    for (const provider of ["grok", "muse"] as const) {
       expect(acpClientCapabilities(provider)).toEqual(ACP_DELEGATED_FS_CAPABILITIES);
     }
   });

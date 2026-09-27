@@ -1,0 +1,10 @@
+[
+  {"sessionUpdate":"async_task_spawned","asyncTaskId":"task-live","name":"Two steps","taskType":"workflow","description":"Two steps","showInTranscript":false,"canStop":true},
+  {"sessionUpdate":"tool_call_update","toolCallId":"launch-live","_meta":{"claudeCode":{"toolName":"Workflow","toolResponse":{"status":"async_launched","taskType":"local_workflow","taskId":"task-live","runId":"wf-live","workflowName":"two-steps","summary":"Two steps"}}}},
+  {"sessionUpdate":"async_task_progress","toolCallId":"launch-live","asyncTaskId":"task-live"},
+  {"sessionUpdate":"async_task_progress","asyncTaskId":"task-live","description":"One: step-one","summary":"Two steps","lastToolName":"step-one","usage":{"totalTokens":100,"toolUses":0,"durationMs":1000}},
+  {"sessionUpdate":"async_task_progress","asyncTaskId":"task-live","description":"Two: step-two","summary":"Two steps","lastToolName":"step-two","usage":{"totalTokens":200,"toolUses":0,"durationMs":2000}},
+  {"sessionUpdate":"async_task_state_update","toolCallId":"launch-live","asyncTaskId":"task-live","state":"stopped"},
+  {"sessionUpdate":"async_task_state_update","toolCallId":"launch-live","asyncTaskId":"task-live","state":"completed"},
+  {"sessionUpdate":"async_task_state_update","toolCallId":"launch-live","asyncTaskId":"task-live","state":"completed","outputFilePath":"/example/tasks/task-live.output"}
+]

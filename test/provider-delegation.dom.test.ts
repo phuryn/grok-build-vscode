@@ -10,6 +10,7 @@ import { parseRunProgressUpdate } from "../src/run-progress";
 import { OUTBOUND_DISPOSITION, OUTBOUND_PROJECT_AUTH, transformHostMsgForRemote } from "../src/remote-policy";
 import { Projection } from "../adapters/muse/projection.mts";
 import { bootWebview, dispatch, type Harness } from "./webview-harness";
+import claudeAsyncWire from "./fixtures/claude-async-workflow.json";
 
 // Whitelisted fields from the 2026-09-26 captures. IDs and paths are neutral;
 // the fixtures never include the original machine metadata or skill catalog.
@@ -27,7 +28,7 @@ function setup(provider: string, parent = "parent") {
   let replaying = false;
   const buffer: any[] = [];
   const client = new AcpClient({ cliPath: "unused", cwd: "/example", log: () => {},
-    backend: backends.find(b => b.provider === provider)! });
+    backend: provider === "claude" ? new ClaudeBackend() : backends.find(b => b.provider === provider)! });
   client.sessionId = parent;
   const emit = (msg: any) => {
     if (msg.type === "historyReplay") replaying = msg.active;
@@ -152,6 +153,12 @@ describe("provider delegation through the existing presentation wire", () => {
       expect(s.buffer.filter(m => m.type === "runProgress").at(-1).update.done).toBe(false);
       expect(s.desk.doc.querySelectorAll(".workflow-pin .workflow-agent")).toHaveLength(2);
       expect(s.desk.doc.querySelectorAll(".run-progress-btn")).toHaveLength(0);
+      for (const h of [s.desk, s.phone, s.reopen()]) {
+        const dots = h.doc.querySelectorAll(".workflow-pin .workflow-dot");
+        expect([...dots].map(dot => (dot as HTMLElement).dataset.state)).toEqual(["done", "done"]);
+        expect(dots[0].parentElement?.hidden).toBe(false);
+        expect(h.doc.querySelectorAll(".workflow-phase")).toHaveLength(0);
+      }
       p.accept(rows.at(-1).method, { item: rows.at(-1).item });
       p.accept(rows.at(-1).method, { item: rows.at(-1).item }); // duplicate revision
     }
@@ -159,6 +166,7 @@ describe("provider delegation through the existing presentation wire", () => {
     for (const h of [s.desk, s.phone, s.reopen()]) {
       expect(h.doc.querySelectorAll(".workflow-card")).toHaveLength(1);
       expect(h.doc.querySelectorAll(".workflow-agent")).toHaveLength(2);
+      expect([...h.doc.querySelectorAll(".workflow-report-dots .workflow-dot")].map(dot => (dot as HTMLElement).dataset.state)).toEqual(["done", "done"]);
       expect(h.doc.querySelector(".workflow-output-body")?.textContent).toMatch(/alpha[\s\S]*beta/);
       expect(h.doc.querySelector(".workflow-output-body code")?.textContent).toContain('"status": "ok"');
       expect(h.doc.querySelector(".workflow-pin")).toBeNull();
@@ -200,6 +208,83 @@ describe("provider delegation through the existing presentation wire", () => {
       expect(OUTBOUND_PROJECT_AUTH[type]).toBe("scope");
     }
   });
+});
+
+it.each(["completed", "failed"])("Claude upgrades the receipt in place and finishes %s on desk, phone and warm reopen", terminal => {
+  const s = setup("claude");
+  s.accept(claudeAsyncWire[1]);
+  const card = s.desk.doc.querySelector(".workflow-card");
+  expect(card?.textContent).toContain("launched");
+  s.accept(claudeAsyncWire[0]);
+  for (const update of claudeAsyncWire.slice(2, 5)) s.accept(update);
+  expect(s.desk.doc.querySelector(".workflow-card")).toBe(card);
+  for (const h of [s.desk, s.phone, s.reopen()]) {
+    expect(h.doc.querySelectorAll(".workflow-card")).toHaveLength(1);
+    expect(h.doc.querySelectorAll(".workflow-pin .workflow-dot")).toHaveLength(2);
+    expect(h.doc.querySelector(".workflow-pin")?.textContent).toContain("two-steps");
+    expect(h.doc.querySelector(".workflow-pin")?.textContent).toContain("step-two");
+    expect(h.doc.querySelectorAll(".run-progress-btn")).toHaveLength(0);
+  }
+  s.accept(claudeAsyncWire[5]);
+  s.accept({ ...claudeAsyncWire[6], state: terminal, summary: "## Result\n\n**Finished** <script>bad()</script>" });
+  s.accept({ ...claudeAsyncWire[7], state: terminal });
+  s.accept(claudeAsyncWire[1]);
+  for (const h of [s.desk, s.phone, s.reopen()]) {
+    expect(h.doc.querySelectorAll(".workflow-card")).toHaveLength(1);
+    expect(h.doc.querySelector(".workflow-pin")).toBeNull();
+    expect(h.doc.querySelector(".workflow-report-state")?.textContent).toBe(terminal === "completed" ? "done" : "failed");
+    expect(h.doc.querySelectorAll(".workflow-agent")).toHaveLength(2);
+    expect(h.doc.querySelector(".workflow-output-body h2")?.textContent).toBe("Result");
+    expect(h.doc.querySelector(".workflow-output-body script")).toBeNull();
+  }
+});
+
+it("Claude phase and agent labels stay text on desk, phone and buffered reopen", () => {
+  const s = setup("claude");
+  s.accept(claudeAsyncWire[1]); s.accept(claudeAsyncWire[0]);
+  s.accept({ ...claudeAsyncWire[3], description: '<img src=x onerror=bad()>: <script>bad()</script>' });
+  for (const h of [s.desk, s.phone, s.reopen()]) {
+    const pin = h.doc.querySelector(".workflow-pin")!;
+    expect(pin.textContent).toContain("<script>bad()</script>");
+    expect(pin.querySelector("img, script")).toBeNull();
+  }
+});
+
+it.each(["completed", "failed", "stopped"])("Claude phase progression and parallel agents stay clear on desk/phone/reopen (%s)", terminal => {
+  const s = setup("claude");
+  s.accept(claudeAsyncWire[1]); s.accept(claudeAsyncWire[0]);
+  for (const description of ["Pick: three nouns", "Describe: describe:wave", "Describe: describe:tide", "Describe: describe:reef", "Describe: describe:wave"]) {
+    s.accept({ ...claudeAsyncWire[3], description });
+  }
+  for (const h of [s.desk, s.phone, s.reopen()]) {
+    const pin = h.doc.querySelector(".workflow-pin")!;
+    expect([...pin.querySelectorAll(".workflow-phase")].map(el => (el as HTMLElement).dataset.state)).toEqual(["done", "active"]);
+    expect([...pin.querySelectorAll(".workflow-agent")].map(el => (el as HTMLElement).dataset.state)).toEqual(["done", "active", "active", "active"]);
+    expect(pin.textContent).not.toMatch(/unknown|\?/);
+  }
+  s.accept({ ...claudeAsyncWire[3], description: "Combine: make a haiku" });
+  for (const h of [s.desk, s.phone, s.reopen()]) {
+    expect([...h.doc.querySelectorAll(".workflow-pin .workflow-agent")].map(el => (el as HTMLElement).dataset.state)).toEqual(["done", "done", "done", "done", "active"]);
+  }
+  s.accept({ ...claudeAsyncWire[6], state: terminal });
+  for (const h of [s.desk, s.phone, s.reopen()]) {
+    expect(h.doc.querySelector(".workflow-report-state")?.textContent).toBe(terminal === "completed" ? "done" : terminal === "stopped" ? "cancelled" : "failed");
+    expect([...h.doc.querySelectorAll(".workflow-agent")].map(el => (el as HTMLElement).dataset.state)).toEqual(["done", "done", "done", "done", terminal === "completed" ? "done" : terminal === "stopped" ? "cancelled" : terminal]);
+    expect(h.doc.querySelector(".workflow-card")?.textContent).not.toMatch(/unknown|\?/);
+  }
+});
+
+it.each(["inProgress", "failed"])("Muse child dots distinguish failure without phases or invented names (%s)", status => {
+  const s = setup("muse");
+  const p = new Projection(update => s.accept(update), () => {});
+  p.acceptHistory({ ...fixtures["muse-workflow"].at(-1).item, status,
+    children: [{ childId: "one", status: "terminal", terminal: "failed" }, { childId: "two", status: "started" }] });
+  for (const h of [s.desk, s.phone, s.reopen()]) {
+    const selector = status === "inProgress" ? ".workflow-pin .workflow-dot" : ".workflow-report-dots .workflow-dot";
+    expect([...h.doc.querySelectorAll(selector)].map(dot => (dot as HTMLElement).dataset.state)).toEqual(["failed", "active"]);
+    expect(h.doc.querySelectorAll(".workflow-phase")).toHaveLength(0);
+    expect(h.doc.querySelectorAll(".workflow-agent-name")[0].textContent).toBe("Agent 1");
+  }
 });
 
 describe("paused workflow Markdown (#189)", () => {

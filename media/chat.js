@@ -14348,6 +14348,18 @@
         if (current) item.setAttribute("aria-current", "step");
       }
     }
+    if (!hasPhases && u.agentProgressDots && Array.isArray(u.agents)) {
+      dots.hidden = expanded || !u.agents.length;
+      for (const agent of u.agents) {
+        const dot = workflowText(dots, "workflow-dot workflow-agent-dot", "", "span");
+        const state = agent.state || "unknown";
+        dot.dataset.state = /^(started|usage|running|active)$/.test(state) ? "active"
+          : /^(complete|completed|done)$/.test(state) ? "done"
+          : /^(failed|error|rejected|timedOut|aborted)$/.test(state) ? "failed" : state;
+        dot.title = `${workflowAgentName(agent)}: ${state}`;
+        dot.setAttribute("aria-label", dot.title);
+      }
+    }
     // Legacy detail mixes results, pause reasons and arbitrary CLI events.
     // Its provenance cannot be recovered by splitting on a separator. Only
     // source-preserving hosts can provide output; do not guess on old hosts.

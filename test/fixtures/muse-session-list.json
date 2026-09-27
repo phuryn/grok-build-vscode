@@ -1,0 +1,48 @@
+{
+  "sessions": [
+    {
+      "sessionId": "muse-parallel-demo",
+      "path": "/example/muse/sessions/muse-parallel-demo/session.jsonl",
+      "status": "notLoaded",
+      "activeTurnId": null,
+      "createdAt": "2026-09-27T05:45:03.091887Z",
+      "updatedAt": "2026-09-27T05:50:04.935844Z",
+      "workspaceRoot": "/example/project",
+      "providerId": "meta",
+      "modelId": "muse-spark-1.3",
+      "turnCount": 1,
+      "forkedFrom": null,
+      "title": "Run two readers and merge their summaries.",
+      "firstUserPrompt": "Run two readers and merge their summaries."
+    },
+    {
+      "sessionId": "muse-sequential-demo",
+      "path": "/example/muse/sessions/muse-sequential-demo/session.jsonl",
+      "status": "notLoaded",
+      "activeTurnId": null,
+      "createdAt": "2026-09-27T05:44:11.145499Z",
+      "updatedAt": "2026-09-27T05:49:51.374358Z",
+      "workspaceRoot": "/example/project",
+      "providerId": "meta",
+      "modelId": "muse-spark-1.3-contributor",
+      "turnCount": 1,
+      "forkedFrom": null,
+      "title": "Run a short demo workflow.",
+      "firstUserPrompt": "Run a short demo workflow."
+    },
+    {
+      "sessionId": "muse-blank-before-provider-switch",
+      "path": "/example/muse/sessions/muse-blank-before-provider-switch/session.jsonl",
+      "status": "notLoaded",
+      "activeTurnId": null,
+      "createdAt": "2026-09-27T05:45:51.831613Z",
+      "updatedAt": "2026-09-27T05:45:52.353129Z",
+      "workspaceRoot": "/example/project",
+      "providerId": "meta",
+      "modelId": "muse-spark-1.3",
+      "turnCount": 0,
+      "forkedFrom": null
+    }
+  ],
+  "nextCursor": null
+}

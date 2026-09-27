@@ -10,11 +10,34 @@ import { ClaudeBackend } from "../src/claude-backend";
 import { MuseBackend } from "../src/muse-backend";
 import { parseRunProgressUpdate } from "../src/run-progress";
 import { Projection } from "../adapters/muse/projection.mts";
+import { SessionFold } from "@muse-code/sdk";
 
 const fixtures = JSON.parse(readFileSync(new URL("fixtures/provider-delegation.json", import.meta.url), "utf8"));
 const backends = [grokBackend, new CodexBackend(), new ClaudeBackend(), new MuseBackend()];
 
 describe("provider delegation normalization boundaries", () => {
+  it("projects the installed Muse SDK's real workflow fold, preserving opaque result references", () => {
+    const fold = new SessionFold();
+    const updates: any[] = [];
+    const projection = new Projection(update => updates.push(update), () => {});
+    for (const row of fixtures["muse-workflow"]) {
+      fold.apply({ method: row.method, params: { sessionId: "parent", item: row.item } } as any);
+      projection.accept(row.method, { item: fold.items.get(row.item.itemId) });
+    }
+    const final = fixtures["muse-workflow"].at(-1).item;
+    const held = fold.items.get(final.itemId)!;
+    expect(held.children).toEqual(final.children);
+    // The scrubbed fixture omitted refs. Exercise the SDK with the documented
+    // opaque URI too; the fold preserves it without resolving it into output.
+    const withRef = { ...final, revision: final.revision + 1, children: final.children.map((child: any) => ({
+      ...child, resultRef: `subagent-result://${child.childId}/task/example#5`,
+    })) };
+    fold.apply({ method: "item/updated", params: { sessionId: "parent", item: withRef } } as any);
+    expect(fold.items.get(final.itemId)?.children?.[0].resultRef).toMatch(/^subagent-result:\/\//);
+    const card = parseRunProgressUpdate(updates.at(-1)._meta["muse/workflow"]);
+    expect(card).toMatchObject({ done: true, agentProgressDots: true, agents: [{ label: "Agent 1", state: "completed" }, { label: "Agent 2", state: "completed" }] });
+    expect(card?.phases).toBeUndefined();
+  });
   it.each(backends)("$provider routes replay before load resolves and clears the child IDs on failure", async backend => {
     for (const fails of [false, true]) {
       const client = new AcpClient({ cliPath: "unused", cwd: "/example", log: () => {}, backend });
@@ -41,7 +64,7 @@ describe("provider delegation normalization boundaries", () => {
   it.each(backends)("$provider opts into only its own capability and wire extensions", backend => {
     const caps = acpClientCapabilities(backend.provider);
     expect(caps.subagents).toEqual(backend.provider === "codex" ? {} : undefined);
-    if (backend.provider !== "codex") expect(caps).not.toHaveProperty("_meta");
+    if (backend.provider === "grok" || backend.provider === "muse") expect(caps).not.toHaveProperty("_meta");
     const spawn = fixtures["codex-subagent-optin"][0].update;
     expect(backend.normalizeUpdate(spawn, undefined).update.sessionUpdate)
       .toBe(backend.provider === "codex" ? "tool_call" : "subagent_spawned");
@@ -139,7 +162,7 @@ it("Codex handshake survives the bundled adapter parser and enables only native 
     const caps = parsed(acpClientCapabilities(provider));
     expect(adapter.clientSupportsSubagents(caps)).toBe(provider === "codex");
     expect(adapter.clientSupportsAirCapability(caps, "nativeSubagentSessions")).toBe(provider === "codex");
-    expect(adapter.clientSupportsAirCapability(caps, "asyncTasks")).toBe(false);
+    expect(adapter.clientSupportsAirCapability(caps, "asyncTasks")).toBe(provider === "claude");
   }
 });
 
