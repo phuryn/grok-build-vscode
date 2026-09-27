@@ -29,7 +29,7 @@ export const CLAUDE_ACP_ADAPTER_VERSION = packageManifest.dependencies[CLAUDE_AC
  *  is a comparison point, nothing more. Bump it when a release is validated
  *  against a newer CLI. Falling behind Anthropic's latest is the safe
  *  direction — it means we stop offering, not that we offer wrongly. */
-export const CLAUDE_PINNED_CLI_VERSION = "2.1.263";
+export const CLAUDE_PINNED_CLI_VERSION = "2.1.281";
 
 const PERMISSION_TITLE_LIMIT = 80;
 
