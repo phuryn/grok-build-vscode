@@ -17398,6 +17398,10 @@
     // comes back via postChips) — the host snapshots its own copy on send.
     if (sendWait) sendWait.cancel();
     sendWait = hostWait.begin({ label: "Sending your message", success: "Message sent.", failure: "Couldn't send your message." });
+    // The wait keeps its own id: a clearMessages between send and echo (a relay
+    // reattach, a CLI respawn) resets the pending-submission state below, and
+    // the echo must still be able to settle the strip it belongs to.
+    sendWait.submissionId = submissionId;
     vscode.postMessage({ type: "send", text, ...(submissionId ? { submissionId } : {}) });
     input.value = "";
     renderInputHighlight();
@@ -19775,6 +19779,12 @@
         break;
       }
       case "userMessage":
+        // The host's echo of our own submission is its acknowledgement, whatever
+        // a reset in between did to the pending-submission fields.
+        if (sendWait && msg.submissionId && msg.submissionId === sendWait.submissionId) {
+          sendWait.succeed();
+          sendWait = null;
+        }
         for (const pending of queuedWaits) {
           if (pending.sessionId === state.activeSessionId && msg.text === pending.text && sameChipIds(msg.chips, pending.chipIds)) {
             pending.op.success = "Message sent.";
@@ -20489,6 +20499,14 @@
         // Matched on text because the queue deliberately collapses several
         // contributions into one string and cannot carry a submission id (see
         // divertRacingSend in the host).
+        // A queued send is answered: the queue snapshot is the host's reply to
+        // it, as it already is for queuedWaits and the placeholder below. Its
+        // later echo can carry merged text or a different implicit chip.
+        if (sendWait && state.pendingSubmissionText && queueHoldsContribution(state.sendQueue, state.pendingSubmissionText)) {
+          sendWait.success = "Message queued.";
+          sendWait.succeed();
+          sendWait = null;
+        }
         if (state.optimisticSendEl && state.pendingSubmissionText) {
           if (queueHoldsContribution(state.sendQueue, state.pendingSubmissionText)) {
             // ONLY the placeholder. The pending submission id and text stay put:
