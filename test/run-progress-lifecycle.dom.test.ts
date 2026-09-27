@@ -282,7 +282,7 @@ describe("the captured workflow lifecycle", () => {
   });
   it("observes a cancelled state transition without portraying it as ongoing work", () => {
     const h = replay(); h.frame(4); h.frame(5);
-    expect(text(h, ".workflow-agent-state")).toBe("cancelled");
+    expect(text(h, ".workflow-agent-state")).toBe("stopped");
     expect(text(h, ".workflow-agent-activity")).toBe("state changed 0s ago \u00b7 no token activity observed");
     h.advance(12000); h.frame(5);
     expect(text(h, ".workflow-agent-activity")).toBe("state changed 12s ago \u00b7 no token activity observed");
@@ -294,7 +294,7 @@ describe("the captured workflow lifecycle", () => {
     expect(h.doc.querySelector(".workflow-pin")).toBeNull();
     expect(text(h, ".workflow-card .run-progress-phase")).toBe("");
     expect(text(h, ".workflow-card .delegation-time")).toBe("0:00");
-    expect(text(h, ".workflow-agent-state")).toBe("cancelled");
+    expect(text(h, ".workflow-agent-state")).toBe("stopped");
     expect(h.doc.querySelector(".workflow-card")!.classList.contains("run-progress-cancelled")).toBe(true);
     expect(h.doc.querySelector(".workflow-pin-pref, .workflow-trace")).toBeNull();
     expect(h.doc.querySelectorAll(".workflow-card .run-progress-btn")).toHaveLength(0);
@@ -307,7 +307,7 @@ describe("the captured workflow lifecycle", () => {
         ...update, agents: update.agents!.map((agent) => ({ ...agent, tokensUsed: 288307 })),
       } });
     }
-    expect(text(h, ".workflow-card .workflow-agent-state")).toBe("cancelled · 288K tokens");
+    expect(text(h, ".workflow-card .workflow-agent-state")).toBe("stopped · 288K tokens");
     expect(text(h, ".workflow-card .workflow-agent-activity")).toBe("state changed");
   });
 });

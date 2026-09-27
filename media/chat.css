@@ -2906,8 +2906,10 @@ body.thinking-hidden .msg.thinking { display: none; }
 .workflow-trace { display: flex; align-items: center; gap: 7px; padding: 3px 0; background: none; border: 0; color: var(--vscode-descriptionForeground); }
 .workflow-trace-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workflow-pin-pref { margin-left: auto; flex: none; }
-.workflow-pin-pref[aria-pressed="true"] { color: var(--vscode-charts-blue, #3794ff); background: color-mix(in srgb, var(--vscode-charts-blue, #3794ff) 12%, transparent); }
-.workflow-pin-pref:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
+/* The message copy button's recipe (.msg-action-btn): a ghost 28px target with
+   a 16px glyph. Pinned is said by the glyph's colour alone; a filled box read
+   heavier than every other icon in the conversation. */
+.workflow-pin-pref[aria-pressed="true"] { color: var(--vscode-charts-blue, #3794ff); }
 
 .workflow-report-toggle { cursor: pointer; font-weight: 600; display: flex; align-items: center; gap: 9px; }
 /* The native disclosure triangle sits on the LEFT and is not our chevron; the
@@ -2933,6 +2935,16 @@ body.thinking-hidden .msg.thinking { display: none; }
 .workflow-agent[data-state*="permission"] .workflow-agent-state, .workflow-agent[data-state*="blocked"] .workflow-agent-state { color: var(--vscode-charts-orange, #d7ba7d); }
 .workflow-agent[data-state="cancelled"] { opacity: 0.8; }
 .run-progress-card .run-progress-btn:disabled { opacity: 0.55; cursor: default; }
+/* A 36px target drawn as a 28px pill, on every surface: the transparent border
+   is hit-slop. Surfaces that raise tap targets (touch, the relay's narrow
+   layout) raised the whole pill with them, and Pause and Stop read as
+   oversized next to the card's text. */
+.run-progress-card .run-progress-actions .run-progress-btn {
+  min-height: 36px;
+  border: 4px solid transparent;
+  background-clip: padding-box;
+  border-radius: 8px;
+}
 .workflow-pin-toggle:focus-visible, .workflow-agent-toggle:focus-visible, .workflow-report-toggle:focus-visible, .run-progress-btn:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
 @media (hover: none), (pointer: coarse) {
   /* The finished report's summary is the tap target that opens it, so it
@@ -2979,7 +2991,6 @@ body.thinking-hidden .msg.thinking { display: none; }
 .subagent-failed .delegation-status, .run-progress-failed .delegation-status { color: var(--vscode-errorForeground); }
 @media (hover: none), (pointer: coarse) {
   .delegation-header, .workflow-card .run-progress-btn { min-height: 36px; }
-  .workflow-pin-pref { min-width: 36px; min-height: 36px; }
 }
 
 .tool-group {

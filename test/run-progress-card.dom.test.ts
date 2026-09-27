@@ -490,6 +490,14 @@ describe("workflow evidence", () => {
     expect(agent(h).querySelector(".workflow-agent-state")!.textContent).toBe("done");
   });
   it.each([
+    ["completed", "done"], ["active", "running"], ["usage", "running"], ["scheduled", "queued"],
+    ["cancelled", "stopped"], ["error", "failed"], ["waiting_permission", "waiting permission"],
+  ])("says an agent's %s state in the card's own words (%s)", (reported, shown) => {
+    const h = boot();
+    send(h, { agents: [{ ...base.agents[0], state: reported }] });
+    expect(agent(h).querySelector(".workflow-agent-state")!.textContent).toBe(shown);
+  });
+  it.each([
     [1000, "1K"], [23552, "23.55K"], [99999, "100K"], [100000, "100K"],
     [288307, "288K"], [999500, "1M"], [1200000, "1.2M"],
   ])("formats %i agent tokens like the context window (%s)", (tokens, formatted) => {

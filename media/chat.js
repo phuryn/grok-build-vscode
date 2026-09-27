@@ -14332,6 +14332,18 @@
       : /^(failed|error|rejected|timedOut|aborted)$/.test(state) ? "failed" : state || "unknown";
   }
 
+  // The words the card header already uses, whichever agent reported the row:
+  // Muse says "completed" and "active" where Grok says "done" and "running".
+  // Anything outside that vocabulary (a permission wait) keeps its own words.
+  function workflowAgentStateLabel(state) {
+    const marker = workflowAgentState(state);
+    if (marker === "active") return "running";
+    if (marker === "done" || marker === "failed") return marker;
+    if (/^(cancelled|canceled|stopped)$/.test(state)) return "stopped";
+    if (/^(scheduled|queued|pending)$/.test(state)) return "queued";
+    return state.replace(/[_-]+/g, " ");
+  }
+
   function applyPinLiveWorkflows(value) {
     if (state.pinLiveWorkflows === value) return;
     state.pinLiveWorkflows = value;
@@ -14522,7 +14534,7 @@
       }
       row.querySelector(".workflow-state-marker").dataset.state = workflowAgentState(agent.state);
       row.querySelector(".workflow-agent-name").textContent = workflowAgentName(agent);
-      row.querySelector(".workflow-agent-state").textContent = [agent.state ? agent.state.replace(/[_-]+/g, " ") : "",
+      row.querySelector(".workflow-agent-state").textContent = [agent.state ? workflowAgentStateLabel(agent.state) : "",
         agent.tokensUsed > 0 ? `${compactTokens(agent.tokensUsed)} tokens` : ""].filter(Boolean).join(" · ");
       row.querySelector(".workflow-agent-activity").textContent = activity;
       return row;
@@ -14555,7 +14567,7 @@
         }
       }
       if (live) {
-        const button = workflowText(actions, "workflow-pin-pref icon-btn", "", "button");
+        const button = workflowText(actions, "workflow-pin-pref msg-action-btn", "", "button");
         button.type = "button";
         button.innerHTML = ICON.pin;
         button.setAttribute("aria-pressed", String(state.pinLiveWorkflows));
