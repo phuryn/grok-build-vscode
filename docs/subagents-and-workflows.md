@@ -94,7 +94,7 @@ no command offers one. (`/goal` exists in Codex and is a different feature.)
 | **Steps** | named phases with their states | every phase declared in the script's literal `meta` block, from launch; the current one from progress | none reported; one dot per agent instead |
 | **Agents** | one row per agent, with state and tokens | one row per agent seen in progress; no tokens, because usage is only a run total | `Agent 1`, `Agent 2` and so on, with state, and tokens when reported |
 | **Time** | reported; the card counts on between frames and holds while paused | reported | not reported; the app measures it while it watches live |
-| **Result in the card** | `result_summary`: prose, or the `report`, `summary` or `sentence` field of a JSON object; any other JSON shows as a JSON code block | none: the task events carry only an output file path, and Claude gives the answer in its own reply | Muse's final summary; a JSON value shows as a code block |
+| **Result in the card** | `result_summary`: prose, or the `report`, `summary` or `sentence` field of a JSON object; any other JSON shows as a JSON code block | the task's terminal `summary`, when Claude sends one, as sanitized Markdown; the `outputFilePath` is not shown, and Claude's own reply usually carries the answer too | Muse's final summary; a JSON value shows as a code block |
 | **Controls** | Pause or Resume, and Stop | none | none |
 | **Finish** | a terminal `workflow_updated`; the host also checks the run's own state file | a terminal task state; on reopen, the replayed `<task-notification>` | a terminal `workflow` item |
 | **After reopening** | the frames replay and the card is rebuilt where the run happened, with steps, agents, time and result | task events are not replayed; the card comes back from the launch acknowledgement and the task notification, with its name, the declared steps and the outcome | Muse's history carries the finished item: agent dots, agents and result; no time |
@@ -192,9 +192,10 @@ conversation stopped showing its history.
   stopped. Internal labels such as "final workflow update" and "No agents
   reported" are gone.
 - **Tokens inside the card, and only when there is something to count.** The
-  header says what the run is, whether it is running and for how long. A zero
-  count is left out, and counts use the same compact form as the context
-  meter (288K).
+  header says what the run is, whether it is running and for how long. A workflow
+  leaves a zero count out; a subagent card shows the count the agent
+  reported, even zero. Counts use the same compact form as the context
+  popover's ledger (1.48K, 288K).
 - **The result reads like a reply.** It uses the message renderer and
   sanitizer and the conversation's copy button. The CLI sends the result, the
   last event and the pause message as separate fields, and the card keeps
@@ -210,9 +211,10 @@ conversation stopped showing its history.
   update for 2 min".
 - **At most three dots in a long workflow's header.** Eight dots crowded the
   header, most of all on a phone. Up to four steps, every dot shows. Past
-  four, the header shows the current step (else a failed one, else the first
-  unfinished one) with one neighbour on each side and an ellipsis where steps
-  are hidden. The dots never wrap; the name is shortened instead. The full
+  four, it shows three: the current step (else a failed one, else the first
+  unfinished one) and its neighbours, shifted so a step at either end still
+  shows three, or the last three once every step is finished. An ellipsis
+  marks each side where steps are hidden. The dots never wrap; the name is shortened instead. The full
   list stays inside the card.
 - **Find opens a closed card, and only one that can open.** With every card
   closed, a Find hit inside a result was hidden again by the card's
@@ -314,9 +316,6 @@ conversation stopped showing its history.
 | `test/workflow-replay.dom.test.ts` | a cold reopen keeps one card at the run's place |
 | `test/subagent-mux.dom.test.ts`, `test/subagent-replay.dom.test.ts` | Grok child output routing, and a Composer-agent replay |
 
-`npm run e2e:workflow-header` checks the workflow header's layout in real
-Chromium at phone widths.
-
 **Live, before a release.** These start the real CLIs with real sign-ins,
 spend model usage, and are never part of `npm test` or CI:
 
@@ -325,9 +324,9 @@ npm run smoke:acp                                         # Codex, Claude Code, 
 npm run test:live -- --only=subagent,subagent-composer,workflow   # Grok
 ```
 
-Among their other checks, these runs ask each agent for a trivial subagent and
-a trivial workflow, check the wire and the parsed progress, then drive the
-real desktop app and record what it drew. The evidence lands in
+Among their other checks, these runs ask for a trivial subagent (Grok, Codex,
+Claude) and a trivial workflow (Grok, Claude, Muse), check the wire and the
+parsed progress, then drive the real desktop app and record what it drew. The evidence lands in
 `.verification/acp-smoke/<run>/`. There,
 `<provider>-render/render-report.md` (Grok: `grok-render/render-report.md`)
 shows every card closed and opened, with its header, steps, agents, result,

@@ -61,21 +61,24 @@ Rows with a positive snapshot token total and no observed activity have no
 button or chevron. Expansion is held in memory per run, with every new run
 collapsed; it is never a host setting.
 
-Since 4.13.2 the live transcript entry and the pinned card render the same
+Since 4.13.2 workflow cards use the same
 closed header (`makeDelegationHeader`, shared with subagent cards): icon, kind,
 name, static dots from the reported phases (windowed to the current step and its
 neighbours past four), status and elapsed time. Two minutes without a frame shows
-as the status "no update for 2 min". Expanding shows labelled phases, one row per
-agent with its tokens, the pause message and the result; Pause/Resume and Stop are
-on the pinned card only. A finished run (`complete` or `completed`, including a Partial
+as the status "no update for 2 min". Expanding shows the phases in one row with arrows, one row per
+agent with its tokens, the pause message and the result. Since 4.13.3 a live run has one
+full card: pinned above the composer by default, with a one-line trace where the run started,
+or in the transcript when the person unpins (`grok.pinLiveWorkflows`, per device on a phone);
+Pause/Resume and Stop are on whichever copy is live. A finished run (`complete` or `completed`, including a Partial
 result summary) leaves the pin and replaces its marker with an expandable
 summary that arrives collapsed, without Pause/Stop. Stateless phase definitions
 remain unknown during a live run except for its current position; successful
 completion marks them done. The retained current phase cannot mark a terminal run's step active;
 failed/cancelled runs preserve pending steps instead of claiming they finished.
 
-The expanded body orders the steps, the agent roster, the pin's controls, the
-pause message, the result and a token total; the header keeps its status while
+The expanded body orders the steps, the agent roster, the pause message, the
+result, a token total, then Pause/Resume/Stop and the pin toggle, on the one
+live card; the header keeps its status while
 the card is open. The result uses the same `renderMarkdown`, direction handling
 and link interception as message bodies, including underscore emphasis.
 This summary renders notification metadata, not the contents of a report file.
