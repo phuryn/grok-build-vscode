@@ -13,7 +13,6 @@ export const REASONING_EFFORTS = ["none", "minimal", "low", "medium", "high", "x
 
 const RESUME_RETRY_DELAY_MS = 300;
 const RESUME_RETRY_WINDOW_MS = 10_000;
-const BACKGROUND_TURN_WAIT_MS = 180_000;
 
 /** turnCount counts completed turns, not prompts. Keep unfinished work and
  *  forks; creation/resume bookkeeping can advance updatedAt on a blank row. */
@@ -53,7 +52,7 @@ function childExitTimeout(): Promise<undefined> {
 
 interface PendingTurn {
   turnId?: string;
-  wakeBackgroundWait?: () => void;
+  queued?: boolean;
   cancelRequested?: boolean;
   early: Map<string, Record<string, any>>;
   resolve: (result: Record<string, any>) => void;
@@ -68,7 +67,6 @@ export class MuseSession {
   private closing?: Promise<void>;
   private sessionId?: string;
   private reasoningEffort?: ReasoningEffort;
-  private activeTurnId?: string;
   private creating = false;
   private replayBuffer?: { method: string; params: Record<string, any> }[];
   private pending?: PendingTurn;
@@ -234,7 +232,6 @@ export class MuseSession {
       const result = await this.resumeSession(sessionId);
       const resumed = result.session as any;
       if (resumed?.sessionId !== sessionId || resumed.workspaceRoot !== cwd) throw new Error("Muse resume workspace/session mismatch");
-      this.activeTurnId = resumed.activeTurnId ?? undefined;
       const history = result.history as any;
       this.reasoningEffort = history?.snapshot?.state?.reasoningEffort?.reasoningEffort;
       const seen = new Set<string>();
@@ -299,30 +296,16 @@ export class MuseSession {
     void completed.catch(() => {});
     this.pending = pending;
     try {
-      if (this.activeTurnId) {
-        const deadline = Date.now() + BACKGROUND_TURN_WAIT_MS;
-        while (this.activeTurnId && !pending.cancelRequested) {
-          let timer!: ReturnType<typeof setTimeout>;
-          try {
-            await Promise.race([new Promise<void>((resolve, reject) => {
-              pending.wakeBackgroundWait = resolve;
-              timer = setTimeout(() => reject(new RequestError(-32021,
-                "Muse is still finishing a background task. Try again in a moment.")), Math.max(0, deadline - Date.now()));
-            }), completed.then(() => new Promise<never>(() => {}))]);
-          } finally { clearTimeout(timer); }
-        }
-        if (pending.cancelRequested) return { stopReason: "cancelled" };
-        pending.wakeBackgroundWait = undefined;
-        pending.early.clear();
-      }
       this.approvals.clear();
       const admitted = await Promise.race([this.connection().command("turn/start", {
-        sessionId, input: prompt.map(part => ({ type: "text", text: (part as { text: string }).text })),
+        sessionId, ifBusy: "queue", input: prompt.map(part => ({ type: "text", text: (part as { text: string }).text })),
       }), completed.then(() => new Promise<never>(() => {}))]);
-      if (admitted.status !== "accepted" || typeof admitted.turnId !== "string" || admitted.startedNewTurn !== true) {
-        throw new Error(`Muse did not start a new turn: ${JSON.stringify(admitted)}`);
+      if (admitted.status !== "accepted" || typeof admitted.turnId !== "string" || !admitted.turnId
+        || (admitted.disposition !== "started" && admitted.disposition !== "queued")) {
+        throw new Error(`Muse did not admit a prompt turn: ${JSON.stringify(admitted)}`);
       }
       pending.turnId = admitted.turnId;
+      pending.queued = admitted.disposition === "queued";
       this.log(`Muse turn admitted: ${admitted.turnId}`);
       const early = pending.early.get(admitted.turnId);
       if (early) pending.resolve(early);
@@ -337,19 +320,27 @@ export class MuseSession {
       throw new Error(`Muse turn failed: ${JSON.stringify(terminal.error ?? terminal.terminal)}`);
     } finally {
       this.pending = undefined;
-      if (!pending.wakeBackgroundWait) this.approvals.clear();
+      this.approvals.clear();
     }
   }
 
   async cancel(sessionId: string): Promise<void> {
     this.assertSession(sessionId);
-    if (this.pending) this.pending.cancelRequested = true;
-    if (this.pending?.wakeBackgroundWait) {
-      this.pending.wakeBackgroundWait();
-      return;
+    const pending = this.pending;
+    if (!pending) return;
+    pending.cancelRequested = true;
+    const turnId = pending.turnId;
+    if (!turnId) return; // Admission will cancel using its authoritative ID.
+    if (pending.queued) {
+      try {
+        await this.connection().command("turn/unqueue", { sessionId, turnId });
+        return; // Settlement is turn/unqueued, not the command acknowledgement.
+      } catch (error) {
+        if (!(error instanceof MspError) || error.kind !== "commandRejected") throw error;
+        // Launch can win the reclaim race. Stop only this same admitted turn.
+      }
     }
-    const turnId = this.pending?.turnId ?? this.activeTurnId;
-    if (turnId) await this.connection().command("turn/cancel", { sessionId, turnId });
+    await this.connection().command("turn/cancel", { sessionId, turnId });
   }
 
   private assertSession(id: string): void {
@@ -390,19 +381,15 @@ export class MuseSession {
     }
     if (params.sessionId !== this.sessionId) return;
     if (this.replayBuffer) { this.replayBuffer.push({ method, params }); return; }
-    if (method === "turn/started") this.activeTurnId = params.turnId;
-    if (method === "turn/completed" && params.turnId === this.activeTurnId) {
-      this.activeTurnId = undefined;
-      this.pending?.wakeBackgroundWait?.();
-    }
     this.projection.accept(method, params);
     this.approvals.accept(method, params);
     if (method === "userInput/requested" || method === "view/gap") {
       this.fail(new Error(`Muse ${method} is unsupported in this boundary slice`));
     }
-    if (method === "turn/completed" && this.pending && typeof params.turnId === "string") {
-      if (!this.pending.turnId) this.pending.early.set(params.turnId, params);
-      else if (params.turnId === this.pending.turnId) this.pending.resolve(params);
+    if (["turn/completed", "turn/unqueued"].includes(method) && this.pending && typeof params.turnId === "string") {
+      const terminal = method === "turn/unqueued" ? { ...params, terminal: "cancelled" } : params;
+      if (!this.pending.turnId) this.pending.early.set(params.turnId, terminal);
+      else if (params.turnId === this.pending.turnId) this.pending.resolve(terminal);
     }
   }
 
