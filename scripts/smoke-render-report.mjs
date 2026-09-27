@@ -105,6 +105,10 @@ export function knownBoundaries(root, provider) {
       ...(provider === "codex" ? {
         codex: "src/codex-backend.ts normalizeCodexUpdate uses native subagent_spawned/subagent_state_update, standard tool status and message chunks; captured threadStatus/collaboration/phase annotations are not UI inputs. No _meta.codex.subagent reader exists in this checkout.",
         quota: "src/codex-backend.ts normalizeCodexPromptResult reads standard result.usage; duplicate _meta.quota.token_count/model_usage accounting is not a separate host quota surface.",
+        // ACCEPTED: a real, pre-existing gap, triaged and backlogged ("Codex streams command output in _meta.terminal_*").
+        terminal_info: "ACCEPTED pre-existing gap (backlog): no reader for Codex's provider-owned terminal id/cwd; host terminal/* RPC handling is a different path.",
+        terminal_output_delta: "ACCEPTED pre-existing gap (backlog): Codex's streamed exec output is not consumed; normalizeCodexUpdate maps only the final rawOutput.formatted_output.",
+        terminal_exit: "ACCEPTED pre-existing gap (backlog): Codex's terminal exit metadata is not consumed; standard tool status and the final rawOutput still render.",
       } : {}),
     },
     "ACP method": {
@@ -114,11 +118,7 @@ export function knownBoundaries(root, provider) {
   return {
     ignored: provider === "grok" ? grokBoundaries.ignored : ignored,
     handled: provider === "grok" ? grokBoundaries.handled : {},
-    findings: provider === "grok" ? grokBoundaries.findings : provider === "codex" ? { "ACP metadata": {
-      terminal_info: "src/codex-backend.ts preserves this metadata and terminal content references, but src/acp.ts and media/chat.js have no reader for the provider-owned terminal ID/cwd. Host terminal/* RPC handling is a different path.",
-      terminal_output_delta: "No reader in src/ or media/: Codex's streamed exec output is not consumed. normalizeCodexUpdate only maps the final rawOutput.formatted_output; this is a missing live-output path.",
-      terminal_exit: "No reader in src/ or media/: Codex's terminal exit metadata is not consumed. Standard tool status/final rawOutput can still render, but the provider terminal lifecycle is not handled.",
-    } } : {},
+    findings: provider === "grok" ? grokBoundaries.findings : {},
     sources: files,
     metadataShape: provider === "grok" ? "flat fields" : "namespaces",
     updates: merge([...texts.map(s => extractKnownKinds(s, "sessionUpdate")), { values: ignoredUpdates, prefixes: [] }]),

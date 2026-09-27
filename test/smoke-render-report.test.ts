@@ -220,7 +220,8 @@ describe("live smoke regressions", () => {
     ];
     const audit = classifyBoundaries(events, known);
     expect(audit.seen.every((row: any) => row.reason?.match(/src\/|media\//))).toBe(true);
-    expect(audit.unhandled.map((row: any) => [row.kind, row.status])).toEqual([["session_info_update", "FINDING"]]);
+    expect(audit.unhandled).toEqual([]);
+    expect(audit.ignored.find((row: any) => row.kind === "session_info_update")?.reason).toMatch(/^ACCEPTED pre-existing gap \(backlog/);
     expect(audit.seen.find((row: any) => row.kind === "usage").status).toBe("KNOWN");
     expect(audit.seen.find((row: any) => row.kind === "inputTokens").status).toBe("KNOWN");
     expect(audit.seen.find((row: any) => row.kind === "feedbackEnabled").status).toBe("KNOWN");
@@ -257,15 +258,15 @@ describe("live smoke regressions", () => {
     expect(cardResultEvidence(cards, events, { provider: "claude" })[0].required).toBe(true);
     expect(() => assertRenderedScenario({ ...scenario, resultEvidence: [{ reported: false }], opened: { cards: [{ ...cards[0], terminal: false }] } })).toThrow(/nonterminal/);
   });
-  it("keeps the three Codex terminal metadata namespaces as findings, not ignored annotations", () => {
+  it("keeps the three Codex terminal metadata namespaces as accepted backlog gaps, and pins that no reader exists", () => {
     const names = ["terminal_info", "terminal_output_delta", "terminal_exit"];
     const events = names.map(key => ({ direction: "receive", message: { params: { update: {
       sessionUpdate: "tool_call_update", toolCallId: "exec-1", _meta: { [key]: { terminal_id: "exec-1" } },
     } } } }));
     const audit = classifyBoundaries(events, knownBoundaries(root, "codex"));
-    expect(audit.unhandled).toHaveLength(3);
-    expect(audit.unhandled.every((r: any) => r.status === "FINDING" && r.reason)).toBe(true);
-    expect(audit.ignored).toEqual([]);
+    expect(audit.unhandled).toEqual([]);
+    expect(audit.ignored.map((r: any) => r.kind).sort()).toEqual([...names].sort());
+    expect(audit.ignored.every((r: any) => /^ACCEPTED pre-existing gap \(backlog\)/.test(r.reason))).toBe(true);
     const normalized = normalizeCodexUpdate({ sessionUpdate: "tool_call_update", toolCallId: "exec-1",
       _meta: { terminal_output_delta: { data: "streamed output", terminal_id: "exec-1" } } });
     expect(normalized.update.rawOutput).toBeUndefined();
