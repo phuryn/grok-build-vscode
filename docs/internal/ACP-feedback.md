@@ -1,5 +1,7 @@
 # Grok CLI over ACP — current field feedback
 
+Muse MSP resume contention and its ACP error mapping are documented separately in [Muse Code adapter](../../research/muse-adapter.md).
+
 Feedback for the xAI team from a thin ACP client (`grok agent stdio`, JSON-RPC over stdio). It
 carries open behavior only, plus a short record of what has closed. The 0.2.3–0.2.112 record is
 [archived separately](ACP-feedback-through-0.2.112.md); headings below cite the archive section

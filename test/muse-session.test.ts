@@ -7,11 +7,17 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { AcpClient } from "../src/acp";
 import { MuseBackend } from "../src/muse-backend";
+import { MspError } from "@muse-code/sdk";
+import { RequestError } from "@agentclientprotocol/sdk";
 
 // The session tests inject a fake SDK connection; no vendor executable is used.
-vi.mock("@muse-code/sdk", () => ({ spawnMspConnection: () => { throw new Error("inject the fake spawn"); } }));
+vi.mock("@muse-code/sdk", async importOriginal => ({
+  ...await importOriginal<typeof import("@muse-code/sdk")>(),
+  spawnMspConnection: () => { throw new Error("inject the fake spawn"); },
+}));
 const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllEnvs();
   Object.defineProperty(process, "platform", platformDescriptor);
 });
@@ -321,6 +327,78 @@ describe("Muse turn admission and process ownership", () => {
 
 
 describe("Muse cancellation and resume", () => {
+  const busy = () => new MspError({ code: -32021, message: "session session is already in use",
+    data: { kind: "sessionInUse", retryable: false, sessionId: "session" } });
+
+  it.each([1, 5, 33])("resumes after %i lease conflicts on the same connection and projects history once", async conflicts => {
+    vi.useFakeTimers();
+    const s = setup();
+    await s.session.initialize();
+    for (let i = 0; i < conflicts; i++) s.command.mockRejectedValueOnce(busy());
+    s.command.mockResolvedValue({ session: { sessionId: "session", workspaceRoot: "/workspace" },
+      history: { mode: "inline", items: [{ itemId: "answer", revision: 1, kind: "agentMessage", text: "Restored" }] },
+    } as any);
+    const loading = s.session.loadSession("session", "/workspace", []);
+    await vi.advanceTimersByTimeAsync(299);
+    expect(s.command).toHaveBeenCalledOnce();
+    expect(s.client.notify).not.toHaveBeenCalled();
+    expect(s.fatal).not.toHaveBeenCalled();
+    await expect(s.session.newSession("/workspace", [])).rejects.toThrow("already owns a session");
+    await vi.advanceTimersByTimeAsync(conflicts * 300 - 299);
+    await loading;
+    expect(s.command).toHaveBeenCalledTimes(conflicts + 1);
+    // No commandId override: each SDK command call gets a fresh id.
+    for (const call of s.command.mock.calls) expect(call).toEqual(["session/resume", { sessionId: "session", history: "inline" }]);
+    expect(s.spawn).toHaveBeenCalledOnce();
+    expect(s.handshake.initialize).toHaveBeenCalledOnce();
+    expect(s.handshake.close).not.toHaveBeenCalled();
+    expect(s.fatal).not.toHaveBeenCalled();
+    expect(s.client.notify).toHaveBeenCalledOnce();
+    expect(s.client.notify.mock.calls[0]?.[1].update.content.text).toBe("Restored");
+  });
+
+  it("reports a persistent lease conflict through ACP after 10 seconds without spawning or creating sessions", async () => {
+    vi.useFakeTimers();
+    const s = setup();
+    await s.session.initialize();
+    s.command.mockRejectedValue(busy());
+    const loading = s.session.loadSession("session", "/workspace", []);
+    const failed = loading.catch(error => error);
+    await vi.advanceTimersByTimeAsync(9999);
+    expect(s.fatal).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    const error = await failed;
+    expect(error).toBeInstanceOf(RequestError);
+    expect(error.toErrorResponse()).toEqual({ code: -32021,
+      message: "Muse Code is busy with this conversation in another window. Try again in a moment." });
+    expect(s.fatal).toHaveBeenCalledOnce();
+    expect(s.fatal).toHaveBeenCalledWith(error);
+    expect(s.command).toHaveBeenCalledTimes(34);
+    for (const call of s.command.mock.calls) expect(call).toEqual(["session/resume", { sessionId: "session", history: "inline" }]);
+    expect(s.spawn).toHaveBeenCalledOnce();
+    expect(s.handshake.initialize).toHaveBeenCalledOnce();
+    expect(s.handshake.close).not.toHaveBeenCalled();
+    expect(s.connection.request).not.toHaveBeenCalled();
+    expect(s.client.notify).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("preserves fast failure for non-transient resume errors", async () => {
+    vi.useFakeTimers();
+    const s = setup();
+    await s.session.initialize();
+    const error = new MspError({ code: -32020, message: "Session not found",
+      data: { kind: "sessionNotFound", retryable: false } });
+    s.command.mockRejectedValue(error);
+    await expect(s.session.loadSession("session", "/workspace", [])).rejects.toBe(error);
+    expect(s.command).toHaveBeenCalledOnce();
+    expect(s.fatal).toHaveBeenCalledOnce();
+    expect(s.fatal).toHaveBeenCalledWith(error);
+    expect(s.spawn).toHaveBeenCalledOnce();
+    expect(s.client.notify).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it("queues cancellation before admission and waits for the terminal", async () => {
     const s = await ready();
     const prompt = s.session.prompt("session", [{ type: "text", text: "hello" }]);

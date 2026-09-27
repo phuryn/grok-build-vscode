@@ -39,6 +39,8 @@ A prompt waits for its matching terminal notification, not admission. Projection
 
 Resume projects inline items or snapshot state explicitly, with paged durable revisions as the fallback. Incoming live events are buffered until history is projected. The host's shared history process starts in the home directory and is reused per provider. Path changes, failed starts and disconnects drain owned processes; the adapter awaits its SDK child before reporting `MUSE_CHILD_EXIT`.
 
+`MuseSession.resumeSession` retries `sessionInUse` (-32021) every 300 ms within a 10-second window, despite MSP's `retryable: false`. Each attempt issues a fresh command on the same connection; no new serve or session is created. Other live serves briefly acquire foreign sessions' OS writer leases when the shared store changes; `.session.lock` PID text does not identify the current lease holder. Persistent contention becomes an ACP `RequestError` with a busy-conversation message; other errors retain their existing failure path. `test/muse-session.test.ts` covers recovery, exhaustion and non-transient failure with fake MSP responses.
+
 Build and binary-free validation:
 
 ```sh

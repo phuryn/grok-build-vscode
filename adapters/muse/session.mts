@@ -1,5 +1,5 @@
-import { spawnMspConnection, type MspHandshake, type SpawnedMspConnection } from "@muse-code/sdk";
-import type { AgentContext, ContentBlock, PromptResponse } from "@agentclientprotocol/sdk";
+import { MspError, spawnMspConnection, type MspHandshake, type SpawnedMspConnection } from "@muse-code/sdk";
+import { RequestError, type AgentContext, type ContentBlock, type PromptResponse } from "@agentclientprotocol/sdk";
 import { Projection } from "./projection.mjs";
 import { Approvals } from "./approvals.mjs";
 // A deep import because the SDK root re-exports nothing from `msp.js`, and
@@ -10,6 +10,9 @@ import type { ReasoningEffort } from "@muse-code/sdk/dist/src/msp.js";
 
 // MSP exposes a session-wide vocabulary, with no per-model capability list.
 export const REASONING_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"] as const satisfies readonly ReasoningEffort[];
+
+const RESUME_RETRY_DELAY_MS = 300;
+const RESUME_RETRY_WINDOW_MS = 10_000;
 
 /**
  * How long a closing adapter waits for `muse serve` to actually exit. The host
@@ -190,6 +193,25 @@ export class MuseSession {
     return {};
   }
 
+  private async resumeSession(sessionId: string) {
+    const deadline = Date.now() + RESUME_RETRY_WINDOW_MS;
+    do {
+      try {
+        // Each command() mints a fresh commandId on the existing connection.
+        return await this.connection().command("session/resume", { sessionId, history: "inline" });
+      } catch (error) {
+        if (!(error instanceof MspError) || (error.kind !== "sessionInUse" && error.code !== -32021)) throw error;
+        // Other serves briefly take the writer lease even for sessions they do
+        // not own. This is transient despite MSP reporting retryable: false.
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) break;
+        await new Promise(resolve => setTimeout(resolve, Math.min(RESUME_RETRY_DELAY_MS, remaining)));
+      }
+    } while (Date.now() < deadline);
+    // An ordinary Error loses its message at the ACP boundary.
+    throw new RequestError(-32021, "Muse Code is busy with this conversation in another window. Try again in a moment.");
+  }
+
   async loadSession(sessionId: string, cwd: string, mcpServers: unknown[]) {
     if (this.sessionId || this.creating) throw new Error("Muse adapter already owns a session");
     if (mcpServers.length) throw new Error("Muse adapter does not accept client MCP servers");
@@ -197,7 +219,7 @@ export class MuseSession {
     this.sessionId = sessionId;
     this.replayBuffer = [];
     try {
-      const result = await this.connection().command("session/resume", { sessionId, history: "inline" });
+      const result = await this.resumeSession(sessionId);
       const resumed = result.session as any;
       if (resumed?.sessionId !== sessionId || resumed.workspaceRoot !== cwd) throw new Error("Muse resume workspace/session mismatch");
       this.activeTurnId = resumed.activeTurnId ?? undefined;
