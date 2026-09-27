@@ -1,6 +1,6 @@
 # Grok CLI over ACP — current field feedback
 
-Muse MSP resume contention and its ACP error mapping are documented separately in [Muse Code adapter](../../research/muse-adapter.md). Prompts arriving during Muse-initiated delivery turns reserve one cancellable slot until `turn/completed`, bounded to three minutes with an ACP busy error on timeout.
+Muse MSP resume contention and its ACP error mapping are documented separately in [Muse Code adapter](../../research/muse-adapter.md). A prompt arriving while Muse runs a turn of its own (a workflow's result delivery) is queued by Muse (`ifBusy: "queue"`, disposition `queued`) and awaited; Stop reclaims it with `turn/unqueue`.
 
 Feedback for the xAI team from a thin ACP client (`grok agent stdio`, JSON-RPC over stdio). It
 carries open behavior only, plus a short record of what has closed. The 0.2.3–0.2.112 record is

@@ -4,7 +4,7 @@ VS Code sidebar and desktop client for Grok Build, OpenAI Codex, Claude Code and
 
 Remote Control pairs this host with **[AFK Pilot](https://afkpilot.com)**, whose server half lives outside this repo. `src/remote-frames.ts` is this side of a wire contract mirrored on the server: bump `REMOTE_PROTO_VERSION` on any incompatible change, and prefer additive, capability-detected changes — a client gates a new affordance on whether the frame feeding it arrived, never on a version number. Issues for AFK Pilot are tracked here too.
 
-Cloud hosts advertise `cloudHostUpdateState` from `src/cloud-host-update.ts`; its arrival enables the remote banner and About row. The coordinator checks relay metadata and waits for every session, command and sign-in before requesting a maintenance hold, recording the attempt, removing BOOT's host-check and agent-update stamps and quitting Electron. An unfinished attempt delays automatic retries for one hour; manual retry still works. Routine admission covers the claim through the run's outcome. BOOT owns installation; desks retain their existing updater.
+Cloud hosts advertise `cloudHostUpdateState` from `src/cloud-host-update.ts`; its arrival enables the remote banner and About row. The coordinator runs only when `~/afkpilot-boot.sh` is the restart-safe BOOT (`CLOUD_UPDATE_BOOT_MARKER`). It checks relay metadata and waits for every session, command and sign-in, every unfinished reported workflow (a run silent for 30 minutes no longer counts) and 90 seconds of agent quiet before requesting a maintenance hold, recording the attempt, removing BOOT's host-check and agent-update stamps and quitting Electron. An unfinished attempt delays automatic retries for one hour; manual retry still works. Routine admission covers the claim through the run's outcome. BOOT owns installation; desks retain their existing updater.
 
 ## Status
 
@@ -25,7 +25,7 @@ State the rule, name the function / constant / config-key an agent would grep fo
 
 **Muse history.** `MuseSession.listSessions` excludes known blank catalog rows before rail/history caching. Zero completed turns alone is insufficient: prompt/title/content activity, active turns, forks and uncertain metadata are retained.
 
-**Muse reopening and prompt admission.** `MuseSession.resumeSession` retries writer-lease conflicts on the same connection and surfaces an ACP busy error if contention persists. `prompt` reserves one cancellable slot while a Muse-initiated turn finishes, waiting at most three minutes before an ACP busy error. Retry parameters and lease semantics: [research/muse-adapter.md](research/muse-adapter.md).
+**Muse reopening and prompt admission.** `MuseSession.resumeSession` retries writer-lease conflicts on the same connection and surfaces an ACP busy error if contention persists. `prompt` sends `turn/start` with `ifBusy: "queue"`: a prompt Muse queues behind its own turn (a workflow's result delivery) is admitted and awaited, and Stop reclaims it with `turn/unqueue`. Retry parameters and lease semantics: [research/muse-adapter.md](research/muse-adapter.md).
 
 ## Where the detail lives
 

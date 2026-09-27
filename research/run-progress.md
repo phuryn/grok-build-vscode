@@ -61,11 +61,13 @@ Rows with a positive snapshot token total and no observed activity have no
 button or chevron. Expansion is held in memory per run, with every new run
 collapsed; it is never a host setting.
 
-A live transcript entry is a non-expandable name/status marker. The pinned card
-shows static dots from the reported phases, current phase, reported elapsed time,
-and `updated Ns ago` from frame arrival. Its expanded view adds labelled phases,
-agent budget and single-line agent summaries. Pause/Resume and Stop stay outside
-the disclosure. A finished run (`complete` or `completed`, including a Partial
+Since 4.13.2 the live transcript entry and the pinned card render the same
+closed header (`makeDelegationHeader`, shared with subagent cards): icon, kind,
+name, static dots from the reported phases (windowed to the current step and its
+neighbours past four), status and elapsed time. Two minutes without a frame shows
+as the status "no update for 2 min". Expanding shows labelled phases, one row per
+agent with its tokens, then Pause/Resume and Stop and the pause message, then the
+result. A finished run (`complete` or `completed`, including a Partial
 result summary) leaves the pin and replaces its marker with an expandable
 summary that arrives collapsed, without Pause/Stop. Stateless phase definitions
 remain unknown during a live run except for its current position; successful

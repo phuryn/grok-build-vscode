@@ -141,11 +141,11 @@ Hover a message you sent → **Rewind** (or **Grok: Rewind Conversation**), conf
 </details>
 
 <details>
-<summary><strong>Deep Research / Workflow progress</strong> — a card that pins above the composer, with Pause / Resume / Stop</summary>
+<summary><strong>Deep Research / Workflow progress</strong> — a card that pins above the composer while it runs</summary>
 
-When Grok runs a Deep Research, Workflow, or Goal task, a progress card streams its reported progress live. Named workflows offer **Pause**, **Resume**, and **Stop** while the run's state allows them; Goal cards do not offer those workflow controls.
+When an agent runs a workflow — Grok's Deep Research and Workflow tools, Claude Code's workflows, Muse Code's workflows — the chat shows a workflow card with its reported progress. Grok's Goal tasks keep a progress card of their own. Named Grok workflows offer **Pause**, **Resume** and **Stop** while the run's state allows them.
 
-A running **workflow** pins itself just above the composer so it cannot scroll out of reach, and leaves a one-line marker in the transcript rather than a second copy of itself. Collapsed it shows the name, one dot per reported step with the current one marked, the phase, elapsed time and how long ago the last frame arrived; agents that have failed or are waiting on a permission prompt are counted there by state, because a stuck run keeps its frames arriving and would otherwise read as a busy one. It is a count and the state's own word, not the roster. Tap it for the labelled phase strip, the agent budget and one row per agent. When the run finishes the pin goes and the transcript marker becomes a collapsed report showing the outcome, reported duration and phase dots; tap it to read the result and agent detail. A finish missed while nobody was watching is reconciled from the CLI's saved workflow state, and reopening older turns keeps the report where the run happened.
+Every workflow card has one quiet header: an icon, "Workflow", the run's name, a dot per step (per agent on Muse; past four steps, the current one and its neighbours), the status and the elapsed time. A running workflow also pins itself just above the composer with the same header, so it cannot scroll out of reach. Cards start closed. Open one for the steps, one row per agent with its tokens, Grok's controls and pause message, and the result, which reads like a reply and has a copy button. When nothing has been heard for two minutes, the status says so. When the run finishes the pin goes and the card in the transcript keeps the outcome. A Grok finish missed while nobody was watching is reconciled from the CLI's saved workflow state, and reopening older turns keeps the card where the run happened.
 
 </details>
 
@@ -161,7 +161,7 @@ Click the **context donut** for `used / window (%)` — said in thousands, with 
 <details>
 <summary><strong>Subagents</strong> — delegated tasks render as cards with their result</summary>
 
-When Grok delegates work to a subagent, the chat shows a card with the task and a live timer, then the subagent's output when it finishes — background subagents included, whose result folds back into the card when it lands.
+When Grok, Claude Code or Codex delegates work to a subagent, the chat shows a card with the same quiet header as a workflow: an icon, "Subagent", the task, its status and a timer. Open it for the subagent's activity where the agent streams it (Grok, Codex), its result — which reads like a reply and has a copy button — and the tokens it used where the agent reports them. Background subagents included: their result folds back into the card when it lands. Muse Code delegates through workflows instead.
 
 ![A subagent call rendered as a card in the chat](https://raw.githubusercontent.com/phuryn/grok-build-vscode/main/docs/screenshots/subagents.png)
 

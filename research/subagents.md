@@ -12,8 +12,8 @@
 > **Status: SHIPPED (subagent row) as of grok 0.2.93 / extension post-1.5.5.**
 > grok now emits a **genuine `spawn_subagent` tool call** — see § Ground truth
 > (0.2.93) below for the captured wire shapes. The extension renders a
-> purple-accented row (task description + blink-dots → duration + expandable
-> result) and hides the child's persisted sibling session from history
+> subagent card (since 4.13.2 the shared delegation header — task description,
+> status and a clock — closed by default, with an expandable, copyable result) and hides the child's persisted sibling session from history
 > (`session_kind: "subagent"`). The sections after § Ground truth (0.2.93)
 > describe the OLD 0.2.3–0.2.3x background-shell mechanism and are kept as
 > history — the classifier still excludes the legacy
