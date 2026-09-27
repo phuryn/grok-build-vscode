@@ -3268,3 +3268,21 @@ describe("the tray row appears only where a tray does (#174)", () => {
     expect(text).toMatch(/quit on close/i);
   });
 });
+
+
+describe("live workflow pin setting", () => {
+  it("defaults to pinned on both hosts without adding an app Settings row", () => {
+    const api = loadSettings() as any;
+    expect(api.ROWS.some((row: { id: string }) => row.id === "pinLiveWorkflows")).toBe(false);
+    const read = (path: string) => readFileSync(fileURLToPath(new URL(path, import.meta.url)), "utf8");
+    const property = JSON.parse(read("../package.json")).contributes.configuration.properties["grok.pinLiveWorkflows"];
+    expect(property.type).toBe("boolean");
+    expect(property.default).toBe(true);
+    expect(read("../src/desktop/config-store.ts")).toMatch(/"grok\.pinLiveWorkflows":\s*true,/);
+    const sidebar = read("../src/sidebar.ts");
+    expect(sidebar.match(/pinLiveWorkflows: cfg.get\("pinLiveWorkflows", true\)/g)).toHaveLength(2);
+    expect(sidebar).toContain('e.affectsConfiguration("grok.pinLiveWorkflows")');
+    expect(sidebar).toContain('type: "pinLiveWorkflows"');
+    expect(sidebar).toContain('.update("pinLiveWorkflows", !!msg.value, "global")');
+  });
+});

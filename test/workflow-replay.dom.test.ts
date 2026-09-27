@@ -109,6 +109,32 @@ function replayBuffer(h: Harness, session: Session) {
 }
 
 describe("workflow replay routing", () => {
+  it.each([false, true])("anchors an early replay frame after its launch receipt (separate update=%s)", async separateUpdate => {
+    const h = view(80);
+    const { session } = await coldReplay(h, client => {
+      user(client, "Start research"); answer(client, "Starting research");
+      wire(client, "_x.ai/session/update", active);
+      const call = { toolCallId: "launch", title: "Creating workflow 'middle-research'", kind: "other",
+        status: "completed", rawOutput: { type: "Workflow", run_id: RUN, name: "middle-research" } };
+      wire(client, "session/update", { sessionUpdate: "tool_call", ...call,
+        ...(separateUpdate ? { status: "in_progress", rawOutput: undefined } : {}) });
+      if (separateUpdate) wire(client, "session/update", { sessionUpdate: "tool_call_update", ...call });
+      wire(client, "_x.ai/session/update", complete);
+      user(client, "Later conversation");
+    });
+    const restored = view(80);
+    replayBuffer(restored, session);
+    for (const rendered of [h, restored]) {
+      const launch = [...rendered.doc.querySelectorAll(".tool-flat, .tool-group")]
+        .find(el => el.textContent?.includes("Creating workflow"))!;
+      const card = rendered.doc.querySelector(".workflow-card")!;
+      expect(launch).toBeDefined();
+      expect(launch.nextElementSibling).toBe(card);
+      expect(order(rendered)).toEqual(["Start research", RUN, "Later conversation"]);
+      expect((card.querySelector("details") as HTMLDetailsElement).open).toBe(false);
+    }
+  });
+
   it.each([80, 10])("cold replay places a workflow in the middle, including after reload (%i-turn window)", async turns => {
     const h = view(turns);
     const { session, client } = await coldReplay(h, client => {

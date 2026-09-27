@@ -16,6 +16,7 @@ function view(provider = "grok") {
     }) as any;
   } });
   windows.push(h.window);
+  dispatch(h.window, { type: "pinLiveWorkflows", value: false });
   dispatch(h.window, { type: "providerState", providers: [{ id: provider }] });
   dispatch(h.window, { type: "session", sessionId: "parent", provider, models: [] });
   return { ...h, tick(ms: number) { now += ms; for (const fn of ticks) fn(); } };
@@ -82,13 +83,13 @@ describe("Find inside a closed card", () => {
     expect((card.querySelector(".workflow-expanded") as HTMLElement).hidden).toBe(false);
   });
 
-  it.each(["running", "done"])("leaves an empty %s workflow card closed when Find hits its hidden labels", status => {
+  it.each(["running", "done"])("leaves an empty %s workflow card closed when Find has no step to reveal", status => {
     const h = view("claude");
     const card = workflow(h, "claude", status, { phases: [], agents: [], agentsUsed: undefined, controlsAvailable: false });
     find(h, "Steps");
     const row = card.querySelector(".delegation-header")!;
     expect(row.getAttribute("aria-expanded")).toBe("false");
-    expect(row.querySelector(".delegation-chevron")).toBeNull();
+    expect(!!row.querySelector(".delegation-chevron")).toBe(status === "running");
     if (status === "done") expect((card.querySelector("details") as HTMLDetailsElement).open).toBe(false);
     else expect((card.querySelector(".workflow-expanded") as HTMLElement).hidden).toBe(true);
   });
@@ -141,15 +142,14 @@ describe("quiet delegation card contract", () => {
     }
   });
 
-  it.each(["grok", "claude", "muse"])("%s workflow shares its closed header with the pin and finished report", provider => {
+  it.each(["grok", "claude", "muse"])("%s unpinned workflow shares its closed header with the finished report", provider => {
     for (const state of ["running", "done", "failed"]) {
       const h = view(provider);
       const card = workflow(h, provider, state);
       const row = header(card, "Workflow", state, true);
       if (state === "running") {
-        const pin = h.doc.querySelector(".workflow-pin-run")!;
-        expect(header(pin, "Workflow", state, true).innerHTML).toBe(row.innerHTML);
-        expect((pin.querySelector(".workflow-expanded") as HTMLElement).hidden).toBe(true);
+        expect(h.doc.querySelector(".workflow-pin-run")).toBeNull();
+        expect((card.querySelector(".workflow-expanded") as HTMLElement).hidden).toBe(true);
       } else expect((card.querySelector("details") as HTMLDetailsElement).open).toBe(false);
       expect(card.querySelector(".delegation-meta")!.textContent).toBe("1 agent · 36.42K tokens");
     }
@@ -198,14 +198,14 @@ describe("quiet delegation card contract", () => {
     expect(finished.querySelector(".delegation-time")!.textContent).toBe("");
   });
 
-  it("advances reported workflow time and puts two-minute staleness in both headers", () => {
+  it("advances reported workflow time and puts two-minute staleness in the live header", () => {
     const h = view();
     const card = workflow(h, "grok", "running", { elapsedMs: 10000 });
     h.tick(119000);
     expect(card.querySelector(".delegation-time")!.textContent).toBe("2:09");
     expect(card.querySelector(".delegation-status")!.textContent).toBe("running");
     h.tick(1000);
-    expect([...h.doc.querySelectorAll(".delegation-status")].map(el => el.textContent)).toEqual(["no update for 2 min", "no update for 2 min"]);
+    expect([...h.doc.querySelectorAll(".delegation-status")].map(el => el.textContent)).toEqual(["no update for 2 min"]);
     workflow(h, "grok", "done", { elapsedMs: 123000 }); h.tick(60000);
     expect(card.querySelector(".delegation-time")!.textContent).toBe("2:03");
     expect(card.querySelector(".delegation-status")!.textContent).toBe("done");
@@ -222,7 +222,7 @@ describe("quiet delegation card contract", () => {
     h.tick(150000);
     expect(card.querySelector(".delegation-time")!.textContent).toBe("0:16");
     expect(card.querySelector(".delegation-status")!.textContent).toBe("paused");
-    expect(h.doc.querySelector(".workflow-pin .run-progress-actions")!.closest(".workflow-expanded")).not.toBeNull();
+    expect(h.doc.querySelector(".workflow-card .run-progress-actions")!.closest(".workflow-expanded")).not.toBeNull();
   });
 
   it("keeps Claude's Allowed Workflow decision row", () => {

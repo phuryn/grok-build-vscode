@@ -173,6 +173,9 @@ describe("provider delegation through the existing presentation wire", () => {
       for (const row of rows.slice(0, -1)) p.accept(row.method, { item: row.item });
       expect(s.buffer.filter(m => m.type === "runProgress").at(-1).update.done).toBe(false);
       expect(s.desk.doc.querySelectorAll(".workflow-pin .workflow-agent")).toHaveLength(2);
+      expect(s.desk.doc.querySelector(".workflow-card .workflow-expanded")).toBeNull();
+      expect(s.desk.doc.querySelector(".workflow-trace")).not.toBeNull();
+      expect(s.desk.doc.querySelector(".workflow-pin-pref")).not.toBeNull();
       expect(s.desk.doc.querySelectorAll(".run-progress-btn")).toHaveLength(0);
       for (const h of [s.desk, s.phone, s.reopen()]) {
         const dots = h.doc.querySelectorAll(".workflow-pin .workflow-dot");

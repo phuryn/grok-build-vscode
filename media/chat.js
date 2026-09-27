@@ -145,6 +145,7 @@
    * have sent one anyway.
    */
   const EXPAND_DIFF_CARD_KEY = "grok.remote.expandDiffCard";
+  const PIN_LIVE_WORKFLOWS_KEY = IS_REMOTE ? "grok.remote.pinLiveWorkflows" : "grok.pinLiveWorkflows";
   const PROMPT_NAV_KEY = IS_REMOTE ? "grok.remote.promptNav" : "grok.promptNav";
   const REMOTE_TTS_KEY = "grok.remote.tts";
   const REMOTE_TTS_SUMMARY_KEY = "grok.remote.ttsSummary";
@@ -984,6 +985,7 @@
     // so someone who went and turned this off keeps it off; only a device that
     // never had an opinion picks up the new default.
     promptNav: IS_REMOTE ? storedBool(PROMPT_NAV_KEY, true) : false,
+    pinLiveWorkflows: IS_REMOTE ? storedBool(PIN_LIVE_WORKFLOWS_KEY, true) : true,
     // Independent of tool expansion; a remote owns its per-device default.
     expandDiffCard: IS_REMOTE ? storedBool(EXPAND_DIFF_CARD_KEY, false) : false,
     // grok.steerByDefault (persisted, global): when true a message sent while
@@ -1107,6 +1109,7 @@
     // neighbour, so the pair reads as one row of menu chrome rather than one
     // outline and one filled mark arguing about weight.
     shapes: `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.3 10a.7.7 0 0 1-.626-1.079L11.4 3a.7.7 0 0 1 1.198-.043L16.3 8.9a.7.7 0 0 1-.572 1.1Z"/><rect x="3" y="14" width="7" height="7" rx="1"/><circle cx="17.5" cy="17.5" r="3.5"/></svg>`,
+    arrowRight: `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14m-7-7 7 7-7 7"/></svg>`,
     pin: `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="m5 17 2-7V5l-2-2h14l-2 2v5l2 7Z"/></svg>`,
     // Same Lucide pin path with a filled head (outline stroke kept for the needle).
     pinFilled: `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="m5 17 2-7V5l-2-2h14l-2 2v5l2 7Z" fill="currentColor"/></svg>`,
@@ -14124,6 +14127,7 @@
 
   let workflowPin = null;
   let workflowAgeTimer = null;
+  let workflowMoveFrame = 0;
 
   function addWorkflowToolMarker(call) {
     if (state.activeProvider === "muse" && call?.title === "workflow") return true;
@@ -14143,6 +14147,21 @@
     return true;
   }
 
+  function syncWorkflowLaunchRows() {
+    for (const item of state.toolItemsByToolCallId.values()) {
+      const result = item._call?.rawOutput;
+      if (result?.type !== "Workflow" || typeof result.run_id !== "string") continue;
+      const card = state.runProgressCards.get(result.run_id);
+      if (!card?.parentNode) continue;
+      const row = item.closest(".tool-group") || item;
+      // Replay can report the run before its launch receipt. The receipt's
+      // run id anchors it exactly; names can be reused by later launches.
+      if (card.parentNode === row.parentNode && (card.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING)) {
+        row.after(card);
+      }
+    }
+  }
+
   function syncWorkflowToolMarkers() {
     const records = [...state.runProgressCards.values()].map((el) => el._workflow).filter(Boolean);
     for (const item of messagesEl.querySelectorAll(".workflow-tool-marker")) {
@@ -14154,6 +14173,8 @@
   }
 
   function clearWorkflowPin() {
+    if (workflowMoveFrame) cancelAnimationFrame(workflowMoveFrame);
+    workflowMoveFrame = 0;
     if (workflowPin) workflowPin.remove();
     workflowPin = null;
     clearInterval(workflowAgeTimer);
@@ -14213,6 +14234,7 @@
   }
 
   function refreshWorkflowHeader(header, record) {
+    if (!header) return;
     const u = record.update;
     const status = u.failed ? "failed" : u.cancelled ? "stopped" : u.done ? "done" : workflowLiveStatus(u);
     header.querySelector(".delegation-status").textContent = status === "running" && record.receivedAt != null && Date.now() - record.receivedAt >= 120000
@@ -14287,7 +14309,8 @@
           if (content) return content;
         }
       }
-      return "";
+      // Keep backticks inside JSON strings from closing the Markdown fence.
+      return value == null ? "" : "```json\n" + JSON.stringify(value, null, 2).replace(/`/g, "\\u0060") + "\n```";
     } catch {
       // summarize_result caps at 16KiB: a truncated JSON object must not
       // fall back to a raw blob. Nor should a JSON code fence bypass this.
@@ -14296,14 +14319,69 @@
     }
   }
 
+  function workflowMarker(parent, state) {
+    const marker = workflowText(parent, "workflow-state-marker", "", "span");
+    marker.dataset.state = state;
+    marker.setAttribute("aria-hidden", "true");
+    return marker;
+  }
+
+  function workflowAgentState(state) {
+    return /^(started|usage|running|active)$/.test(state) ? "active"
+      : /^(complete|completed|done)$/.test(state) ? "done"
+      : /^(failed|error|rejected|timedOut|aborted)$/.test(state) ? "failed" : state || "unknown";
+  }
+
+  function applyPinLiveWorkflows(value) {
+    if (state.pinLiveWorkflows === value) return;
+    state.pinLiveWorkflows = value;
+    const cards = [...state.runProgressCards.values()].filter(el => el._workflow && !el._workflow.update.done && !el._workflow.update.launchOnly);
+    if (!cards.length) return;
+    const focused = document.activeElement;
+    const scrollTop = messagesEl.scrollTop;
+    if (workflowMoveFrame) cancelAnimationFrame(workflowMoveFrame);
+    // Composer resizing and transcript mutations both normally follow the
+    // bottom. Hold the reader's position through this move's layout instead.
+    workflowMoveFrame = requestAnimationFrame(() => {
+      messagesEl.scrollTop = scrollTop;
+      workflowMoveFrame = requestAnimationFrame(() => {
+        messagesEl.scrollTop = scrollTop;
+        workflowMoveFrame = 0;
+      });
+    });
+    let focusTarget;
+    for (const el of cards) {
+      const record = el._workflow;
+      const source = value ? el : record.pin;
+      const hadFocus = source?.contains(focused) && focused.classList.contains("workflow-pin-pref");
+      // Move the body too: open agent details and pending interactions belong
+      // to the run, regardless of which surface currently holds it.
+      if (value) {
+        if (!record.pin) {
+          record.pin = document.createElement("article");
+          record.pin.className = "workflow-pin-run run-progress-card";
+          record.pin.dataset.runId = record.update.id;
+        }
+        record.pin.replaceChildren(...el.childNodes);
+      } else {
+        el.replaceChildren(...record.pin.childNodes);
+      }
+      renderWorkflowTranscript(el, record);
+      if (hadFocus) focusTarget = value ? record.pin : el;
+    }
+    syncWorkflowPin();
+    focusTarget?.querySelector(".workflow-pin-pref")?.focus({ preventScroll: true });
+    messagesEl.scrollTop = scrollTop;
+  }
+
   function renderWorkflowSurface(el, record, reportHeader) {
     const u = record.update;
     if (!el.firstChild) {
       if (!reportHeader) workflowText(el, "workflow-heading", "").appendChild(makeDelegationHeader("Workflow"));
       const body = workflowText(el, "workflow-expanded", "");
-      body.innerHTML = `<section class="workflow-steps"><div class="delegation-section-label">Steps</div><ol class="workflow-phases"></ol></section>` +
-        `<section class="workflow-agents"><div class="delegation-section-label">Agents</div><ul class="workflow-roster"></ul></section>` +
-        `<div class="run-progress-actions"></div><div class="run-progress-detail" hidden></div><div class="workflow-spend delegation-meta" hidden></div>`;
+      body.innerHTML = `<section class="workflow-steps"><ol class="workflow-phases"></ol></section>` +
+        `<section class="workflow-agents"><ul class="workflow-roster"></ul></section>` +
+        `<div class="run-progress-detail" hidden></div><div class="workflow-spend delegation-meta" hidden></div><div class="run-progress-actions"></div>`;
     }
     const toggle = reportHeader || el.querySelector(".delegation-header");
     const body = el.querySelector(".workflow-expanded");
@@ -14340,23 +14418,30 @@
       const phaseState = u.done && !reportedTerminal && (atPosition || phase.state === "active" || (!phase.state && !u.failed && !u.cancelled))
         ? u.failed ? "failed" : u.cancelled ? "cancelled" : "done"
         : current ? "active" : phase.state || "unknown";
-      for (const [parent, className, label, tag] of [[strip, "workflow-phase", phase.title, "li"], [dots, "workflow-dot", "", "span"]]) {
+      for (const [parent, className, label, tag] of [[strip, "workflow-phase", "", "li"], [dots, "workflow-dot workflow-state-marker", "", "span"]]) {
         const item = workflowText(parent, className, label, tag);
         item.dataset.state = phaseState;
         if (phase.id) item.dataset.phaseId = phase.id;
         item.title = `${phase.title}: ${current ? "current" : phaseState === "unknown" ? "state unavailable" : phaseState}`;
         item.setAttribute("aria-label", item.title);
         if (current) item.setAttribute("aria-current", "step");
+        if (parent === strip) {
+          workflowMarker(item, phaseState);
+          workflowText(item, "workflow-phase-label", phase.title, "span");
+          if (phase !== phases[phases.length - 1]) {
+            const arrow = workflowText(item, "workflow-phase-arrow", "", "span");
+            arrow.setAttribute("aria-hidden", "true");
+            arrow.innerHTML = ICON.arrowRight;
+          }
+        }
       }
     }
     if (!hasPhases && u.agentProgressDots && Array.isArray(u.agents)) {
       dots.hidden = !u.agents.length;
       for (const agent of u.agents) {
-        const dot = workflowText(dots, "workflow-dot workflow-agent-dot", "", "span");
+        const dot = workflowText(dots, "workflow-dot workflow-agent-dot workflow-state-marker", "", "span");
         const state = agent.state || "unknown";
-        dot.dataset.state = /^(started|usage|running|active)$/.test(state) ? "active"
-          : /^(complete|completed|done)$/.test(state) ? "done"
-          : /^(failed|error|rejected|timedOut|aborted)$/.test(state) ? "failed" : state;
+        dot.dataset.state = workflowAgentState(state);
         dot.title = `${workflowAgentName(agent)}: ${state}`;
         dot.setAttribute("aria-label", dot.title);
       }
@@ -14418,7 +14503,8 @@
           button.type = "button";
           button.setAttribute("aria-expanded", "false");
         }
-        workflowText(button, "workflow-agent-name", "", "strong");
+        workflowMarker(button, "unknown");
+        workflowText(button, "workflow-agent-name", "", "span");
         workflowText(button, "workflow-agent-state", "", "span");
         const chevron = hasDetails ? workflowText(button, "workflow-agent-chevron", "", "span") : null;
         if (chevron) {
@@ -14434,6 +14520,7 @@
           chevron.innerHTML = detail.hidden ? ICON.chevronRight : ICON.chevronDown;
         };
       }
+      row.querySelector(".workflow-state-marker").dataset.state = workflowAgentState(agent.state);
       row.querySelector(".workflow-agent-name").textContent = workflowAgentName(agent);
       row.querySelector(".workflow-agent-state").textContent = [agent.state ? agent.state.replace(/[_-]+/g, " ") : "",
         agent.tokensUsed > 0 ? `${compactTokens(agent.tokensUsed)} tokens` : ""].filter(Boolean).join(" · ");
@@ -14445,30 +14532,40 @@
 
     const actions = el.querySelector(".run-progress-actions");
     const paused = /paus/i.test(u.phase || "");
-    const controlsAvailable = el === record.pin && !u.done && !u.launchOnly && u.controlsAvailable !== false;
+    const live = !u.done && !u.launchOnly;
+    const controlsAvailable = live && u.controlsAvailable !== false && /^[\w.:-]+$/.test(u.displayName || "");
     // Deliberately NOT gated on `receivedAt`. The handle is what a control
     // needs, and the host owns the run either way -- a Stop for a run that has
     // since ended is ignored there, while greying the controls out on a live
     // run a phone joined is the out-of-reach complaint this card was built for.
-    const reason = !u.displayName ? "Controls unavailable: no workflow handle reported"
-      : !/^[\w.:-]+$/.test(u.displayName) ? "Controls unavailable: invalid workflow handle" : "";
     // Preserve focused controls and pending pointer clicks across rollup frames.
-    const controlsKey = JSON.stringify([u.done, u.launchOnly, paused, u.displayName, reason, u.controlsAvailable]);
+    const controlsKey = JSON.stringify([u.done, u.launchOnly, paused, u.displayName, u.controlsAvailable, state.pinLiveWorkflows]);
     if (actions.dataset.controlsKey !== controlsKey) {
       actions.dataset.controlsKey = controlsKey;
       actions.replaceChildren();
-      actions.hidden = !controlsAvailable;
+      actions.hidden = !live;
       if (controlsAvailable) {
         for (const action of [paused ? "resume" : "pause", "stop"]) {
           const button = workflowText(actions, "run-progress-btn", action[0].toUpperCase() + action.slice(1), "button");
           button.type = "button";
-          button.disabled = !!reason;
-          button.title = reason || `${button.textContent} ${u.displayName}`;
+          button.title = `${button.textContent} ${u.displayName}`;
           button.onclick = () => {
             if (!button.disabled) vscode.postMessage({ type: "workflowControl", action, displayName: u.displayName });
           };
         }
-        if (reason) workflowText(actions, "workflow-control-reason", reason);
+      }
+      if (live) {
+        const button = workflowText(actions, "workflow-pin-pref icon-btn", "", "button");
+        button.type = "button";
+        button.innerHTML = ICON.pin;
+        button.setAttribute("aria-pressed", String(state.pinLiveWorkflows));
+        button.title = state.pinLiveWorkflows ? "Unpin: show it where it started" : "Pin above the message box";
+        button.setAttribute("aria-label", button.title);
+        button.onclick = () => {
+          applyPinLiveWorkflows(!state.pinLiveWorkflows);
+          if (IS_REMOTE) storeRemotePref(PIN_LIVE_WORKFLOWS_KEY, state.pinLiveWorkflows);
+          else vscode.postMessage({ type: "setPinLiveWorkflows", value: state.pinLiveWorkflows });
+        };
       }
     }
     const expandable = !!(hasPhases || u.agents?.length || !actions.hidden || detailText || outputText || totals.length);
@@ -14476,7 +14573,7 @@
     if (!reportHeader) toggle.onclick = () => {
       if (!expandable) return;
       el._expanded = !el._expanded;
-      if (el === record.pin) record.expanded = el._expanded;
+      record.expanded = el._expanded;
       renderWorkflowSurface(el, record);
       if (workflowPin) workflowPin.classList.toggle("is-expanded", !!record.expanded);
     };
@@ -14487,7 +14584,16 @@
     el.classList.toggle("run-progress-failed", !!u.failed);
     el.classList.toggle("run-progress-cancelled", !!u.cancelled && !u.failed);
     el.classList.toggle("run-progress-done", !!u.done);
+    const trace = !u.done && !u.launchOnly && state.pinLiveWorkflows;
+    el.classList.toggle("workflow-trace", trace);
+    if (trace) {
+      el.replaceChildren();
+      workflowText(el, "run-progress-badge", "", "span").innerHTML = TOOL_ICON.workflow;
+      workflowText(el, "workflow-trace-label", `Workflow ${u.title && u.title !== u.id ? u.title : u.displayName || ""} started \u00b7 live below`, "span");
+      return;
+    }
     if (!u.done) {
+      el._expanded = record.expanded;
       renderWorkflowSurface(el, record);
       return;
     }
@@ -14513,7 +14619,7 @@
     // nothing above the composer, which is the complaint the pin exists to fix.
     // Receipt silence is shown in the header without withholding the pin.
     const records = [...state.runProgressCards.values()].map((el) => el._workflow)
-      .filter((r) => r && !r.update.done && !r.update.launchOnly)
+      .filter((r) => r && state.pinLiveWorkflows && !r.update.done && !r.update.launchOnly)
       .sort((a, b) => Number(workflowBlockages(b.update).length > 0) - Number(workflowBlockages(a.update).length > 0));
     if (!records.length) {
       if (workflowPin) workflowPin.remove();
@@ -14548,6 +14654,7 @@
         record.pin.dataset.runId = record.update.id;
       }
       if (stack.children[index] !== record.pin) stack.insertBefore(record.pin, stack.children[index] || null);
+      record.pin._expanded = record.expanded;
       renderWorkflowSurface(record.pin, record);
     }
     if (focused && focused.isConnected && stack.contains(focused) && document.activeElement !== focused) focused.focus({ preventScroll: true });
@@ -14606,6 +14713,7 @@
       record.update = update;
     }
     renderWorkflowTranscript(el, record);
+    syncWorkflowLaunchRows();
     syncWorkflowToolMarkers();
     syncWorkflowPin();
     refreshWorkflowAges();
@@ -15584,7 +15692,7 @@
     const h = messagesEl.clientHeight;
     if (h === lastScrollportHeight) return;
     lastScrollportHeight = h;
-    if (state.stickToBottom && !state.replaying) messagesEl.scrollTop = messagesEl.scrollHeight;
+    if (state.stickToBottom && !state.replaying && !workflowMoveFrame) messagesEl.scrollTop = messagesEl.scrollHeight;
   }).observe(messagesEl);
 
   // The scrollport's own border-box does not resize when content inside an
@@ -15593,10 +15701,10 @@
   // pinned; a deliberate scroll-up has cleared stickToBottom and is untouched.
   let contentFollowFrame = 0;
   new MutationObserver(() => {
-    if (state.replaying || state.historyHydrating || prependLock || contentFollowFrame) return;
+    if (state.replaying || state.historyHydrating || prependLock || workflowMoveFrame || contentFollowFrame) return;
     contentFollowFrame = requestAnimationFrame(() => {
       contentFollowFrame = 0;
-      if (state.stickToBottom && !state.replaying && !prependLock) messagesEl.scrollTop = messagesEl.scrollHeight;
+      if (state.stickToBottom && !state.replaying && !prependLock && !workflowMoveFrame) messagesEl.scrollTop = messagesEl.scrollHeight;
       updatePromptNav();
     });
   }).observe(messagesEl, {
@@ -18320,6 +18428,7 @@
     if (workflowBody && workflowBody.hidden && openable(workflowBody.parentElement)) {
       const surface = workflowBody.parentElement;
       surface._expanded = true;
+      if (surface._workflow) surface._workflow.expanded = true;
       workflowBody.hidden = false;
       surface.classList.add("is-expanded");
       setDelegationExpandable(surface.querySelector(".delegation-header"), true, true);
@@ -18878,6 +18987,7 @@
         if (typeof msg.steerByDefault === "boolean") state.steerByDefault = msg.steerByDefault;
         // A remote ignores the desk's value and keeps its own: the frame is
         // suppressed on the way out, but initialState is mirrored wholesale.
+        if (!IS_REMOTE) applyPinLiveWorkflows(msg.pinLiveWorkflows !== false);
         if (!IS_REMOTE && typeof msg.promptNav === "boolean") state.promptNav = msg.promptNav;
         if (!IS_REMOTE) {
           state.expandDiffCard = msg.expandDiffCard === true;
@@ -19143,6 +19253,9 @@
           state.expandDiffCard = !!msg.value;
           applyExpandDiffCard();
         }
+        break;
+      case "pinLiveWorkflows":
+        if (!IS_REMOTE) applyPinLiveWorkflows(!!msg.value);
         break;
       case "promptNav":
         // Arrives after the host writes grok.promptNav, which is how a
@@ -19884,6 +19997,7 @@
           state.mediaGenCallIds.add(msg.call.toolCallId);
         }
         addToToolGroup(msg.call);
+        syncWorkflowLaunchRows();
         // Reads replay as a completed tool_call with the file text in `content`.
         // Shell rows wait for host `commandOutput` (grok) or a later update (Claude).
         if (isReadTool(msg.call)) maybeAttachToolResultOutput(msg.call);
@@ -19953,6 +20067,7 @@
         // arrive on this update. Attach the IN box first so maybeAttach can
         // fill OUT from this same completed payload.
         refreshToolRowFromUpdate(msg.call);
+        syncWorkflowLaunchRows();
         // A self-executed command (cursor/Composer runs it in its own shell and
         // reports the result here, not via terminal/create) — fill the row's #41
         // IN/OUT box by toolCallId. Same path now fills a Read row's View all.

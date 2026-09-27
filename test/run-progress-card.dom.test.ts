@@ -33,6 +33,16 @@ const hidden = (el: Element | null) => !!el?.hasAttribute("hidden");
 const outputRuns = JSON.parse(readFileSync(new URL("fixtures/workflow-output.json", import.meta.url), "utf8")).runs;
 
 describe("workflow output", () => {
+  it.each(['42', 'true', '["machine"]', '{"status":"ok","path":"scratch/a.md"}',
+    '{"one":"alpha","summary":"done","two":"beta"}', '{"html":"<script>bad()</script>","fence":"```"}'])
+    ("renders a JSON result as fenced code: %s", result_summary => {
+      const h = boot(); send(h, { status: "complete", result_summary });
+      const output = card(h).querySelector(".workflow-output-body")!;
+      expect(JSON.parse(output.querySelector("pre code")!.textContent!)).toEqual(JSON.parse(result_summary));
+      expect(output.querySelector("script")).toBeNull();
+      expect((card(h).querySelector(".workflow-output") as any)._copyText).toBe(
+        "```json\n" + JSON.stringify(JSON.parse(result_summary), null, 2).replace(/`/g, "\\u0060") + "\n```");
+    });
   it.each(outputRuns)("separates summary, progress, output and roster for $run_id", (run) => {
     const h = boot(); send(h, run);
     const body = card(h).querySelector(".workflow-report-body")!;
@@ -60,7 +70,7 @@ describe("workflow output", () => {
     });
   });
 
-  it.each([undefined, "", "done", "null", "42", "true", '["machine"]', '{"status":"ok","path":"scratch/a.md"}', '{"summary":"truncated', '```json\n{"status":"ok"}\n```'])
+  it.each([undefined, "", "done", "null", '{"summary":"truncated', '```json\n{"status":"ok"}\n```'])
     ("omits the output block for non-human payload %s", (result_summary) => {
       const h = boot(); send(h, { status: "complete", result_summary });
       expect(card(h).querySelector(".workflow-output")).toBeNull();
@@ -106,6 +116,136 @@ describe("workflow output", () => {
     expect({ before, output: surface.querySelector(".workflow-output") }).toEqual({ before: {
       order: ["workflow-phases", "workflow-roster", "workflow-output delegation-result"], reason: "Review required",
     }, output: null });
+  });
+});
+
+describe("one live workflow surface", () => {
+  const toggle = (h: Harness) => h.doc.querySelector<HTMLButtonElement>(".workflow-pin-pref")!;
+  const frame = (h: Harness) => new Promise<void>(resolve => h.window.requestAnimationFrame(() => resolve()));
+
+  it.each([{}, { vscode: true }, { remote: true }])("moves every live run together and preserves open state, focus and scroll on %j", async options => {
+    const h = boot(options);
+    send(h); expand(h);
+    send(h, { run_id: "r2", name: "second" });
+    expect(h.doc.querySelectorAll(".workflow-heading")).toHaveLength(2);
+    expect(h.doc.querySelectorAll(".workflow-trace")).toHaveLength(2);
+    const scroll = h.doc.getElementById("messages")!;
+    Object.defineProperty(scroll, "scrollHeight", { configurable: true, value: 10000 });
+    await frame(h);
+    scroll.scrollTop = 123;
+    const button = toggle(h);
+    button.focus();
+    expect(button.getAttribute("aria-pressed")).toBe("true");
+    expect(button.title).toBe("Unpin: show it where it started");
+    click(h.window, button);
+    await frame(h); await frame(h); await frame(h);
+    expect(scroll.scrollTop).toBe(123);
+    expect(h.doc.querySelector(".workflow-pin, .workflow-trace")).toBeNull();
+    expect(h.doc.querySelectorAll(".workflow-card .workflow-heading")).toHaveLength(2);
+    expect(h.doc.querySelectorAll(".run-progress-btn")).toHaveLength(4);
+    expect(card(h).querySelector(".delegation-header")?.getAttribute("aria-expanded")).toBe("true");
+    expect(h.doc.activeElement).toBe(toggle(h));
+    expect(toggle(h).getAttribute("aria-pressed")).toBe("false");
+    expect(toggle(h).title).toBe("Pin above the message box");
+    click(h.window, toggle(h));
+    expect(h.doc.querySelectorAll(".workflow-pin-run")).toHaveLength(2);
+    expect(h.doc.querySelectorAll(".workflow-card .run-progress-btn")).toHaveLength(0);
+    expect(h.doc.querySelectorAll(".run-progress-btn")).toHaveLength(4);
+    expect(pin(h).querySelector(".delegation-header")?.getAttribute("aria-expanded")).toBe("true");
+    expect(h.doc.activeElement).toBe(toggle(h));
+    expect(pin(h).querySelectorAll('[aria-expanded="false"].delegation-header')).toHaveLength(1);
+    await frame(h); await frame(h); await frame(h);
+    expect(scroll.scrollTop).toBe(123);
+  });
+
+  it.each([true, false])("finishes into a closed transcript report when pinned=%s", pinned => {
+    const h = boot();
+    dispatch(h.window, { type: "pinLiveWorkflows", value: pinned });
+    send(h);
+    const original = card(h);
+    click(h.window, h.doc.querySelector(".delegation-header")!);
+    send(h, { status: "complete", result_summary: "Report" });
+    expect(card(h)).toBe(original);
+    expect(h.doc.querySelector(".workflow-pin, .workflow-pin-pref, .run-progress-btn, .workflow-trace")).toBeNull();
+    expect((card(h).querySelector("details") as HTMLDetailsElement).open).toBe(false);
+  });
+
+  it("posts the desk preference and accepts settings frames, with pinned as the old-host default", () => {
+    const h = boot(); send(h); expand(h);
+    click(h.window, toggle(h));
+    expect(h.posted).toContainEqual({ type: "setPinLiveWorkflows", value: false });
+    dispatch(h.window, { type: "pinLiveWorkflows", value: true });
+    expect(pin(h)).not.toBeNull();
+    dispatch(h.window, { type: "pinLiveWorkflows", value: false });
+    expect(h.doc.querySelector(".workflow-pin")).toBeNull();
+    dispatch(h.window, { type: "initialState" });
+    expect(pin(h)).not.toBeNull();
+    dispatch(h.window, { type: "initialState", pinLiveWorkflows: false });
+    expect(h.doc.querySelector(".workflow-pin")).toBeNull();
+  });
+
+  it("stores the phone preference locally, restores it on reload and ignores desk frames", () => {
+    const h = boot({ remote: true }); send(h); expand(h);
+    click(h.window, toggle(h));
+    expect(h.window.localStorage.getItem("grok.remote.pinLiveWorkflows")).toBe("false");
+    expect(h.posted.some(m => m.type === "setPinLiveWorkflows")).toBe(false);
+    dispatch(h.window, { type: "initialState", pinLiveWorkflows: true });
+    dispatch(h.window, { type: "pinLiveWorkflows", value: true });
+    expect(h.doc.querySelector(".workflow-pin")).toBeNull();
+    const restored = bootWebview({ remote: true, beforeScripts: w => w.localStorage.setItem("grok.remote.pinLiveWorkflows", "false") });
+    windows.push(restored.window); send(restored);
+    expect(restored.doc.querySelector(".workflow-pin")).toBeNull();
+    expect(card(restored).querySelector(".workflow-heading")).not.toBeNull();
+  });
+
+  it("keeps the toggle as the last and only control for a run without driven controls", () => {
+    const h = boot();
+    dispatch(h.window, { type: "runProgress", update: { id: "run", kind: "workflow", phase: "running", controlsAvailable: false } });
+    expand(h);
+    expect([...pin(h).querySelector(".run-progress-actions")!.children]).toEqual([toggle(h)]);
+    expect(hidden(toggle(h).closest(".workflow-expanded"))).toBe(false);
+    click(h.window, toggle(h));
+    expect([...card(h).querySelector(".run-progress-actions")!.children]).toEqual([toggle(h)]);
+  });
+
+  it("routes Pause, Resume and Stop from the unpinned card only", () => {
+    const h = boot(); send(h); expand(h);
+    click(h.window, toggle(h));
+    const controls = () => [...card(h).querySelectorAll<HTMLButtonElement>(".run-progress-btn")];
+    click(h.window, controls()[0]);
+    send(h, { status: "user_paused" });
+    expect(controls().map(button => button.textContent)).toEqual(["Resume", "Stop"]);
+    controls().forEach(button => click(h.window, button));
+    expect(h.posted.filter(m => m.type === "workflowControl")).toEqual([
+      { type: "workflowControl", action: "pause", displayName: "deep-research" },
+      { type: "workflowControl", action: "resume", displayName: "deep-research" },
+      { type: "workflowControl", action: "stop", displayName: "deep-research" },
+    ]);
+    expect(h.doc.querySelector(".workflow-pin")).toBeNull();
+    expect(h.doc.querySelectorAll(".run-progress-btn")).toHaveLength(2);
+    expect(card(h).querySelector(".run-progress-actions")!.lastElementChild).toBe(toggle(h));
+  });
+
+  it("uses the same markers for header, steps and agents, with arrows inside each step", () => {
+    const h = boot();
+    const style = h.doc.createElement("style");
+    style.textContent = readFileSync(new URL("../media/chat.css", import.meta.url), "utf8");
+    h.doc.head.append(style);
+    const states = ["done", "active", "pending", "unknown", "failed", "cancelled", "stopped"];
+    send(h, { current_phase: "active", phases: states.map(state => ({ title: state, state })),
+      agents: states.map((state, i) => ({ agent_id: String(i), label: state, state })) });
+    expand(h);
+    const steps = [...pin(h).querySelectorAll(".workflow-phase")];
+    expect(steps.map(step => step.querySelector(".workflow-state-marker")?.getAttribute("data-state"))).toEqual(states);
+    expect(pin(h).querySelectorAll(".workflow-phase-arrow svg")).toHaveLength(states.length - 1);
+    expect(steps.slice(0, -1).every(step => step.lastElementChild?.classList.contains("workflow-phase-arrow"))).toBe(true);
+    expect(steps.at(-1)?.querySelector(".workflow-phase-arrow")).toBeNull();
+    expect(h.window.getComputedStyle(steps[1].querySelector(".workflow-phase-label") as any).fontWeight).toBe("700");
+    expect(steps[1].getAttribute("aria-current")).toBe("step");
+    expect(steps.every(step => step.getAttribute("aria-label") === step.getAttribute("title"))).toBe(true);
+    expect(pin(h).querySelector(".delegation-section-label")).toBeNull();
+    expect([...pin(h).querySelectorAll(".workflow-agent-toggle")].map(row => row.firstElementChild?.getAttribute("data-state"))).toEqual(states);
+    expect(pin(h).querySelector("strong.workflow-agent-name")).toBeNull();
   });
 });
 
@@ -181,8 +321,10 @@ describe("approved workflow states", () => {
     expect(dots.filter((d) => d.hasAttribute("aria-current"))).toHaveLength(1);
     expect(hidden(pin(h).querySelector(".workflow-expanded"))).toBe(true);
     expect(pin(h).querySelector(".workflow-motion, .blink-dots")).toBeNull();
-    expect(card(h).querySelector(".delegation-header")!.innerHTML).toBe(pin(h).querySelector(".delegation-header")!.innerHTML);
-    expect(card(h).querySelector(".delegation-header")!.getAttribute("aria-expanded")).toBe("false");
+    expect(card(h).textContent).toBe("Workflow deep-research started \u00b7 live below");
+    expect(card(h).querySelector("svg")).not.toBeNull();
+    expect(card(h).querySelector(".delegation-header, .workflow-expanded, button, .delegation-chevron")).toBeNull();
+    expect(h.doc.querySelectorAll(".workflow-heading")).toHaveLength(1);
   });
   it.each([{}, { vscode: true }, { remote: true }])("keeps the header status and duration when opened on surface %j", (options) => {
     const h = boot(options);
@@ -416,10 +558,10 @@ describe("workflow evidence", () => {
     const buttons = [...pin(h).querySelectorAll<HTMLButtonElement>(".run-progress-btn")];
     expect(buttons.map(b => b.textContent)).toEqual(["Pause", "Stop"]);
     expect(buttons.every(b => b.disabled)).toBe(false);
-    expect(card(h).querySelector(".delegation-status")!.textContent).toBe("running");
+    expect(pin(h).querySelector(".delegation-status")!.textContent).toBe("running");
     expect(card(h).querySelector("summary")).toBeNull();
     // Beside tool rows that all carry one, a bare string read as half-drawn.
-    expect(card(h).querySelector(".delegation-icon svg.tool-icon")).not.toBeNull();
+    expect(card(h).querySelector(".run-progress-badge svg.tool-icon")).not.toBeNull();
   });
 });
 
@@ -451,7 +593,7 @@ describe("reported capabilities", () => {
     dispatch(h.window, { type: "runProgress", update: { kind: "workflow", id: "opaque", title: "opaque", phase: "running", done: false, progress: 0.3 } });
     expect(pin(h).querySelectorAll(".workflow-dot, .workflow-agent")).toHaveLength(0);
     for (const selector of [".workflow-phases", ".workflow-roster", ".workflow-spend"]) expect(hidden(pin(h).querySelector(selector))).toBe(true);
-    expect(card(h).querySelector(".delegation-status")!.textContent).toBe("running");
+    expect(pin(h).querySelector(".delegation-status")!.textContent).toBe("running");
     expect(pin(h).textContent).not.toMatch(/opaque|%/);
     send(h, { phases: undefined, current_phase: undefined, elapsed_ms: undefined, agents: undefined, agents_used: undefined, agent_budget: undefined });
     expect(pin(h).querySelector('[data-run-id="r1"] .run-progress-phase')!.textContent).toBe("running");
@@ -547,12 +689,12 @@ describe("reachable controls and tool fallback", () => {
     const h = boot(); send(h, { status });
     expect(pin(h).querySelector(".run-progress-phase")!.textContent).toBe(expected);
   });
-  it.each([undefined, "bad handle", " deep-research "])("disables controls for handle %s", (name) => {
+  it.each([undefined, "bad handle", " deep-research "])("offers only the pin toggle for unavailable handle %s", (name) => {
     const h = boot(); send(h, { name });
     const buttons = [...pin(h).querySelectorAll<HTMLButtonElement>(".run-progress-btn")];
-    expect(buttons).toHaveLength(2);
-    expect(buttons.every((b) => b.disabled)).toBe(true);
-    expect(pin(h).textContent).toContain("Controls unavailable:");
+    expect(buttons).toHaveLength(0);
+    expect(pin(h).querySelector(".run-progress-actions")!.children).toHaveLength(1);
+    expect(pin(h).querySelector(".workflow-pin-pref")).not.toBeNull();
     buttons.forEach((b) => b.click());
     expect(h.posted.filter((m) => m.type === "workflowControl")).toEqual([]);
   });

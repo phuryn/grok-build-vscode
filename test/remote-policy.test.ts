@@ -1496,3 +1496,13 @@ describe("the diff-card preference belongs to each device", () => {
     expect(transformHostMsgForRemote({ type: "expandDiffCard", value: true })).toBeNull();
   });
 });
+
+describe("the live-workflow pin preference belongs to each device", () => {
+  it("keeps both directions host-local and needs no remote session binding", () => {
+    expect(INBOUND_DISPOSITION.setPinLiveWorkflows).toBe("host-local");
+    expect(REMOTE_REQUIRES_BOUND_SESSION.setPinLiveWorkflows).toBe(false);
+    expect(OUTBOUND_DISPOSITION.pinLiveWorkflows).toBe("host-local");
+    expect(OUTBOUND_PROJECT_AUTH.pinLiveWorkflows).toBe("none");
+    expect(transformHostMsgForRemote({ type: "pinLiveWorkflows", value: true })).toBeNull();
+  });
+});

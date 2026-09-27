@@ -296,6 +296,7 @@ describe("the captured workflow lifecycle", () => {
     expect(text(h, ".workflow-card .delegation-time")).toBe("0:00");
     expect(text(h, ".workflow-agent-state")).toBe("cancelled");
     expect(h.doc.querySelector(".workflow-card")!.classList.contains("run-progress-cancelled")).toBe(true);
+    expect(h.doc.querySelector(".workflow-pin-pref, .workflow-trace")).toBeNull();
     expect(h.doc.querySelectorAll(".workflow-card .run-progress-btn")).toHaveLength(0);
   });
   it("keeps state-change evidence without denying an unchanged positive token total", () => {

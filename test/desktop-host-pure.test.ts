@@ -1287,12 +1287,11 @@ describe("webview message schema validation — display-preference setters", () 
   // VS Code accepts (no gate there) and a phone never posts (local-only) can
   // therefore be dead on the desktop and on a cloud machine alone — which is
   // exactly what happened to setExpandDiffCard the day it shipped.
-  it("accepts setExpandDiffCard with a boolean and refuses anything else", () => {
-    expect(parseWebviewMsg({ type: "setExpandDiffCard", value: true }))
-      .toEqual({ type: "setExpandDiffCard", value: true });
-    expect(parseWebviewMsg({ type: "setExpandDiffCard", value: false })?.type).toBe("setExpandDiffCard");
-    expect(parseWebviewMsg({ type: "setExpandDiffCard", value: "yes" })).toBeNull();
-    expect(parseWebviewMsg({ type: "setExpandDiffCard" })).toBeNull();
+  it.each(["setExpandDiffCard", "setPinLiveWorkflows"])("accepts %s with a boolean and refuses anything else", type => {
+    expect(parseWebviewMsg({ type, value: true })).toEqual({ type, value: true });
+    expect(parseWebviewMsg({ type, value: false })?.type).toBe(type);
+    expect(parseWebviewMsg({ type, value: "yes" })).toBeNull();
+    expect(parseWebviewMsg({ type })).toBeNull();
   });
 });
 

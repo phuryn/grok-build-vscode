@@ -2816,28 +2816,23 @@ body.thinking-hidden .msg.thinking { display: none; }
   list-style: none;
 }
 .workflow-phase {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   min-width: 0;
   max-width: 100%;
-  overflow-wrap: anywhere;
-  padding: 2px 5px;
-  border-bottom: 2px solid var(--vscode-editorWidget-border, #777);
+  color: var(--vscode-descriptionForeground);
+  font: inherit;
 }
-.workflow-phase::before { content: "○ "; }
-.workflow-phase[data-state="unknown"]::before { content: "? "; }
-.workflow-phase[data-state="active"] { color: var(--vscode-foreground); border-color: var(--vscode-charts-blue, #3794ff); }
-.workflow-phase[data-state="active"]::before { content: "› "; }
-.workflow-phase[data-state="done"]::before,
-.workflow-phase[data-state="complete"]::before,
-.workflow-phase[data-state="completed"]::before { content: "✓ "; }
-.workflow-phase[data-state="done"],
-.workflow-phase[data-state="complete"],
-.workflow-phase[data-state="completed"] { border-color: var(--vscode-charts-green, #4ec9b0); }
-/* A stage that was active when a run stopped or failed must not look
-   like a stage that was never reached (○, identical to pending). */
-.workflow-phase[data-state="failed"]::before { content: "✕ "; }
-.workflow-phase[data-state="failed"] { border-color: var(--vscode-errorForeground); color: var(--vscode-errorForeground); }
-.workflow-phase[data-state="cancelled"]::before { content: "› "; }
-.workflow-phase[data-state="cancelled"] { opacity: 0.7; }
+.workflow-phase-label { min-width: 0; overflow-wrap: anywhere; }
+.workflow-phase[data-state="active"], .workflow-phase[data-state="done"],
+.workflow-phase[data-state="complete"], .workflow-phase[data-state="completed"] { color: var(--vscode-foreground); }
+.workflow-phase[data-state="active"] .workflow-phase-label { font-weight: 700; }
+.workflow-phase[data-state="failed"] { color: var(--vscode-errorForeground); }
+.workflow-phase[data-state="cancelled"] .workflow-phase-label,
+.workflow-phase[data-state="stopped"] .workflow-phase-label { text-decoration: line-through; }
+.workflow-phase-arrow { display: inline-flex; flex: none; color: var(--vscode-descriptionForeground); }
+.workflow-phase-arrow svg { width: 12px; height: 12px; }
 /* Name, steps and stage on the left; elapsed and the chevron on the right; the
    controls on their OWN row at the foot of the card. Pause and Stop used to
    share this row, which clipped "Stop" off the right edge of a phone, and the
@@ -2873,15 +2868,46 @@ body.thinking-hidden .msg.thinking { display: none; }
 /* Wraps because a phase list is not always four steps — a long one would
    otherwise run the heading off a 320px screen. */
 .workflow-dots { display: inline-flex; flex-wrap: nowrap; flex: none; gap: 5px; align-items: center; }
-.workflow-dot { width: 7px; height: 7px; border: 1px solid currentColor; border-radius: 50%; opacity: 0.45; }
-.workflow-dot[data-state="unknown"] { border-style: dashed; }
+.workflow-state-marker {
+  display: inline-block;
+  position: relative;
+  flex: none;
+  box-sizing: border-box;
+  width: 9px;
+  height: 9px;
+  border: 1px solid var(--vscode-descriptionForeground);
+  border-radius: 50%;
+}
+.workflow-state-marker[data-state="unknown"] { border-style: dashed; }
+.workflow-state-marker[data-state="done"], .workflow-state-marker[data-state="complete"], .workflow-state-marker[data-state="completed"] {
+  background: var(--vscode-charts-green, #89d185);
+  border-color: var(--vscode-charts-green, #89d185);
+}
+.workflow-state-marker[data-state="active"] { border-color: var(--vscode-charts-blue, #3794ff); }
+.workflow-state-marker[data-state="active"]::after {
+  content: "";
+  position: absolute;
+  inset: 2px;
+  background: var(--vscode-charts-blue, #3794ff);
+  border-radius: 50%;
+}
+.workflow-state-marker[data-state="failed"] { background: var(--vscode-errorForeground); border-color: var(--vscode-errorForeground); }
+.workflow-state-marker[data-state="cancelled"]::after, .workflow-state-marker[data-state="stopped"]::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 0;
+  width: 7px;
+  border-top: 1px solid var(--vscode-descriptionForeground);
+  transform: rotate(-45deg);
+}
 .workflow-dot[hidden] { display: none; }
 .workflow-dots-more { font-size: 11px; line-height: 1; opacity: 0.6; }
-.workflow-agent-dot[data-state="active"] { border: 2px solid var(--vscode-charts-blue, #3794ff); opacity: 1; }
-.workflow-dot[data-state="done"], .workflow-dot[data-state="complete"], .workflow-dot[data-state="completed"] { background: var(--vscode-charts-green, #4ec9b0); border-color: var(--vscode-charts-green, #4ec9b0); opacity: 1; }
-.workflow-dot[data-state="failed"] { background: var(--vscode-errorForeground); border-color: var(--vscode-errorForeground); opacity: 1; }
-.workflow-dot[data-state="cancelled"] { opacity: 0.7; }
-.workflow-dot[aria-current="step"] { border: 2px solid var(--vscode-charts-blue, #3794ff); opacity: 1; }
+.workflow-trace { display: flex; align-items: center; gap: 7px; padding: 3px 0; background: none; border: 0; color: var(--vscode-descriptionForeground); }
+.workflow-trace-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workflow-pin-pref { margin-left: auto; flex: none; }
+.workflow-pin-pref[aria-pressed="true"] { color: var(--vscode-charts-blue, #3794ff); background: color-mix(in srgb, var(--vscode-charts-blue, #3794ff) 12%, transparent); }
+.workflow-pin-pref:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
 
 .workflow-report-toggle { cursor: pointer; font-weight: 600; display: flex; align-items: center; gap: 9px; }
 /* The native disclosure triangle sits on the LEFT and is not our chevron; the
@@ -2896,16 +2922,16 @@ body.thinking-hidden .msg.thinking { display: none; }
 .workflow-report-dots[hidden], .workflow-report-elapsed[hidden] { display: none; }
 .workflow-report-body { margin-top: 6px; }
 .workflow-agent-toggle { display: flex; align-items: baseline; gap: 6px; width: 100%; border: 0; padding: 4px 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; white-space: nowrap; }
-.workflow-agent-name { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; }
-.workflow-agent-state { flex: 0 0 auto; }
-.workflow-agent-chevron { margin-left: auto; }
+.workflow-agent-name { font-weight: 400; color: var(--vscode-foreground); flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; }
+.workflow-agent-state { flex: 0 0 auto; margin-left: auto; color: var(--vscode-descriptionForeground); }
+.workflow-agent-chevron { margin-left: 0; }
 .workflow-agent-detail { padding: 4px 0; }
 .workflow-roster { overflow-x: auto; list-style: none; padding: 0; margin: 8px 0 2px; }
 .workflow-agent { padding: 5px 0; border-top: 1px solid var(--vscode-editorWidget-border, #555); overflow-wrap: anywhere; }
-.workflow-agent[data-state*="fail"], .workflow-agent[data-state*="error"] { color: var(--vscode-errorForeground, #f48771); }
-.workflow-agent[data-state*="permission"], .workflow-agent[data-state*="blocked"] { color: var(--vscode-charts-orange, #d7ba7d); }
+.workflow-agent[data-state*="permission"], .workflow-agent[data-state*="blocked"],
+.workflow-agent[data-state*="permission"] .workflow-agent-name, .workflow-agent[data-state*="blocked"] .workflow-agent-name,
+.workflow-agent[data-state*="permission"] .workflow-agent-state, .workflow-agent[data-state*="blocked"] .workflow-agent-state { color: var(--vscode-charts-orange, #d7ba7d); }
 .workflow-agent[data-state="cancelled"] { opacity: 0.8; }
-.workflow-control-reason { flex-basis: 100%; font-size: 0.9em; }
 .run-progress-card .run-progress-btn:disabled { opacity: 0.55; cursor: default; }
 .workflow-pin-toggle:focus-visible, .workflow-agent-toggle:focus-visible, .workflow-report-toggle:focus-visible, .run-progress-btn:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
 @media (hover: none), (pointer: coarse) {
@@ -2950,11 +2976,10 @@ body.thinking-hidden .msg.thinking { display: none; }
 .delegation-section-label { margin-top: 10px; font-size: .88em; opacity: .7; }
 .subagent-stream::before { content: "Activity"; font-size: .88em; opacity: .7; }
 .delegation-result .msg-actions { opacity: 1; }
-.workflow-phases { flex-direction: column; align-items: flex-start; }
-.workflow-phase { border: 0; padding: 0; }
 .subagent-failed .delegation-status, .run-progress-failed .delegation-status { color: var(--vscode-errorForeground); }
 @media (hover: none), (pointer: coarse) {
-  .delegation-header { min-height: 36px; }
+  .delegation-header, .workflow-card .run-progress-btn { min-height: 36px; }
+  .workflow-pin-pref { min-width: 36px; min-height: 36px; }
 }
 
 .tool-group {
