@@ -1,6 +1,33 @@
 import type { HostMsg } from "./protocol";
-import { promises as fs } from "node:fs";
+import { promises as fs, readFileSync } from "node:fs";
 import * as path from "node:path";
+
+// Restart-safe BOOT function defined in grok-remote/src/pool-bootstrap.ts.
+export const CLOUD_UPDATE_BOOT_MARKER = "cleanup_display";
+export function cloudHostBootSupportsUpdate(home: string): boolean {
+  try { return readFileSync(path.join(home, "afkpilot-boot.sh"), "utf8").includes(CLOUD_UPDATE_BOOT_MARKER); }
+  catch { return false; }
+}
+
+export const CLOUD_WORKFLOW_SILENCE_MS = 30 * 60_000;
+export const CLOUD_AGENT_QUIET_MS = 90_000;
+
+/** Latest frame wins per run and per session; a lost completion cannot block forever. */
+export function cloudLiveWorkflowRuns(sessions: Iterable<{ buffer: readonly HostMsg[] }>,
+  receivedAt: WeakMap<object, number>, now: number): number {
+  let count = 0;
+  for (const session of sessions) {
+    const latest = new Map<string, Extract<HostMsg, { type: "runProgress" }>>();
+    for (const message of session.buffer) {
+      if (message.type === "runProgress" && message.update.kind === "workflow") latest.set(message.update.id, message);
+    }
+    for (const message of latest.values()) {
+      const at = receivedAt.get(message);
+      if (!message.update.done && at !== undefined && now - at < CLOUD_WORKFLOW_SILENCE_MS) count++;
+    }
+  }
+  return count;
+}
 
 /** BOOT rechecks the host and reinstalls agent CLIs after this handoff. */
 export async function removeCloudHostUpdateStamps(home: string): Promise<void> {
@@ -60,8 +87,10 @@ export interface CloudUpdateSession {
 
 /** No human-wait expiry: every session, including background sessions, must settle. */
 export function cloudHostIsIdle(sessions: Iterable<CloudUpdateSession>, commandRunning: boolean,
-  signingIn: boolean, admittedWork = 0): boolean {
-  if (commandRunning || signingIn || admittedWork > 0) return false;
+  signingIn: boolean, admittedWork = 0, liveWorkflowRuns = 0,
+  lastAgentActivity = -Infinity, now = 0): boolean {
+  if (commandRunning || signingIn || admittedWork > 0 || liveWorkflowRuns > 0
+    || now - lastAgentActivity < CLOUD_AGENT_QUIET_MS) return false;
   for (const s of sessions) {
     if (s.turnToken || s.priming || s.pendingPermissions.size || s.pendingQuestions.size
       || s.pendingExitPlans.size || s.queuedSends.length) return false;

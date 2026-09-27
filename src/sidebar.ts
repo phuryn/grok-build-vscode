@@ -1,4 +1,4 @@
-import { CloudHostUpdate, cloudHostIsIdle, installedCloudHostVersion, parseCloudHostUpdateAttempt, removeCloudHostUpdateStamps, CLOUD_UPDATE_REFUSAL } from "./cloud-host-update";
+import { CloudHostUpdate, cloudHostIsIdle, cloudHostBootSupportsUpdate, cloudLiveWorkflowRuns, installedCloudHostVersion, parseCloudHostUpdateAttempt, removeCloudHostUpdateStamps, CLOUD_UPDATE_REFUSAL } from "./cloud-host-update";
 import { MuseBackend, withMuseCredentialBackend } from "./muse-backend";
 import { locateMuseCli, parseMuseVersionOutput } from "./muse-cli-locator";
 import { museInstallCommand } from "./muse-install";
@@ -897,6 +897,8 @@ export class GrokSidebar {
   private uplink?: RemoteUplink;
   private cloudHostUpdate?: CloudHostUpdate;
   private cloudHostWork = 0;
+  private cloudWorkflowReceivedAt = new WeakMap<object, number>();
+  private cloudLastAgentActivity = -Infinity;
   private readonly remoteClients: RemoteClientState<Session, RemoteBrowserPreferences>;
   /**
    * One git write at a time per repository.
@@ -1262,6 +1264,7 @@ export class GrokSidebar {
 
   private startCloudHostUpdate(): void {
     if (!isCloudEnvironment() || !this.host.exitCloudHost) return;
+    if (!cloudHostBootSupportsUpdate(os.homedir())) return;
     const app = path.join(os.homedir(), "afkpilot");
     let record: string | undefined;
     try { record = fs.readFileSync(path.join(app, ".afkpilot-asset"), "utf8"); }
@@ -1294,9 +1297,14 @@ export class GrokSidebar {
         if (!response.ok) throw new Error("Cloud update check failed");
         return response.json();
       },
-      idle: () => cloudHostIsIdle(new Set([...this.pool, this.focused]), this.terminalManager.anyRunning(),
-        this.deviceLoginInFlight() || !!this.mcpRemoteAuthorization,
-        this.cloudHostWork + (this.providerCliUpdate ? 1 : 0)),
+      idle: () => {
+        const sessions = new Set([...this.pool, this.focused]);
+        const now = Date.now();
+        return cloudHostIsIdle(sessions, this.terminalManager.anyRunning(),
+          this.deviceLoginInFlight() || !!this.mcpRemoteAuthorization,
+          this.cloudHostWork + (this.providerCliUpdate ? 1 : 0),
+          cloudLiveWorkflowRuns(sessions, this.cloudWorkflowReceivedAt, now), this.cloudLastAgentActivity, now);
+      },
       publish: (message) => this.uplink?.publishCloudUpdate(message),
       maintenance: () => {
         if (!this.uplink) return Promise.reject(new Error("No uplink for maintenance hold"));
@@ -1305,6 +1313,20 @@ export class GrokSidebar {
       removeStamp: () => removeCloudHostUpdateStamps(os.homedir()),
       exit: () => this.host.exitCloudHost!(),
     });
+  }
+
+  private trackCloudAgentActivity(session: Session, client: AcpClient, gen: number): void {
+    if (!this.cloudHostUpdate) return;
+    // Includes provider-initiated delivery turns, with no host turn token.
+    for (const event of ["messageChunk", "thoughtChunk", "mediaContent", "toolCall", "toolCallUpdate",
+      "plan", "childStream", "taskBackgrounded", "taskCompleted", "promptComplete", "notice",
+      "xaiNotification", "subagentLifecycle", "update", "contextUsage", "adapterUsageUpdate"]) {
+      client.on(event, () => {
+        if (gen !== session.gen || !this.cloudHostUpdate) return;
+        this.cloudLastAgentActivity = Date.now();
+        this.cloudHostUpdate.considerApply();
+      });
+    }
   }
 
   /** Covers awaits before a turn token exists, including scheduled/background sends. */
@@ -10308,6 +10330,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // Owned by this client, so tearing it down takes its commands with it.
     client.terminal = this.terminalManager.ownedBy(client);
 
+    this.trackCloudAgentActivity(session, client, gen);
     client.on("initialized", (init) => {
       if (gen !== session.gen) return;
       this.warnOAuthShadowOnce(init?._meta?.defaultAuthMethodId, env);
@@ -18528,6 +18551,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       // Hydration may keep the first frame it sees. Repair every replay position
       // from the newest observation, with independent nested data for each frame.
       for (const message of frames) message.update = structuredClone(completed);
+      this.cloudHostUpdate?.considerApply();
       if (session.suppressContent) continue;
       const frame: HostMsg = { type: "runProgress", update: completed, replaceOnly: true };
       if (session === this.focused) this.postLocal(frame);
@@ -18550,6 +18574,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     if (message.type === "runProgress") {
       const completed = this.workflowCompletion(session, message.update);
       if (completed) message = { type: "runProgress", update: completed };
+      if (this.cloudHostUpdate) this.cloudWorkflowReceivedAt.set(message, Date.now());
     }
     // A capture still running when tools start may already contain their writes.
     // Prefer the tool-row fallback to presenting that as the pre-turn file.
@@ -18558,6 +18583,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     if (session.suppressContent && GrokSidebar.SUPPRESS_TYPES.has(message.type)) return;
     if (message.type === "clearMessages") session.buffer = [];
     else if (!GrokSidebar.TRANSIENT_TYPES.has(message.type)) session.buffer.push(message);
+    if (message.type === "runProgress") this.cloudHostUpdate?.considerApply();
     if (message.type === "userMessage" && !message.steer) {
       session.liveFeedbackEligible = false;
       session.turnRating = 0;
