@@ -44,6 +44,12 @@ rows("ignored", "ACP update", "response_completed", "src/acp-dispatch.ts extract
 rows("ignored", "ACP update", "session_summary_generated", "src/sidebar.ts xaiNotification/postSessionName: summary notification is unused; cliSessionTitle reads persisted titles on history refresh (live title gap tracked by session_info_update).");
 rows("ignored", "ACP update", "tool_call_delta_chunk", "src/acp-dispatch.ts routeSessionUpdate: complete tool_call/rawInput creates cards; incremental pre-call argument fragments are not rendered.");
 rows("ignored", "ACP update", "subagent_progress", "src/acp-dispatch.ts isSubagentLifecycleUpdate: deliberately excluded periodic progress; spawn/finish and child streams own cards.");
+// Seen only in the full test:live run (edits, Stop, reopen, background tasks), 2026-09-27.
+meta("handled", "details old_line new_line", "media/chat.js extractDiffSites: edit-diff sites from _meta.details[] and the echo's first-site old_line/new_line.");
+meta("ignored", "isReplay", "src/sidebar.ts: replay is known from the host's own session/load and historyReplay state; the per-update flag is unused.");
+meta("ignored", "cancellationCategory", "src/acp.ts prompt result: a cancelled turn is read from stopReason \"cancelled\"; the category is diagnostic.");
+rows("ignored", "ACP method", "_x.ai/task_backgrounded _x.ai/task_completed", "src/acp-dispatch.ts routeSessionUpdate handles the same events as session/update task_backgrounded / task_completed; these standalone notifications duplicate them.");
+rows("ignored", "ACP method", "_x.ai/session/interjection", "ACCEPTED pre-existing gap (backlog): no host reader for Grok's interjection notice.");
 // ACCEPTED entries are real, pre-existing gaps that were triaged and backlogged. They stay
 // listed with their reason in every report; only a NEW unknown kind fails the audit.
 rows("ignored", "ACP update", "session_info_update", "ACCEPTED pre-existing gap (backlog: Grok renames a conversation mid-session and the rail does not follow): src/sidebar.ts xaiNotification has no title-update handler; the title arrives on history refresh via cliSessionTitle.");
