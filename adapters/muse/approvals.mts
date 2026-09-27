@@ -10,6 +10,7 @@ interface Approval {
   toolCallId?: string;
   toolName?: string;
   rawArgs?: string;
+  turnId?: string;
 }
 
 export function permissionOptions(choices: Choice[]): PermissionOption[] {
@@ -39,6 +40,11 @@ export class Approvals {
   ) {}
 
   clear(): void { this.current.clear(); this.offered.clear(); }
+
+  /** A turn's end settles its approvals, so a late answer never reaches Muse. */
+  forgetTurn(turnId: string): void {
+    for (const [id, approval] of this.current) if (approval.turnId === turnId) this.current.delete(id);
+  }
 
   accept(method: string, params: Record<string, any>): void {
     if (method === "approval/resolved") { this.current.delete(params.approvalId); return; }

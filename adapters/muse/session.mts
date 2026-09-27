@@ -296,7 +296,8 @@ export class MuseSession {
     void completed.catch(() => {});
     this.pending = pending;
     try {
-      this.approvals.clear();
+      // Approvals belong to Muse's turns, not to this prompt: one raised by a turn
+      // Muse runs on its own must stay answerable while this prompt queues behind it.
       const admitted = await Promise.race([this.connection().command("turn/start", {
         sessionId, ifBusy: "queue", input: prompt.map(part => ({ type: "text", text: (part as { text: string }).text })),
       }), completed.then(() => new Promise<never>(() => {}))]);
@@ -320,7 +321,6 @@ export class MuseSession {
       throw new Error(`Muse turn failed: ${JSON.stringify(terminal.error ?? terminal.terminal)}`);
     } finally {
       this.pending = undefined;
-      this.approvals.clear();
     }
   }
 
@@ -383,6 +383,7 @@ export class MuseSession {
     if (this.replayBuffer) { this.replayBuffer.push({ method, params }); return; }
     this.projection.accept(method, params);
     this.approvals.accept(method, params);
+    if (method === "turn/completed" && typeof params.turnId === "string") this.approvals.forgetTurn(params.turnId);
     if (method === "userInput/requested" || method === "view/gap") {
       this.fail(new Error(`Muse ${method} is unsupported in this boundary slice`));
     }

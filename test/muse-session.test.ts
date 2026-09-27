@@ -665,3 +665,34 @@ it("acknowledges approval presentation and deduplicates the paired notification"
     choiceId: "server-denial", requirementId: params.currentRequirementId });
   expect(s.fatal).not.toHaveBeenCalled();
 });
+
+const museApproval = (turnId: string) => ({ sessionId: "session", approvalId: `approval-${turnId}`, turnId, toolCallId: "call",
+  toolName: "bash", rawArgs: "{}", currentRequirementId: { approvalId: `approval-${turnId}`, sourceIndex: 0 },
+  availableChoices: [{ choiceId: "allow", decision: "approved", scope: "once", label: "Allow" }] });
+
+it("keeps an approval from Muse's own turn answerable while a prompt queues behind it", async () => {
+  const s = await ready();
+  const answer = deferred<any>(); s.client.request.mockReturnValue(answer.promise);
+  s.event("approval/requested", museApproval("delivery"));
+  const prompt = s.session.prompt("session", [{ type: "text", text: "while Muse is busy" }]);
+  s.admission.resolve({ status: "accepted", turnId: "mine", startedNewTurn: false, disposition: "queued" });
+  await new Promise(resolve => setImmediate(resolve));
+  answer.resolve({ outcome: { outcome: "selected", optionId: "allow" } });
+  await new Promise(resolve => setImmediate(resolve));
+  expect(s.command).toHaveBeenCalledWith("approval/decide", expect.objectContaining({ approvalId: "approval-delivery", choiceId: "allow" }));
+  s.event("turn/completed", { turnId: "delivery", terminal: "completed" });
+  s.event("turn/completed", { turnId: "mine", terminal: "completed" });
+  await expect(prompt).resolves.toEqual({ stopReason: "end_turn" });
+  expect(s.fatal).not.toHaveBeenCalled();
+});
+
+it("drops a finished turn's approval so a late answer never reaches Muse", async () => {
+  const s = await ready();
+  const answer = deferred<any>(); s.client.request.mockReturnValue(answer.promise);
+  s.event("approval/requested", museApproval("done"));
+  s.event("turn/completed", { turnId: "done", terminal: "cancelled" });
+  answer.resolve({ outcome: { outcome: "selected", optionId: "allow" } });
+  await new Promise(resolve => setImmediate(resolve));
+  expect(s.command).not.toHaveBeenCalledWith("approval/decide", expect.anything());
+  expect(s.fatal).not.toHaveBeenCalled();
+});
