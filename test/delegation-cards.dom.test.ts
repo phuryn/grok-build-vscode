@@ -53,6 +53,35 @@ function header(card: Element, kind: string, status: string, expandable: boolean
   return row;
 }
 
+describe("header dots for long workflows", () => {
+  const shown = (card: Element) => [...card.querySelector(".delegation-header .workflow-dots")!.children]
+    .filter(el => !(el as HTMLElement).hidden)
+    .map(el => el.classList.contains("workflow-dots-more") ? "…" : (el as HTMLElement).dataset.state);
+  const steps = (states: string[]) => states.map((state, i) => ({ title: `Step ${i + 1}`, state }));
+
+  it("keeps every dot up to four steps", () => {
+    const h = view();
+    expect(shown(workflow(h, "grok", "running", { phases: steps(["done", "done", "active", "pending"]) })))
+      .toEqual(["done", "done", "active", "pending"]);
+  });
+
+  it("windows eight steps to the current one and its neighbours, marking what is hidden", () => {
+    const h = view();
+    expect(shown(workflow(h, "grok", "running", { phases: steps(["active", ...Array(7).fill("pending")]) })))
+      .toEqual(["active", "pending", "pending", "…"]);
+    expect(shown(workflow(h, "grok", "running", { phases: steps(["done", "done", "done", "active", "pending", "pending", "pending", "pending"]) })))
+      .toEqual(["…", "done", "active", "pending", "…"]);
+    expect(shown(workflow(h, "grok", "done", { phases: steps(Array(8).fill("done")) })))
+      .toEqual(["…", "done", "done", "done"]);
+  });
+
+  it("keeps the full list of steps inside the card", () => {
+    const h = view();
+    const card = workflow(h, "grok", "running", { phases: steps(["done", "active", ...Array(6).fill("pending")]) });
+    expect(card.querySelectorAll(".workflow-phases > li")).toHaveLength(8);
+  });
+});
+
 describe("quiet delegation card contract", () => {
   it.each(["grok", "claude", "codex"])("%s subagent has the same closed header across running, done and failed", provider => {
     for (const state of ["running", "done", "failed"]) {

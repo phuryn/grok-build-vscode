@@ -13727,6 +13727,31 @@
     workflowText(el, "msg-actions", "").appendChild(makeMessageCopyButton());
   }
 
+  // A long run keeps the header short. Past four steps the header shows the
+  // current step with one on each side, and an ellipsis where steps are
+  // hidden; the full list is inside the card. The focus is the current step,
+  // else a failed one, else the first unfinished one, else the last.
+  function windowWorkflowDots(dots) {
+    const items = [...dots.children].filter(d => d.classList.contains("workflow-dot"));
+    if (items.length <= 4) return;
+    const find = (test) => items.findIndex(test);
+    let at = find(d => d.getAttribute("aria-current") === "step" || d.dataset.state === "active");
+    if (at < 0) at = find(d => d.dataset.state === "failed");
+    if (at < 0) at = find(d => !/^(done|complete|completed|failed|cancelled|stopped)$/.test(d.dataset.state || ""));
+    if (at < 0) at = items.length - 1;
+    const start = Math.max(0, Math.min(at - 1, items.length - 3));
+    items.forEach((d, i) => { d.hidden = i < start || i >= start + 3; });
+    const more = () => {
+      const el = document.createElement("span");
+      el.className = "workflow-dots-more";
+      el.textContent = "…";
+      el.setAttribute("aria-hidden", "true");
+      return el;
+    };
+    if (start > 0) dots.insertBefore(more(), items[0]);
+    if (start + 3 < items.length) dots.appendChild(more());
+  }
+
   // All delegation surfaces use these slots, including terminal reports.
   function makeDelegationHeader(kind, tag = "button", report = false) {
     const sub = kind === "Subagent";
@@ -14336,6 +14361,7 @@
         dot.setAttribute("aria-label", dot.title);
       }
     }
+    windowWorkflowDots(dots);
     // Legacy detail mixes results, pause reasons and arbitrary CLI events.
     // Its provenance cannot be recovered by splitting on a separator. Only
     // source-preserving hosts can provide output; do not guess on old hosts.
