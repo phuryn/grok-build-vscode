@@ -144,6 +144,8 @@ export interface RunProgressUpdate {
   workflowContent?: { resultSummary: string | null; pauseMessage: string | null };
   /** False for providers whose workflow controls the host cannot drive. */
   controlsAvailable?: boolean;
+  /** A launch receipt, without live progress or a composer pin. */
+  launchOnly?: boolean;
   /**
    * 0–1 COMPLETION when known — goals only.
    *
@@ -356,6 +358,7 @@ function parseWorkflow(u: Record<string, unknown>, sessionUpdate: string): RunPr
     cancelled,
     displayName: u.controlsAvailable === false ? undefined : displayName,
     ...(u.controlsAvailable === false ? { controlsAvailable: false } : {}),
+    ...(u.launchOnly === true ? { launchOnly: true } : {}),
     sessionUpdate,
   };
 }

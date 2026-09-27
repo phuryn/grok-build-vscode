@@ -986,8 +986,10 @@ describe("acpClientCapabilities", () => {
   });
 
   it("adds native subagents only for Codex, retaining delegated fs", () => {
-    expect(acpClientCapabilities("codex")).toEqual({ ...ACP_DELEGATED_FS_CAPABILITIES, subagents: {} });
-    expect(acpClientCapabilities("codex", "1.0.4", true)).toEqual({ ...ACP_DELEGATED_FS_CAPABILITIES, subagents: {} });
+    expect(acpClientCapabilities("codex")).toEqual({ ...ACP_DELEGATED_FS_CAPABILITIES, subagents: {},
+      _meta: { jetbrains: { air: { version: 1, capabilities: ["nativeSubagentSessions"] } } } });
+    expect(acpClientCapabilities("codex", "1.0.4", true)).toEqual({ ...ACP_DELEGATED_FS_CAPABILITIES, subagents: {},
+      _meta: { jetbrains: { air: { version: 1, capabilities: ["nativeSubagentSessions"] } } } });
     for (const provider of ["grok", "claude", "muse"] as const) {
       expect(acpClientCapabilities(provider)).toEqual(ACP_DELEGATED_FS_CAPABILITIES);
     }

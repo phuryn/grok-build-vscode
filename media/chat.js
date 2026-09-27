@@ -14476,6 +14476,14 @@
     el.classList.toggle("run-progress-failed", !!u.failed);
     el.classList.toggle("run-progress-cancelled", !!u.cancelled && !u.failed);
     el.classList.toggle("run-progress-done", !!u.done);
+    if (u.launchOnly) {
+      el.replaceChildren();
+      const status = u.failed ? "failed" : u.cancelled ? "cancelled" : u.done ? "done" : "launched";
+      const marker = workflowText(el, "workflow-marker", "");
+      marker.innerHTML = TOOL_ICON.workflow + `<span>${escapeHtml(`${name} \u00b7 ${status}`)}</span>`;
+      if (u.subtitle) workflowText(el, "run-progress-sub", u.subtitle);
+      return;
+    }
     if (!u.done) {
       el.replaceChildren();
       const status = workflowLiveStatus(u);
@@ -14536,7 +14544,7 @@
     // How fresh the information is belongs in the receipt, not in whether the
     // run is shown at all.
     const records = [...state.runProgressCards.values()].map((el) => el._workflow)
-      .filter((r) => r && !r.update.done)
+      .filter((r) => r && !r.update.done && !r.update.launchOnly)
       .sort((a, b) => Number(workflowBlockages(b.update).length > 0) - Number(workflowBlockages(a.update).length > 0));
     if (!records.length) {
       if (workflowPin) workflowPin.remove();
@@ -14626,7 +14634,7 @@
     syncWorkflowToolMarkers();
     syncWorkflowPin();
     refreshWorkflowAges();
-    if (!historical && !workflowAgeTimer) workflowAgeTimer = setInterval(refreshWorkflowAges, 1000);
+    if (!historical && !update.launchOnly && !workflowAgeTimer) workflowAgeTimer = setInterval(refreshWorkflowAges, 1000);
     scrollToBottom();
   }
 

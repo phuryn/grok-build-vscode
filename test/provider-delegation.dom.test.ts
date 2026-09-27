@@ -114,7 +114,7 @@ describe("provider delegation through the existing presentation wire", () => {
     expect(s.desk.doc.querySelectorAll(".subagent-card")).toHaveLength(1);
   });
 
-  it.each(["live", "load"])("Claude workflow %s has one running card and a safe replay notice", async phase => {
+  it.each(["live", "load"])("Claude workflow %s has one unpinned launch receipt and a safe replay notice", async phase => {
     const rows = fixtures["claude-workflow"].filter((r: any) => r.phase === phase);
     const s = setup("claude", rows[0].sessionId);
     if (phase === "load") s.emit({ type: "historyReplay", active: true });
@@ -124,6 +124,9 @@ describe("provider delegation through the existing presentation wire", () => {
     for (const h of [s.desk, s.phone, s.reopen()]) {
       await frame(h);
       expect(h.doc.querySelectorAll(".workflow-card")).toHaveLength(1);
+      expect(h.doc.querySelector(".workflow-pin")).toBeNull();
+      expect(h.doc.querySelector(".workflow-card")?.textContent).not.toMatch(/running|no recent updates|no update since/);
+      expect(h.doc.querySelector(".workflow-card")?.textContent).toContain(phase === "load" ? "done" : "launched");
       expect(h.doc.querySelectorAll(".run-progress-btn")).toHaveLength(0);
       expect(h.doc.querySelector("#messages")?.textContent).not.toContain("<task-notification>");
       expect(h.doc.querySelector("#messages")?.textContent).toContain("alpha beta");
@@ -215,4 +218,31 @@ describe("paused workflow Markdown (#189)", () => {
     dispatch(h.window, { type: "runProgress", update: { ...update, phase: "running", workflowContent: { pauseMessage: null, resultSummary: null } } });
     expect(h.doc.querySelector(".run-progress-detail")?.textContent).toBe("");
   });
+});
+
+it.each(["live", "load"])("Claude %s uses the launched name and description without claiming progress", phase => {
+  const s = setup("claude");
+  if (phase === "load") s.emit({ type: "historyReplay", active: true });
+  if (phase === "live") s.accept({ sessionUpdate: "tool_call_update", toolCallId: "launch",
+    _meta: { claudeCode: { toolName: "Workflow", toolResponse: { status: "async_launched",
+      taskType: "local_workflow", runId: "wf-demo", taskId: "task-demo", workflowName: "greeting-demo", summary: "Write then shorten" } } } });
+  s.accept({ sessionUpdate: "tool_call_update", toolCallId: "launch", status: "completed",
+    _meta: { claudeCode: { toolName: "Workflow" } }, rawOutput:
+      "Workflow launched in background. Task ID: task-demo\nSummary: Write then shorten\nScript file: /project/workflows/scripts/greeting-demo-wf-demo.js\nRun ID: wf-demo" });
+  if (phase === "load") s.emit({ type: "historyReplay", active: false });
+  s.accept({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "The workflow finished." } });
+  for (const h of [s.desk, s.phone, s.reopen()]) {
+    expect(h.doc.querySelector(".workflow-card")?.textContent).toContain("greeting-demo");
+    expect(h.doc.querySelector(".workflow-card")?.textContent).toContain("launched");
+    expect(h.doc.querySelector(".workflow-card")?.textContent).toContain("Write then shorten");
+    expect(h.doc.querySelector(".workflow-pin, .workflow-receipt, .run-progress-btn")).toBeNull();
+  }
+  s.accept({ sessionUpdate: "user_message_chunk", content: { type: "text", text:
+    "<task-notification><task-id>task-demo</task-id><status>completed</status><result>Hello there friend</result></task-notification>" } });
+  for (const h of [s.desk, s.phone, s.reopen()]) {
+    expect(h.doc.querySelector(".workflow-card")?.textContent).toContain("done");
+    expect(h.doc.querySelector(".workflow-card")?.textContent).toContain("greeting-demo");
+    expect(h.doc.querySelector(".workflow-card")?.textContent).not.toContain("Hello there friend");
+    expect(h.doc.querySelector(".workflow-pin, .workflow-receipt, .run-progress-btn")).toBeNull();
+  }
 });

@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
+import { transformSync } from "esbuild";
 import { AcpClient, acpClientCapabilities } from "../src/acp";
 import { grokBackend } from "../src/grok-backend";
 import { CodexBackend } from "../src/codex-backend";
@@ -38,7 +41,7 @@ describe("provider delegation normalization boundaries", () => {
   it.each(backends)("$provider opts into only its own capability and wire extensions", backend => {
     const caps = acpClientCapabilities(backend.provider);
     expect(caps.subagents).toEqual(backend.provider === "codex" ? {} : undefined);
-    expect(caps).not.toHaveProperty("_meta"); // no AIR asyncTasks/nativeSubagentSessions
+    if (backend.provider !== "codex") expect(caps).not.toHaveProperty("_meta");
     const spawn = fixtures["codex-subagent-optin"][0].update;
     expect(backend.normalizeUpdate(spawn, undefined).update.sessionUpdate)
       .toBe(backend.provider === "codex" ? "tool_call" : "subagent_spawned");
@@ -73,12 +76,12 @@ describe("provider delegation normalization boundaries", () => {
   it.each(["live", "load"])("Claude workflow %s has the same run identity without controls", phase => {
     const backend = new ClaudeBackend();
     const updates = fixtures["claude-workflow"].filter((r: any) => r.phase === phase)
-      .map((r: any) => backend.normalizeUpdate(r.update, undefined)).filter((r: any) => r.workflowUpdate);
+      .map((r: any) => backend.normalizeUpdate(r.update, undefined)).filter((r: any) => r.workflowUpdate && r.update);
     expect(updates.length).toBeGreaterThan(0);
     expect(new Set(updates.map((r: any) => r.workflowUpdate.run_id)).size).toBe(1);
     for (const result of updates) {
       expect(result.update.sessionUpdate).toBe("tool_call_update"); // launch row still completes
-      expect(parseRunProgressUpdate(result.workflowUpdate)).toMatchObject({ kind: "workflow", phase: "running", done: false,
+      expect(parseRunProgressUpdate(result.workflowUpdate)).toMatchObject({ kind: "workflow", phase: "launched", done: false,
         controlsAvailable: false, displayName: undefined });
     }
   });
@@ -111,4 +114,47 @@ describe("provider delegation normalization boundaries", () => {
     expect(updates[1]._meta["muse/workflow"].result_summary).toBeUndefined();
     expect(updates[1]._meta["muse/workflow"].status).toBe("completed");
   });
+});
+
+// Execute the installed adapter's parser AND predicates, without its CLI entry
+// point. Testing our raw capabilities against the predicate alone misses the
+// schema stripping `subagents` on the way into CodexAcpServer.initialize.
+it("Codex handshake survives the bundled adapter parser and enables only native subagents", () => {
+  const require = createRequire(import.meta.url);
+  const file = require.resolve("@agentclientprotocol/codex-acp");
+  const source = readFileSync(file, "utf8");
+  const entry = source.indexOf('if (process.argv.includes("--version"))');
+  expect(entry).toBeGreaterThan(0);
+  const code = transformSync(source.slice(0, entry) + `
+    export { zInitializeRequest, clientSupportsSubagents, clientSupportsAirCapability };`, {
+    format: "cjs", platform: "node", define: { "import.meta.url": JSON.stringify(pathToFileURL(file).href) },
+  }).code;
+  const module = { exports: {} as any };
+  new Function("require", "module", "exports", code.replace(/^#![^\n]*\n/, ""))(createRequire(file), module, module.exports);
+  const adapter = module.exports;
+  const parsed = (capabilities: any) => adapter.zInitializeRequest.parse({ protocolVersion: 1, clientCapabilities: capabilities }).clientCapabilities;
+  // This is the broken real-app handshake, not an invented negative fixture.
+  expect(adapter.clientSupportsSubagents(parsed({ ...acpClientCapabilities("codex"), _meta: undefined }))).toBe(false);
+  for (const provider of ["grok", "codex", "claude", "muse"] as const) {
+    const caps = parsed(acpClientCapabilities(provider));
+    expect(adapter.clientSupportsSubagents(caps)).toBe(provider === "codex");
+    expect(adapter.clientSupportsAirCapability(caps, "nativeSubagentSessions")).toBe(provider === "codex");
+    expect(adapter.clientSupportsAirCapability(caps, "asyncTasks")).toBe(false);
+  }
+});
+
+it("Claude completes only the launch identified by a task notification", () => {
+  const backend = new ClaudeBackend();
+  const launch = (id: string) => backend.normalizeUpdate({ sessionUpdate: "tool_call_update", toolCallId: `tool-${id}`,
+    _meta: { claudeCode: { toolName: "Workflow", toolResponse: {
+      status: "async_launched", taskType: "local_workflow", runId: id, taskId: `task-${id}`,
+      workflowName: `name-${id}`, summary: "Description",
+    } } } }, undefined);
+  launch("one"); launch("two");
+  const wake = (ids: string) => backend.normalizeUpdate({ sessionUpdate: "user_message_chunk",
+    content: { type: "text", text: `<task-notification>${ids}<status>completed</status></task-notification>` } }, undefined);
+  expect(wake("<task-id>unknown</task-id>").workflowUpdate).toBeUndefined();
+  expect(wake("<task-id>task-one</task-id><tool-use-id>tool-two</tool-use-id>").workflowUpdate).toBeUndefined();
+  expect(wake("<task-id>task-one</task-id>").workflowUpdate).toMatchObject({ run_id: "one", name: "name-one", status: "completed", launchOnly: true });
+  expect(wake("<run-id>two</run-id>").workflowUpdate).toMatchObject({ run_id: "two", status: "completed" });
 });

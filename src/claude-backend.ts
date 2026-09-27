@@ -163,6 +163,13 @@ export function normalizeClaudePromptResult(result: any): any {
   };
 }
 
+// Replay retains the generated script filename: <launched name>-<exact run id>.js.
+function claudeWorkflowName(output: string, runId: string): string {
+  const file = /^Script file:\s*(.+)$/m.exec(output)?.[1]?.trim().split(/[\\/]/).pop();
+  const suffix = `-${runId}.js`;
+  return file?.endsWith(suffix) ? file.slice(0, -suffix.length) : "Workflow";
+}
+
 export function normalizeClaudeUpdate(update: any, meta?: any): BackendUpdate {
   if (!update || typeof update !== "object") return { update, meta };
   const text = update.content?.type === "text" ? update.content.text : undefined;
@@ -207,8 +214,9 @@ export function normalizeClaudeUpdate(update: any, meta?: any): BackendUpdate {
       ? /^Run ID:\s*(\S+)/m.exec(output)?.[1] : undefined;
     const runId = launched ? response.runId : replayRun;
     if (typeof runId === "string" && runId) return { update, meta, workflowUpdate: {
-      sessionUpdate: "workflow_updated", run_id: runId, status: "running",
-      name: "Workflow", objective: launched ? response.summary : /^Summary:\s*(.+)$/m.exec(output)?.[1],
+      sessionUpdate: "workflow_updated", run_id: runId, status: "launched",
+      launchOnly: true,
+      name: (launched ? response.workflowName : undefined) || claudeWorkflowName(output, runId), objective: launched ? response.summary : /^Summary:\s*(.+)$/m.exec(output)?.[1],
       controlsAvailable: false,
     } };
   }
@@ -354,7 +362,33 @@ export class ClaudeBackend implements AcpBackend {
   }
 
   normalizePromptResult(result: any): any { return normalizeClaudePromptResult(result); }
-  normalizeUpdate(update: any, meta: any): BackendUpdate { return normalizeClaudeUpdate(update, meta); }
+  private readonly workflowLaunches = new Map<string, any>();
+  normalizeUpdate(update: any, meta: any): BackendUpdate {
+    const result = normalizeClaudeUpdate(update, meta);
+    const launch = result.workflowUpdate;
+    if (launch) {
+      const previous = this.workflowLaunches.get(launch.run_id);
+      if (launch.name === "Workflow" && previous) launch.name = previous.name;
+      const output = typeof update.rawOutput === "string" ? update.rawOutput : "";
+      const taskId = update._meta?.claudeCode?.toolResponse?.taskId
+        ?? /^Workflow launched in background\. Task ID:\s*(\S+)/.exec(output)?.[1];
+      for (const key of [update.toolCallId, taskId, launch.run_id]) {
+        if (typeof key === "string" && key) this.workflowLaunches.set(key, launch);
+      }
+    }
+    if (result.notice) {
+      const text = update.content.text as string;
+      const ids = ["task-id", "tool-use-id", "run-id"].map(tag =>
+        new RegExp(`<${tag}>([^<]+)</${tag}>`).exec(text)?.[1]?.trim());
+      const matches = ids.map(id => id && this.workflowLaunches.get(id)).filter(Boolean);
+      const status = /<status>([^<]*)<\/status>/.exec(text)?.[1];
+      if (matches.length && matches.every(match => match.run_id === matches[0].run_id)
+          && status && /^(completed|failed|cancelled|stopped)$/.test(status)) {
+        result.workflowUpdate = { ...matches[0], status };
+      }
+    }
+    return result;
+  }
   normalizePermissionParams(params: any): any { return normalizeClaudePermissionParams(params); }
 
   setModel(sessionId: string, modelId: string): { method: string; params: any } {

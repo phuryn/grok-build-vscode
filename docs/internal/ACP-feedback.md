@@ -489,9 +489,11 @@ opt-in replaces synthetic Start/Complete tool rows and replays child sessions;
 Claude's opt-in loses the Agent call on replay, so the client retains its
 default handshake and normalizes the hand-back. Muse workflow snapshots use
 provider metadata on a standard ACP update, then the shared workflow card.
-Claude's background workflow completion has no correlated live lifecycle
-event without asyncTasks; the card stays running and its replay XML wake-up is
-a notice. [Captured shapes and normalization](../../research/subagent-workflow-shapes.md#client-mappings).
+Codex's bundled initialize schema strips `subagents`, so the client also sends
+AIR `nativeSubagentSessions`; `asyncTasks` remains disabled. Claude's workflow
+card is a named, unpinned launch receipt. A task notification can finish it via
+matching task/tool-use/run IDs; an uncorrelated answer leaves it launched.
+The replay XML wake-up is a notice. [Captured shapes and normalization](../../research/subagent-workflow-shapes.md#client-mappings).
 
 **Ask:** persist resolved interactions across `session/load`; make a background "completed" mean
 completed; stop duplicating structured output in text; do not push a child session's updates down the

@@ -234,6 +234,7 @@ export type AcpClientCapabilities = {
   fs: { readTextFile?: true; writeTextFile: true };
   terminal: true;
   subagents?: Record<string, never>;
+  _meta?: { jetbrains: { air: { version: number; capabilities: string[] } } };
 };
 
 /** Handshake every provider used before grok 1.0 — client-delegated fs. */
@@ -281,7 +282,10 @@ export function acpClientCapabilities(
   grokVersion?: string | null,
   versionVerified = false,
 ): AcpClientCapabilities {
-  if (provider === "codex") return { ...ACP_DELEGATED_FS_CAPABILITIES, subagents: {} };
+  // codex-acp's bundled ACP schema strips `subagents` before its native gate.
+  // AIR metadata survives that parser. asyncTasks is a separate, unused opt-in.
+  if (provider === "codex") return { ...ACP_DELEGATED_FS_CAPABILITIES, subagents: {},
+    _meta: { jetbrains: { air: { version: 1, capabilities: ["nativeSubagentSessions"] } } } };
   if (provider !== "grok") return ACP_DELEGATED_FS_CAPABILITIES;
   if (!versionVerified) return ACP_DELEGATED_FS_CAPABILITIES;
   const parsed = parseGrokVersion(grokVersion ?? "");
