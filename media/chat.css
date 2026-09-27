@@ -2872,7 +2872,7 @@ body.thinking-hidden .msg.thinking { display: none; }
 .workflow-pin .run-progress-btn { padding: 5px 12px; border-radius: 6px; }
 /* Wraps because a phase list is not always four steps — a long one would
    otherwise run the heading off a 320px screen. */
-.workflow-dots { display: inline-flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+.workflow-dots { display: inline-flex; flex-wrap: nowrap; flex: none; gap: 5px; align-items: center; }
 .workflow-dot { width: 7px; height: 7px; border: 1px solid currentColor; border-radius: 50%; opacity: 0.45; }
 .workflow-dot[data-state="unknown"] { border-style: dashed; }
 .workflow-agent-dot[data-state="active"] { border: 2px solid var(--vscode-charts-blue, #3794ff); opacity: 1; }

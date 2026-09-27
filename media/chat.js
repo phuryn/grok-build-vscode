@@ -14350,7 +14350,8 @@
     const completeTokenTotal = tokens.length && tokens.length === u.agents.length
       && (!Number.isFinite(u.agentsUsed) || u.agentsUsed === tokens.length);
     const totals = [Number.isFinite(u.agentsUsed) ? `${formatCount(u.agentsUsed)} ${u.agentsUsed === 1 ? "agent" : "agents"}` : "",
-      completeTokenTotal ? `${compactTokens(tokens.reduce((sum, a) => sum + a.tokensUsed, 0))} tokens` : ""].filter(Boolean);
+      // A zero total is a run that has not spent yet, not information.
+      completeTokenTotal && tokens.some(a => a.tokensUsed > 0) ? `${compactTokens(tokens.reduce((sum, a) => sum + a.tokensUsed, 0))} tokens` : ""].filter(Boolean);
     spend.textContent = totals.join(" \u00b7 ");
     spend.hidden = !totals.length;
     const outputText = workflowOutputText(u.workflowContent?.resultSummary);
@@ -14409,7 +14410,7 @@
       }
       row.querySelector(".workflow-agent-name").textContent = workflowAgentName(agent);
       row.querySelector(".workflow-agent-state").textContent = [agent.state ? agent.state.replace(/[_-]+/g, " ") : "",
-        Number.isFinite(agent.tokensUsed) ? `${compactTokens(agent.tokensUsed)} tokens` : ""].filter(Boolean).join(" · ");
+        agent.tokensUsed > 0 ? `${compactTokens(agent.tokensUsed)} tokens` : ""].filter(Boolean).join(" · ");
       row.querySelector(".workflow-agent-activity").textContent = activity;
       return row;
     });

@@ -345,7 +345,7 @@ describe("workflow evidence", () => {
   it("renders a done agent state without the reported prefix", () => {
     const h = boot();
     send(h, { agents: [{ ...base.agents[0], phase: "Plan", state: "done" }] });
-    expect(agent(h).querySelector(".workflow-agent-state")!.textContent).toBe("done · 0 tokens");
+    expect(agent(h).querySelector(".workflow-agent-state")!.textContent).toBe("done");
   });
   it.each([
     [1000, "1K"], [23552, "23.55K"], [99999, "100K"], [100000, "100K"],
