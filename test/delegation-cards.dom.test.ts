@@ -53,6 +53,36 @@ function header(card: Element, kind: string, status: string, expandable: boolean
   return row;
 }
 
+describe("Find inside a closed card", () => {
+  const find = (h: Harness, q: string) => {
+    const api = (h.window as any).__grokFind;
+    api.open(); api.setQuery(q); api.next();
+    return api;
+  };
+
+  it("opens a finished subagent card and keeps it open through the refresh timer", () => {
+    const h = view("claude");
+    const card = subagent(h);
+    subagent(h, "completed", { rawOutput: { text: "needle in the result" }, _meta: { subagentUsage: { tokens: 10, durationMs: 1000 } } });
+    expect((card.querySelector(".subagent-result") as HTMLElement).hidden).toBe(true);
+    find(h, "needle");
+    h.tick(3000);
+    expect((card.querySelector(".subagent-result") as HTMLElement).hidden).toBe(false);
+    expect(card.querySelector(".delegation-header")!.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("opens a running workflow's closed transcript card when the hit is inside it", () => {
+    const h = view();
+    const card = workflow(h, "grok", "running", { phases: [{ title: "Needle step", state: "active" }] });
+    const body = card.querySelector(".workflow-expanded") as HTMLElement;
+    expect(body.hidden).toBe(true);
+    find(h, "Needle step");
+    expect(body.hidden).toBe(false);
+    workflow(h, "grok", "running", { phases: [{ title: "Needle step", state: "active" }] });
+    expect((card.querySelector(".workflow-expanded") as HTMLElement).hidden).toBe(false);
+  });
+});
+
 describe("header dots for long workflows", () => {
   const shown = (card: Element) => [...card.querySelector(".delegation-header .workflow-dots")!.children]
     .filter(el => !(el as HTMLElement).hidden)

@@ -18304,13 +18304,25 @@
       const row = details.closest(".has-details");
       if (row) setDetailExpanded(row, true);
     }
+    // A hit inside a closed delegation card opens that card through its own
+    // state, so the card's refresh timer and later updates keep it open.
+    // Unhiding the body alone was undone within a second.
     const sub = el.closest(".subagent-card");
-    if (sub) {
-      const stream = sub.querySelector(".subagent-stream");
-      const result = sub.querySelector(".subagent-result");
-      if (stream && stream.contains(el)) stream.hidden = false;
-      if (result && result.contains(el)) result.hidden = false;
+    if (sub && !sub._expanded) {
+      sub._expanded = true;
+      wireSubagentExpand(sub);
     }
+    const workflowBody = el.closest(".workflow-expanded");
+    if (workflowBody && workflowBody.hidden) {
+      const surface = workflowBody.parentElement;
+      surface._expanded = true;
+      workflowBody.hidden = false;
+      surface.classList.add("is-expanded");
+      const header = surface.querySelector(".delegation-header");
+      if (header) setDelegationExpandable(header, true, true);
+    }
+    const report = el.closest("details.workflow-report");
+    if (report && !report.open) report.open = true;
   }
 
   function scrollToFindMatch(m) {
