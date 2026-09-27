@@ -18307,22 +18307,25 @@
     // A hit inside a closed delegation card opens that card through its own
     // state, so the card's refresh timer and later updates keep it open.
     // Unhiding the body alone was undone within a second.
+    // Only a card that has something to open is opened: an empty card still
+    // carries hidden section labels, and forcing it open left a chevron that
+    // could not close it.
+    const openable = (card) => !!card?.querySelector(".delegation-header.expandable");
     const sub = el.closest(".subagent-card");
-    if (sub && !sub._expanded) {
+    if (sub && !sub._expanded && openable(sub)) {
       sub._expanded = true;
       wireSubagentExpand(sub);
     }
     const workflowBody = el.closest(".workflow-expanded");
-    if (workflowBody && workflowBody.hidden) {
+    if (workflowBody && workflowBody.hidden && openable(workflowBody.parentElement)) {
       const surface = workflowBody.parentElement;
       surface._expanded = true;
       workflowBody.hidden = false;
       surface.classList.add("is-expanded");
-      const header = surface.querySelector(".delegation-header");
-      if (header) setDelegationExpandable(header, true, true);
+      setDelegationExpandable(surface.querySelector(".delegation-header"), true, true);
     }
     const report = el.closest("details.workflow-report");
-    if (report && !report.open) report.open = true;
+    if (report && !report.open && openable(report)) report.open = true;
   }
 
   function scrollToFindMatch(m) {

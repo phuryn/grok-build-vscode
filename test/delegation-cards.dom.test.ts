@@ -81,6 +81,17 @@ describe("Find inside a closed card", () => {
     workflow(h, "grok", "running", { phases: [{ title: "Needle step", state: "active" }] });
     expect((card.querySelector(".workflow-expanded") as HTMLElement).hidden).toBe(false);
   });
+
+  it.each(["running", "done"])("leaves an empty %s workflow card closed when Find hits its hidden labels", status => {
+    const h = view("claude");
+    const card = workflow(h, "claude", status, { phases: [], agents: [], agentsUsed: undefined, controlsAvailable: false });
+    find(h, "Steps");
+    const row = card.querySelector(".delegation-header")!;
+    expect(row.getAttribute("aria-expanded")).toBe("false");
+    expect(row.querySelector(".delegation-chevron")).toBeNull();
+    if (status === "done") expect((card.querySelector("details") as HTMLDetailsElement).open).toBe(false);
+    else expect((card.querySelector(".workflow-expanded") as HTMLElement).hidden).toBe(true);
+  });
 });
 
 describe("header dots for long workflows", () => {
