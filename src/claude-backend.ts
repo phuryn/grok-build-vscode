@@ -365,6 +365,7 @@ export class ClaudeBackend implements AcpBackend {
   normalizePromptResult(result: any): any { return normalizeClaudePromptResult(result); }
   private readonly workflows = new ClaudeWorkflows();
   normalizeUpdate(update: any, meta: any): BackendUpdate {
+    this.workflows.toolInput(update);
     if (["async_task_spawned", "async_task_progress", "async_task_state_update"].includes(update?.sessionUpdate)) {
       return { workflowUpdate: this.workflows.accept(update) };
     }

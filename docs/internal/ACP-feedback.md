@@ -1,6 +1,6 @@
 # Grok CLI over ACP — current field feedback
 
-Muse MSP resume contention and its ACP error mapping are documented separately in [Muse Code adapter](../../research/muse-adapter.md).
+Muse MSP resume contention and its ACP error mapping are documented separately in [Muse Code adapter](../../research/muse-adapter.md). Prompts arriving during Muse-initiated delivery turns reserve one cancellable slot until `turn/completed`, bounded to three minutes with an ACP busy error on timeout.
 
 Feedback for the xAI team from a thin ACP client (`grok agent stdio`, JSON-RPC over stdio). It
 carries open behavior only, plus a short record of what has closed. The 0.2.3–0.2.112 record is
@@ -494,8 +494,10 @@ provider metadata on a standard ACP update, then the shared workflow card.
 Codex's bundled initialize schema strips `subagents`, so the client also sends
 AIR `nativeSubagentSessions`; Codex's `asyncTasks` remains disabled. Claude
 uses `asyncTasks` to upgrade a correlated launch receipt into observed live
-phases/agents and terminal state. Cold replay still has only the receipt and
-ID-correlated notification; the XML wake-up is a notice. Muse's collapsed dots
+phases/agents and terminal state. A literal parse of `rawInput.script` seeds up to
+64 pending phase titles (200 characters each) at launch and on replay when input
+is available; missing/unparseable scripts retain observed-only progress. Cold
+replay otherwise has only the receipt and ID-correlated notification; the XML wake-up is a notice. Muse's collapsed dots
 follow child states; opaque workflow result references have no supported
 resolver in the installed SDK. [Adapter audit](../../research/live-workflow-follow-up.md). [Captured shapes and normalization](../../research/subagent-workflow-shapes.md#client-mappings).
 

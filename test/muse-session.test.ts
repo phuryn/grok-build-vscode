@@ -307,6 +307,80 @@ describe("Muse subscription usage", () => {
 });
 
 describe("Muse turn admission and process ownership", () => {
+  it("waits for a Muse-initiated turn and reserves the single prompt slot", async () => {
+    const s = await ready();
+    s.event("turn/started", { turnId: "delivery" });
+    const prompt = s.session.prompt("session", [{ type: "text", text: "And a subagent?" }]);
+    await expect(s.session.prompt("session", [{ type: "text", text: "again" }])).rejects.toThrow("already has an active prompt");
+    s.event("turn/completed", { turnId: "unrelated", terminal: "completed" });
+    await new Promise(resolve => setImmediate(resolve));
+    expect(s.command).not.toHaveBeenCalledWith("turn/start", expect.anything());
+    s.event("turn/completed", { turnId: "delivery", terminal: "completed" });
+    await new Promise(resolve => setImmediate(resolve));
+    expect(s.command).toHaveBeenCalledWith("turn/start", { sessionId: "session", input: [{ type: "text", text: "And a subagent?" }] });
+    s.admission.resolve({ status: "accepted", turnId: "user", startedNewTurn: true });
+    s.event("turn/completed", { turnId: "user", terminal: "completed" });
+    await expect(prompt).resolves.toEqual({ stopReason: "end_turn" });
+    expect(s.command.mock.calls.filter(([method]) => method === "turn/start")).toHaveLength(1);
+  });
+
+  it.each([false, true])("cancels a background wait promptly, including its completion race (%s)", async complete => {
+    const s = await ready();
+    s.event("turn/started", { turnId: "delivery" });
+    const prompt = s.session.prompt("session", [{ type: "text", text: "hello" }]);
+    if (complete) s.event("turn/completed", { turnId: "delivery", terminal: "completed" });
+    await s.session.cancel("session");
+    await expect(prompt).resolves.toEqual({ stopReason: "cancelled" });
+    s.event("turn/completed", { turnId: "delivery", terminal: "completed" });
+    expect(s.command).not.toHaveBeenCalledWith("turn/start", expect.anything());
+    expect(s.command).not.toHaveBeenCalledWith("turn/cancel", expect.anything());
+  });
+
+  it("times out a background wait with an ACP-visible message and frees the slot", async () => {
+    vi.useFakeTimers();
+    const s = await ready();
+    s.event("turn/started", { turnId: "delivery" });
+    const prompt = s.session.prompt("session", [{ type: "text", text: "hello" }]);
+    const rejected = expect(prompt).rejects.toMatchObject({ code: -32021,
+      message: "Muse is still finishing a background task. Try again in a moment." });
+    await vi.advanceTimersByTimeAsync(180_000);
+    await rejected;
+    expect(s.command).not.toHaveBeenCalledWith("turn/start", expect.anything());
+    expect(s.fatal).not.toHaveBeenCalled();
+    s.event("turn/completed", { turnId: "delivery", terminal: "completed" });
+    const next = s.session.prompt("session", [{ type: "text", text: "Hey" }]);
+    s.admission.resolve({ status: "accepted", turnId: "user", startedNewTurn: true });
+    s.event("turn/completed", { turnId: "user", terminal: "completed" });
+    await expect(next).resolves.toEqual({ stopReason: "end_turn" });
+  });
+
+  it("keeps rejecting a second prompt during our own admission and active turn", async () => {
+    const s = await ready();
+    const first = s.session.prompt("session", [{ type: "text", text: "hello" }]);
+    await expect(s.session.prompt("session", [{ type: "text", text: "second" }])).rejects.toThrow("already has an active prompt");
+    s.admission.resolve({ status: "accepted", turnId: "user", startedNewTurn: true });
+    s.event("turn/started", { turnId: "user" });
+    await expect(s.session.prompt("session", [{ type: "text", text: "third" }])).rejects.toThrow("already has an active prompt");
+    s.event("turn/completed", { turnId: "user", terminal: "completed" });
+    await expect(first).resolves.toEqual({ stopReason: "end_turn" });
+  });
+
+  it.each(["protocol", "close"])("cleans up a background wait on %s", async failure => {
+    vi.useFakeTimers();
+    const s = await ready();
+    s.event("turn/started", { turnId: "delivery" });
+    const prompt = s.session.prompt("session", [{ type: "text", text: "hello" }]);
+    const rejected = expect(prompt).rejects.toThrow(failure === "protocol" ? "invalid MSP" : "closing");
+    if (failure === "protocol") s.protocolError(new Error("invalid MSP"));
+    else {
+      s.exited.resolve({ code: 0, signal: null });
+      await s.session.close();
+    }
+    await rejected;
+    expect(s.command).not.toHaveBeenCalledWith("turn/start", expect.anything());
+    expect(vi.getTimerCount()).toBeLessThanOrEqual(failure === "close" ? 1 : 0);
+  });
+
   it("requests no capabilities and preserves the complete model description", async () => {
     const s = await ready();
     expect(s.handshake.initialize).toHaveBeenCalledWith({ clientInfo: { name: "grok_build_muse_adapter", version: "1" },

@@ -13,6 +13,7 @@ export const REASONING_EFFORTS = ["none", "minimal", "low", "medium", "high", "x
 
 const RESUME_RETRY_DELAY_MS = 300;
 const RESUME_RETRY_WINDOW_MS = 10_000;
+const BACKGROUND_TURN_WAIT_MS = 180_000;
 
 /** turnCount counts completed turns, not prompts. Keep unfinished work and
  *  forks; creation/resume bookkeeping can advance updatedAt on a blank row. */
@@ -52,6 +53,7 @@ function childExitTimeout(): Promise<undefined> {
 
 interface PendingTurn {
   turnId?: string;
+  wakeBackgroundWait?: () => void;
   cancelRequested?: boolean;
   early: Map<string, Record<string, any>>;
   resolve: (result: Record<string, any>) => void;
@@ -287,9 +289,8 @@ export class MuseSession {
 
   async prompt(sessionId: string, prompt: ContentBlock[]): Promise<PromptResponse> {
     this.assertSession(sessionId);
-    if (this.pending || this.activeTurnId) throw new Error("Muse session already has an active prompt");
+    if (this.pending) throw new Error("Muse session already has an active prompt");
     if (!prompt.length || prompt.some(part => part.type !== "text")) throw new Error("Muse adapter accepts text prompts only");
-    this.approvals.clear();
     let pending!: PendingTurn;
     const completed = new Promise<Record<string, any>>((resolve, reject) => {
       pending = { resolve, reject, early: new Map() };
@@ -298,6 +299,23 @@ export class MuseSession {
     void completed.catch(() => {});
     this.pending = pending;
     try {
+      if (this.activeTurnId) {
+        const deadline = Date.now() + BACKGROUND_TURN_WAIT_MS;
+        while (this.activeTurnId && !pending.cancelRequested) {
+          let timer!: ReturnType<typeof setTimeout>;
+          try {
+            await Promise.race([new Promise<void>((resolve, reject) => {
+              pending.wakeBackgroundWait = resolve;
+              timer = setTimeout(() => reject(new RequestError(-32021,
+                "Muse is still finishing a background task. Try again in a moment.")), Math.max(0, deadline - Date.now()));
+            }), completed.then(() => new Promise<never>(() => {}))]);
+          } finally { clearTimeout(timer); }
+        }
+        if (pending.cancelRequested) return { stopReason: "cancelled" };
+        pending.wakeBackgroundWait = undefined;
+        pending.early.clear();
+      }
+      this.approvals.clear();
       const admitted = await Promise.race([this.connection().command("turn/start", {
         sessionId, input: prompt.map(part => ({ type: "text", text: (part as { text: string }).text })),
       }), completed.then(() => new Promise<never>(() => {}))]);
@@ -319,13 +337,17 @@ export class MuseSession {
       throw new Error(`Muse turn failed: ${JSON.stringify(terminal.error ?? terminal.terminal)}`);
     } finally {
       this.pending = undefined;
-      this.approvals.clear();
+      if (!pending.wakeBackgroundWait) this.approvals.clear();
     }
   }
 
   async cancel(sessionId: string): Promise<void> {
     this.assertSession(sessionId);
     if (this.pending) this.pending.cancelRequested = true;
+    if (this.pending?.wakeBackgroundWait) {
+      this.pending.wakeBackgroundWait();
+      return;
+    }
     const turnId = this.pending?.turnId ?? this.activeTurnId;
     if (turnId) await this.connection().command("turn/cancel", { sessionId, turnId });
   }
@@ -369,7 +391,10 @@ export class MuseSession {
     if (params.sessionId !== this.sessionId) return;
     if (this.replayBuffer) { this.replayBuffer.push({ method, params }); return; }
     if (method === "turn/started") this.activeTurnId = params.turnId;
-    if (method === "turn/completed" && params.turnId === this.activeTurnId) this.activeTurnId = undefined;
+    if (method === "turn/completed" && params.turnId === this.activeTurnId) {
+      this.activeTurnId = undefined;
+      this.pending?.wakeBackgroundWait?.();
+    }
     this.projection.accept(method, params);
     this.approvals.accept(method, params);
     if (method === "userInput/requested" || method === "view/gap") {

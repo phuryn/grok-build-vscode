@@ -67,6 +67,24 @@ function setup(provider: string, parent = "parent") {
 }
 const frame = (h: Harness) => new Promise<void>(resolve => h.window.requestAnimationFrame(() => resolve()));
 
+it("shows every Claude script phase from launch on desk and phone, with sanitized titles", () => {
+  const s = setup("claude");
+  const titles = ["One", '<img src=x onerror="alert(1)">'];
+  s.accept({ sessionUpdate: "tool_call", toolCallId: "launch-live", _meta: { claudeCode: { toolName: "Workflow" } },
+    rawInput: { script: `export const meta = { phases: ${JSON.stringify(titles.map(title => ({ title })))} };` } });
+  s.accept(claudeAsyncWire[1]);
+  for (const h of [s.desk, s.phone, s.reopen()]) {
+    const phases = [...h.doc.querySelectorAll(".workflow-pin .workflow-phase")];
+    expect(phases.map(p => p.textContent)).toEqual(titles);
+    expect(phases.map(p => (p as HTMLElement).dataset.state)).toEqual(["pending", "pending"]);
+    expect(h.doc.querySelector(".workflow-pin img")).toBeNull();
+  }
+  s.accept(claudeAsyncWire[0]); s.accept(claudeAsyncWire[3]);
+  for (const h of [s.desk, s.phone, s.reopen()]) {
+    expect([...h.doc.querySelectorAll(".workflow-pin .workflow-phase")].map(p => (p as HTMLElement).dataset.state)).toEqual(["active", "pending"]);
+  }
+});
+
 describe("provider delegation through the existing presentation wire", () => {
   it.each(["live", "load"])("Codex %s builds one card, owns child output, and keeps wait separate", async phase => {
     const rows = fixtures["codex-subagent-optin"].filter((r: any) => r.phase === phase);

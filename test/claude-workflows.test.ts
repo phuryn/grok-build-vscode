@@ -10,6 +10,71 @@ import wire from "./fixtures/claude-async-workflow.json";
 const normalize = (backend: ClaudeBackend, update: any) => backend.normalizeUpdate(update, undefined).workflowUpdate;
 
 describe("Claude AIR workflows", () => {
+  const script = `/* metadata */ export const meta = {
+    name: 'two-steps', description: 'A ] in a string, with phases: [{ title: "decoy" }]',
+    phases: [{ title: 'One' }, /* next */ { "title": "Two" },],
+  }; throw new Error('the script body must never run');`;
+  const input = (source: unknown = script) => ({ sessionUpdate: "tool_call", toolCallId: "launch-live",
+    rawInput: { script: source }, _meta: { claudeCode: { toolName: "Workflow" } } });
+
+  it.each([true, false])("seeds all pending steps from rawInput.script before progress (separate input=%s)", separate => {
+    const backend = new ClaudeBackend();
+    if (separate) expect(normalize(backend, input())).toBeUndefined();
+    const receipt = normalize(backend, { ...wire[1], ...(separate ? {} : { rawInput: input().rawInput }) });
+    expect(receipt).toMatchObject({ launchOnly: false, phases: [{ title: "One", state: "pending" }, { title: "Two", state: "pending" }] });
+    expect(normalize(backend, wire[0]).phases).toEqual(receipt.phases);
+    expect(normalize(backend, wire[3]).phases.map((p: any) => p.state)).toEqual(["active", "pending"]);
+    expect(normalize(backend, wire[4]).phases.map((p: any) => p.state)).toEqual(["done", "active"]);
+    expect(normalize(backend, { ...wire[4], description: "Extra: another" }).phases).toEqual([
+      { title: "One", state: "done" }, { title: "Two", state: "done" }, { title: "Extra", state: "active" },
+    ]);
+    expect(normalize(backend, wire[1]).phases).toHaveLength(3);
+  });
+
+  it("merges a late receipt without erasing observed progress or future pending steps", () => {
+    const backend = new ClaudeBackend();
+    normalize(backend, input());
+    normalize(backend, wire[0]); normalize(backend, wire[3]);
+    expect(normalize(backend, wire[1]).phases).toEqual([{ title: "One", state: "active" }, { title: "Two", state: "pending" }]);
+    expect(normalize(backend, { ...wire[5], state: "failed" }).phases).toEqual([{ title: "One", state: "failed" }, { title: "Two", state: "pending" }]);
+  });
+
+  it("seeds cold replay with input and honors its later terminal notification", () => {
+    const backend = new ClaudeBackend();
+    normalize(backend, input());
+    const receipt = normalize(backend, { toolCallId: "launch-live", sessionUpdate: "tool_call_update",
+      _meta: input()._meta, rawOutput: "Workflow launched in background. Task ID: task-live\nRun ID: wf-live" });
+    expect(receipt.phases.map((p: any) => p.state)).toEqual(["pending", "pending"]);
+    const final = normalize(backend, { sessionUpdate: "user_message_chunk", content: { type: "text",
+      text: "<task-notification><task-id>task-live</task-id><status>completed</status></task-notification>" } });
+    expect(final.status).toBe("completed");
+    expect(final.phases.map((p: any) => p.state)).toEqual(["done", "done"]);
+  });
+
+  it.each([undefined, 42, "", "export const meta = { phases: [{ title: 'partial' }",
+    "export const meta = { phases: [{ title: process.exit() }] };",
+    "export const meta = { phases: [{ title: `computed ${process.exit()}` }] };",
+    "export const meta = { phases: [{ name: 'missing title' }] };",
+    "// export const meta = { phases: [{ title: 'comment' }] };",
+  ])("preserves the observed-only fallback for an unavailable literal script: %s", source => {
+    const backend = new ClaudeBackend();
+    normalize(backend, { ...input(), rawInput: { script: source } });
+    expect(normalize(backend, wire[1])).toMatchObject({ launchOnly: true });
+    normalize(backend, wire[0]);
+    expect(normalize(backend, wire[3]).phases).toEqual([{ title: "One", state: "active" }]);
+  });
+
+  it("caps phase count and title length, and decodes literal quotes and escapes", () => {
+    const backend = new ClaudeBackend();
+    normalize(backend, input(`export const meta = { phases: ${JSON.stringify(Array.from({ length: 100 }, () => ({ title: "x".repeat(300) })))} };`));
+    const phases = normalize(backend, wire[1]).phases;
+    expect(phases).toHaveLength(64);
+    expect(phases.every((p: any) => p.title.length === 200)).toBe(true);
+    const quoted = new ClaudeBackend();
+    normalize(quoted, input(String.raw`export const meta = { phases: [{ title: 'Owner\'s \u0053cout' }, { title: "Inspect \"files\"" }] };`));
+    expect(normalize(quoted, wire[1]).phases.map((p: any) => p.title)).toEqual(["Owner's Scout", 'Inspect "files"']);
+  });
+
   it.each([true, false])("joins receipt and async events in either order (spawn first=%s)", spawnFirst => {
     const backend = new ClaudeBackend();
     const receipt = normalize(backend, wire[spawnFirst ? 0 : 1]);
