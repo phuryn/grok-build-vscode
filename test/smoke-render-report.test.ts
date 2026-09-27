@@ -4,8 +4,10 @@ import { resolve } from "node:path";
 import { bootWebview, click, dispatch } from "./webview-harness";
 import { parseRunProgressUpdate } from "../src/run-progress";
 import claude from "./fixtures/claude-async-workflow.json";
+import codexMetadata from "./fixtures/smoke-codex-metadata.json";
+import { normalizeCodexPromptResult, normalizeCodexUpdate } from "../src/codex-backend";
 // @ts-expect-error The standalone smoke helper has no declarations.
-import { extractKnownKinds, extractMetaNamespaces, extractDocumentedIgnored, knownBoundaries, classifyBoundaries, readRenderedChat, assertRenderedScenario, renderReportMarkdown, completeRenderScenarios } from "../scripts/smoke-render-report.mjs";
+import { extractKnownKinds, extractMetaNamespaces, extractDocumentedIgnored, knownBoundaries, classifyBoundaries, readRenderedChat, assertRenderedScenario, renderReportMarkdown, completeRenderScenarios, cardResultEvidence, smokeOutcome } from "../scripts/smoke-render-report.mjs";
 
 const root = resolve(__dirname, "..");
 const recorded = (file: string) => readFileSync(resolve(__dirname, "fixtures", file), "utf8").trim().split(/\r?\n/).map(line => JSON.parse(line));
@@ -62,6 +64,46 @@ describe("source-derived boundary vocabulary", () => {
 });
 
 describe("recorded boundary samples and unknown net", () => {
+  it("classifies the nine captured Codex annotations and duplicate usage against executable source", () => {
+    expect(codexMetadata.updates).toHaveLength(9);
+    const known = knownBoundaries(root, "codex");
+    // The report must not claim that source reads a namespace it never reads.
+    expect(extractMetaNamespaces(readFileSync(resolve(root, "src/codex-backend.ts"), "utf8"))).not.toContain("codex");
+    const events = codexMetadata.updates.map(update => ({ direction: "receive", message: { method: "session/update", params: { update } } }));
+    const result = classifyBoundaries([...events, { direction: "receive", message: { result: codexMetadata.result } }], known);
+    expect(result.unhandled).toEqual([]);
+    expect(result.ignored).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "codex", count: 9, reason: expect.stringContaining("native subagent_spawned") }),
+      expect.objectContaining({ kind: "quota", count: 1, reason: expect.stringContaining("result.usage") }),
+    ]));
+    expect(normalizeCodexPromptResult(codexMetadata.result)._meta.usage.totalTokens).toBe(codexMetadata.result.usage.totalTokens);
+    expect(normalizeCodexUpdate({ sessionUpdate: "subagent_spawned", subagentSessionId: "child", task: "reply ok" }).update)
+      .toMatchObject({ kind: "subagent", subagent_id: "child", status: "in_progress" });
+    expect(classifyBoundaries([{ direction: "receive", message: { result: { _meta: { futureCodexNamespace: {} } } } }], known).unhandled).toHaveLength(1);
+  });
+  it.each(["codex", "claude"])("documents each captured %s optional boundary without hiding new kinds", provider => {
+    const known = knownBoundaries(root, provider);
+    const events = [
+      { direction: "receive", message: { result: { _meta: { goal: { version: 1 }, jetbrains: { air: { version: 1 } }, steering: { supported: true } } } } },
+      { direction: "receive", message: { method: "session/update", params: { update: { sessionUpdate: "available_commands_update", availableCommands: [
+        { name: "plan", _meta: { commandAction: { kind: "setConfigOption", configId: "collaboration_mode", value: "plan" } } },
+      ] } } } },
+      { direction: "receive", message: { method: "_auth/status_update", params: { authStatus: { kind: "account", label: "redacted" } } } },
+    ];
+    const result = classifyBoundaries(events, known);
+    expect(result.unhandled).toEqual([]);
+    expect(result.ignored.map((r: any) => r.kind)).toEqual(expect.arrayContaining(["goal", "jetbrains", "commandAction", "_auth/status_update"]));
+    expect(result.ignored.every((r: any) => r.reason.includes("src/"))).toBe(true);
+    expect(result.seen.find((r: any) => r.kind === "steering").status).toBe(provider === "codex" ? "KNOWN" : "KNOWN-IGNORED");
+    expect(classifyBoundaries([{ direction: "receive", message: { method: "_auth/status_update", id: 77 } }], known).unhandled).toHaveLength(1);
+    expect(classifyBoundaries([{ direction: "receive", message: { result: { _meta: { unknownVendor: {} } } } }], known).unhandled).toHaveLength(1);
+  });
+
+  it("does not call unselected scenarios passes or missing failures", () => {
+    const result = completeRenderScenarios([{ name: "subagent", result: "PASS" }], "claude", undefined, "subagent");
+    expect(result.find((s: any) => s.name === "workflow").result).toBe("NOT RUN");
+    expect(completeRenderScenarios([], "claude", undefined, "subagent").find((s: any) => s.name === "subagent").result).toBe("FAIL");
+  });
   it("accepts recorded Claude AIR and distinguishes a deliberate drop from a new kind", () => {
     const events = claude.map(update => ({ direction: "receive", message: { method: "session/update", params: { update } } }));
     const known = knownBoundaries(root, "claude");
@@ -120,7 +162,13 @@ describe("real chat.js render report extraction", () => {
     for (const el of h.doc.querySelectorAll(".subagent-row")) click(h.window, el);
     const opened = readRenderedChat(h.doc);
     expect(opened.cards.every((c: any) => c.result && c.copy && c.header.expanded)).toBe(true);
-    const scenario = { name: "subagent", result: "PASS", pageErrors: [], closed, opened };
+    const events = recorded("composer-subagent-session.jsonl").flatMap(call => [
+      { direction: "receive", message: { params: { update: call } } },
+      { direction: "host-to-webview", message: { type: call.sessionUpdate === "tool_call" ? "toolCall" : "toolCallUpdate", call } },
+    ]);
+    const resultEvidence = cardResultEvidence(opened.cards, events);
+    expect(resultEvidence.every((e: any) => e.reported)).toBe(true);
+    const scenario = { name: "subagent", result: "PASS", pageErrors: [], closed, opened, resultEvidence };
     expect(() => assertRenderedScenario(scenario)).not.toThrow();
     expect(() => assertRenderedScenario({ ...scenario, pageErrors: ["TypeError in chat.js"] })).toThrow(/renderer threw/);
     expect(() => assertRenderedScenario({ ...scenario, opened: closed })).toThrow(/no non-empty result/);
@@ -144,7 +192,9 @@ describe("real chat.js render report extraction", () => {
     expect(opened.cards[0].steps).toContain("Plan");
     expect(opened.cards[0].agents).toContain("research-planner");
     expect(opened.cards[0].copy).toBe(true);
-    expect(() => assertRenderedScenario({ name: "workflow", result: "PASS", pageErrors: [], closed, opened })).not.toThrow();
+    const resultEvidence = cardResultEvidence(opened.cards, [{ direction: "receive", message: { params: { update: { ...sample, result_summary: "One sentence result" } } } }]);
+    expect(resultEvidence[0].reported).toBe(true);
+    expect(() => assertRenderedScenario({ name: "workflow", result: "PASS", pageErrors: [], closed, opened, resultEvidence })).not.toThrow();
   });
   it("asserts plumbing, leaves answer correctness to a judge, and cannot pass an absent card", () => {
     const base = { result: "PASS", pageErrors: [], opened: { cards: [], finalReply: "not the requested word", errors: [] } };
@@ -153,5 +203,73 @@ describe("real chat.js render report extraction", () => {
     expect(() => assertRenderedScenario({ ...base, name: "workflow" })).toThrow(/no rendered workflow/);
     expect(() => assertRenderedScenario({ ...base, name: "subagent", result: "INCONCLUSIVE" })).not.toThrow();
     expect(() => assertRenderedScenario({ ...base, name: "subagent", result: "INCONCLUSIVE", pageErrors: ["boom"] })).toThrow(/renderer threw/);
+  });
+});
+
+
+describe("live smoke regressions", () => {
+  it("keeps the three Codex terminal metadata namespaces as findings, not ignored annotations", () => {
+    const names = ["terminal_info", "terminal_output_delta", "terminal_exit"];
+    const events = names.map(key => ({ direction: "receive", message: { params: { update: {
+      sessionUpdate: "tool_call_update", toolCallId: "exec-1", _meta: { [key]: { terminal_id: "exec-1" } },
+    } } } }));
+    const audit = classifyBoundaries(events, knownBoundaries(root, "codex"));
+    expect(audit.unhandled).toHaveLength(3);
+    expect(audit.unhandled.every((r: any) => r.status === "FINDING" && r.reason)).toBe(true);
+    expect(audit.ignored).toEqual([]);
+    const normalized = normalizeCodexUpdate({ sessionUpdate: "tool_call_update", toolCallId: "exec-1",
+      _meta: { terminal_output_delta: { data: "streamed output", terminal_id: "exec-1" } } });
+    expect(normalized.update.rawOutput).toBeUndefined();
+    for (const file of ["src/codex-backend.ts", "src/acp.ts", "src/acp-dispatch.ts", "src/sidebar.ts", "media/chat.js", "media/webview-helpers.js"]) {
+      expect(readFileSync(resolve(root, file), "utf8")).not.toMatch(/terminal_(?:info|output_delta|exit)/);
+    }
+  });
+  it.each(["codex", "claude"])("documents captured %s permission and accounting annotations", provider => {
+    const metadata = provider === "claude" ? { permission: {}, quota: {}, "_claude/origin": { kind: "human" } } : { permission: {} };
+    const audit = classifyBoundaries([{ direction: "receive", message: { result: { _meta: metadata } } }], knownBoundaries(root, provider));
+    expect(audit.unhandled).toEqual([]);
+    expect(audit.ignored).toHaveLength(Object.keys(metadata).length);
+    expect(audit.ignored.every((r: any) => r.reason.includes("src/"))).toBe(true);
+  });
+  it("accepts Claude's output-file-only completion but still requires a result when that same card reports one", () => {
+    const cards = [{ id: "wf-live", kind: "workflow", terminal: true, result: "", header: {} }];
+    const events = claude.map(update => ({ direction: "receive", message: { params: { update } } }));
+    const scenario = { name: "workflow", result: "PASS", pageErrors: [], opened: { cards }, closed: { cards }, resultEvidence: cardResultEvidence(cards, events) };
+    expect(scenario.resultEvidence[0]).toMatchObject({ reported: false, reason: "no result reported by the provider" });
+    expect(() => assertRenderedScenario(scenario)).not.toThrow();
+    expect(renderReportMarkdown({ provider: "claude", route: "test", boundaries: { unhandled: [], ignored: [] }, scenarios: [scenario] })).toContain("no result reported by the provider");
+    const unrelated = { direction: "receive", message: { params: { update: { sessionUpdate: "workflow_updated", run_id: "another", resultSummary: "other result" } } } };
+    expect(cardResultEvidence(cards, [...events, unrelated])[0].reported).toBe(false);
+    const summary = { direction: "receive", message: { params: { update: { sessionUpdate: "async_task_state_update", asyncTaskId: "task-live", state: "completed", summary: "actual result" } } } };
+    scenario.resultEvidence = cardResultEvidence(cards, [...events, summary]);
+    expect(scenario.resultEvidence[0].reported).toBe(true);
+    expect(() => assertRenderedScenario(scenario)).toThrow(/no non-empty result/);
+    cards[0].result = "actual result";
+    expect(() => assertRenderedScenario(scenario)).not.toThrow();
+    cards[0].terminal = false;
+    expect(() => assertRenderedScenario(scenario)).toThrow(/nonterminal/);
+  });
+  it("correlates subagent results individually, even when the host drops the reported output", () => {
+    const cards = [{ kind: "subagent" }, { kind: "subagent" }];
+    const events = ["one", "two"].map(id => ({ direction: "host-to-webview", message: { type: "toolCall", call: { kind: "subagent", toolCallId: id } } }));
+    const wire = { direction: "receive", message: { params: { update: { sessionUpdate: "tool_call_update", toolCallId: "two", rawOutput: [{ type: "text", text: "result" }] } } } };
+    expect(cardResultEvidence(cards, [...events, wire]).map((e: any) => e.reported)).toEqual([false, true]);
+  });
+  it("separates inconclusive-only, partial, interrupted and failed exits", () => {
+    expect(smokeOutcome([{ result: "PASS" }, { result: "N/A" }])).toEqual({ status: "PASS", exitCode: 0 });
+    expect(smokeOutcome([{ result: "NOT RUN" }])).toEqual({ status: "PARTIAL", exitCode: 0 });
+    expect(smokeOutcome([{ result: "PASS" }, { result: "INCONCLUSIVE" }])).toEqual({ status: "INCONCLUSIVE", exitCode: 2 });
+    expect(smokeOutcome([{ result: "FAIL" }, { result: "INCONCLUSIVE" }])).toEqual({ status: "FAIL", exitCode: 1 });
+    expect(smokeOutcome([{ result: "INCONCLUSIVE" }], true)).toEqual({ status: "FAIL", exitCode: 1 });
+  });
+  it("requires Codex's child-session output on its own card even without a DOM tool ID", () => {
+    const cards = [{ kind: "subagent", result: "", terminal: true }];
+    const events = [
+      { direction: "host-to-webview", message: { type: "toolCall", call: { kind: "subagent", toolCallId: "codex-subagent:child", child_session_id: "child" } } },
+      { direction: "receive", message: { params: { sessionId: "child", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "child result" } } } } },
+    ];
+    const resultEvidence = cardResultEvidence(cards, events);
+    expect(resultEvidence[0].reported).toBe(true);
+    expect(() => assertRenderedScenario({ name: "subagent", pageErrors: [], opened: { cards }, resultEvidence })).toThrow(/no non-empty result/);
   });
 });

@@ -6,10 +6,11 @@ import { MuseBackend } from "../src/muse-backend";
 import { grokBackend } from "../src/grok-backend";
 import { parseRunProgressUpdate } from "../src/run-progress";
 import claudeWorkflow from "./fixtures/claude-async-workflow.json";
+import liveCatalogs from "./fixtures/smoke-live-catalogs.json";
 const { isSubagentToolCall } = require("../media/webview-helpers.js");
 // The entry guard makes this import pure: npm test never starts a real CLI.
 // @ts-expect-error Standalone release script intentionally has no declaration file.
-import { approvalOption, bounded, checkPermission, checkTools, timeoutMs, selectSmokeModel, lowestSmokeEffort, checkSubagents, checkWorkflow, delegationAttempted, isMuseDeliveryChunk, inconclusive } from "../scripts/acp-smoke.mjs";
+import { permissionSmokeNotApplicable, approvalOption, bounded, checkPermission, checkTools, timeoutMs, selectSmokeModel, selectSmokeEffort, desktopSmokeCatalog, smokeScenario, lowestSmokeEffort, checkSubagents, checkWorkflow, delegationAttempted, isMuseDeliveryChunk, inconclusive } from "../scripts/acp-smoke.mjs";
 
 describe("ACP smoke evidence checks (no adapter or model)", () => {
   const permission = {
@@ -76,6 +77,53 @@ function framesFor(backend: any, updates: any[], seedBackend: any = backend) {
 }
 
 describe("live smoke catalog selection", () => {
+  it.each([
+    ["codex", new CodexBackend(), "gpt-6-luna", "low"],
+    ["claude", new ClaudeBackend(), "haiku", "low"],
+    ["muse", new MuseBackend(), "muse-spark-1.3-contributor", "none"],
+  ] as const)("ranks the captured %s catalog AFTER the real app normalizer", (provider, backend, modelId, effort) => {
+    const normalized = backend.normalizeSessionResponse(structuredClone(liveCatalogs[provider].session));
+    expect(selectSmokeModel(normalized)).toMatchObject({ modelId, effort });
+    const desktop = desktopSmokeCatalog({ modelId: normalized.models.currentModelId,
+      models: normalized.models.availableModels.map((m: any) => ({ ...m,
+        supportsReasoningEffort: m._meta?.supportsReasoningEffort, reasoningEfforts: m._meta?.reasoningEfforts?.map((e: any) => e.value) })) });
+    expect(selectSmokeModel(desktop)).toMatchObject({ modelId, effort });
+    if (provider === "codex") expect(() => selectSmokeModel(normalized, "gpt-6-luna[low]")).toThrow(/not in the advertised/);
+  });
+
+  it("uses Claude's post-Haiku config menu, which removes effort, rather than stale per-model metadata", () => {
+    const initial = new ClaudeBackend().normalizeSessionResponse(liveCatalogs.claude.session);
+    const haiku = initial.models.availableModels.find((m: any) => m.modelId === "haiku");
+    expect(selectSmokeEffort(liveCatalogs.claude.session, haiku)).toEqual({ configId: "effort", effort: "low" });
+    expect(selectSmokeEffort(liveCatalogs.claude.afterModel, haiku)).toEqual({ effort: undefined });
+    expect(selectSmokeEffort(liveCatalogs.codex.session, {})).toEqual({ configId: "reasoning_effort", effort: "low" });
+    expect(selectSmokeEffort(liveCatalogs.muse.session, liveCatalogs.muse.session.models.availableModels[0])).toEqual({ effort: "none" });
+  });
+
+  it("honors advertised thought-level ids and refuses ambiguous/unrecognized options", () => {
+    const option = { id: "thinking", category: "thought_level", options: [{ value: "high" }, { value: "minimal" }] };
+    expect(selectSmokeEffort({ configOptions: [option] }, {})).toEqual({ configId: "thinking", effort: "minimal" });
+    expect(() => selectSmokeEffort({ configOptions: [option, { ...option, id: "effort" }] }, {})).toThrow(/ambiguous/);
+    expect(() => selectSmokeEffort({ configOptions: [{ ...option, options: [{ value: "turbo" }] }] }, {})).toThrow(/unrecognized/);
+  });
+
+  it("preserves Muse's current privacy variant without pretending the catalog proves prices", () => {
+    const response = structuredClone(liveCatalogs.muse.session);
+    expect(selectSmokeModel(response).basis).toContain("cheapest is unproven");
+    response.models.currentModelId = "muse-spark-1.2";
+    expect(selectSmokeModel(response).modelId).toBe("muse-spark-1.2");
+    response.models.currentModelId = "missing";
+    expect(() => selectSmokeModel(response)).toThrow(/no recognizable/);
+  });
+
+  it("validates one cheap scenario before launching a provider", () => {
+    const allowed = ["plain reply", "subagent", "workflow"];
+    expect(smokeScenario(["--provider=codex", "--scenario=plain-reply"], allowed)).toBe("plain reply");
+    expect(smokeScenario([], allowed)).toBeUndefined();
+    for (const args of [["--scenario="], ["--scenario=typo"], ["--scenario=subagent", "--scenario=workflow"]]) {
+      expect(() => smokeScenario(args, allowed)).toThrow();
+    }
+  });
   const model = (modelId: string, efforts?: string[]) => ({ modelId, name: modelId,
     _meta: { supportsReasoningEffort: !!efforts, reasoningEfforts: efforts?.map(value => ({ value })) } });
   const catalog = (models: any[]) => ({ models: { availableModels: models } });
@@ -209,4 +257,12 @@ describe("Muse delivery-window evidence", () => {
     expect(isMuseDeliveryChunk({ ...chunk, method: "replay" }, "s", true, true)).toBe(false);
     expect(isMuseDeliveryChunk({ ...chunk, params: { ...chunk.params, update: { sessionUpdate: "session_info_update" } } }, "s", true, true)).toBe(false);
   });
+});
+
+
+it("does not claim Muse's provider-controlled permission policy must ask", () => {
+  expect(permissionSmokeNotApplicable("muse")).toContain("approval policy to Muse");
+  expect(permissionSmokeNotApplicable("muse")).toContain("not exercised");
+  expect(permissionSmokeNotApplicable("codex")).toBeUndefined();
+  expect(permissionSmokeNotApplicable("claude")).toBeUndefined();
 });

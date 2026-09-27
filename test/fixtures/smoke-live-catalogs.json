@@ -1,0 +1,552 @@
+{
+  "codex": {
+    "source": "2026-09-27T13-47-18-168Z-sZ0bwk/codex-1.jsonl",
+    "session": {
+      "models": {
+        "availableModels": [
+          {
+            "modelId": "gpt-6-astra[low]",
+            "name": "6 Astra (low)",
+            "description": "Frontier intelligence for the most demanding work. Fast responses with lighter reasoning"
+          },
+          {
+            "modelId": "gpt-6-astra[medium]",
+            "name": "6 Astra (medium)",
+            "description": "Frontier intelligence for the most demanding work. Balances speed and reasoning depth for everyday tasks"
+          },
+          {
+            "modelId": "gpt-6-astra[high]",
+            "name": "6 Astra (high)",
+            "description": "Frontier intelligence for the most demanding work. Greater reasoning depth for complex problems"
+          },
+          {
+            "modelId": "gpt-6-astra[xhigh]",
+            "name": "6 Astra (xhigh)",
+            "description": "Frontier intelligence for the most demanding work. Extra high reasoning depth for complex problems"
+          },
+          {
+            "modelId": "gpt-6-astra[max]",
+            "name": "6 Astra (max)",
+            "description": "Frontier intelligence for the most demanding work. Maximum reasoning depth for the hardest problems"
+          },
+          {
+            "modelId": "gpt-6-astra[ultra]",
+            "name": "6 Astra (ultra)",
+            "description": "Frontier intelligence for the most demanding work. Maximum reasoning with automatic task delegation"
+          },
+          {
+            "modelId": "gpt-6-sol[low]",
+            "name": "6 Sol (low)",
+            "description": "Workhorse model for coding and everyday work. Fast responses with lighter reasoning"
+          },
+          {
+            "modelId": "gpt-6-sol[medium]",
+            "name": "6 Sol (medium)",
+            "description": "Workhorse model for coding and everyday work. Balances speed and reasoning depth for everyday tasks"
+          },
+          {
+            "modelId": "gpt-6-sol[high]",
+            "name": "6 Sol (high)",
+            "description": "Workhorse model for coding and everyday work. Greater reasoning depth for complex problems"
+          },
+          {
+            "modelId": "gpt-6-sol[xhigh]",
+            "name": "6 Sol (xhigh)",
+            "description": "Workhorse model for coding and everyday work. Extra high reasoning depth for complex problems"
+          },
+          {
+            "modelId": "gpt-6-sol[max]",
+            "name": "6 Sol (max)",
+            "description": "Workhorse model for coding and everyday work. Maximum reasoning depth for the hardest problems"
+          },
+          {
+            "modelId": "gpt-6-sol[ultra]",
+            "name": "6 Sol (ultra)",
+            "description": "Workhorse model for coding and everyday work. Maximum reasoning with automatic task delegation"
+          },
+          {
+            "modelId": "gpt-6-luna[low]",
+            "name": "6 Luna (low)",
+            "description": "Fast and affordable model for easier tasks. Fast responses with lighter reasoning"
+          },
+          {
+            "modelId": "gpt-6-luna[medium]",
+            "name": "6 Luna (medium)",
+            "description": "Fast and affordable model for easier tasks. Balances speed and reasoning depth for everyday tasks"
+          },
+          {
+            "modelId": "gpt-6-luna[high]",
+            "name": "6 Luna (high)",
+            "description": "Fast and affordable model for easier tasks. Greater reasoning depth for complex problems"
+          },
+          {
+            "modelId": "gpt-6-luna[xhigh]",
+            "name": "6 Luna (xhigh)",
+            "description": "Fast and affordable model for easier tasks. Extra high reasoning depth for complex problems"
+          },
+          {
+            "modelId": "gpt-6-luna[max]",
+            "name": "6 Luna (max)",
+            "description": "Fast and affordable model for easier tasks. Maximum reasoning depth for the hardest problems"
+          },
+          {
+            "modelId": "gpt-5.6-sol[low]",
+            "name": "5.6 Sol (low)",
+            "description": "Older coding model for complex work. Fast responses with lighter reasoning"
+          },
+          {
+            "modelId": "gpt-5.6-sol[medium]",
+            "name": "5.6 Sol (medium)",
+            "description": "Older coding model for complex work. Balances speed and reasoning depth for everyday tasks"
+          },
+          {
+            "modelId": "gpt-5.6-sol[high]",
+            "name": "5.6 Sol (high)",
+            "description": "Older coding model for complex work. Greater reasoning depth for complex problems"
+          },
+          {
+            "modelId": "gpt-5.6-sol[xhigh]",
+            "name": "5.6 Sol (xhigh)",
+            "description": "Older coding model for complex work. Extra high reasoning depth for complex problems"
+          },
+          {
+            "modelId": "gpt-5.6-sol[max]",
+            "name": "5.6 Sol (max)",
+            "description": "Older coding model for complex work. Maximum reasoning depth for the hardest problems"
+          },
+          {
+            "modelId": "gpt-5.6-sol[ultra]",
+            "name": "5.6 Sol (ultra)",
+            "description": "Older coding model for complex work. Maximum reasoning with automatic task delegation"
+          },
+          {
+            "modelId": "gpt-5.6-terra[low]",
+            "name": "5.6 Terra (low)",
+            "description": "Older balanced model for straightforward work. Fast responses with lighter reasoning"
+          },
+          {
+            "modelId": "gpt-5.6-terra[medium]",
+            "name": "5.6 Terra (medium)",
+            "description": "Older balanced model for straightforward work. Balances speed and reasoning depth for everyday tasks"
+          },
+          {
+            "modelId": "gpt-5.6-terra[high]",
+            "name": "5.6 Terra (high)",
+            "description": "Older balanced model for straightforward work. Greater reasoning depth for complex problems"
+          },
+          {
+            "modelId": "gpt-5.6-terra[xhigh]",
+            "name": "5.6 Terra (xhigh)",
+            "description": "Older balanced model for straightforward work. Extra high reasoning depth for complex problems"
+          },
+          {
+            "modelId": "gpt-5.6-terra[max]",
+            "name": "5.6 Terra (max)",
+            "description": "Older balanced model for straightforward work. Maximum reasoning depth for the hardest problems"
+          },
+          {
+            "modelId": "gpt-5.6-terra[ultra]",
+            "name": "5.6 Terra (ultra)",
+            "description": "Older balanced model for straightforward work. Maximum reasoning with automatic task delegation"
+          },
+          {
+            "modelId": "gpt-5.6-luna[low]",
+            "name": "5.6 Luna (low)",
+            "description": "Older fast and efficient model. Fast responses with lighter reasoning"
+          },
+          {
+            "modelId": "gpt-5.6-luna[medium]",
+            "name": "5.6 Luna (medium)",
+            "description": "Older fast and efficient model. Balances speed and reasoning depth for everyday tasks"
+          },
+          {
+            "modelId": "gpt-5.6-luna[high]",
+            "name": "5.6 Luna (high)",
+            "description": "Older fast and efficient model. Greater reasoning depth for complex problems"
+          },
+          {
+            "modelId": "gpt-5.6-luna[xhigh]",
+            "name": "5.6 Luna (xhigh)",
+            "description": "Older fast and efficient model. Extra high reasoning depth for complex problems"
+          },
+          {
+            "modelId": "gpt-5.6-luna[max]",
+            "name": "5.6 Luna (max)",
+            "description": "Older fast and efficient model. Maximum reasoning depth for the hardest problems"
+          },
+          {
+            "modelId": "gpt-5.5[low]",
+            "name": "5.5 (low)",
+            "description": "Legacy coding model. Fast responses with lighter reasoning"
+          },
+          {
+            "modelId": "gpt-5.5[medium]",
+            "name": "5.5 (medium)",
+            "description": "Legacy coding model. Balances speed and reasoning depth for everyday tasks"
+          },
+          {
+            "modelId": "gpt-5.5[high]",
+            "name": "5.5 (high)",
+            "description": "Legacy coding model. Greater reasoning depth for complex problems"
+          },
+          {
+            "modelId": "gpt-5.5[xhigh]",
+            "name": "5.5 (xhigh)",
+            "description": "Legacy coding model. Extra high reasoning depth for complex problems"
+          }
+        ],
+        "currentModelId": "gpt-6-astra[xhigh]"
+      },
+      "configOptions": [
+        {
+          "id": "model",
+          "name": "Model",
+          "description": "Model Codex uses for the session",
+          "category": "model",
+          "type": "select",
+          "currentValue": "gpt-6-astra",
+          "options": [
+            {
+              "value": "gpt-6-astra",
+              "name": "6 Astra",
+              "description": "Frontier intelligence for the most demanding work."
+            },
+            {
+              "value": "gpt-6-sol",
+              "name": "6 Sol",
+              "description": "Workhorse model for coding and everyday work."
+            },
+            {
+              "value": "gpt-6-luna",
+              "name": "6 Luna",
+              "description": "Fast and affordable model for easier tasks."
+            },
+            {
+              "value": "gpt-5.6-sol",
+              "name": "5.6 Sol",
+              "description": "Older coding model for complex work."
+            },
+            {
+              "value": "gpt-5.6-terra",
+              "name": "5.6 Terra",
+              "description": "Older balanced model for straightforward work."
+            },
+            {
+              "value": "gpt-5.6-luna",
+              "name": "5.6 Luna",
+              "description": "Older fast and efficient model."
+            },
+            {
+              "value": "gpt-5.5",
+              "name": "5.5",
+              "description": "Legacy coding model."
+            }
+          ]
+        },
+        {
+          "id": "reasoning_effort",
+          "name": "Reasoning effort",
+          "description": "How much reasoning effort the model should use",
+          "category": "thought_level",
+          "type": "select",
+          "currentValue": "xhigh",
+          "options": [
+            {
+              "value": "low",
+              "name": "Low",
+              "description": "Fast responses with lighter reasoning"
+            },
+            {
+              "value": "medium",
+              "name": "Medium",
+              "description": "Balances speed and reasoning depth for everyday tasks"
+            },
+            {
+              "value": "high",
+              "name": "High",
+              "description": "Greater reasoning depth for complex problems"
+            },
+            {
+              "value": "xhigh",
+              "name": "Xhigh",
+              "description": "Extra high reasoning depth for complex problems"
+            },
+            {
+              "value": "max",
+              "name": "Max",
+              "description": "Maximum reasoning depth for the hardest problems"
+            },
+            {
+              "value": "ultra",
+              "name": "Ultra",
+              "description": "Maximum reasoning with automatic task delegation"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "claude": {
+    "source": "2026-09-27T14-07-23-441Z-Xr0Hel/claude-1.jsonl",
+    "session": {
+      "configOptions": [
+        {
+          "id": "model",
+          "name": "Model",
+          "description": "AI model to use",
+          "category": "model",
+          "type": "select",
+          "currentValue": "default",
+          "options": [
+            {
+              "value": "default",
+              "name": "Default (recommended)",
+              "description": "Opus (1M context)"
+            },
+            {
+              "value": "opus[1m]",
+              "name": "Opus 5.5",
+              "description": "Opus 5.5 with 1M context · Best for everyday, complex tasks"
+            },
+            {
+              "value": "claude-fable-5-1[1m]",
+              "name": "Fable 5.1",
+              "description": "Fable 5.1 · Most capable for your hardest and longest-running tasks"
+            },
+            {
+              "value": "sonnet",
+              "name": "Sonnet 5",
+              "description": "Sonnet 5 · Efficient for routine tasks"
+            },
+            {
+              "value": "haiku",
+              "name": "Haiku 4.5",
+              "description": "Haiku 4.5 · Fastest for quick answers"
+            }
+          ]
+        },
+        {
+          "id": "effort",
+          "name": "Effort",
+          "description": "Available effort levels for this model",
+          "category": "thought_level",
+          "type": "select",
+          "currentValue": "xhigh",
+          "options": [
+            {
+              "value": "default",
+              "name": "Default"
+            },
+            {
+              "value": "low",
+              "name": "Low"
+            },
+            {
+              "value": "medium",
+              "name": "Medium"
+            },
+            {
+              "value": "high",
+              "name": "High"
+            },
+            {
+              "value": "xhigh",
+              "name": "Xhigh"
+            },
+            {
+              "value": "max",
+              "name": "Max"
+            }
+          ]
+        }
+      ]
+    },
+    "afterModel": {
+      "configOptions": [
+        {
+          "id": "model",
+          "name": "Model",
+          "description": "AI model to use",
+          "category": "model",
+          "type": "select",
+          "currentValue": "haiku",
+          "options": [
+            {
+              "value": "default",
+              "name": "Default (recommended)",
+              "description": "Opus (1M context)"
+            },
+            {
+              "value": "opus[1m]",
+              "name": "Opus 5.5",
+              "description": "Opus 5.5 with 1M context · Best for everyday, complex tasks"
+            },
+            {
+              "value": "claude-fable-5-1[1m]",
+              "name": "Fable 5.1",
+              "description": "Fable 5.1 · Most capable for your hardest and longest-running tasks"
+            },
+            {
+              "value": "sonnet",
+              "name": "Sonnet 5",
+              "description": "Sonnet 5 · Efficient for routine tasks"
+            },
+            {
+              "value": "haiku",
+              "name": "Haiku 4.5",
+              "description": "Haiku 4.5 · Fastest for quick answers"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "muse": {
+    "source": "2026-09-27T14-07-55-516Z-yIgskw/muse-1.jsonl",
+    "session": {
+      "models": {
+        "currentModelId": "muse-spark-1.3-contributor",
+        "availableModels": [
+          {
+            "modelId": "muse-spark-1.3",
+            "name": "muse-spark-1.3",
+            "_meta": {
+              "totalContextTokens": 1007997,
+              "supportsReasoningEffort": true,
+              "reasoningEfforts": [
+                {
+                  "value": "none"
+                },
+                {
+                  "value": "minimal"
+                },
+                {
+                  "value": "low"
+                },
+                {
+                  "value": "medium"
+                },
+                {
+                  "value": "high"
+                },
+                {
+                  "value": "xhigh"
+                },
+                {
+                  "value": "max"
+                },
+                {
+                  "value": "ultra"
+                }
+              ]
+            }
+          },
+          {
+            "modelId": "muse-spark-1.3-contributor",
+            "name": "muse-spark-1.3-contributor",
+            "description": "Your content, including inter-session messages, may be used for product improvement.",
+            "_meta": {
+              "totalContextTokens": 1007997,
+              "supportsReasoningEffort": true,
+              "reasoningEfforts": [
+                {
+                  "value": "none"
+                },
+                {
+                  "value": "minimal"
+                },
+                {
+                  "value": "low"
+                },
+                {
+                  "value": "medium"
+                },
+                {
+                  "value": "high"
+                },
+                {
+                  "value": "xhigh"
+                },
+                {
+                  "value": "max"
+                },
+                {
+                  "value": "ultra"
+                }
+              ]
+            }
+          },
+          {
+            "modelId": "muse-spark-1.2",
+            "name": "muse-spark-1.2",
+            "_meta": {
+              "totalContextTokens": 1007997,
+              "supportsReasoningEffort": true,
+              "reasoningEfforts": [
+                {
+                  "value": "none"
+                },
+                {
+                  "value": "minimal"
+                },
+                {
+                  "value": "low"
+                },
+                {
+                  "value": "medium"
+                },
+                {
+                  "value": "high"
+                },
+                {
+                  "value": "xhigh"
+                },
+                {
+                  "value": "max"
+                },
+                {
+                  "value": "ultra"
+                }
+              ]
+            }
+          },
+          {
+            "modelId": "muse-spark-1.2-contributor",
+            "name": "muse-spark-1.2-contributor",
+            "description": "Your content, including inter-session messages, may be used for product improvement.",
+            "_meta": {
+              "totalContextTokens": 1007997,
+              "supportsReasoningEffort": true,
+              "reasoningEfforts": [
+                {
+                  "value": "none"
+                },
+                {
+                  "value": "minimal"
+                },
+                {
+                  "value": "low"
+                },
+                {
+                  "value": "medium"
+                },
+                {
+                  "value": "high"
+                },
+                {
+                  "value": "xhigh"
+                },
+                {
+                  "value": "max"
+                },
+                {
+                  "value": "ultra"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  }
+}

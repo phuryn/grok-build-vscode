@@ -32,8 +32,8 @@
  *   npm run test:live -- --video-timeout=120000    # give /imagine-video 2 min before SKIPping
  *   GROK_BIN=/path/to/grok npm run test:live
  *
- * Exit code 0 iff no test FAILED (SKIPs — e.g. no subscription, grok chose not
- * to delegate — do not fail the gate; they're reported honestly).
+ * Exit code 0 iff no test FAILED or remained INCONCLUSIVE. Delegation refusal
+ * is INCONCLUSIVE; unrelated legacy SKIPs retain their existing policy.
  */
 const { spawn } = require("node:child_process");
 const os = require("node:os");
@@ -1277,8 +1277,10 @@ async function testSubagent() {
     await withTimeout(acp.send("initialize", INIT), 30000, "init");
     const ns = await withTimeout(acp.send("session/new", { cwd, mcpServers: [] }), 30000, "new");
     assert(ns.result && ns.result.sessionId, "session/new failed");
+    const { SUBAGENT_PROMPT } = await import("./acp-smoke.mjs");
+    await selectGrokSmokeModel(acp, ns.result);
     await withTimeout(
-      acp.send("session/prompt", { sessionId: ns.result.sessionId, prompt: [{ type: "text", text: "Use a subagent to read math.js and report in one sentence what add() does. Delegate to a subagent." }] }),
+      acp.send("session/prompt", { sessionId: ns.result.sessionId, prompt: [{ type: "text", text: SUBAGENT_PROMPT }] }),
       300000, "subagent prompt");
 
     // Regression guard: grok's get_command_or_subagent_output is an output READER,
@@ -1293,7 +1295,7 @@ async function testSubagent() {
     const bgIds = new Set(acp.bgTasks.map((u) => u.toolCallId));
     const pollIds = new Set(acp.taskOutputCalls.map((u) => u.toolCallId));
     if (bgIds.size === 0 && pollIds.size === 0 && acp.subagentCalls.length === 0) {
-      throw new Skip("grok did not delegate this run (non-deterministic) — saw " +
+      throw new Inconclusive("grok did not delegate this run — saw " +
         acp.updates.filter((u) => u.sessionUpdate === "tool_call").length +
         " tool calls, none a subagent / background task");
     }
@@ -1317,6 +1319,23 @@ async function testSubagent() {
     return `delegated via background task (${bgIds.size} bg spawn, ${pollIds.size} output-poll); ` +
       `poller correctly NOT carded — grok's real subagent = background shell, see research/subagents.md`;
   } finally { acp.kill(); }
+}
+
+class Inconclusive extends Error {}
+
+async function selectGrokSmokeModel(acp, session, composerOnly = false) {
+  const { selectSmokeModel } = await import("./acp-smoke.mjs");
+  const availableModels = session.models?.availableModels ?? [];
+  const models = composerOnly ? availableModels.filter(m => /composer/i.test(m.modelId)) : availableModels;
+  assert(models.length, "no advertised models for the requested Grok lane");
+  const selected = selectSmokeModel({ models: { ...session.models, availableModels: models } }, process.env.ACP_SMOKE_GROK_MODEL);
+  const response = await withTimeout(acp.send("session/set_model", { sessionId: session.sessionId, modelId: selected.modelId,
+    ...(selected.effort ? { _meta: { reasoningEffort: selected.effort } } : {}) }), 30000, "economy model/effort selection");
+  assert(!response.error, `model selection failed: ${JSON.stringify(response.error)}`);
+  const { grokBackend } = require(path.join(REPO, "out", "grok-backend.js"));
+  assert(grokBackend.modelSetSucceeded(response.result), `model selection rejected: ${JSON.stringify(response.result)}`);
+  console.log(`model=${selected.modelId}; effort=${selected.effort || "N/A"}; ${selected.basis}`);
+  return selected;
 }
 
 // Use the shared real ACP peer here: real terminal handlers, retained wire and
@@ -1371,7 +1390,7 @@ async function testWorkflow() {
     if (error instanceof Skip) throw error;
     if (error.code === "MODEL_DID_NOT_DELEGATE") {
       report.result = "INCONCLUSIVE";
-      throw new Skip(error.message + `; evidence: ${output}`);
+      throw new Inconclusive(error.message + `; evidence: ${output}`);
     }
     throw error;
   } finally {
@@ -1397,8 +1416,12 @@ async function testWorkflow() {
 
 async function testRender() {
   const { runRenderSmoke } = await import("./smoke-render.mjs");
-  const rendered = await runRenderSmoke("grok", liveEvidence(), GROK);
-  if (rendered.scenarios.some(s => s.result === "INCONCLUSIVE")) throw new Skip("render scenarios unproven; read grok-render/render-report.md");
+  const scenario = ONLY.length === 1 && ["subagent", "subagent-composer", "workflow"].includes(ONLY[0])
+    ? (ONLY[0] === "subagent-composer" ? "subagent" : ONLY[0]) : undefined;
+  let rendered;
+  try { rendered = await runRenderSmoke("grok", liveEvidence(), GROK, scenario); }
+  catch (error) { if (error.code === "NOT_OBSERVED") throw new Inconclusive(error.message); throw error; }
+  if (rendered.scenarios.some(s => s.result === "INCONCLUSIVE")) throw new Inconclusive("render scenarios unproven; read grok-render/render-report.md");
   return "real desktop host and chat.js rendered plain reply, subagent and workflow; content remains for the judge";
 }
 
@@ -1419,21 +1442,16 @@ async function testSubagentComposer() {
     await withTimeout(acp.send("initialize", INIT), 30000, "init");
     const ns = await withTimeout(acp.send("session/new", { cwd, mcpServers: [] }), 30000, "new");
     assert(ns.result && ns.result.sessionId, "session/new failed");
-    const models = (ns.result.models && ns.result.models.availableModels) || [];
-    const composer = models.find((m) => /composer/i.test(String(m.modelId || "")));
-    if (!composer) throw new Skip("no Composer model available on this account/build");
-    const sm = await withTimeout(
-      acp.send("session/set_model", { sessionId: ns.result.sessionId, modelId: composer.modelId }),
-      30000, "set_model");
-    if (sm.error) throw new Skip(`set_model(${composer.modelId}) rejected: ${JSON.stringify(sm.error).slice(0, 120)}`);
+    const { SUBAGENT_PROMPT } = await import("./acp-smoke.mjs");
+    const composer = await selectGrokSmokeModel(acp, ns.result, true);
     await withTimeout(
-      acp.send("session/prompt", { sessionId: ns.result.sessionId, prompt: [{ type: "text", text: "Use a subagent to read math.js and report in one sentence what add() does. Delegate to a subagent." }] }),
+      acp.send("session/prompt", { sessionId: ns.result.sessionId, prompt: [{ type: "text", text: SUBAGENT_PROMPT }] }),
       300000, "composer subagent prompt");
 
     const misfired = acp.taskOutputCalls.filter((u) => isSubagentToolCall(u));
     assert(misfired.length === 0, `isSubagentToolCall wrongly matched ${misfired.length} poller(s)`);
     if (acp.subagentCalls.length === 0 && acp.bgTasks.length === 0) {
-      throw new Skip("composer did not delegate this run (non-deterministic)");
+      throw new Inconclusive("composer did not delegate this run");
     }
     // Composer's completion is an UNTITLED tool_call_update (status completed,
     // no _meta) on the SAME toolCallId as the Task call — the shape the card
@@ -1613,7 +1631,10 @@ function selected() {
       results.push({ name: t.name, status: "PASS", detail });
     } catch (e) {
       const ms = Number((process.hrtime.bigint() - started) / 1000000n);
-      if (e instanceof Skip) {
+      if (e instanceof Inconclusive) {
+        console.log(`INCONCLUSIVE (${ms}ms)\n      ${e.message}`);
+        results.push({ name: t.name, status: "INCONCLUSIVE", detail: e.message });
+      } else if (e instanceof Skip) {
         console.log(`SKIP (${ms}ms)\n      ${e.message}`);
         results.push({ name: t.name, status: "SKIP", detail: e.message });
       } else {
@@ -1642,8 +1663,9 @@ function selected() {
   const pass = results.filter((r) => r.status === "PASS").length;
   const skip = results.filter((r) => r.status === "SKIP").length;
   const fail = results.filter((r) => r.status === "FAIL").length;
-  console.log(`\n ── summary ──  ${pass} passed · ${skip} skipped · ${fail} failed`);
+  const inconclusive = results.filter((r) => r.status === "INCONCLUSIVE").length;
+  console.log(`\n ── summary ──  ${pass} passed · ${skip} skipped · ${fail} failed · ${inconclusive} inconclusive`);
   for (const r of results) if (r.status !== "PASS") console.log(`   ${r.status}  ${r.name}`);
   console.log("");
-  process.exit(fail > 0 ? 1 : 0);
-})().catch((e) => { console.error("runner crashed:", e); process.exit(2); });
+  process.exit(fail > 0 ? 1 : inconclusive > 0 ? 2 : 0);
+})().catch((e) => { console.error("runner crashed:", e); process.exit(1); });

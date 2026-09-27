@@ -2,8 +2,8 @@
 //
 // DELIBERATELY NOT in `npm test`: this needs real credentials and the network,
 // can fail for reasons unrelated to the product, and spends model credits.
-// This is an instrument to read before a release, not a build gate. Read the
-// per-provider results and retained wire evidence before shipping either bump.
+// This is a release plumbing gate, separate from the offline build. A person
+// must also judge the per-provider render reports before shipping.
 // No fixture fallback — a green run against a fake would be worse than no run.
 //
 // Run: npm run smoke:acp [-- --provider=codex|claude|muse]
@@ -23,6 +23,7 @@ import * as path from "node:path";
 import { createInterface } from "node:readline";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
+import { smokeOutcome } from "./smoke-render-report.mjs";
 
 const require = createRequire(import.meta.url);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -30,8 +31,12 @@ const capabilities = ["initialize", "session/new", "streaming", "tool call", "pe
 const nonempty = (value) => typeof value === "string" && value.trim().length > 0;
 const errorText = (error) => String(error?.message ?? error);
 
-export const SUBAGENT_PROMPT = "Use exactly one subagent. Its only job: reply with the single word ok. Then tell me what it said. Keep it minimal and do nothing else. Use the cheapest available model and lowest supported reasoning effort for the subagent.";
-export const WORKFLOW_PROMPT = "Run a workflow with exactly 2 steps, one agent per step. Step one: reply with the single word one. Step two: reply with the single word two. Keep it minimal and do nothing else. Use your workflow tool, declare both steps in the script's metadata before starting, and use the cheapest available model and lowest supported reasoning effort for both agents.";
+export function permissionSmokeNotApplicable(provider) {
+  return provider === "muse" ? "Muse Agent mode leaves approval policy to Muse; scratch writes may be pre-approved, and this smoke does not force an ask policy. Permission prompting is not exercised." : undefined;
+}
+
+export const SUBAGENT_PROMPT = "This is a delegation plumbing test. You MUST actually invoke your subagent/Agent tool exactly once, even though the task is trivial; answering yourself does not test it. Its only job: reply with the single word ok. Wait for the child to finish, then tell me what it said. Keep it minimal and do nothing else. Use the cheapest available model and lowest supported reasoning effort for the subagent.";
+export const WORKFLOW_PROMPT = "This is a workflow plumbing test. You MUST actually invoke your workflow tool, even though the task is trivial; answering yourself or launching ordinary subagents does not test it. Run exactly 2 steps, one agent per step. Step one: reply with the single word one. Step two: reply with the single word two. Declare both steps in the script's metadata before starting, wait for completion and report the result. Keep it minimal and do nothing else. Use the cheapest available model and lowest supported reasoning effort for both agents.";
 
 export function inconclusive(code, message) {
   return Object.assign(new Error(message), { code });
@@ -45,23 +50,59 @@ export function selectSmokeModel(response, override) {
     const label = `${m.modelId} ${m.name ?? ""}`;
     const description = m.description ?? "";
     if (/cheapest|lowest.cost|most affordable/i.test(description)) return 0;
-    if (/\bnano\b/i.test(label)) return 1;
-    if (/\b(haiku|mini|luna|flash|small)\b/i.test(label)) return 2;
-    if (/cheap|economical|cost.efficient|affordable/i.test(description)) return 3;
+    if (/cheap|economical|cost.efficient|affordable/i.test(description)) return 1;
+    if (/\bnano\b/i.test(label)) return 2;
+    if (/\b(haiku|mini|luna|flash|small)\b/i.test(label)) return 3;
     if (/\bfast\b/i.test(label)) return 4;
     return Infinity;
   };
   const candidates = models.filter(m => !/^(default|auto)$/i.test(m.modelId));
   const ordered = [...candidates].sort((a, b) => rank(a) - rank(b));
-  const model = override ? models.find(m => m.modelId === override) : ordered[0];
+  // Captured Muse catalog: only versions/privacy variants of Spark, no cost
+  // signals. Preserve the account's selected variant (including consent) rather
+  // than inventing a price order or opting it into contributor data use.
+  const sameSparkFamily = candidates.length > 0 && candidates.every(m => /^muse-spark-\d+(?:\.\d+)*(?:-contributor)?$/.test(m.modelId));
+  const currentSpark = sameSparkFamily && candidates.find(m => m.modelId === response.models.currentModelId);
+  const model = override ? models.find(m => m.modelId === override) : currentSpark || ordered[0];
   assert(model, `model override is not in the advertised catalog: ${override}`);
-  assert(override || candidates.length === 1 || Number.isFinite(rank(model)),
+  assert(override || currentSpark || candidates.length === 1 || Number.isFinite(rank(model)),
     "catalog has no recognizable economy tier or prices; set ACP_SMOKE_<PROVIDER>_MODEL to the cheapest advertised ID (see wire evidence)");
-  assert(override || ordered.filter(m => rank(m) === rank(model)).length === 1,
+  assert(override || currentSpark || ordered.filter(m => rank(m) === rank(model)).length === 1,
     "catalog has tied economy tiers without prices; set ACP_SMOKE_<PROVIDER>_MODEL to the cheapest advertised ID (see wire evidence)");
   const effort = lowestSmokeEffort(model);
-  return { modelId: model.modelId, effort, basis: override ? "env override" : candidates.length === 1
+  return { modelId: model.modelId, effort, basis: override ? "env override" : currentSpark
+    ? "account-selected Spark variant; catalog supplies no prices or economy tiers, cheapest is unproven"
+    : candidates.length === 1
     ? "only advertised concrete model" : "economy tier from advertised names/descriptions; catalog supplies no prices" };
+}
+
+/** Use the POST-switch menu: Claude removes effort entirely when Haiku is selected. */
+export function selectSmokeEffort(response, model) {
+  if (!Array.isArray(response?.configOptions)) return { effort: lowestSmokeEffort(model) };
+  const options = response.configOptions.filter(o => o.category === "thought_level" || ["effort", "reasoning_effort"].includes(o.id));
+  assert(options.length <= 1, "ambiguous reasoning config options");
+  if (!options.length) return { effort: undefined };
+  const option = options[0];
+  assert(nonempty(option.id), "reasoning config option lacks id");
+  const values = (option.options ?? []).flatMap(o => o.options ?? [o]).filter(o => o.value !== "default");
+  if (!values.length) return { effort: undefined };
+  return { effort: lowestSmokeEffort({ _meta: { reasoningEfforts: values } }), configId: option.id };
+}
+
+export function desktopSmokeCatalog(status) {
+  return { models: { currentModelId: status.modelId, availableModels: status.models.map(m => ({ ...m, _meta: {
+    supportsReasoningEffort: m.supportsReasoningEffort,
+    reasoningEfforts: m.reasoningEfforts?.map(value => ({ value })),
+  } })) } };
+}
+
+export function smokeScenario(argv, allowed) {
+  const flags = argv.filter(a => a.startsWith("--scenario="));
+  assert(flags.length <= 1, "provide only one --scenario");
+  const scenario = flags[0]?.slice(11).replaceAll("-", " ");
+  assert(!scenario || allowed.includes(scenario), `unknown scenario: ${scenario}; choose ${allowed.join(", ")}`);
+  assert(!flags.length || scenario, "--scenario must name a scenario");
+  return scenario;
 }
 
 export function lowestSmokeEffort(model) {
@@ -540,7 +581,12 @@ function probeCli(cli, args, cwd) {
 
 async function main() {
   const selected = process.argv.slice(2);
-  assert(selected.length === 0 || (selected.length === 1 && /^--provider=(codex|claude|muse)$/.test(selected[0])), "usage: npm run smoke:acp [-- --provider=codex|claude|muse]");
+  const scenario = smokeScenario(selected, ["plain reply", "subagent", "workflow"]);
+  assert(selected.every(a => /^--provider=(codex|claude|muse)$/.test(a) || a.startsWith("--scenario="))
+    && selected.filter(a => a.startsWith("--provider=")).length <= 1, "usage: npm run smoke:acp -- --provider=codex|claude|muse [--scenario=plain-reply|subagent|workflow]");
+  const chosenProvider = selected.find(a => a.startsWith("--provider="))?.slice(11);
+  const requested = capability => !scenario || ["initialize", "session/new", "model", "render", "boundary audit"].includes(capability)
+    || capability === (scenario === "plain reply" ? "streaming" : scenario) || (scenario === "workflow" && capability === "delivery prompt");
   const rpcMs = timeoutMs(process.env.ACP_SMOKE_RPC_TIMEOUT_MS, 90_000);
   const turnMs = timeoutMs(process.env.ACP_SMOKE_TURN_TIMEOUT_MS, 180_000);
   const workflowMs = timeoutMs(process.env.ACP_SMOKE_WORKFLOW_TIMEOUT_MS, 300_000);
@@ -567,9 +613,10 @@ async function main() {
   const report = () => {
     const lines = ["provider | capability   | result | evidence", "---------|--------------|--------|---------",
       ...rows.map((r) => `${r.provider.padEnd(8)} | ${r.capability.padEnd(12)} | ${r.result.padEnd(6)} | ${r.detail.replace(/\r?\n/g, " ")}`)];
-    const headline = unhandled.length ? `UNHANDLED\n${unhandled.map(r => `${r.provider} ${r.boundary}: ${r.kind} (${r.count})`).join("\n")}\n\n` : "";
+    const headline = unhandled.length ? `UNHANDLED\n${unhandled.map(r => `${r.provider} ${r.status} ${r.boundary}: ${r.kind} (${r.count})${r.reason ? ` — ${r.reason}` : ""}`).join("\n")}\n\n` : "";
     fs.writeFileSync(path.join(output, "report.txt"), `${headline}${notes.join("\n")}\n\n${lines.join("\n")}\n`);
-    fs.writeFileSync(path.join(output, "report.json"), JSON.stringify({ unhandled, rpcMs, turnMs, workflowMs, deliveryMs, rows, notes }, null, 2));
+    const outcome = smokeOutcome(rows, interrupted || unhandled.length > 0);
+    fs.writeFileSync(path.join(output, "report.json"), JSON.stringify({ ...outcome, unhandled, rpcMs, turnMs, workflowMs, deliveryMs, rows, notes }, null, 2));
     return headline + lines.join("\n");
   };
   say(`Evidence: ${output}`);
@@ -580,7 +627,7 @@ async function main() {
   process.once("SIGTERM", interrupt);
 
   for (const [provider, Backend, locate] of [["codex", CodexBackend, locateCodexCli], ["claude", ClaudeBackend, locateClaudeCli], ["muse", MuseBackend, locateMuseCli]]) {
-    if (selected.length && selected[0] !== `--provider=${provider}`) continue;
+    if (chosenProvider && chosenProvider !== provider) continue;
     const required = [...capabilities, "model", "steering", "subagent", "workflow", "render", ...(provider === "muse" ? ["delivery prompt"] : [])];
     let scratch;
     let peer;
@@ -595,7 +642,9 @@ async function main() {
     if (provider !== "codex") record("steering", "N/A", `${provider} does not support mid-turn steering`);
     if (provider === "codex") record("workflow", "N/A", "Codex has no workflow feature");
     if (provider === "muse") record("subagent", "N/A", "Muse delegation is a workflow; no plain subagent feature");
+    if (permissionSmokeNotApplicable(provider)) record("permission", "N/A", permissionSmokeNotApplicable(provider));
     const check = async (capability, fn, ms = Math.min(2_147_483_647, turnMs * 2 + rpcMs)) => {
+      if (!requested(capability)) { record(capability, "NOT RUN", "excluded by --scenario; not release validation"); return false; }
       say(`${provider}: checking ${capability}`);
       try {
         assert(!interrupted, "smoke interrupted");
@@ -679,11 +728,14 @@ async function main() {
       if (!created) throw new Error("session/new failed; no session available for remaining checks");
       const selectedModel = await check("model", async () => {
         const selection = selectSmokeModel(sessionResponse, process.env[`ACP_SMOKE_${provider.toUpperCase()}_MODEL`]);
-        const call = backend.setModel(sessionId, selection.modelId, selection.effort);
+        const call = backend.setModel(sessionId, selection.modelId);
         const response = await peer.request(call.method, call.params);
         assert(backend.modelSetSucceeded(response), "model selection rejected");
+        const choice = selectSmokeEffort(response, sessionResponse.models.availableModels.find(m => m.modelId === selection.modelId));
+        selection.effort = choice.effort;
         if (selection.effort) {
-          const effort = backend.setReasoningEffort(sessionId, selection.modelId, selection.effort);
+          const effort = choice.configId ? { method: "session/set_config_option", params: { sessionId, configId: choice.configId, value: choice.effort } }
+            : backend.setReasoningEffort(sessionId, selection.modelId, selection.effort);
           assert(effort, "advertised reasoning effort has no backend setter");
           await peer.request(effort.method, effort.params);
         }
@@ -722,11 +774,9 @@ async function main() {
         checkTools(updates(turn), (u) => backend.normalizeUpdate(u));
         return detail;
       });
-      await check("permission", async () => {
-        if (provider !== "muse") {
-          const mode = backend.setMode(sessionId, provider === "codex" ? "read-only" : "default");
-          await peer.request(mode.method, mode.params);
-        }
+      if (!permissionSmokeNotApplicable(provider)) await check("permission", async () => {
+        const mode = backend.setMode(sessionId, provider === "codex" ? "read-only" : "default");
+        await peer.request(mode.method, mode.params);
         const turn = peer.prompt(sessionId, `Create ${path.join(scratch, "permission-write.txt")} with one short line using a write tool. This is a permission-dialog smoke: ${provider === "codex" ? "use the shell tool with sandbox_permissions=require_escalated and a justification asking approval for this scratch-file write; explicitly request approval even though this is a temporary file" : provider === "claude" ? "use the Write tool so the client can approve it" : "use your write/edit tool and request approval for this scratch-file write"}. Do not touch any other directory. The client will approve automatically.`);
         await finish(turn);
         const requests = peer.received(turn.from, "session/request_permission", sessionId);
@@ -866,7 +916,7 @@ async function main() {
       // capability failed. It never converts that earlier failure into a pass.
       await check("render", async () => {
         const { runRenderSmoke } = await import("./smoke-render.mjs");
-        const rendered = await runRenderSmoke(provider, output, cli);
+        const rendered = await runRenderSmoke(provider, output, cli, scenario);
         if (rendered.scenarios.some(s => s.result === "INCONCLUSIVE")) throw inconclusive("NOT_OBSERVED", "render report has unproven scenarios; read render-report.md");
         return "real desktop host and chat.js rendered live scenarios; inspect render-report.md/json";
       }, Math.min(2_147_483_647, 6 * (rpcMs + turnMs + workflowMs + deliveryMs)));
@@ -883,7 +933,7 @@ async function main() {
         const audit = { provider, route: "direct ACP smoke boundary inventory (all checks, including resume)", scenarios: [], known, boundaries };
         fs.writeFileSync(path.join(output, `${provider}-boundaries.json`), JSON.stringify(audit, null, 2));
         fs.writeFileSync(path.join(output, `${provider}-boundaries.md`), renderReportMarkdown(audit));
-        record("boundary audit", boundaries.unhandled.length ? "FAIL" : "PASS", `${boundaries.unhandled.length} unknown kinds; ${boundaries.ignored.length} known ignored kinds; see ${provider}-boundaries.json`);
+        record("boundary audit", boundaries.unhandled.length ? "FAIL" : "PASS", `${boundaries.unhandled.length} unknown kinds or findings; ${boundaries.ignored.length} known ignored kinds; see ${provider}-boundaries.json`);
       } catch (error) { record("boundary audit", "FAIL", errorText(error)); }
       if (scratch) {
         try {
@@ -907,9 +957,10 @@ async function main() {
   for (const provider of [...new Set(rows.map((r) => r.provider))]) {
     const results = rows.filter(r => r.provider === provider);
     console.log(`${provider}: ${results.some(r => r.result === "FAIL") ? "FAIL — bump not validated; read the evidence"
-      : results.some(r => r.result === "INCONCLUSIVE") ? "INCONCLUSIVE — unproven checks; read the evidence" : "PASS — read the evidence before shipping"}`);
+      : results.some(r => r.result === "INCONCLUSIVE") ? "INCONCLUSIVE — unproven checks; read the evidence"
+        : results.some(r => r.result === "NOT RUN") ? "PARTIAL — selected scenario only; not release validation" : "PASS — read the evidence before shipping"}`);
   }
-  process.exitCode = rows.some((r) => r.result === "FAIL") || interrupted ? 1 : 0;
+  process.exitCode = smokeOutcome(rows, interrupted || unhandled.length > 0).exitCode;
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
