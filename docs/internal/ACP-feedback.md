@@ -484,6 +484,15 @@ and `subagent_finished` gained `will_wake`. All still undocumented.
 correlation, and separate live/replay lifecycle routing. The replay filter and the `sessionKind`
 filter are both retirable on 1.0.5.
 
+**Cross-provider client mapping (2026-09-26 captures):** Codex's ACP subagent
+opt-in replaces synthetic Start/Complete tool rows and replays child sessions;
+Claude's opt-in loses the Agent call on replay, so the client retains its
+default handshake and normalizes the hand-back. Muse workflow snapshots use
+provider metadata on a standard ACP update, then the shared workflow card.
+Claude's background workflow completion has no correlated live lifecycle
+event without asyncTasks; the card stays running and its replay XML wake-up is
+a notice. [Captured shapes and normalization](../../research/subagent-workflow-shapes.md#client-mappings).
+
 **Ask:** persist resolved interactions across `session/load`; make a background "completed" mean
 completed; stop duplicating structured output in text; do not push a child session's updates down the
 parent's connection; and document the `_x.ai/session_notification` lifecycle kinds, including the new

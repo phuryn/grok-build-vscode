@@ -49,3 +49,5 @@ dev-app-update.yml
 # Release signing runbook — names the Apple Team ID, the enrolled identity and the
 # full signing pipeline. Private: this repo's docs/internal/ is otherwise public.
 docs/internal/macos-code-signing.md
+# Raw ACP captures from the shape probe: machine paths and account metadata.
+research/subagent-workflow-shape-logs/

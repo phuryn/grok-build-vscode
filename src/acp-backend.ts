@@ -110,6 +110,9 @@ export interface BackendConfigState {
 export interface BackendUpdate {
   update?: any;
   meta?: any;
+  /** Provider progress projected onto the existing lifecycle presentation rail. */
+  workflowUpdate?: any;
+  notice?: string;
   sessionTitle?: string;
   contextWindow?: number;
   /** Direct occupancy reported by a backend, including an empty context. */

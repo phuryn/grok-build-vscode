@@ -10418,6 +10418,14 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         this.refreshFeedbackAvailability(session);
       }
     });
+    client.on("notice", (text: string) => {
+      if (gen !== session.gen) return;
+      session.inUserMessage = false;
+      if (session.replaying) {
+        this.emit(session, { type: "subagentUpdate", update: { sessionUpdate: "turn_completed" } });
+      }
+      this.emit(session, { type: "planNotice", text });
+    });
     client.on("messageChunk", (text: string) => {
       if (gen !== session.gen) return;
       if (session.captureAgentText !== undefined) {

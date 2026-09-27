@@ -142,6 +142,8 @@ export interface RunProgressUpdate {
    * absence means an older host whose `detail` has lost field provenance.
    * Keep `detail` unchanged for older clients; they ignore this extra field. */
   workflowContent?: { resultSummary: string | null; pauseMessage: string | null };
+  /** False for providers whose workflow controls the host cannot drive. */
+  controlsAvailable?: boolean;
   /**
    * 0–1 COMPLETION when known — goals only.
    *
@@ -352,7 +354,8 @@ function parseWorkflow(u: Record<string, unknown>, sessionUpdate: string): RunPr
     done: done || failed || cancelled,
     failed,
     cancelled,
-    displayName,
+    displayName: u.controlsAvailable === false ? undefined : displayName,
+    ...(u.controlsAvailable === false ? { controlsAvailable: false } : {}),
     sessionUpdate,
   };
 }

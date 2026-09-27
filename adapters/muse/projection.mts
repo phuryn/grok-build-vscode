@@ -11,6 +11,41 @@ interface ItemState {
 
 const MUSE_FAILURE_OUTPUT_LINES = 8;
 
+/** MSP full workflow snapshots, including the same item in resume history. */
+function workflowUpdate(item: Record<string, any>): Record<string, any> | undefined {
+  if (typeof item.workflowRunId !== "string" || !item.workflowRunId) return;
+  let summary: unknown;
+  const match = typeof item.message === "string"
+    ? /^<workflow-launch-reconciled>([\s\S]*)<\/workflow-launch-reconciled>$/.exec(item.message.trim()) : null;
+  if (match) {
+    try { summary = JSON.parse(match[1])?.final_summary?.summary; } catch { /* Incomplete envelope: no output yet. */ }
+  }
+  if (typeof summary === "string") {
+    try {
+      // Muse's entire returned value is output, including arbitrary JSON.
+      // Present it as Markdown before the shared Grok summary filter, which
+      // intentionally omits JSON without a known human-facing field.
+      summary = `Returned value:\n\n\`\`\`json\n${JSON.stringify(JSON.parse(summary), null, 2)}\n\`\`\``;
+    } catch { /* Already prose or Markdown. */ }
+  }
+  const children = Array.isArray(item.children) ? item.children : [];
+  return {
+    sessionUpdate: "workflow_updated", run_id: item.workflowRunId,
+    name: item.entryId || item.scriptId || "Workflow", revision: item.revision,
+    status: item.status === "inProgress" ? "running" : item.status === "completed" ? "completed"
+      : item.status === "cancelled" ? "cancelled" : "failed",
+    controlsAvailable: false,
+    result_summary: typeof summary === "string" ? summary : undefined,
+    agents: children.filter((child: any) => child && typeof child.childId === "string").map((child: any, i: number) => ({
+      agent_id: child.childId, label: `Agent ${i + 1}`,
+      state: child.status === "terminal" ? child.terminal || "stopped"
+        : child.status === "started" || child.status === "usage" ? "active" : child.status,
+      tokens_used: typeof child.usage?.inputTokens === "number" && typeof child.usage?.outputTokens === "number"
+        ? child.usage.inputTokens + child.usage.outputTokens : undefined,
+    })),
+  };
+}
+
 /** The row already names the tool. Show why it stopped: the reported reason,
  *  the server's one-line summary, else the tail of what the tool printed. */
 function museToolFailureMessage(item: Record<string, any>): string {
@@ -94,7 +129,12 @@ export class Projection {
     state.revision = item.revision;
     state.kind = item.kind;
     if (item.kind === "reminderChild") return;
-    if (item.kind === "toolCall") {
+    if (item.kind === "workflow") {
+      const workflow = workflowUpdate(item);
+      // Keep ACP schema-valid: provider metadata carries the rollup to our
+      // backend, which emits the existing runProgress presentation message.
+      if (workflow) this.emit({ sessionUpdate: "session_info_update", _meta: { "muse/workflow": workflow } });
+    } else if (item.kind === "toolCall") {
       const first = !state.toolCallId;
       state.toolCallId = item.callId || id;
       // MSP's open enum has exactly one nonterminal value. ACP has no

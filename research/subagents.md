@@ -85,8 +85,20 @@ appends *after* the tool row. Word-level chunks coalesce to one markdown /
 thought paint per card per frame. A child chunk whose session matches no card
 is dropped from the parent transcript. Cold `session/load` still does not
 replay child transcripts into the parent — children remain sibling sessions
-on disk; cards rebuild from the lifecycle rail. Fixture:
+on disk. Cards rebuild from tool calls; replayed lifecycle frames tag and finish
+existing cards rather than create them. Fixture:
 `test/fixtures/grok-subagent-mux.jsonl`.
+
+**Other providers:** Codex alone advertises `clientCapabilities.subagents: {}`.
+`normalizeCodexUpdate` turns native spawn/state events into stable tool calls,
+tagged with the child session ID before any child chunks arrive. Its full
+replay follows the same route. The default Start/Complete rows disappear under
+this opt-in; live `wait` remains an ordinary tool. Claude keeps the default
+handshake so replay retains its Agent call. Its explicit subagent marker is
+authoritative; `normalizeClaudeUpdate` extracts output and usage from the
+hand-back (including the replay trailer), with no child stream. Muse delegates
+through workflows and reports children in the workflow roster. See
+[per-provider captures and mappings](subagent-workflow-shapes.md#client-mappings).
 
 `spawn_subagent` goes through the normal `session/request_permission`
 flow, so in Agent mode the user first approves it like any other tool.

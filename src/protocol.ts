@@ -927,7 +927,7 @@ export type HostMsg =
   /**
    * Live child-session stream demuxed off the parent ACP stdout (#62).
    * Additive: an older webview that ignores this type loses nothing it has today.
-   * Child transcripts are not replayed on cold session/load.
+   * Codex also replays child transcripts on cold session/load; Grok does not.
    */
   | { type: "childStream"; childSessionId: string; event: "messageChunk"; text: string }
   | { type: "childStream"; childSessionId: string; event: "thoughtChunk"; text: string }
@@ -935,7 +935,7 @@ export type HostMsg =
   | { type: "childStream"; childSessionId: string; event: "toolCall"; call: ToolCallPayload }
   | { type: "childStream"; childSessionId: string; event: "toolCallUpdate"; call: ToolCallPayload }
   // Deep Research / Workflow / Goal progress (P2-10) — normalized from the
-  // live `_x.ai/session_notification` rail (`workflow_updated` / `goal_updated`).
+  // Grok lifecycle rails and provider-normalized workflow rollups.
   // Cards update in place by `id`; terminal phases stop the live dots.
   // replaceOnly is a live repair hint: never create a card outside the window.
   // Buffered/snapshot frames omit it; older receivers ignore the optional field.

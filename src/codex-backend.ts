@@ -141,6 +141,23 @@ function codexMcpTitle(update: any): string | undefined {
 
 export function normalizeCodexUpdate(update: any, meta?: any): BackendUpdate {
   if (!update || typeof update !== "object") return { update, meta };
+  const childId = update.subagentSessionId;
+  if (typeof childId === "string" && childId) {
+    // The opt-in replaces Start/Complete tool rows, including on replay.
+    // A stable synthetic call gives the existing card and child mux an owner.
+    if (update.sessionUpdate === "subagent_spawned") return { meta, update: {
+      sessionUpdate: "tool_call", toolCallId: `codex-subagent:${childId}`,
+      kind: "subagent", title: update.name || "Subagent", status: "in_progress",
+      rawInput: { description: update.name, prompt: update.task },
+      subagent_id: childId, child_session_id: childId,
+    } };
+    if (update.sessionUpdate === "subagent_state_update") return { meta, update: {
+      sessionUpdate: "tool_call_update", toolCallId: `codex-subagent:${childId}`,
+      status: update.state === "completed" ? "completed"
+        : update.state === "failed" ? "failed"
+        : update.state === "cancelled" || update.state === "stopped" ? "cancelled" : "in_progress",
+    } };
+  }
   if (update.sessionUpdate === "session_info_update") {
     const title = [update.title, update.sessionTitle, update.name, update.sessionInfo?.title, update._meta?.title]
       .find((value) => typeof value === "string" && value.trim()) as string | undefined;

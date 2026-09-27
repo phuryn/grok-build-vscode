@@ -499,6 +499,7 @@
 
   function isSubagentToolCall(call) {
     if (!call) return false;
+    if (call._meta?.claudeCode?.subagent === true) return true;
     if (call.kind === "subagent" || call.kind === "agent") return true;
     // Structural marker on grok 0.2.9x: _meta["x.ai/tool"].name carries the
     // real tool id regardless of how the call is titled — and when present it

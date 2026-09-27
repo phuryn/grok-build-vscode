@@ -233,6 +233,7 @@ export { buildGrokAgentArgs } from "./grok-backend";
 export type AcpClientCapabilities = {
   fs: { readTextFile?: true; writeTextFile: true };
   terminal: true;
+  subagents?: Record<string, never>;
 };
 
 /** Handshake every provider used before grok 1.0 — client-delegated fs. */
@@ -272,13 +273,15 @@ export const GROK_IMAGE_READ_MIN_VERSION: [number, number, number] = [1, 0, 4];
  * Unknown, unparseable, unverified, or cached grok versions keep the pre-1.0
  * handshake. A missed version probe must not silently drop client fs: on
  * 0.2.117 that can blank plan review (`planContent: null`) and may also stop
- * write delegation. Codex is not this bug and keeps the delegated handshake.
+ * write delegation. Codex retains delegated fs and opts into subagent sessions;
+ * Claude and Muse keep the default handshake.
  */
 export function acpClientCapabilities(
   provider: AcpProvider,
   grokVersion?: string | null,
   versionVerified = false,
 ): AcpClientCapabilities {
+  if (provider === "codex") return { ...ACP_DELEGATED_FS_CAPABILITIES, subagents: {} };
   if (provider !== "grok") return ACP_DELEGATED_FS_CAPABILITIES;
   if (!versionVerified) return ACP_DELEGATED_FS_CAPABILITIES;
   const parsed = parseGrokVersion(grokVersion ?? "");
@@ -302,6 +305,7 @@ export class AcpClient extends EventEmitter {
   readonly usesClientPlanGate: boolean;
 
   sessionId?: string;
+  private loadingChildSessionIds?: Set<string>;
   currentModelId?: string;
   currentModeId?: string;
   availableModels: ModelInfo[] = [];
@@ -548,11 +552,16 @@ export class AcpClient extends EventEmitter {
   }
 
   async loadSession(sessionId: string, modelId?: string): Promise<{ sessionId: string }> {
-    const raw = await this.request("session/load", {
-      sessionId,
-      cwd: this.opts.cwd,
-      mcpServers: await this.mcpServersForSession(),
-    });
+    const mcpServers = await this.mcpServersForSession();
+    // Replay precedes the response and may use a different parent wire ID.
+    // Only an explicit spawn identifies a child until the load completes.
+    this.loadingChildSessionIds = new Set();
+    let raw: any;
+    try {
+      raw = await this.request("session/load", { sessionId, cwd: this.opts.cwd, mcpServers });
+    } finally {
+      this.loadingChildSessionIds = undefined;
+    }
     const res = this.backend.normalizeSessionResponse(raw);
     this.sessionId = sessionId;
     if (res?.models?.availableModels) {
@@ -1339,9 +1348,17 @@ export class AcpClient extends EventEmitter {
   }
 
   private handleSessionUpdate(u: any, meta?: any, sessionId?: string): void {
-    const foreign = isForeignSessionUpdate(sessionId, this.sessionId);
+    if (this.loadingChildSessionIds && u?.sessionUpdate === "subagent_spawned") {
+      const childId = u.subagentSessionId ?? u.child_session_id ?? u.subagent_id;
+      if (typeof childId === "string" && childId) this.loadingChildSessionIds.add(childId);
+    }
+    const foreign = this.loadingChildSessionIds
+      ? typeof sessionId === "string" && this.loadingChildSessionIds.has(sessionId)
+      : isForeignSessionUpdate(sessionId, this.sessionId);
     const normalized = this.backend.normalizeUpdate(u, meta);
     if (!foreign) {
+      if (normalized.workflowUpdate) this.emit("subagentLifecycle", normalized.workflowUpdate, meta);
+      if (normalized.notice) this.emit("notice", normalized.notice);
       if (this.provider === "claude") {
         const windows = claudeSubscriptionWindows(normalized.update);
         if (windows !== undefined) this.emit("subscriptionUsage", windows);

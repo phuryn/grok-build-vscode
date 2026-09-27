@@ -13925,6 +13925,10 @@
   }
 
   function addSubagentCard(call) {
+    if (call?.child_session_id && call.toolCallId && state.subagentCards.has(call.toolCallId)) {
+      applySubagentUpdate(call);
+      return;
+    }
     closeToolGroup();
     clearWelcome();
     hideGrokking();
@@ -13943,14 +13947,12 @@
       `<div class="subagent-stream" hidden></div>` +
       `<div class="subagent-result" hidden></div>`;
     setSubagentTitle(el, call);
-    // Cards rebuilt by a cold restore never receive their own subagent_spawned
-    // (session/load strips the lifecycle rail), so they'd sit permanently
-    // untagged — a magnet for a LATER live spawn's FIFO tag, corrupting the old
-    // card with the new run's duration/output. Mark them so live spawn-tagging
-    // and the no-id finish fallback skip them.
+    // Replay may omit lifecycle IDs. A later live spawn must not claim an
+    // untagged historical card through the Grok FIFO fallback.
     if (state.replaying) el.dataset.subagentReplayed = "1";
     appendTranscriptChild(el);
     if (call && call.toolCallId) state.subagentCards.set(call.toolCallId, el);
+    tagSubagentChildSession(el, call);
     applySubagentUpdate(call, el); // a replayed call may already be completed
     scrollToBottom();
   }
@@ -13968,6 +13970,9 @@
     // Task → status "completed" + rawOutput {type:"Text", text} with NO
     // duration (the subagent_finished lifecycle event fills that in).
     const out = call && call.rawOutput;
+    const usage = call?._meta?.subagentUsage;
+    if (typeof usage?.durationMs === "number") el._subagentDurationMs = usage.durationMs;
+    if (typeof usage?.tokens === "number") el._subagentTokens = usage.tokens;
     const status = String(call?.status || "").toLowerCase();
     const finished = status === "completed" || status === "failed" || status === "cancelled" ||
       (out && out.type === "SubagentCompleted");
@@ -13990,11 +13995,17 @@
     // Thread the failure/cancel through the tool-channel path too — not just the
     // lifecycle rail — since the tool-channel completion is the common ordering.
     finishSubagentCard(el, {
-      durationMs: out && typeof out.duration_ms === "number" ? out.duration_ms : null,
+      durationMs: out && typeof out.duration_ms === "number" ? out.duration_ms : el._subagentDurationMs ?? null,
       output,
       failed: status === "failed",
       cancelled: status === "cancelled",
     });
+    if (Number.isFinite(el._subagentTokens)) {
+      const time = el.querySelector(".subagent-time");
+      if (time) {
+        time.textContent = time.textContent.replace(/ · [\d.,kKmM]+ tokens$/, "") + ` · ${compactTokens(el._subagentTokens)} tokens`;
+      }
+    }
   }
 
   // A background delegation's result arrives on the poller tool
@@ -14344,7 +14355,11 @@
     for (const [selector, value] of [[".run-progress-sub", u.subtitle], [".run-progress-detail", detailText]]) {
       const target = el.querySelector(selector);
       target.hidden = !expanded || !value;
-      target.textContent = value || "";
+      if (selector === ".run-progress-detail") {
+        target.innerHTML = renderMarkdown(value || "");
+        applyAutoDir(target);
+        renderMermaidIn(target);
+      } else target.textContent = value || "";
     }
     const spend = el.querySelector(".workflow-spend");
     const spendText = Number.isFinite(u.agentsUsed)
@@ -14430,12 +14445,12 @@
     const reason = !u.displayName ? "Controls unavailable: no workflow handle reported"
       : !/^[\w.:-]+$/.test(u.displayName) ? "Controls unavailable: invalid workflow handle" : "";
     // Preserve focused controls and pending pointer clicks across rollup frames.
-    const controlsKey = JSON.stringify([u.done, paused, u.displayName, reason]);
+    const controlsKey = JSON.stringify([u.done, paused, u.displayName, reason, u.controlsAvailable]);
     if (actions.dataset.controlsKey !== controlsKey) {
       actions.dataset.controlsKey = controlsKey;
       actions.replaceChildren();
-      actions.hidden = !!u.done;
-      if (!u.done) {
+      actions.hidden = !!u.done || u.controlsAvailable === false;
+      if (!u.done && u.controlsAvailable !== false) {
         for (const action of [paused ? "resume" : "pause", "stop"]) {
           const button = workflowText(actions, "run-progress-btn", action[0].toUpperCase() + action.slice(1), "button");
           button.type = "button";

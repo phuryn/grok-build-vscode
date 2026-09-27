@@ -35,6 +35,9 @@ export class MuseBackend implements AcpBackend<"muse"> {
   normalizeSessionResponse(response: any) { return { ...response, models: response.models ?? response._meta?.models }; }
   normalizePromptResult(result: any) { return result; }
   normalizeUpdate(update: any, meta: any) {
+    if (update?.sessionUpdate === "session_info_update" && update._meta?.["muse/workflow"]) {
+      return { workflowUpdate: update._meta["muse/workflow"] };
+    }
     if (update?.sessionUpdate === "usage_update") return { update,
       meta, contextUsed: update.used, contextWindow: update.size };
     return { update, meta };
