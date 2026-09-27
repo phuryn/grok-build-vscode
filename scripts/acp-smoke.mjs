@@ -1,4 +1,4 @@
-// Live ACP smoke against the REAL Codex and Claude adapters and user CLIs.
+// Live ACP smoke against the REAL Codex, Claude and Muse adapters and user CLIs.
 //
 // DELIBERATELY NOT in `npm test`: this needs real credentials and the network,
 // can fail for reasons unrelated to the product, and spends model credits.
@@ -6,9 +6,11 @@
 // per-provider results and retained wire evidence before shipping either bump.
 // No fixture fallback — a green run against a fake would be worse than no run.
 //
-// Run: npm run smoke:acp [-- --provider=codex|claude]
-// Optional: CODEX_CLI_PATH / CLAUDE_CLI_PATH (existing user CLI),
-// ACP_SMOKE_RPC_TIMEOUT_MS (90000), ACP_SMOKE_TURN_TIMEOUT_MS (180000).
+// Run: npm run smoke:acp [-- --provider=codex|claude|muse]
+// Optional: CODEX_CLI_PATH / CLAUDE_CLI_PATH / MUSE_CLI_PATH (existing user CLI),
+// ACP_SMOKE_<PROVIDER>_MODEL (must be advertised),
+// ACP_SMOKE_RPC_TIMEOUT_MS (90000), ACP_SMOKE_TURN_TIMEOUT_MS (180000),
+// ACP_SMOKE_WORKFLOW_TIMEOUT_MS (300000), ACP_SMOKE_DELIVERY_TIMEOUT_MS (60000).
 // Evidence: .verification/acp-smoke/<unique run>/ (never overwritten).
 // Agent workspaces are separate OS-temp directories, removed even on failure.
 // Real provider homes are preserved: relocating them would hide credentials
@@ -27,6 +29,131 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const capabilities = ["initialize", "session/new", "streaming", "tool call", "permission", "cancellation", "resume"];
 const nonempty = (value) => typeof value === "string" && value.trim().length > 0;
 const errorText = (error) => String(error?.message ?? error);
+
+export const SUBAGENT_PROMPT = "Use exactly one subagent. Its only job: reply with the single word ok. Then tell me what it said. Keep it minimal and do nothing else. Use the cheapest available model and lowest supported reasoning effort for the subagent.";
+export const WORKFLOW_PROMPT = "Run a workflow with exactly 2 steps, one agent per step. Step one: reply with the single word one. Step two: reply with the single word two. Keep it minimal and do nothing else. Use your workflow tool, declare both steps in the script's metadata before starting, and use the cheapest available model and lowest supported reasoning effort for both agents.";
+
+export function inconclusive(code, message) {
+  return Object.assign(new Error(message), { code });
+}
+
+/** Catalogs currently expose names/tiers, not comparable prices. Never invent an ID. */
+export function selectSmokeModel(response, override) {
+  const models = response?.models?.availableModels?.filter(m => nonempty(m?.modelId)) ?? [];
+  assert(models.length, "session advertised no models");
+  const rank = (m) => {
+    const label = `${m.modelId} ${m.name ?? ""}`;
+    const description = m.description ?? "";
+    if (/cheapest|lowest.cost|most affordable/i.test(description)) return 0;
+    if (/\bnano\b/i.test(label)) return 1;
+    if (/\b(haiku|mini|luna|flash|small)\b/i.test(label)) return 2;
+    if (/cheap|economical|cost.efficient|affordable/i.test(description)) return 3;
+    if (/\bfast\b/i.test(label)) return 4;
+    return Infinity;
+  };
+  const candidates = models.filter(m => !/^(default|auto)$/i.test(m.modelId));
+  const ordered = [...candidates].sort((a, b) => rank(a) - rank(b));
+  const model = override ? models.find(m => m.modelId === override) : ordered[0];
+  assert(model, `model override is not in the advertised catalog: ${override}`);
+  assert(override || candidates.length === 1 || Number.isFinite(rank(model)),
+    "catalog has no recognizable economy tier or prices; set ACP_SMOKE_<PROVIDER>_MODEL to the cheapest advertised ID (see wire evidence)");
+  assert(override || ordered.filter(m => rank(m) === rank(model)).length === 1,
+    "catalog has tied economy tiers without prices; set ACP_SMOKE_<PROVIDER>_MODEL to the cheapest advertised ID (see wire evidence)");
+  const effort = lowestSmokeEffort(model);
+  return { modelId: model.modelId, effort, basis: override ? "env override" : candidates.length === 1
+    ? "only advertised concrete model" : "economy tier from advertised names/descriptions; catalog supplies no prices" };
+}
+
+export function lowestSmokeEffort(model) {
+  const offered = (model?._meta?.reasoningEfforts ?? []).map(e => typeof e === "string" ? e : e?.value).filter(nonempty);
+  if (!offered.length) {
+    assert(!model?._meta?.supportsReasoningEffort, "model supports effort but advertises no effort menu");
+    return undefined;
+  }
+  const effort = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"].find(e => offered.includes(e));
+  assert(effort, `unrecognized effort menu: ${offered.join(", ")}`);
+  return effort;
+}
+
+export function delegationAttempted(frames, kind) {
+  return frames.some(({ raw }) => kind === "workflow"
+    ? raw?._meta?.claudeCode?.toolName === "Workflow" || raw?._meta?.["muse/workflow"]
+      || raw?.sessionUpdate === "workflow_updated" || raw?.taskType === "workflow"
+      || /^workflow$/i.test(raw?.title ?? "") || raw?._meta?.["x.ai/tool"]?.name === "workflow"
+    : raw?.sessionUpdate?.startsWith("subagent_") || raw?._meta?.claudeCode?.subagent === true
+      || raw?._meta?.claudeCode?.toolName === "Agent" || raw?._meta?.codex?.subagent
+      || (["tool_call", "tool_call_update"].includes(raw?.sessionUpdate)
+        && (raw.kind === "subagent" || /^(Agent|spawn_subagent|Start subagent\b.*)$/i.test(raw.title ?? ""))));
+}
+
+/** Consume normalized parent cards and only the child stream belonging to that card. */
+export function checkSubagents(frames, sessionId, isSubagentToolCall) {
+  const calls = new Map();
+  for (const frame of frames.filter(f => f.sessionId === sessionId)) {
+    const u = frame.update;
+    if (!["tool_call", "tool_call_update"].includes(u?.sessionUpdate)) continue;
+    if (u.sessionUpdate === "tool_call" && isSubagentToolCall(u)) {
+      assert(nonempty(u.toolCallId), "normalized subagent card lacks toolCallId");
+      calls.set(u.toolCallId, { ...u });
+    } else if (calls.has(u.toolCallId)) {
+      Object.assign(calls.get(u.toolCallId), Object.fromEntries(Object.entries(u).filter(([, v]) => v !== undefined)));
+    }
+  }
+  if (!calls.size) {
+    assert(!delegationAttempted(frames, "subagent"), "delegation wire evidence produced no normalized subagent card");
+    throw inconclusive("MODEL_DID_NOT_DELEGATE", "model did not delegate; no subagent launch observed (no retry)");
+  }
+  for (const call of calls.values()) {
+    assert.equal(call.status, "completed", `subagent ${call.toolCallId} did not complete successfully`);
+    const output = typeof call.rawOutput === "string" ? call.rawOutput : call.rawOutput?.output;
+    const content = (call.content ?? []).some(b => nonempty(b.content?.text));
+    const child = call.child_session_id;
+    const childOutput = nonempty(child) && frames.some(f => f.sessionId === child
+      && f.update?.sessionUpdate === "agent_message_chunk" && nonempty(f.update.content?.text));
+    assert(nonempty(output) || content || childOutput, `subagent ${call.toolCallId} has no non-empty normalized result/child output`);
+  }
+  return `${calls.size} normalized subagent card(s), completed with non-empty result`;
+}
+
+/** All snapshots are parsed by the shipped parseRunProgressUpdate before this check. */
+export function checkWorkflow(frames, provider) {
+  const progress = frames.map(f => f.workflow).filter(p => p?.kind === "workflow");
+  if (!progress.length) {
+    assert(!delegationAttempted(frames, "workflow"), "workflow launch observed but no parsed workflowUpdate arrived");
+    throw inconclusive("MODEL_DID_NOT_DELEGATE", "model did not delegate; no workflow launch observed (no retry)");
+  }
+  const id = progress[0].id;
+  assert(progress.every(p => p.id === id), "expected one workflow, received unrelated run IDs");
+  const last = progress.at(-1);
+  assert(last.done && !last.failed && !last.cancelled, `workflow ${id} did not finish successfully (${last.phase})`);
+  const roster = provider === "muse" ? "agents" : "phases";
+  assert(progress.some(p => p[roster]?.length >= 2), `workflow ${id} never showed >=2 ${roster}`);
+  if (provider === "claude") {
+    // seedWorkflow comes from a second real normalizer fed ONLY Workflow tool
+    // frames: AIR progress cannot manufacture the up-front script declaration.
+    const seedFrame = frames.find(f => f.seedWorkflow?.id === id);
+    const seed = seedFrame?.seedWorkflow;
+    assert(seed?.phases?.length >= 2, "Workflow script metadata did not seed >=2 steps up front");
+    const titles = seed.phases.map(p => p.title);
+    assert(progress[0].phases?.length === titles.length, "first workflow update omitted declared steps");
+    assert(progress.every(p => p.phases?.length === titles.length
+      && p.phases.every((phase, i) => phase.title === titles[i])), "workflow steps were discovered late or changed order");
+    const taskIds = new Set(frames.filter(f => f.raw?.toolCallId === seedFrame.raw.toolCallId)
+      .flatMap(f => [f.raw.asyncTaskId, f.raw._meta?.claudeCode?.toolResponse?.taskId]).filter(nonempty));
+    const tasks = frames.map(f => f.raw).filter(u => taskIds.has(u?.asyncTaskId));
+    assert(tasks.some(u => u.sessionUpdate === "async_task_spawned" && u.taskType === "workflow")
+      && tasks.some(u => u.sessionUpdate === "async_task_progress")
+      && tasks.some(u => u.sessionUpdate === "async_task_state_update" && u.state === "completed"),
+    "Workflow lacks correlated AIR spawn/progress/completion events");
+  }
+  return `workflow ${id}: >=2 ${roster}, parsed done=true (${progress.length} snapshots)${provider === "claude" ? "; all steps seeded from script metadata" : ""}`;
+}
+
+export function isMuseDeliveryChunk(message, sessionId, launchSettled, workflowDone) {
+  return launchSettled && workflowDone && message.method === "session/update"
+    && message.params?.sessionId === sessionId && message.params.update?.sessionUpdate === "agent_message_chunk"
+    && message.params.update.content?.type === "text" && nonempty(message.params.update.content.text);
+}
 
 export function timeoutMs(value, fallback) {
   const ms = value === undefined ? fallback : Number(value);
@@ -148,14 +275,15 @@ function scratchPath(base, target, writing = false) {
   return resolved;
 }
 
-class Peer {
-  constructor(spec, cwd, evidence, rpcMs, turnMs, TerminalManager) {
+export class Peer {
+  constructor(spec, cwd, evidence, rpcMs, turnMs, TerminalManager, backend, seedBackend, parseProgress) {
     this.cwd = cwd;
     this.rpcMs = rpcMs;
     this.turnMs = turnMs;
     this.nextId = 0;
     this.pending = new Map();
     this.events = [];
+    this.normalized = [];
     this.listeners = new Set();
     this.terminals = new TerminalManager();
     this.terminalIds = new Set();
@@ -185,6 +313,19 @@ class Peer {
         const message = JSON.parse(line);
         assert.equal(message.jsonrpc, "2.0", "adapter emitted non-JSON-RPC stdout");
         this.record("receive", message);
+        if (["session/update", "_x.ai/session_notification", "x.ai/session_notification", "_x.ai/session/update", "x.ai/session/update"].includes(message.method)) {
+          const { update: raw, sessionId, _meta } = message.params;
+          const normalized = backend.normalizeUpdate(raw, _meta);
+          const seed = raw?._meta?.claudeCode?.toolName === "Workflow"
+            ? seedBackend.normalizeUpdate(raw, _meta).workflowUpdate : undefined;
+          // Normalizers own mutable workflow buffers. Retain each instant, not
+          // references that a later completed snapshot could retroactively fill.
+          const frame = structuredClone({ sessionId, raw, update: normalized.update,
+            workflow: parseProgress(normalized.workflowUpdate ?? normalized.update), seedWorkflow: parseProgress(seed),
+            ignored: !Object.entries(normalized).some(([key, value]) => key !== "meta" && value !== undefined) });
+          this.normalized.push(frame);
+          this.record("normalized", frame);
+        }
         if (message.method && message.id !== undefined) {
           // Handle concurrently: an outstanding permission or terminal request
           // must never stop reception of the response to another RPC.
@@ -244,7 +385,17 @@ class Peer {
 
   notify(method, params) { this.send({ jsonrpc: "2.0", method, params }); }
 
+  async waitUntil(predicate, what, ms) {
+    const deadline = Date.now() + ms;
+    while (!predicate()) {
+      if (this.failure) throw this.failure;
+      if (Date.now() >= deadline) throw Object.assign(new Error(`${what} never arrived within ${ms}ms`), { code: "ACP_SMOKE_TIMEOUT" });
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+  }
+
   async handleRequest({ method, params }) {
+    if (["_x.ai/session_notification", "x.ai/session_notification", "_x.ai/session/update", "x.ai/session/update"].includes(method)) return {};
     if (method === "session/request_permission") {
       const option = approvalOption(params);
       // Even malformed permission requests receive an immediate response.
@@ -389,13 +540,19 @@ function probeCli(cli, args, cwd) {
 
 async function main() {
   const selected = process.argv.slice(2);
-  assert(selected.length === 0 || (selected.length === 1 && /^--provider=(codex|claude)$/.test(selected[0])), "usage: npm run smoke:acp [-- --provider=codex|claude]");
+  assert(selected.length === 0 || (selected.length === 1 && /^--provider=(codex|claude|muse)$/.test(selected[0])), "usage: npm run smoke:acp [-- --provider=codex|claude|muse]");
   const rpcMs = timeoutMs(process.env.ACP_SMOKE_RPC_TIMEOUT_MS, 90_000);
   const turnMs = timeoutMs(process.env.ACP_SMOKE_TURN_TIMEOUT_MS, 180_000);
+  const workflowMs = timeoutMs(process.env.ACP_SMOKE_WORKFLOW_TIMEOUT_MS, 300_000);
+  const deliveryMs = timeoutMs(process.env.ACP_SMOKE_DELIVERY_TIMEOUT_MS, 60_000);
   // `smoke:acp` compiles src first, exactly like smoke:live. No stale bundles,
   // TS loader, copied spawn implementation, or adapter-path override.
   const { CodexBackend, normalizeCodexUpdate, normalizeCodexPermissionParams } = require("../out/codex-backend.js");
   const { ClaudeBackend } = require("../out/claude-backend.js");
+  const { MuseBackend } = require("../out/muse-backend.js");
+  const { locateMuseCli } = require("../out/muse-cli-locator.js");
+  const { parseRunProgressUpdate } = require("../out/run-progress.js");
+  const { isSubagentToolCall } = require("../media/webview-helpers.js");
   const { locateCodexCli } = require("../out/codex-cli-locator.js");
   const { locateClaudeCli } = require("../out/claude-cli-locator.js");
   const { acpClientCapabilities } = require("../out/acp.js");
@@ -405,13 +562,15 @@ async function main() {
   const output = fs.mkdtempSync(path.join(outputParent, `${new Date().toISOString().replace(/[:.]/g, "-")}-`));
   const rows = [];
   const notes = [];
+  const unhandled = [];
   const say = (text) => { console.log(`[acp-smoke] ${text}`); notes.push(text); };
   const report = () => {
     const lines = ["provider | capability   | result | evidence", "---------|--------------|--------|---------",
       ...rows.map((r) => `${r.provider.padEnd(8)} | ${r.capability.padEnd(12)} | ${r.result.padEnd(6)} | ${r.detail.replace(/\r?\n/g, " ")}`)];
-    fs.writeFileSync(path.join(output, "report.txt"), `${notes.join("\n")}\n\n${lines.join("\n")}\n`);
-    fs.writeFileSync(path.join(output, "report.json"), JSON.stringify({ rpcMs, turnMs, rows, notes }, null, 2));
-    return lines.join("\n");
+    const headline = unhandled.length ? `UNHANDLED\n${unhandled.map(r => `${r.provider} ${r.boundary}: ${r.kind} (${r.count})`).join("\n")}\n\n` : "";
+    fs.writeFileSync(path.join(output, "report.txt"), `${headline}${notes.join("\n")}\n\n${lines.join("\n")}\n`);
+    fs.writeFileSync(path.join(output, "report.json"), JSON.stringify({ unhandled, rpcMs, turnMs, workflowMs, deliveryMs, rows, notes }, null, 2));
+    return headline + lines.join("\n");
   };
   say(`Evidence: ${output}`);
   let interrupted = false;
@@ -420,26 +579,33 @@ async function main() {
   process.once("SIGINT", interrupt);
   process.once("SIGTERM", interrupt);
 
-  for (const [provider, Backend, locate] of [["codex", CodexBackend, locateCodexCli], ["claude", ClaudeBackend, locateClaudeCli]]) {
+  for (const [provider, Backend, locate] of [["codex", CodexBackend, locateCodexCli], ["claude", ClaudeBackend, locateClaudeCli], ["muse", MuseBackend, locateMuseCli]]) {
     if (selected.length && selected[0] !== `--provider=${provider}`) continue;
-    const required = [...capabilities, ...(provider === "codex" ? ["steering"] : [])];
+    const required = [...capabilities, "model", "steering", "subagent", "workflow", "render", ...(provider === "muse" ? ["delivery prompt"] : [])];
     let scratch;
     let peer;
     let sessionId;
     let fatal;
-    const check = async (capability, fn) => {
+    let cli;
+    const record = (capability, result, detail) => {
+      rows.push({ provider, capability, result, detail: detail.replace(/\r?\n/g, " ") });
+      say(`${provider} ${capability}: ${result} — ${detail}`);
+      report();
+    };
+    if (provider !== "codex") record("steering", "N/A", `${provider} does not support mid-turn steering`);
+    if (provider === "codex") record("workflow", "N/A", "Codex has no workflow feature");
+    if (provider === "muse") record("subagent", "N/A", "Muse delegation is a workflow; no plain subagent feature");
+    const check = async (capability, fn, ms = Math.min(2_147_483_647, turnMs * 2 + rpcMs)) => {
       say(`${provider}: checking ${capability}`);
       try {
         assert(!interrupted, "smoke interrupted");
-        const detail = await bounded(Promise.resolve().then(fn), `${provider} ${capability} check`, Math.min(2_147_483_647, turnMs * 2 + rpcMs));
+        const detail = await bounded(Promise.resolve().then(fn), `${provider} ${capability} check`, ms);
         rows.push({ provider, capability, result: "PASS", detail });
         say(`${provider} ${capability}: PASS — ${detail}`);
         report();
         return true;
       } catch (e) {
-        rows.push({ provider, capability, result: "FAIL", detail: errorText(e).replace(/\r?\n/g, " ") });
-        say(`${provider} ${capability}: FAIL — ${errorText(e)}`);
-        report();
+        record(capability, ["MODEL_DID_NOT_DELEGATE", "NOT_OBSERVED"].includes(e.code) ? "INCONCLUSIVE" : "FAIL", errorText(e));
         return false;
       }
     };
@@ -460,7 +626,7 @@ async function main() {
         JSON.stringify({ permissions: { ask: ["Write", "Edit", "MultiEdit"] } }, null, 2),
       );
       say(`${provider} scratch: ${scratch}`);
-      const cli = resolveCli(provider, locate);
+      cli = resolveCli(provider, locate);
       const version = probeCli(cli, ["--version"], scratch);
       assert(new RegExp(provider, "i").test(version), `version probe did not identify ${provider}: ${version}`);
       say(`${provider} CLI: ${cli} (${version})`);
@@ -469,21 +635,29 @@ async function main() {
         // Codex prints login status to stderr on some releases; exit zero is
         // the CLI's authenticated verdict. Never require OPENAI_API_KEY.
         say(`codex auth: login status exited 0${status ? `; ${status}` : " (existing CLI credentials)"}`);
-      } else {
+      } else if (provider === "claude") {
         const status = JSON.parse(probeCli(cli, ["auth", "status", "--json"], scratch));
         assert.equal(status.loggedIn, true, "Claude credentials missing: auth status reports loggedIn=false");
         say(`claude auth: loggedIn=true; method=${status.authMethod}`);
-      }
+      } else say("muse auth: real prompt checks will validate existing credentials (the SDK catalog alone does not prove login)");
       const backend = new Backend();
       const spec = backend.spawn({ cliPath: cli, cwd: scratch, env: { ...process.env } });
-      const packageName = `@agentclientprotocol/${provider === "codex" ? "codex-acp" : "claude-agent-acp"}`;
+      const packageName = provider === "muse" ? "@muse-code/sdk" : `@agentclientprotocol/${provider === "codex" ? "codex-acp" : "claude-agent-acp"}`;
       const manifest = JSON.parse(fs.readFileSync(require.resolve(`${packageName}/package.json`), "utf8"));
       assert.equal(manifest.version, require("../package.json").dependencies[packageName], "installed adapter differs from the pinned bump; install dependencies before interpreting this smoke");
-      assert.equal(fs.realpathSync(spec.args[0]), fs.realpathSync(path.resolve(path.dirname(require.resolve(`${packageName}/package.json`)), typeof manifest.bin === "string" ? manifest.bin : Object.values(manifest.bin)[0])), "spawn spec did not select the installed real adapter");
+      const adapterPath = provider === "muse" ? path.join(root, "out", "muse-adapter", "main.mjs")
+        : path.resolve(path.dirname(require.resolve(`${packageName}/package.json`)), typeof manifest.bin === "string" ? manifest.bin : Object.values(manifest.bin)[0]);
+      assert.equal(fs.realpathSync(spec.args[0]), fs.realpathSync(adapterPath), "spawn spec did not select the installed real adapter");
+      if (provider === "muse") {
+        assert.equal(spec.env.MUSE_CODE_EXECUTABLE, cli);
+        assert.equal(spec.env.ELECTRON_RUN_AS_NODE, "1");
+        say(`muse credential backend: ${spec.env.TBH_CREDENTIAL_BACKEND || "OS default"}`);
+      }
       say(`${provider} adapter: ${manifest.version}; spawn=${JSON.stringify({ command: spec.command, args: spec.args, shell: spec.shell, cli, ELECTRON_RUN_AS_NODE: spec.env.ELECTRON_RUN_AS_NODE })}`);
       let connection = 0;
       const connect = () => {
-        peer = new Peer(spec, scratch, path.join(output, `${provider}-${++connection}.jsonl`), rpcMs, turnMs, TerminalManager);
+        peer = new Peer(spec, scratch, path.join(output, `${provider}-${++connection}.jsonl`), rpcMs, turnMs, TerminalManager,
+          new Backend(), new Backend(), parseRunProgressUpdate);
         active = peer;
       };
       const initialize = async () => {
@@ -494,13 +668,28 @@ async function main() {
       };
       connect();
       await check("initialize", async () => { await initialize(); return `protocolVersion=1${provider === "codex" ? "; _meta.steering.supported=true" : ""}`; });
+      let sessionResponse;
       const created = await check("session/new", async () => {
         const response = await peer.request("session/new", { cwd: scratch, mcpServers: [] });
         assert(nonempty(response.sessionId), "session/new returned no sessionId");
         sessionId = response.sessionId;
+        sessionResponse = backend.normalizeSessionResponse(response);
         return `sessionId=${sessionId}`;
       });
       if (!created) throw new Error("session/new failed; no session available for remaining checks");
+      const selectedModel = await check("model", async () => {
+        const selection = selectSmokeModel(sessionResponse, process.env[`ACP_SMOKE_${provider.toUpperCase()}_MODEL`]);
+        const call = backend.setModel(sessionId, selection.modelId, selection.effort);
+        const response = await peer.request(call.method, call.params);
+        assert(backend.modelSetSucceeded(response), "model selection rejected");
+        if (selection.effort) {
+          const effort = backend.setReasoningEffort(sessionId, selection.modelId, selection.effort);
+          assert(effort, "advertised reasoning effort has no backend setter");
+          await peer.request(effort.method, effort.params);
+        }
+        return `model=${selection.modelId}; effort=${selection.effort ?? "N/A (not advertised)"}; ${selection.basis}`;
+      });
+      if (!selectedModel) throw new Error("model selection failed; refusing paid prompts with an unknown/default model");
       let completedPrompt = false;
       const updates = (turn) => {
         const events = peer.events.slice(turn.from);
@@ -534,9 +723,11 @@ async function main() {
         return detail;
       });
       await check("permission", async () => {
-        const mode = backend.setMode(sessionId, provider === "codex" ? "read-only" : "default");
-        await peer.request(mode.method, mode.params);
-        const turn = peer.prompt(sessionId, `Create ${path.join(scratch, "permission-write.txt")} with one short line using a write tool. This is a permission-dialog smoke: ${provider === "codex" ? "use the shell tool with sandbox_permissions=require_escalated and a justification asking approval for this scratch-file write; explicitly request approval even though this is a temporary file" : "use the Write tool so the client can approve it"}. Do not touch any other directory. The client will approve automatically.`);
+        if (provider !== "muse") {
+          const mode = backend.setMode(sessionId, provider === "codex" ? "read-only" : "default");
+          await peer.request(mode.method, mode.params);
+        }
+        const turn = peer.prompt(sessionId, `Create ${path.join(scratch, "permission-write.txt")} with one short line using a write tool. This is a permission-dialog smoke: ${provider === "codex" ? "use the shell tool with sandbox_permissions=require_escalated and a justification asking approval for this scratch-file write; explicitly request approval even though this is a temporary file" : provider === "claude" ? "use the Write tool so the client can approve it" : "use your write/edit tool and request approval for this scratch-file write"}. Do not touch any other directory. The client will approve automatically.`);
         await finish(turn);
         const requests = peer.received(turn.from, "session/request_permission", sessionId);
         assert(requests.length > 0, "write prompt produced no session/request_permission (permission capability remains unproven)");
@@ -578,6 +769,69 @@ async function main() {
         assert(updates(recovery).some((u) => u?.sessionUpdate === "agent_message_chunk" && nonempty(u.content?.text)), "post-cancel prompt returned without an agent message");
         return "live turn cancelled; same session completed a subsequent prompt";
       });
+      if (provider !== "muse") await check("subagent", async () => {
+        if (provider === "codex") {
+          const mode = backend.setMode(sessionId, "agent");
+          await peer.request(mode.method, mode.params);
+        }
+        const from = peer.normalized.length;
+        await finish(peer.prompt(sessionId, SUBAGENT_PROMPT));
+        const frames = () => peer.normalized.slice(from);
+        // Declining the prompt is not a broken normalizer. A real launch whose
+        // card/output never arrives IS a plumbing failure, even after end_turn.
+        if (!delegationAttempted(frames(), "subagent")
+            && !frames().some(f => isSubagentToolCall(f.update))) {
+          return checkSubagents(frames(), sessionId, isSubagentToolCall);
+        }
+        await peer.waitUntil(() => {
+          try { checkSubagents(frames(), sessionId, isSubagentToolCall); return true; }
+          catch { return false; }
+        }, "normalized subagent completion and result", workflowMs);
+        return checkSubagents(frames(), sessionId, isSubagentToolCall);
+      }, Math.min(2_147_483_647, turnMs + workflowMs + rpcMs));
+
+      if (provider !== "codex") {
+        const from = peer.normalized.length;
+        const frames = () => peer.normalized.slice(from).filter(f => f.sessionId === sessionId);
+        let launch;
+        let launchFinished = false;
+        let delivery;
+        let workflowPassed = false;
+        const observeDelivery = message => {
+          if (launch && message.id === launch.id && !message.method) launchFinished = message.result?.stopReason === "end_turn";
+          const done = frames().some(f => f.workflow?.done && !f.workflow.failed && !f.workflow.cancelled);
+          if (provider === "muse" && !delivery && isMuseDeliveryChunk(message, sessionId, launchFinished, done)) {
+            peer.record("delivery-observation", { sessionId, evidence: "unsolicited live answer chunk after launch response and workflow completion" });
+            // In the notification callback: no sleep between evidence of Muse's
+            // own delivery and sending the prompt that used to be refused.
+            delivery = peer.prompt(sessionId, "Do not use tools. Reply with the single word ok.");
+          }
+        };
+        peer.listeners.add(observeDelivery);
+        try {
+          workflowPassed = await check("workflow", async () => {
+            launch = peer.prompt(sessionId, WORKFLOW_PROMPT);
+            await finish(launch);
+            if (!delegationAttempted(frames(), "workflow") && !frames().some(f => f.workflow)) {
+              return checkWorkflow(frames(), provider);
+            }
+            await peer.waitUntil(() => frames().some(f => f.workflow?.done), "parsed workflow terminal update", workflowMs);
+            return checkWorkflow(frames(), provider);
+          }, Math.min(2_147_483_647, turnMs + workflowMs + rpcMs));
+          if (provider === "muse") await check("delivery prompt", async () => {
+            if (!delivery && !workflowPassed) throw inconclusive("NOT_OBSERVED", "not observed: workflow did not complete successfully");
+            try { await peer.waitUntil(() => !!delivery, "Muse unprompted delivery chunk", deliveryMs); }
+            catch (error) {
+              if (error.code !== "ACP_SMOKE_TIMEOUT") throw error;
+              throw inconclusive("NOT_OBSERVED", `not observed: no unprompted delivery chunk within ${deliveryMs}ms`);
+            }
+            await finish(delivery);
+            assert(updates(delivery).some(u => u?.sessionUpdate === "agent_message_chunk" && nonempty(u.content?.text)),
+              "delivery-time prompt completed without an answer");
+            return "sent on an unsolicited live delivery chunk; session/prompt admitted and completed with end_turn";
+          }, Math.min(2_147_483_647, deliveryMs + turnMs + rpcMs));
+        } finally { peer.listeners.delete(observeDelivery); }
+      }
       await check("resume", async () => {
         assert(completedPrompt, "not exercised: no completed prompt exists to verify conversation replay");
         await peer.stop();
@@ -589,8 +843,16 @@ async function main() {
         const users = replay.filter((u) => u?.sessionUpdate === "user_message_chunk" && u.content?.type === "text" && nonempty(u.content.text));
         const agents = replay.filter((u) => u?.sessionUpdate === "agent_message_chunk" && u.content?.type === "text" && nonempty(u.content.text));
         assert(users.length > 0 && agents.length > 0, `session/load returned without conversation replay (user=${users.length}, agent=${agents.length})`);
+        // A reopened Muse 1.4.0 conversation cannot launch workflows. Exercise
+        // ordinary prompt admission here; workflow coverage uses the fresh one.
+        const recovery = peer.prompt(sessionId, "Do not use tools. Reply with the single word ok.");
+        await finish(recovery);
+        assert(updates(recovery).some(u => u?.sessionUpdate === "agent_message_chunk" && nonempty(u.content?.text)), "reopened session returned no answer");
         return `fresh adapter replayed ${users.length} user and ${agents.length} agent chunks for ${sessionId}`;
       });
+      await peer.stop();
+      peer = undefined;
+      active = undefined;
     } catch (e) {
       fatal = errorText(e);
       say(`${provider}: ${fatal}`);
@@ -600,6 +862,29 @@ async function main() {
         catch (e) { rows.push({ provider, capability: "cleanup", result: "FAIL", detail: errorText(e) }); }
       }
       active = undefined;
+      // An independent desktop lane still produces evidence if a protocol
+      // capability failed. It never converts that earlier failure into a pass.
+      await check("render", async () => {
+        const { runRenderSmoke } = await import("./smoke-render.mjs");
+        const rendered = await runRenderSmoke(provider, output, cli);
+        if (rendered.scenarios.some(s => s.result === "INCONCLUSIVE")) throw inconclusive("NOT_OBSERVED", "render report has unproven scenarios; read render-report.md");
+        return "real desktop host and chat.js rendered live scenarios; inspect render-report.md/json";
+      }, Math.min(2_147_483_647, 6 * (rpcMs + turnMs + workflowMs + deliveryMs)));
+      try {
+        const { knownBoundaries, classifyBoundaries, renderReportMarkdown } = await import("./smoke-render-report.mjs");
+        const events = fs.readdirSync(output).filter(name => new RegExp(`^${provider}-[0-9]+\\.jsonl$`).test(name))
+          .flatMap(name => fs.readFileSync(path.join(output, name), "utf8").split(/\r?\n/).filter(Boolean).map(line => JSON.parse(line)));
+        const known = knownBoundaries(root, provider);
+        const boundaries = classifyBoundaries(events, known);
+        // Include the real desktop boundary net in the top-level headline too.
+        const desktopReport = path.join(output, `${provider}-render`, "render-report.json");
+        const desktop = fs.existsSync(desktopReport) ? JSON.parse(fs.readFileSync(desktopReport, "utf8")) : undefined;
+        unhandled.push(...[...boundaries.unhandled, ...(desktop?.boundaries?.unhandled ?? [])].map(row => ({ provider, ...row })));
+        const audit = { provider, route: "direct ACP smoke boundary inventory (all checks, including resume)", scenarios: [], known, boundaries };
+        fs.writeFileSync(path.join(output, `${provider}-boundaries.json`), JSON.stringify(audit, null, 2));
+        fs.writeFileSync(path.join(output, `${provider}-boundaries.md`), renderReportMarkdown(audit));
+        record("boundary audit", boundaries.unhandled.length ? "FAIL" : "PASS", `${boundaries.unhandled.length} unknown kinds; ${boundaries.ignored.length} known ignored kinds; see ${provider}-boundaries.json`);
+      } catch (error) { record("boundary audit", "FAIL", errorText(error)); }
       if (scratch) {
         try {
           assert(inside(fs.realpathSync(os.tmpdir()), scratch) && !inside(root, scratch), "refusing cleanup outside OS-temp scratch");
@@ -620,7 +905,9 @@ async function main() {
   process.removeListener("SIGTERM", interrupt);
   console.log(`\n${report()}\n\nEvidence: ${output}`);
   for (const provider of [...new Set(rows.map((r) => r.provider))]) {
-    console.log(`${provider}: ${rows.some((r) => r.provider === provider && r.result === "FAIL") ? "FAIL — bump not validated; read the evidence" : "PASS — read the evidence before shipping"}`);
+    const results = rows.filter(r => r.provider === provider);
+    console.log(`${provider}: ${results.some(r => r.result === "FAIL") ? "FAIL — bump not validated; read the evidence"
+      : results.some(r => r.result === "INCONCLUSIVE") ? "INCONCLUSIVE — unproven checks; read the evidence" : "PASS — read the evidence before shipping"}`);
   }
   process.exitCode = rows.some((r) => r.result === "FAIL") || interrupted ? 1 : 0;
 }

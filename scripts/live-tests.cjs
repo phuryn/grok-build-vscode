@@ -82,6 +82,18 @@ const QUICK = !!flag("quick");
 const SMOKE = !!flag("smoke");
 const ONLY = (flagVal("only") || "").split(",").map((s) => s.trim()).filter(Boolean);
 const SKIP = (flagVal("skip") || "").split(",").map((s) => s.trim()).filter(Boolean);
+let liveOutput, liveScenario = "startup";
+function liveEvidence() {
+  if (!liveOutput) {
+    const parent = path.join(REPO, ".verification", "acp-smoke");
+    fs.mkdirSync(parent, { recursive: true });
+    liveOutput = fs.mkdtempSync(path.join(parent, "grok-live-"));
+  }
+  return liveOutput;
+}
+function recordLive(direction, message) {
+  fs.appendFileSync(path.join(liveEvidence(), "grok-wire.jsonl"), JSON.stringify({ at: new Date().toISOString(), scenario: liveScenario, direction, message }) + "\n");
+}
 // /imagine-video works interactively, but in this bare headless harness grok
 // 0.2.x tends to spin (Glob/Grep + the video tool retrying with status:failed)
 // instead of cleanly producing one clip, so it often never finishes regardless
@@ -133,12 +145,13 @@ class Acp {
       const line = this.buf.slice(0, i);
       this.buf = this.buf.slice(i + 1);
       if (!line.trim()) continue;
-      let m; try { m = JSON.parse(line); } catch { continue; }
+      let m; try { m = JSON.parse(line); } catch { recordLive("wire-error", { line }); continue; }
       this._handle(m);
     }
   }
 
   _handle(m) {
+    recordLive("receive", m);
     if (m.id != null && m.method == null) {            // response to one of our requests
       const w = this.waiters.get(m.id);
       if (w) { this.waiters.delete(m.id); w(m); }
@@ -1306,6 +1319,89 @@ async function testSubagent() {
   } finally { acp.kill(); }
 }
 
+// Use the shared real ACP peer here: real terminal handlers, retained wire and
+// normalized evidence, bounded process-tree cleanup, and no provider-home move.
+async function testWorkflow() {
+  const { Peer, selectSmokeModel, checkWorkflow, delegationAttempted, WORKFLOW_PROMPT, timeoutMs } = await import("./acp-smoke.mjs");
+  const { grokBackend } = require(path.join(REPO, "out", "grok-backend.js"));
+  const { TerminalManager } = require(path.join(REPO, "out", "terminal-manager.js"));
+  const { parseRunProgressUpdate } = require(path.join(REPO, "out", "run-progress.js"));
+  const rpcMs = timeoutMs(process.env.ACP_SMOKE_RPC_TIMEOUT_MS, 90000);
+  const turnMs = timeoutMs(process.env.ACP_SMOKE_TURN_TIMEOUT_MS, 180000);
+  const workflowMs = timeoutMs(process.env.ACP_SMOKE_WORKFLOW_TIMEOUT_MS, 300000);
+  const parent = path.join(REPO, ".verification", "acp-smoke");
+  fs.mkdirSync(parent, { recursive: true });
+  const output = fs.mkdtempSync(path.join(parent, "grok-workflow-"));
+  console.log(`grok workflow evidence: ${output}`);
+  let cwd;
+  let peer;
+  const report = { provider: "grok", capability: "workflow", result: "FAIL", detail: "not exercised" };
+  try {
+    cwd = fs.realpathSync(mkTmp("workflow"));
+    const fromRepo = path.relative(REPO, cwd);
+    assert(path.isAbsolute(fromRepo) || fromRepo === ".." || fromRepo.startsWith(`..${path.sep}`), "OS-temp workflow scratch must be outside the repository");
+    assert(!/fake-|[\\/]fixtures[\\/]/i.test(GROK), "refusing fixture Grok CLI");
+    peer = new Peer(grokBackend.spawn({ cliPath: GROK, cwd, env: { ...process.env } }), cwd,
+      path.join(output, "grok.jsonl"), rpcMs, turnMs, TerminalManager, grokBackend, grokBackend, parseRunProgressUpdate);
+    const init = await peer.request("initialize", INIT);
+    assert(init.protocolVersion === 1, "initialize.protocolVersion must be 1");
+    const session = await peer.request("session/new", { cwd, mcpServers: [] });
+    assert(session.sessionId, "session/new returned no sessionId");
+    const selected = selectSmokeModel(grokBackend.normalizeSessionResponse(session), process.env.ACP_SMOKE_GROK_MODEL);
+    const call = grokBackend.setModel(session.sessionId, selected.modelId, selected.effort);
+    const response = await peer.request(call.method, call.params);
+    assert(grokBackend.modelSetSucceeded(response), "workflow model selection rejected: " + JSON.stringify(response));
+    report.model = selected;
+    console.log(`grok workflow model=${selected.modelId}; effort=${selected.effort || "N/A (not advertised)"}; ${selected.basis}`);
+    const from = peer.normalized.length;
+    const turn = peer.prompt(session.sessionId, WORKFLOW_PROMPT);
+    const result = await turn.promise;
+    assert(result.stopReason === "end_turn", "workflow prompt failed: " + JSON.stringify(result));
+    const frames = () => peer.normalized.slice(from).filter(f => f.sessionId === session.sessionId);
+    if (delegationAttempted(frames(), "workflow") || frames().some(f => f.workflow)) {
+      await peer.waitUntil(() => frames().some(f => f.workflow?.done), "Grok parsed workflow terminal update", workflowMs);
+    }
+    report.detail = checkWorkflow(frames(), "grok");
+    await peer.stop();
+    peer = undefined;
+    report.result = "PASS";
+    return report.detail;
+  } catch (error) {
+    report.detail = error.message;
+    if (error instanceof Skip) throw error;
+    if (error.code === "MODEL_DID_NOT_DELEGATE") {
+      report.result = "INCONCLUSIVE";
+      throw new Skip(error.message + `; evidence: ${output}`);
+    }
+    throw error;
+  } finally {
+    try { if (peer) await peer.stop(); }
+    catch (error) { report.result = "FAIL"; report.detail = `cleanup failed: ${error.message}`; throw error; }
+    finally {
+      try {
+        if (cwd) {
+          const relative = path.relative(fs.realpathSync(os.tmpdir()), cwd);
+          assert(relative && !path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`)
+            && path.basename(cwd).startsWith("grok-live-workflow-"), "refusing cleanup outside workflow OS-temp scratch");
+          fs.rmSync(cwd, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
+        }
+      } catch (error) { report.result = "FAIL"; report.detail = `scratch cleanup failed: ${error.message}`; throw error; }
+      finally {
+        fs.writeFileSync(path.join(output, "report.json"), JSON.stringify(report, null, 2));
+        const wire = path.join(output, "grok.jsonl");
+        if (fs.existsSync(wire)) fs.appendFileSync(path.join(liveEvidence(), "grok-wire.jsonl"), fs.readFileSync(wire));
+      }
+    }
+  }
+}
+
+async function testRender() {
+  const { runRenderSmoke } = await import("./smoke-render.mjs");
+  const rendered = await runRenderSmoke("grok", liveEvidence(), GROK);
+  if (rendered.scenarios.some(s => s.result === "INCONCLUSIVE")) throw new Skip("render scenarios unproven; read grok-render/render-report.md");
+  return "real desktop host and chat.js rendered plain reply, subagent and workflow; content remains for the judge";
+}
+
 // Composer-agent variant: the Composer wire differs from grok-build's in every
 // subagent-relevant way — the delegation tool is named "Task" (not
 // spawn_subagent), its completion is an UNTITLED tool_call_update with
@@ -1484,12 +1580,14 @@ const TESTS = [
   // interactively. See the testVideo comment + the SKIP-on-timeout handling.
   { name: "video-gen", fn: testVideo, slow: true, optIn: true },
   { name: "subagent", fn: testSubagent, slow: true },
+  { name: "workflow", fn: testWorkflow, slow: true },
   { name: "subagent-composer", fn: testSubagentComposer, slow: true },
+  { name: "render", fn: testRender, slow: true },
 ];
 
 function selected() {
   let list = TESTS;
-  if (ONLY.length) list = list.filter((t) => ONLY.includes(t.name));
+  if (ONLY.length) list = list.filter((t) => ONLY.includes(t.name) || (t.name === "render" && ONLY.some(name => ["subagent", "subagent-composer", "workflow"].includes(name))));
   else if (SMOKE) list = list.filter((t) => t.smoke); // fast lane: handshake + capabilities
   else list = list.filter((t) => !t.optIn); // opt-in tests only run when named in --only
   if (SKIP.length) list = list.filter((t) => !SKIP.includes(t.name));
@@ -1505,6 +1603,7 @@ function selected() {
   console.log(` running ${list.length} test(s)${QUICK ? " (quick: generative tests skipped)" : ""}\n`);
   const results = [];
   for (const t of list) {
+    liveScenario = t.name;
     const started = process.hrtime.bigint();
     process.stdout.write(`  • ${t.name} … `);
     try {
@@ -1523,6 +1622,23 @@ function selected() {
       }
     }
   }
+  const { knownBoundaries, classifyBoundaries, renderReportMarkdown } = await import("./smoke-render-report.mjs");
+  const output = liveEvidence();
+  const wire = path.join(output, "grok-wire.jsonl");
+  const events = fs.existsSync(wire) ? fs.readFileSync(wire, "utf8").split(/\r?\n/).filter(Boolean).map(line => JSON.parse(line)) : [];
+  const known = knownBoundaries(REPO, "grok");
+  const boundaries = classifyBoundaries(events, known);
+  const desktopPath = path.join(output, "grok-render", "render-report.json");
+  if (fs.existsSync(desktopPath)) {
+    const desktop = JSON.parse(fs.readFileSync(desktopPath, "utf8"));
+    for (const key of ["seen", "unhandled", "ignored"]) boundaries[key].push(...desktop.boundaries[key]);
+  }
+  const audit = { provider: "grok", route: "all selected live ACP checks plus desktop lane when selected", scenarios: [], known, boundaries, results };
+  fs.writeFileSync(path.join(output, "boundaries.json"), JSON.stringify(audit, null, 2));
+  fs.writeFileSync(path.join(output, "boundaries.md"), renderReportMarkdown(audit));
+  console.log(renderReportMarkdown(audit));
+  if (boundaries.unhandled.length) results.push({ name: "boundary audit", status: "FAIL", detail: "UNHANDLED kinds; inspect boundaries.json" });
+  console.log(`Evidence: ${output}`);
   const pass = results.filter((r) => r.status === "PASS").length;
   const skip = results.filter((r) => r.status === "SKIP").length;
   const fail = results.filter((r) => r.status === "FAIL").length;
