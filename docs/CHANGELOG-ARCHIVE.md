@@ -195,7 +195,7 @@ Groundwork: Grok Build CLI went **open source** ([xai-org/grok-build](https://gi
 
 ### Changed
 
-- Documentation-only patch: the README hero screenshot now shows the current UI running **Grok 4.5** ([docs/screenshots/grok_4.5.png](screenshots/grok_4.5.png), replacing the v1.4.20 shot). No code changes.
+- Documentation-only patch: the README hero screenshot now shows the current UI running **Grok 4.5** ([docs/screenshots/grok_4.5.png](https://github.com/phuryn/grok-build-vscode/blob/v4.13.1/docs/screenshots/grok_4.5.png), replacing the v1.4.20 shot). No code changes.
 
 ## 1.5.8 — 2026-07-12
 
