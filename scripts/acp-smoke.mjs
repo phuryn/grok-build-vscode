@@ -76,6 +76,15 @@ export function selectSmokeModel(response, override) {
     ? "only advertised concrete model" : "economy tier from advertised names/descriptions; catalog supplies no prices" };
 }
 
+/** Composer is an agent family, not necessarily part of a model ID. */
+export function selectGrokLaneModel(session, override, composerOnly = false) {
+  const available = session?.models?.availableModels ?? [];
+  if (!composerOnly) return selectSmokeModel(session, override);
+  const models = available.filter(m => /composer/i.test(`${m.modelId} ${m.name ?? ""} ${m._meta?.agentType ?? ""}`));
+  if (!models.length) throw Object.assign(new Error(`subagent-composer unavailable: this session advertises no Composer agent/model; advertised: ${available.map(m => `${m.modelId} (agentType=${m._meta?.agentType ?? "unspecified"})`).join(", ") || "none"}. The ordinary subagent lane covers Grok Build; Composer-specific wire assertions cannot be exercised.`), { code: "GROK_COMPOSER_UNAVAILABLE" });
+  return selectSmokeModel({ ...session, models: { ...session.models, availableModels: models } }, override);
+}
+
 /** Use the POST-switch menu: Claude removes effort entirely when Haiku is selected. */
 export function selectSmokeEffort(response, model) {
   if (!Array.isArray(response?.configOptions)) return { effort: lowestSmokeEffort(model) };
@@ -929,6 +938,7 @@ async function main() {
         // Include the real desktop boundary net in the top-level headline too.
         const desktopReport = path.join(output, `${provider}-render`, "render-report.json");
         const desktop = fs.existsSync(desktopReport) ? JSON.parse(fs.readFileSync(desktopReport, "utf8")) : undefined;
+        if (desktop?.cleanup) record("desktop cleanup", desktop.cleanup.result, desktop.cleanup.reason);
         unhandled.push(...[...boundaries.unhandled, ...(desktop?.boundaries?.unhandled ?? [])].map(row => ({ provider, ...row })));
         const audit = { provider, route: "direct ACP smoke boundary inventory (all checks, including resume)", scenarios: [], known, boundaries };
         fs.writeFileSync(path.join(output, `${provider}-boundaries.json`), JSON.stringify(audit, null, 2));

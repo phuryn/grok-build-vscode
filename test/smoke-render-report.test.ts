@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
+import grokCapture from "./fixtures/smoke-grok-capture.json";
+import { extractPromptMeta } from "../src/acp-dispatch";
+import { parseFeedbackEnabledMeta } from "../src/feedback";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { bootWebview, click, dispatch } from "./webview-harness";
@@ -208,6 +211,52 @@ describe("real chat.js render report extraction", () => {
 
 
 describe("live smoke regressions", () => {
+  it("classifies every captured Grok flat metadata field and notification with a host reference", () => {
+    const known = knownBoundaries(root, "grok");
+    const events = [
+      { direction: "receive", message: { result: { _meta: Object.fromEntries(grokCapture.metadata.map(key => [key, {}])) } } },
+      ...grokCapture.methods.map(method => ({ direction: "receive", message: { method } })),
+      ...grokCapture.updates.map(sessionUpdate => ({ direction: "receive", message: { params: { update: { sessionUpdate } } } })),
+    ];
+    const audit = classifyBoundaries(events, known);
+    expect(audit.seen.every((row: any) => row.reason?.match(/src\/|media\//))).toBe(true);
+    expect(audit.unhandled.map((row: any) => [row.kind, row.status])).toEqual([["session_info_update", "FINDING"]]);
+    expect(audit.seen.find((row: any) => row.kind === "usage").status).toBe("KNOWN");
+    expect(audit.seen.find((row: any) => row.kind === "inputTokens").status).toBe("KNOWN");
+    expect(audit.seen.find((row: any) => row.kind === "feedbackEnabled").status).toBe("KNOWN");
+    expect(extractPromptMeta({ _meta: { inputTokens: 12, modelId: "grok-test" } })).toMatchObject({ inputTokens: 12, modelId: "grok-test" });
+    expect(parseFeedbackEnabledMeta({ _meta: { feedbackEnabled: true } })).toBe(true);
+    expect(known.metadataShape).toBe("flat fields");
+    const drift = classifyBoundaries([
+      { direction: "receive", message: { result: { _meta: { newFlatField: true } } } },
+      { direction: "receive", message: { method: "_x.ai/new-broadcast" } },
+      { direction: "receive", message: { method: "_x.ai/settings/update", id: 99 } },
+      { direction: "receive", message: { params: { update: { sessionUpdate: "new_grok_update" } } } },
+    ], known);
+    expect(drift.unhandled).toHaveLength(4);
+    expect(drift.unhandled.every((row: any) => row.status === "UNKNOWN")).toBe(true);
+    expect(renderReportMarkdown({ provider: "grok", route: "capture", boundaries: audit, scenarios: [] })).toContain("## Grok classification");
+  });
+  it("reports captured Grok JSON as backlog, accepts absent summaries and requires supported results on their own card", () => {
+    const cards = [grokCapture.workflow.card];
+    const events = grokCapture.workflow.updates.map(update => ({ direction: "receive", message: { params: { update } } }));
+    expect(events.length).toBeGreaterThan(1);
+    const evidence = (items: any[]) => cardResultEvidence(cards, items, { provider: "grok" });
+    const scenario = { name: "workflow", result: "PASS", pageErrors: [], opened: { cards }, resultEvidence: evidence(events) };
+    expect(scenario.resultEvidence[0]).toMatchObject({ reported: true, required: false });
+    expect(scenario.resultEvidence[0].reason).toContain("known structured-result backlog");
+    expect(evidence(events.slice(0, -1))[0]).toMatchObject({ reported: false, required: false });
+    expect(() => assertRenderedScenario(scenario)).not.toThrow();
+    const result = (id: string) => ({ direction: "receive", message: { params: { update: { sessionUpdate: "workflow_updated", run_id: id, result_summary: "two" } } } });
+    expect(evidence([...events, result("unrelated")])[0].required).toBe(false);
+    scenario.resultEvidence = evidence([...events, result(cards[0].id)]);
+    expect(() => assertRenderedScenario(scenario)).toThrow(/no non-empty result/);
+    const structured = result(cards[0].id);
+    structured.message.params.update.result_summary = '{"summary":"two"}';
+    expect(evidence([structured])[0].required).toBe(true);
+    expect(cardResultEvidence(cards, events, { provider: "claude" })[0].required).toBe(true);
+    expect(() => assertRenderedScenario({ ...scenario, resultEvidence: [{ reported: false }], opened: { cards: [{ ...cards[0], terminal: false }] } })).toThrow(/nonterminal/);
+  });
   it("keeps the three Codex terminal metadata namespaces as findings, not ignored annotations", () => {
     const names = ["terminal_info", "terminal_output_delta", "terminal_exit"];
     const events = names.map(key => ({ direction: "receive", message: { params: { update: {

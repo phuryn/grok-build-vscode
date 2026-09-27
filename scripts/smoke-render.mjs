@@ -9,6 +9,7 @@ import { execFileSync } from "node:child_process";
 import { bounded, timeoutMs, selectSmokeModel, selectSmokeEffort, desktopSmokeCatalog, smokeScenario, SUBAGENT_PROMPT, WORKFLOW_PROMPT, delegationAttempted } from "./acp-smoke.mjs";
 import { knownBoundaries, classifyBoundaries, readRenderedChat, assertRenderedScenario, renderReportMarkdown, completeRenderScenarios, cardResultEvidence, smokeOutcome } from "./smoke-render-report.mjs";
 import { desktopLaunch, parseTrace, desktopFacts, promptCompletion, modelRowIndex, deliveryChunk } from "./smoke-page-driver.mjs";
+import { cleanupBudget, closeDesktop } from "./smoke-cleanup.mjs";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(import.meta.url);
 
@@ -37,6 +38,7 @@ export async function runRenderSmoke(provider, evidenceParent, cliOverride, sele
   const turnMs = timeoutMs(process.env.ACP_SMOKE_TURN_TIMEOUT_MS, 180_000);
   const workflowMs = timeoutMs(process.env.ACP_SMOKE_WORKFLOW_TIMEOUT_MS, 300_000);
   const deliveryMs = timeoutMs(process.env.ACP_SMOKE_DELIVERY_TIMEOUT_MS, 60_000);
+  const cleanupMs = timeoutMs(process.env.ACP_SMOKE_CLEANUP_TIMEOUT_MS, cleanupBudget(provider));
   const scratch = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "grok-render-smoke-")));
   const workspace = path.join(scratch, "workspace"), profile = path.join(scratch, "profile");
   let app, page, proc;
@@ -136,7 +138,7 @@ export async function runRenderSmoke(provider, evidenceParent, cliOverride, sele
       for (let i = 0; i < await headers.count(); i++) if (await headers.nth(i).getAttribute("aria-disabled") !== "true") await headers.nth(i).click();
       await page.evaluate(() => new Promise(resolve => requestAnimationFrame(resolve)));
       scenario.opened = await snapshot();
-      scenario.resultEvidence = cardResultEvidence(scenario.opened.cards, readEvents().slice(scenario.trace?.from ?? 0));
+      scenario.resultEvidence = cardResultEvidence(scenario.opened.cards, readEvents().slice(scenario.trace?.from ?? 0), { provider });
       scenario.pageErrors = [...pageErrors, ...readEvents().filter(e => e.direction === "page-error").map(e => e.message.text)];
       await page.screenshot({ path: path.join(output, `${scenario.name.replaceAll(" ", "-")}.png`), fullPage: true });
     };
@@ -239,10 +241,14 @@ export async function runRenderSmoke(provider, evidenceParent, cliOverride, sele
   } finally {
     if (app) {
       try {
-        await bounded(app.close(), "desktop shutdown", 15_000);
+        const cleanup = await closeDesktop(app, proc, { budgetMs: cleanupMs,
+          record: (direction, message) => fs.appendFileSync(path.join(output, "desktop-wire.jsonl"), JSON.stringify({ at: new Date().toISOString(), direction, message }) + "\n") });
+        report.cleanup = cleanup;
+        report.scenarios.push(cleanup);
+        if (cleanup.result === "FAIL") throw new Error(cleanup.reason);
       } catch (error) {
         failure ??= error;
-        report.scenarios.push({ name: "cleanup", result: "FAIL", reason: String(error.message), pageErrors: [] });
+        if (!report.cleanup) report.scenarios.push({ name: "cleanup", result: "FAIL", reason: String(error.message), pageErrors: [] });
         try { if (proc && proc.exitCode === null && proc.signalCode === null) {
           if (process.platform === "win32") execFileSync("taskkill", ["/PID", String(proc.pid), "/T", "/F"], { windowsHide: true, timeout: 10_000 });
           else proc.kill("SIGKILL");

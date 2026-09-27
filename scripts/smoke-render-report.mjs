@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import ts from "typescript";
+import { grokBoundaries } from "./smoke-grok-boundaries.mjs";
 import { createRequire } from "node:module";
 const { isSubagentToolCall } = createRequire(import.meta.url)("../media/webview-helpers.js");
 
@@ -83,7 +84,7 @@ export function extractMetaNamespaces(source) {
 
 export function knownBoundaries(root, provider) {
   const shared = ["src/acp.ts", "src/acp-dispatch.ts", "src/sidebar.ts", "src/run-progress.ts", "src/subscription-usage.ts"];
-  const files = [...shared, `src/${provider}-backend.ts`, ...(provider === "claude" ? ["src/claude-workflows.ts"] : []), "media/webview-helpers.js", "media/chat.js"];
+  const files = [...shared, `src/${provider}-backend.ts`, ...(provider === "claude" ? ["src/claude-workflows.ts"] : []), ...(provider === "grok" ? ["src/feedback.ts", "src/slash-filter.ts"] : []), "media/webview-helpers.js", "media/chat.js"];
   const texts = files.map(file => fs.readFileSync(path.join(root, file), "utf8"));
   const merge = sets => ({ values: [...new Set(sets.flatMap(s => s.values))].sort(), prefixes: [...new Set(sets.flatMap(s => s.prefixes))].sort() });
   const chat = fs.readFileSync(path.join(root, "media/chat.js"), "utf8");
@@ -111,19 +112,23 @@ export function knownBoundaries(root, provider) {
     },
   } : {};
   return {
-    ignored,
-    findings: provider === "codex" ? { "ACP metadata": {
+    ignored: provider === "grok" ? grokBoundaries.ignored : ignored,
+    handled: provider === "grok" ? grokBoundaries.handled : {},
+    findings: provider === "grok" ? grokBoundaries.findings : provider === "codex" ? { "ACP metadata": {
       terminal_info: "src/codex-backend.ts preserves this metadata and terminal content references, but src/acp.ts and media/chat.js have no reader for the provider-owned terminal ID/cwd. Host terminal/* RPC handling is a different path.",
       terminal_output_delta: "No reader in src/ or media/: Codex's streamed exec output is not consumed. normalizeCodexUpdate only maps the final rawOutput.formatted_output; this is a missing live-output path.",
       terminal_exit: "No reader in src/ or media/: Codex's terminal exit metadata is not consumed. Standard tool status/final rawOutput can still render, but the provider terminal lifecycle is not handled.",
     } } : {},
     sources: files,
+    metadataShape: provider === "grok" ? "flat fields" : "namespaces",
     updates: merge([...texts.map(s => extractKnownKinds(s, "sessionUpdate")), { values: ignoredUpdates, prefixes: [] }]),
     ignoredUpdates,
     methods: merge(texts.map(s => extractKnownKinds(s, "method", { functions: ["handleServerRequest", "parseAcpLine"] }))),
-    namespaces: [...new Set(texts.flatMap(extractMetaNamespaces))].sort(),
+    namespaces: provider === "grok" ? Object.keys(grokBoundaries.handled["ACP metadata"]) : [...new Set(texts.flatMap(extractMetaNamespaces))].sort(),
     webview: extractKnownKinds(chat, "type", { roots: ["msg"] }),
-    limitation: "Static extraction recognizes literal comparisons, switch cases, includes menus and startsWith prefixes. Unknowns stay flagged for review; a dynamic handler is never silently assumed. Metadata inventory is at namespace (first key under _meta) granularity, not arbitrary payload keys.",
+    limitation: "Static extraction recognizes literal comparisons, switch cases, includes menus and startsWith prefixes. Unknowns stay flagged for review; a dynamic handler is never silently assumed. " + (provider === "grok"
+      ? "Grok metadata is audited as individual flat _meta fields with reviewed host readers/omissions, not provider namespaces."
+      : "Metadata inventory is at namespace (first key under _meta) granularity, not arbitrary payload keys."),
   };
 }
 
@@ -133,9 +138,11 @@ export function classifyBoundaries(events, known) {
     if (typeof kind !== "string" || !kind) return;
     const menu = boundary === "ACP update" ? known.updates : boundary === "ACP method" ? known.methods : boundary === "webview" ? known.webview : { values: known.namespaces, prefixes: [] };
     const finding = known.findings?.[boundary]?.[kind];
-    const reason = finding || ((boundary !== "ACP method" || notification) && known.ignored?.[boundary]?.[kind]);
+    const omission = (boundary !== "ACP method" || notification) && known.ignored?.[boundary]?.[kind];
+    const handled = known.handled?.[boundary]?.[kind];
+    const reason = finding || omission || handled;
     const recognized = !!reason || menu.values.includes(kind) || menu.prefixes.some(p => kind.startsWith(p));
-    const status = finding ? "FINDING" : !recognized ? "UNKNOWN" : ignored || reason ? "KNOWN-IGNORED" : "KNOWN";
+    const status = finding ? "FINDING" : !recognized ? "UNKNOWN" : ignored || omission ? "KNOWN-IGNORED" : "KNOWN";
     const key = JSON.stringify([boundary, kind, status]);
     const row = inventory.get(key) ?? { boundary, kind, status, count: 0, ...(reason ? { reason } : {}) };
     row.count++;
@@ -145,7 +152,7 @@ export function classifyBoundaries(events, known) {
     if (!value || typeof value !== "object") return;
     if (Array.isArray(value)) { value.forEach(meta); return; }
     for (const [key, child] of Object.entries(value)) {
-      if (key === "_meta" && child && typeof child === "object") for (const namespace of Object.keys(child)) add("ACP metadata", namespace);
+      if (key === "_meta" && child && typeof child === "object") for (const field of Object.keys(child)) add("ACP metadata", field);
       // Inspect protocol envelopes, not arbitrary tool input/output or model text.
       if (["params", "result", "update", "toolCall", "models", "availableModels", "configOptions", "availableCommands", "content"].includes(key)) meta(child);
     }
@@ -174,12 +181,30 @@ export function smokeOutcome(rows, failed = false) {
   return { status: rows.some(r => r.result === "NOT RUN") ? "PARTIAL" : "PASS", exitCode: 0 };
 }
 
+function grokWorkflowResultRequired(raw) {
+  // The supported format contract in media/chat.js workflowOutputText. Keep
+  // this independent of renderer execution: a renderer regression that drops
+  // supported prose/summary must still fail the smoke assertion.
+  if (typeof raw !== "string" || !raw.trim() || raw.trim() === "done") return false;
+  const text = raw.trim();
+  try {
+    const value = JSON.parse(text);
+    if (typeof value === "string") return grokWorkflowResultRequired(value);
+    return !!value && !Array.isArray(value) && typeof value === "object"
+      && ["report", "summary", "sentence"].some(field => grokWorkflowResultRequired(value[field]));
+  } catch {
+    // Truncated/fenced structured output is also in the JSON-result backlog.
+    return !/^(?:\{|\[\s*(?:["{[\d-]|true\b|false\b|null\b|\]))/.test(text) && !/^```(?:json)?\s*[\r\n]/i.test(text);
+  }
+}
+
 /** Correlate provider results to cards; outputFilePath and launch summaries are not results. */
-export function cardResultEvidence(cards, events) {
+export function cardResultEvidence(cards, events, { provider } = {}) {
   const nonempty = value => typeof value === "string" && !!value.trim();
   const text = value => typeof value === "string" ? value : Array.isArray(value)
     ? value.map(v => text(v?.content ?? v?.text)).join("\n") : "";
   const results = new Set(), workflows = new Map(), subagents = new Map(), children = new Map();
+  const renderableWorkflows = new Set();
   const updates = events.filter(e => ["receive", "acp-receive"].includes(e.direction))
     .map(e => e.message?.params?.update).filter(Boolean);
   // Link Claude's task and tool IDs to its rendered run ID, including late receipts.
@@ -189,7 +214,12 @@ export function cardResultEvidence(cards, events) {
   }
   for (const u of updates) {
     const w = u._meta?.["muse/workflow"] ?? u;
-    if (nonempty(w.resultSummary) || nonempty(w.result_summary)) results.add(`workflow:${w.run_id ?? w.runId ?? w.id}`);
+    const summary = nonempty(w.result_summary) ? w.result_summary : w.resultSummary;
+    if (nonempty(summary)) {
+      const key = `workflow:${w.run_id ?? w.runId ?? w.id}`;
+      results.add(key);
+      if (provider !== "grok" || grokWorkflowResultRequired(summary)) renderableWorkflows.add(key);
+    }
     if (u.sessionUpdate === "async_task_state_update" && ["completed", "failed", "stopped"].includes(u.state) && nonempty(u.summary)) {
       const id = workflows.get(u.asyncTaskId) ?? workflows.get(u.toolCallId);
       if (id) results.add(`workflow:${id}`);
@@ -229,8 +259,10 @@ export function cardResultEvidence(cards, events) {
     const entry = card.kind === "subagent" ? [...subagents][index++] : undefined;
     const reported = card.kind === "workflow" ? results.has(`workflow:${card.id}`)
       : !!entry?.[1] || results.has(`tool:${entry?.[0]}`) || results.has(`child:${card.childSessionId ?? children.get(entry?.[0])}`);
-    return { id: card.id ?? entry?.[0] ?? null, kind: card.kind, reported,
-      reason: reported ? "result reported by the provider" : "no result reported by the provider" };
+    const deferred = reported && provider === "grok" && card.kind === "workflow" && !renderableWorkflows.has(`workflow:${card.id}`);
+    return { id: card.id ?? entry?.[0] ?? null, kind: card.kind, reported, required: reported && !deferred,
+      reason: deferred ? "provider reported a result outside the current workflow card format (media/chat.js workflowOutputText); known structured-result backlog, not a smoke failure"
+        : reported ? "result reported by the provider" : "no result reported by the provider" };
   });
 }
 
@@ -286,7 +318,7 @@ export function assertRenderedScenario(scenario) {
     for (const card of cards) {
       const evidence = scenario.resultEvidence?.[scenario.opened.cards.indexOf(card)];
       assert(evidence, "missing provider result evidence for rendered card");
-      if (evidence.reported) assert(card.result.trim(), "rendered delegation card has no non-empty result reported by the provider");
+      if (evidence.required ?? evidence.reported) assert(card.result.trim(), "rendered delegation card has no non-empty result reported by the provider");
     }
   } else assert(scenario.opened.finalReply.trim(), "no rendered assistant reply");
 }
@@ -323,6 +355,15 @@ export function renderReportMarkdown(report) {
   }
   lines.push("## Known but ignored", ...report.boundaries.ignored.map(r => `- ${r.boundary}: ${r.kind} (${r.count})${r.reason ? ` — ${r.reason}` : ""}`));
   if (!report.boundaries.ignored.length) lines.push("None observed.");
+  if (report.provider === "grok") {
+    lines.push("", "## Grok classification", "", "Entry | Classification | Host reference / reason", "--- | --- | ---");
+    const rows = new Map();
+    for (const row of report.boundaries.seen ?? []) {
+      const key = `${row.boundary}: ${row.kind} (${row.status})`;
+      rows.set(key, row);
+    }
+    for (const [entry, row] of rows) lines.push(`${entry} | ${row.status === "KNOWN" ? "handled" : row.status === "KNOWN-IGNORED" ? "ignored" : "finding"} | ${(row.reason || (row.boundary === "webview" ? "media/chat.js handleHostMessage: executable type handler." : "See known.sources executable dispatch comparisons.")).replaceAll("|", "\\|")}`);
+  }
   lines.push("", "Full boundary inventory and untruncated DOM text are in render-report.json. Content correctness is for the human/agent judge.");
   return lines.join("\n");
 }

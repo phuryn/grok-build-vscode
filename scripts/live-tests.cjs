@@ -1324,11 +1324,10 @@ async function testSubagent() {
 class Inconclusive extends Error {}
 
 async function selectGrokSmokeModel(acp, session, composerOnly = false) {
-  const { selectSmokeModel } = await import("./acp-smoke.mjs");
-  const availableModels = session.models?.availableModels ?? [];
-  const models = composerOnly ? availableModels.filter(m => /composer/i.test(m.modelId)) : availableModels;
-  assert(models.length, "no advertised models for the requested Grok lane");
-  const selected = selectSmokeModel({ models: { ...session.models, availableModels: models } }, process.env.ACP_SMOKE_GROK_MODEL);
+  const { selectGrokLaneModel } = await import("./acp-smoke.mjs");
+  let selected;
+  try { selected = selectGrokLaneModel(session, process.env.ACP_SMOKE_GROK_MODEL, composerOnly); }
+  catch (error) { if (error.code === "GROK_COMPOSER_UNAVAILABLE") throw new Skip(error.message); throw error; }
   const response = await withTimeout(acp.send("session/set_model", { sessionId: session.sessionId, modelId: selected.modelId,
     ...(selected.effort ? { _meta: { reasoningEffort: selected.effort } } : {}) }), 30000, "economy model/effort selection");
   assert(!response.error, `model selection failed: ${JSON.stringify(response.error)}`);
@@ -1422,7 +1421,8 @@ async function testRender() {
   try { rendered = await runRenderSmoke("grok", liveEvidence(), GROK, scenario); }
   catch (error) { if (error.code === "NOT_OBSERVED") throw new Inconclusive(error.message); throw error; }
   if (rendered.scenarios.some(s => s.result === "INCONCLUSIVE")) throw new Inconclusive("render scenarios unproven; read grok-render/render-report.md");
-  return "real desktop host and chat.js rendered plain reply, subagent and workflow; content remains for the judge";
+  return "real desktop host and chat.js rendered selected scenarios; content remains for the judge" +
+    (rendered.cleanup ? `; cleanup ${rendered.cleanup.result}: ${rendered.cleanup.reason}` : "");
 }
 
 // Composer-agent variant: the Composer wire differs from grok-build's in every
@@ -1431,8 +1431,8 @@ async function testRender() {
 // rawOutput {type:"Text"} and NO duration, and the duration/output ride the
 // subagent_spawned/subagent_finished lifecycle events instead (wire capture:
 // test/fixtures/composer-subagent-session.jsonl). Pin both shapes so agent-side
-// drift fails the gate, not the user's chat. Selects the first *composer* model
-// right after session/new — the agent is rebindable until the first turn.
+// drift fails the gate, not the user's chat. Selects an advertised Composer
+// agent/model after session/new, or explicitly skips when that family is absent.
 async function testSubagentComposer() {
   const cwd = mkTmp("subc");
   fs.writeFileSync(path.join(cwd, "app.js"), "const {add}=require('./math');\nconsole.log(add(2,3));\n");
@@ -1648,12 +1648,13 @@ function selected() {
   const wire = path.join(output, "grok-wire.jsonl");
   const events = fs.existsSync(wire) ? fs.readFileSync(wire, "utf8").split(/\r?\n/).filter(Boolean).map(line => JSON.parse(line)) : [];
   const known = knownBoundaries(REPO, "grok");
-  const boundaries = classifyBoundaries(events, known);
   const desktopPath = path.join(output, "grok-render", "render-report.json");
-  if (fs.existsSync(desktopPath)) {
-    const desktop = JSON.parse(fs.readFileSync(desktopPath, "utf8"));
-    for (const key of ["seen", "unhandled", "ignored"]) boundaries[key].push(...desktop.boundaries[key]);
+  const desktopWire = path.join(path.dirname(desktopPath), "desktop-wire.jsonl");
+  if (fs.existsSync(desktopWire)) {
+    const { parseTrace } = await import("./smoke-page-driver.mjs");
+    events.push(...parseTrace(fs.readFileSync(desktopWire, "utf8")));
   }
+  const boundaries = classifyBoundaries(events, known);
   const audit = { provider: "grok", route: "all selected live ACP checks plus desktop lane when selected", scenarios: [], known, boundaries, results };
   fs.writeFileSync(path.join(output, "boundaries.json"), JSON.stringify(audit, null, 2));
   fs.writeFileSync(path.join(output, "boundaries.md"), renderReportMarkdown(audit));

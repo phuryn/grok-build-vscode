@@ -1,0 +1,720 @@
+{
+  "source": ".verification/acp-smoke/grok-live-7cSDK6/",
+  "session": {
+    "models": {
+      "currentModelId": "grok-4.7",
+      "availableModels": [
+        {
+          "modelId": "grok-4.7",
+          "name": "Grok 4.7",
+          "description": "SpaceXAI's latest frontier model",
+          "_meta": {
+            "totalContextTokens": 500000,
+            "agentType": "grok-build-plan",
+            "supportsReasoningEffort": true,
+            "reasoningEffort": "high",
+            "reasoningEfforts": [
+              {
+                "id": "xhigh",
+                "value": "xhigh",
+                "label": "Extra High",
+                "description": "Maximum reasoning for the hardest tasks.",
+                "default": false
+              },
+              {
+                "id": "high",
+                "value": "high",
+                "label": "High",
+                "description": "Thorough reasoning and quality. Recommended.",
+                "default": true
+              },
+              {
+                "id": "medium",
+                "value": "medium",
+                "label": "Medium",
+                "description": "Strong quality with a faster turnaround.",
+                "default": false
+              },
+              {
+                "id": "low",
+                "value": "low",
+                "label": "Low",
+                "description": "Fastest responses. Best for simple tasks.",
+                "default": false
+              }
+            ]
+          }
+        },
+        {
+          "modelId": "grok-4.7-build-fast",
+          "name": "Grok 4.7 Fast",
+          "description": "Fast variant. 2x the price.",
+          "_meta": {
+            "totalContextTokens": 500000,
+            "agentType": "grok-build-plan",
+            "supportsReasoningEffort": true,
+            "reasoningEffort": "high",
+            "reasoningEfforts": [
+              {
+                "id": "xhigh",
+                "value": "xhigh",
+                "label": "Extra High",
+                "description": "Maximum reasoning for the hardest tasks.",
+                "default": false
+              },
+              {
+                "id": "high",
+                "value": "high",
+                "label": "High",
+                "description": "Thorough reasoning and quality. Recommended.",
+                "default": true
+              },
+              {
+                "id": "medium",
+                "value": "medium",
+                "label": "Medium",
+                "description": "Strong quality with a faster turnaround.",
+                "default": false
+              },
+              {
+                "id": "low",
+                "value": "low",
+                "label": "Low",
+                "description": "Fastest responses. Best for simple tasks.",
+                "default": false
+              }
+            ]
+          }
+        },
+        {
+          "modelId": "grok-4.6",
+          "name": "Grok 4.6",
+          "_meta": {
+            "totalContextTokens": 500000,
+            "agentType": "grok-build-plan",
+            "supportsReasoningEffort": true,
+            "reasoningEffort": "high",
+            "reasoningEfforts": [
+              {
+                "id": "xhigh",
+                "value": "xhigh",
+                "label": "Extra High",
+                "description": "Highest effort and reasoning level",
+                "default": false
+              },
+              {
+                "id": "high",
+                "value": "high",
+                "label": "High",
+                "description": "Higher implementation quality with extensive reasoning",
+                "default": true
+              },
+              {
+                "id": "medium",
+                "value": "medium",
+                "label": "Medium",
+                "description": "Balanced effort with standard implementation and testing",
+                "default": false
+              },
+              {
+                "id": "low",
+                "value": "low",
+                "label": "Low",
+                "description": "Quick, fast implementations",
+                "default": false
+              }
+            ]
+          }
+        },
+        {
+          "modelId": "grok-4.5",
+          "name": "Grok 4.5",
+          "_meta": {
+            "totalContextTokens": 500000,
+            "agentType": "grok-build-plan",
+            "supportsReasoningEffort": true,
+            "reasoningEffort": "high",
+            "reasoningEfforts": [
+              {
+                "id": "high",
+                "value": "high",
+                "label": "High",
+                "description": "Highest implementation quality with extensive reasoning",
+                "default": true
+              },
+              {
+                "id": "medium",
+                "value": "medium",
+                "label": "Medium",
+                "description": "Balanced effort with standard implementation and testing",
+                "default": false
+              },
+              {
+                "id": "low",
+                "value": "low",
+                "label": "Low",
+                "description": "Quick, fast implementations",
+                "default": false
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "metadata": [
+    "agentId",
+    "agentInstanceId",
+    "agentTimestampMs",
+    "agentType",
+    "agentVersion",
+    "availableCommands",
+    "cachedReadTokens",
+    "cancelRewind",
+    "chunkId",
+    "codebaseIndexed",
+    "currentWorkingDirectory",
+    "defaultAuthMethodId",
+    "eventId",
+    "feedbackEnabled",
+    "gitRoot",
+    "grokShell",
+    "hideFromScrollback",
+    "hostname",
+    "inputTokens",
+    "isGitRepo",
+    "mcpApps",
+    "mcpServers",
+    "metadata",
+    "model",
+    "modelId",
+    "modelState",
+    "outputTokens",
+    "path",
+    "promptId",
+    "promptIndex",
+    "reasoningEffort",
+    "reasoningEfforts",
+    "reasoningTokens",
+    "requestId",
+    "scope",
+    "sessionId",
+    "sessionRecap",
+    "showNonGitWarning",
+    "streamStartMs",
+    "subagentBackground",
+    "supportsReasoningEffort",
+    "tools",
+    "totalContextTokens",
+    "totalTokens",
+    "turnStartMs",
+    "updateParams",
+    "updateType",
+    "usage",
+    "voiceMode",
+    "x.ai/mcp/sdk",
+    "x.ai/pluginDirs",
+    "x.ai/schedulerBackgroundLoops",
+    "x.ai/sessionConfig",
+    "x.ai/sessionDetail",
+    "x.ai/tool"
+  ],
+  "methods": [
+    "_x.ai/announcements/update",
+    "_x.ai/mcp_initialized",
+    "_x.ai/mcp/servers_updated",
+    "_x.ai/models/update",
+    "_x.ai/queue/changed",
+    "_x.ai/session_notification",
+    "_x.ai/session/prompt_complete",
+    "_x.ai/sessions/changed",
+    "_x.ai/settings/update",
+    "fs/read_text_file",
+    "session/update"
+  ],
+  "updates": [
+    "agent_message_chunk",
+    "agent_thought_chunk",
+    "available_commands_update",
+    "hook_execution",
+    "interaction_resolved",
+    "model_changed",
+    "pending_interaction",
+    "response_completed",
+    "session_info_update",
+    "session_summary_generated",
+    "subagent_finished",
+    "subagent_progress",
+    "subagent_spawned",
+    "tool_call",
+    "tool_call_delta_chunk",
+    "tool_call_update",
+    "turn_completed",
+    "user_message_chunk",
+    "workflow_updated"
+  ],
+  "workflow": {
+    "card": {
+      "id": "wf_01a0e367fc9a7e5281c6ed541cbd2a34",
+      "kind": "workflow",
+      "terminal": true,
+      "header": {
+        "text": "Workflow\nplumbing-test\ndone\n0:08",
+        "iconKind": "Workflow",
+        "iconPresent": true,
+        "name": "plumbing-test",
+        "status": "done",
+        "time": "0:08",
+        "dots": [
+          {
+            "text": "",
+            "title": "One: done",
+            "state": "done"
+          },
+          {
+            "text": "",
+            "title": "Two: done",
+            "state": "done"
+          }
+        ],
+        "chevron": true,
+        "expanded": true
+      },
+      "activity": "",
+      "steps": "One\nTwo",
+      "agents": "One\ndone · 9K tokens\nTwo\ndone · 9K tokens",
+      "result": "",
+      "copy": false,
+      "meta": "2 agents · 18K tokens",
+      "visibleText": "Workflow\nplumbing-test\ndone\n0:08\nSteps\nOne\nTwo\nAgents\nOne\ndone · 9K tokens\nTwo\ndone · 9K tokens\n2 agents · 18K tokens"
+    },
+    "updates": [
+      {
+        "sessionUpdate": "workflow_updated",
+        "run_id": "wf_01a0e367fc9a7e5281c6ed541cbd2a34",
+        "revision": 1,
+        "name": "plumbing-test",
+        "objective": "Two-step plumbing test",
+        "status": "active",
+        "foreground": false,
+        "phases": [
+          {
+            "title": "One",
+            "state": "pending"
+          },
+          {
+            "title": "Two",
+            "state": "pending"
+          }
+        ],
+        "agent_budget": 2,
+        "agents_used": 0,
+        "agents_reserved": 0,
+        "agents_remaining": 2,
+        "agent_usage_incomplete": false,
+        "elapsed_ms": 7,
+        "active_agents": 0,
+        "last_event": "workflow_started",
+        "last_event_timestamp": "2026-09-27T15:07:18.073194800+00:00"
+      },
+      {
+        "sessionUpdate": "workflow_updated",
+        "run_id": "wf_01a0e367fc9a7e5281c6ed541cbd2a34",
+        "revision": 2,
+        "name": "plumbing-test",
+        "objective": "Two-step plumbing test",
+        "status": "active",
+        "foreground": false,
+        "phases": [
+          {
+            "title": "One",
+            "state": "active"
+          },
+          {
+            "title": "Two",
+            "state": "pending"
+          }
+        ],
+        "current_phase": "One",
+        "agent_budget": 2,
+        "agents_used": 0,
+        "agents_reserved": 0,
+        "agents_remaining": 2,
+        "agent_usage_incomplete": false,
+        "elapsed_ms": 10,
+        "active_agents": 0,
+        "last_event": "phase_entered",
+        "last_event_detail": "One",
+        "last_event_timestamp": "2026-09-27T15:07:18.083852500+00:00"
+      },
+      {
+        "sessionUpdate": "workflow_updated",
+        "run_id": "wf_01a0e367fc9a7e5281c6ed541cbd2a34",
+        "revision": 4,
+        "name": "plumbing-test",
+        "objective": "Two-step plumbing test",
+        "status": "active",
+        "foreground": false,
+        "phases": [
+          {
+            "title": "One",
+            "state": "active"
+          },
+          {
+            "title": "Two",
+            "state": "pending"
+          }
+        ],
+        "current_phase": "One",
+        "agent_budget": 2,
+        "agents_used": 1,
+        "agents_reserved": 0,
+        "agents_remaining": 1,
+        "agent_usage_incomplete": false,
+        "elapsed_ms": 21,
+        "active_agents": 1,
+        "current_agent_label": "one",
+        "agents": [
+          {
+            "agent_id": "01a0e367-fcce-7b53-a712-f72f44e25914",
+            "label": "one",
+            "phase": "One",
+            "model": "grok-4.7-build-fast",
+            "state": "running",
+            "tokens_used": 0,
+            "duration_ms": 0
+          }
+        ],
+        "last_event": "phase_entered",
+        "last_event_detail": "One",
+        "last_event_timestamp": "2026-09-27T15:07:18.083852500+00:00"
+      },
+      {
+        "sessionUpdate": "workflow_updated",
+        "run_id": "wf_01a0e367fc9a7e5281c6ed541cbd2a34",
+        "revision": 4,
+        "name": "plumbing-test",
+        "objective": "Two-step plumbing test",
+        "status": "active",
+        "foreground": false,
+        "phases": [
+          {
+            "title": "One",
+            "state": "active"
+          },
+          {
+            "title": "Two",
+            "state": "pending"
+          }
+        ],
+        "current_phase": "One",
+        "agent_budget": 2,
+        "agents_used": 1,
+        "agents_reserved": 0,
+        "agents_remaining": 1,
+        "agent_usage_incomplete": false,
+        "elapsed_ms": 21,
+        "active_agents": 1,
+        "current_agent_label": "one",
+        "agents": [
+          {
+            "agent_id": "01a0e367-fcce-7b53-a712-f72f44e25914",
+            "label": "one",
+            "phase": "One",
+            "model": "grok-4.7-build-fast",
+            "state": "running",
+            "tokens_used": 0,
+            "duration_ms": 0
+          }
+        ],
+        "last_event": "phase_entered",
+        "last_event_detail": "One",
+        "last_event_timestamp": "2026-09-27T15:07:18.083852500+00:00"
+      },
+      {
+        "sessionUpdate": "workflow_updated",
+        "run_id": "wf_01a0e367fc9a7e5281c6ed541cbd2a34",
+        "revision": 5,
+        "name": "plumbing-test",
+        "objective": "Two-step plumbing test",
+        "status": "active",
+        "foreground": false,
+        "phases": [
+          {
+            "title": "One",
+            "state": "active"
+          },
+          {
+            "title": "Two",
+            "state": "pending"
+          }
+        ],
+        "current_phase": "One",
+        "agent_budget": 2,
+        "agents_used": 1,
+        "agents_reserved": 0,
+        "agents_remaining": 1,
+        "agent_usage_incomplete": false,
+        "elapsed_ms": 4164,
+        "active_agents": 0,
+        "agents": [
+          {
+            "agent_id": "01a0e367-fcce-7b53-a712-f72f44e25914",
+            "label": "one",
+            "phase": "One",
+            "model": "grok-4.7-build-fast",
+            "state": "done",
+            "tokens_used": 9001,
+            "duration_ms": 2113
+          }
+        ],
+        "last_event": "phase_entered",
+        "last_event_detail": "One",
+        "last_event_timestamp": "2026-09-27T15:07:18.083852500+00:00"
+      },
+      {
+        "sessionUpdate": "workflow_updated",
+        "run_id": "wf_01a0e367fc9a7e5281c6ed541cbd2a34",
+        "revision": 6,
+        "name": "plumbing-test",
+        "objective": "Two-step plumbing test",
+        "status": "active",
+        "foreground": false,
+        "phases": [
+          {
+            "title": "One",
+            "state": "done"
+          },
+          {
+            "title": "Two",
+            "state": "active"
+          }
+        ],
+        "current_phase": "Two",
+        "agent_budget": 2,
+        "agents_used": 1,
+        "agents_reserved": 0,
+        "agents_remaining": 1,
+        "agent_usage_incomplete": false,
+        "elapsed_ms": 4172,
+        "active_agents": 0,
+        "agents": [
+          {
+            "agent_id": "01a0e367-fcce-7b53-a712-f72f44e25914",
+            "label": "one",
+            "phase": "One",
+            "model": "grok-4.7-build-fast",
+            "state": "done",
+            "tokens_used": 9001,
+            "duration_ms": 2113
+          }
+        ],
+        "last_event": "phase_entered",
+        "last_event_detail": "Two",
+        "last_event_timestamp": "2026-09-27T15:07:22.245988+00:00"
+      },
+      {
+        "sessionUpdate": "workflow_updated",
+        "run_id": "wf_01a0e367fc9a7e5281c6ed541cbd2a34",
+        "revision": 8,
+        "name": "plumbing-test",
+        "objective": "Two-step plumbing test",
+        "status": "active",
+        "foreground": false,
+        "phases": [
+          {
+            "title": "One",
+            "state": "done"
+          },
+          {
+            "title": "Two",
+            "state": "active"
+          }
+        ],
+        "current_phase": "Two",
+        "agent_budget": 2,
+        "agents_used": 2,
+        "agents_reserved": 0,
+        "agents_remaining": 0,
+        "agent_usage_incomplete": false,
+        "elapsed_ms": 4178,
+        "active_agents": 1,
+        "current_agent_label": "two",
+        "agents": [
+          {
+            "agent_id": "01a0e367-fcce-7b53-a712-f72f44e25914",
+            "label": "one",
+            "phase": "One",
+            "model": "grok-4.7-build-fast",
+            "state": "done",
+            "tokens_used": 9001,
+            "duration_ms": 2113
+          },
+          {
+            "agent_id": "01a0e368-0d0b-7510-9522-afd1a893ebc7",
+            "label": "two",
+            "phase": "Two",
+            "model": "grok-4.7-build-fast",
+            "state": "running",
+            "tokens_used": 0,
+            "duration_ms": 0
+          }
+        ],
+        "last_event": "phase_entered",
+        "last_event_detail": "Two",
+        "last_event_timestamp": "2026-09-27T15:07:22.245988+00:00"
+      },
+      {
+        "sessionUpdate": "workflow_updated",
+        "run_id": "wf_01a0e367fc9a7e5281c6ed541cbd2a34",
+        "revision": 8,
+        "name": "plumbing-test",
+        "objective": "Two-step plumbing test",
+        "status": "active",
+        "foreground": false,
+        "phases": [
+          {
+            "title": "One",
+            "state": "done"
+          },
+          {
+            "title": "Two",
+            "state": "active"
+          }
+        ],
+        "current_phase": "Two",
+        "agent_budget": 2,
+        "agents_used": 2,
+        "agents_reserved": 0,
+        "agents_remaining": 0,
+        "agent_usage_incomplete": false,
+        "elapsed_ms": 4178,
+        "active_agents": 1,
+        "current_agent_label": "two",
+        "agents": [
+          {
+            "agent_id": "01a0e367-fcce-7b53-a712-f72f44e25914",
+            "label": "one",
+            "phase": "One",
+            "model": "grok-4.7-build-fast",
+            "state": "done",
+            "tokens_used": 9001,
+            "duration_ms": 2113
+          },
+          {
+            "agent_id": "01a0e368-0d0b-7510-9522-afd1a893ebc7",
+            "label": "two",
+            "phase": "Two",
+            "model": "grok-4.7-build-fast",
+            "state": "running",
+            "tokens_used": 0,
+            "duration_ms": 0
+          }
+        ],
+        "last_event": "phase_entered",
+        "last_event_detail": "Two",
+        "last_event_timestamp": "2026-09-27T15:07:22.245988+00:00"
+      },
+      {
+        "sessionUpdate": "workflow_updated",
+        "run_id": "wf_01a0e367fc9a7e5281c6ed541cbd2a34",
+        "revision": 9,
+        "name": "plumbing-test",
+        "objective": "Two-step plumbing test",
+        "status": "active",
+        "foreground": false,
+        "phases": [
+          {
+            "title": "One",
+            "state": "done"
+          },
+          {
+            "title": "Two",
+            "state": "active"
+          }
+        ],
+        "current_phase": "Two",
+        "agent_budget": 2,
+        "agents_used": 2,
+        "agents_reserved": 0,
+        "agents_remaining": 0,
+        "agent_usage_incomplete": false,
+        "elapsed_ms": 8233,
+        "active_agents": 0,
+        "agents": [
+          {
+            "agent_id": "01a0e367-fcce-7b53-a712-f72f44e25914",
+            "label": "one",
+            "phase": "One",
+            "model": "grok-4.7-build-fast",
+            "state": "done",
+            "tokens_used": 9001,
+            "duration_ms": 2113
+          },
+          {
+            "agent_id": "01a0e368-0d0b-7510-9522-afd1a893ebc7",
+            "label": "two",
+            "phase": "Two",
+            "model": "grok-4.7-build-fast",
+            "state": "done",
+            "tokens_used": 9001,
+            "duration_ms": 2029
+          }
+        ],
+        "last_event": "phase_entered",
+        "last_event_detail": "Two",
+        "last_event_timestamp": "2026-09-27T15:07:22.245988+00:00"
+      },
+      {
+        "sessionUpdate": "workflow_updated",
+        "run_id": "wf_01a0e367fc9a7e5281c6ed541cbd2a34",
+        "revision": 10,
+        "name": "plumbing-test",
+        "objective": "Two-step plumbing test",
+        "status": "complete",
+        "foreground": false,
+        "phases": [
+          {
+            "title": "One",
+            "state": "done"
+          },
+          {
+            "title": "Two",
+            "state": "done"
+          }
+        ],
+        "current_phase": "Two",
+        "agent_budget": 2,
+        "agents_used": 2,
+        "agents_reserved": 0,
+        "agents_remaining": 0,
+        "agent_usage_incomplete": false,
+        "elapsed_ms": 8240,
+        "active_agents": 0,
+        "agents": [
+          {
+            "agent_id": "01a0e367-fcce-7b53-a712-f72f44e25914",
+            "label": "one",
+            "phase": "One",
+            "model": "grok-4.7-build-fast",
+            "state": "done",
+            "tokens_used": 9001,
+            "duration_ms": 2113
+          },
+          {
+            "agent_id": "01a0e368-0d0b-7510-9522-afd1a893ebc7",
+            "label": "two",
+            "phase": "Two",
+            "model": "grok-4.7-build-fast",
+            "state": "done",
+            "tokens_used": 9001,
+            "duration_ms": 2029
+          }
+        ],
+        "last_event": "workflow_completed",
+        "last_event_timestamp": "2026-09-27T15:07:26.313721300+00:00",
+        "result_summary": "{\"one\":\"one\",\"two\":\"two\"}"
+      }
+    ]
+  }
+}

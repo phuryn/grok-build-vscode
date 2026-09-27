@@ -7,12 +7,32 @@ import { grokBackend } from "../src/grok-backend";
 import { parseRunProgressUpdate } from "../src/run-progress";
 import claudeWorkflow from "./fixtures/claude-async-workflow.json";
 import liveCatalogs from "./fixtures/smoke-live-catalogs.json";
+import grokCapture from "./fixtures/smoke-grok-capture.json";
+// @ts-expect-error Standalone release script intentionally has no declaration file.
+import { selectGrokLaneModel } from "../scripts/acp-smoke.mjs";
 const { isSubagentToolCall } = require("../media/webview-helpers.js");
 // The entry guard makes this import pure: npm test never starts a real CLI.
 // @ts-expect-error Standalone release script intentionally has no declaration file.
 import { permissionSmokeNotApplicable, approvalOption, bounded, checkPermission, checkTools, timeoutMs, selectSmokeModel, selectSmokeEffort, desktopSmokeCatalog, smokeScenario, lowestSmokeEffort, checkSubagents, checkWorkflow, delegationAttempted, isMuseDeliveryChunk, inconclusive } from "../scripts/acp-smoke.mjs";
 
 describe("ACP smoke evidence checks (no adapter or model)", () => {
+  it("explains an unavailable Composer lane using its session catalog", () => {
+    expect(() => selectGrokLaneModel(grokCapture.session, undefined, true)).toThrow(/grok-4.7 \(agentType=grok-build-plan\)/);
+    try { selectGrokLaneModel(grokCapture.session, undefined, true); }
+    catch (error: any) { expect(error.code).toBe("GROK_COMPOSER_UNAVAILABLE"); }
+    expect(selectGrokLaneModel(grokCapture.session).modelId).toBeTruthy();
+  });
+  it("selects Composer by advertised family/name/ID and rejects an off-lane override", () => {
+    for (const composer of [
+      { modelId: "family-model", _meta: { agentType: "composer" } },
+      { modelId: "named-model", name: "Composer" },
+      { modelId: "composer-model" },
+    ]) {
+      const session = { models: { availableModels: [...grokCapture.session.models.availableModels, composer] } };
+      expect(selectGrokLaneModel(session, undefined, true).modelId).toBe(composer.modelId);
+      expect(() => selectGrokLaneModel(session, "grok-4.7", true)).toThrow(/not in the advertised catalog/);
+    }
+  });
   const permission = {
     sessionId: "s",
     toolCall: { toolCallId: "t", kind: "execute", rawInput: { command: "write scratch" } },
