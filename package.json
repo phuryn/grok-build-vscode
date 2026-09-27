@@ -2,10 +2,10 @@
   "name": "grok-vscode-phuryn",
   "displayName": "GUI for Grok Build & Muse Code",
   "description": "GUI for Grok Build (incl. Grok 4.7) and Muse Code — and for Codex and Claude Code in the same window. Remote Control from your phone, voice control, multiple sessions, images and videos, Mermaid diagrams, and LaTeX. Works with SuperGrok, X Premium+, and xAI API key. Fair Source (FSL-1.1-MIT). Not affiliated with or endorsed by SpaceXAI (formerly xAI), Meta, OpenAI or Anthropic.",
-  "version": "4.13.1",
+  "version": "4.13.2",
   "publisher": "PawelHuryn",
   "author": {
-    "name": "Pawe\u0142 Huryn",
+    "name": "Paweł Huryn",
     "url": "https://www.productcompass.pm"
   },
   "license": "FSL-1.1-MIT",
@@ -186,15 +186,15 @@
       },
       {
         "command": "grok._debugDummyPlan",
-        "title": "Grok: Debug \u2014 Show dummy plan card (for testing Approve/Reject/Cancel)"
+        "title": "Grok: Debug — Show dummy plan card (for testing Approve/Reject/Cancel)"
       },
       {
         "command": "grok.composerForward",
-        "title": "Grok: Composer \u2014 Move Forward"
+        "title": "Grok: Composer — Move Forward"
       },
       {
         "command": "grok.composerPreviousLine",
-        "title": "Grok: Composer \u2014 Move to Previous Line"
+        "title": "Grok: Composer — Move to Previous Line"
       }
     ],
     "keybindings": [
@@ -307,7 +307,7 @@
           "enumDescriptions": [
             "Agent mode (CLI default)",
             "Agent mode",
-            "Auto accept \u2014 auto-approve every permission request"
+            "Auto accept — auto-approve every permission request"
           ],
           "default": "",
           "description": "Mode for new sessions. Updated automatically to remember your last switch between Agent and Auto accept (Plan is never remembered). Empty = Agent."
@@ -327,7 +327,7 @@
           "type": "number",
           "default": 1800000,
           "minimum": 0,
-          "markdownDescription": "How long a live `session/prompt` may stay silent before the extension reports **ACP request timed out**. Any `session/update` or in-turn server request (permission, terminal, \u2026) resets this idle clock. Default 1800000 (30 minutes). `0` disables the idle cap. Applies to newly started sessions (#117)."
+          "markdownDescription": "How long a live `session/prompt` may stay silent before the extension reports **ACP request timed out**. Any `session/update` or in-turn server request (permission, terminal, …) resets this idle clock. Default 1800000 (30 minutes). `0` disables the idle cap. Applies to newly started sessions (#117)."
         },
         "grok.acp.promptAbsoluteTimeoutMs": {
           "type": "number",
@@ -339,7 +339,7 @@
           "type": "number",
           "default": 120000,
           "minimum": 1000,
-          "markdownDescription": "Timeout for ACP methods other than `session/prompt` (`initialize`, `session/new`, `session/set_model`, \u2026). Default 120000 (2 minutes). Applies to newly started sessions."
+          "markdownDescription": "Timeout for ACP methods other than `session/prompt` (`initialize`, `session/new`, `session/set_model`, …). Default 120000 (2 minutes). Applies to newly started sessions."
         },
         "grok.defaultEffort": {
           "type": "string",
@@ -354,12 +354,12 @@
           ],
           "enumDescriptions": [
             "CLI default (no flag passed to grok agent stdio)",
-            "None \u2014 no extra reasoning",
-            "Minimal \u2014 least reasoning",
-            "Low \u2014 fast, lightweight reasoning",
-            "Medium \u2014 balanced",
-            "High \u2014 deeper reasoning",
-            "Extra high \u2014 deepest reasoning, slowest"
+            "None — no extra reasoning",
+            "Minimal — least reasoning",
+            "Low — fast, lightweight reasoning",
+            "Medium — balanced",
+            "High — deeper reasoning",
+            "Extra high — deepest reasoning, slowest"
           ],
           "default": "",
           "description": "Reasoning effort passed as --reasoning-effort to grok agent stdio. Values match the grok CLI's accepted set (none, minimal, low, medium, high, xhigh). Applies live on recent CLIs (grok 0.2.101+); older CLIs, and resetting to the model default, restart the session."
@@ -376,21 +376,21 @@
             "cmd"
           ],
           "enumDescriptions": [
-            "PowerShell on Windows (pwsh, then Windows PowerShell 5.1); the shell $SHELL names on macOS and Linux \u2014 matches the standalone Grok CLI",
+            "PowerShell on Windows (pwsh, then Windows PowerShell 5.1); the shell $SHELL names on macOS and Linux — matches the standalone Grok CLI",
             "Force cmd.exe on Windows, /bin/sh on macOS and Linux"
           ],
           "default": "auto",
-          "markdownDescription": "Which shell runs the agent's commands. `auto` (default) matches the standalone Grok CLI: PowerShell on Windows \u2014 `pwsh.exe` if installed, else Windows PowerShell 5.1 (#46) \u2014 and the shell `$SHELL` names on macOS and Linux (typically `/bin/zsh`) instead of `/bin/sh`, which on macOS is bash 3.2 and cannot run a modern sdkman init (#140). The agent's command is also unwrapped from the `bash -lc` envelope Grok sends, and run as an explicit argument, so your shell cannot hand it straight back to bash. A `$SHELL` that isn't POSIX-compatible (fish, nushell) falls back to `/bin/sh`, because the agent writes POSIX commands. `cmd` forces `cmd.exe` on Windows and `/bin/sh` on macOS/Linux, if matching your shell causes trouble \u2014 a profile that prints on startup, or is slow to load. On Windows, changing this switches the shell straight away but the agent is told which dialect to write when a conversation starts, so **start a new conversation** for the change to apply to both halves. **Tip: install PowerShell 7 (`pwsh`)** \u2014 the 5.1 fallback rejects `&&` chains and reports every failing command's exit code as 1."
+          "markdownDescription": "Which shell runs the agent's commands. `auto` (default) matches the standalone Grok CLI: PowerShell on Windows — `pwsh.exe` if installed, else Windows PowerShell 5.1 (#46) — and the shell `$SHELL` names on macOS and Linux (typically `/bin/zsh`) instead of `/bin/sh`, which on macOS is bash 3.2 and cannot run a modern sdkman init (#140). The agent's command is also unwrapped from the `bash -lc` envelope Grok sends, and run as an explicit argument, so your shell cannot hand it straight back to bash. A `$SHELL` that isn't POSIX-compatible (fish, nushell) falls back to `/bin/sh`, because the agent writes POSIX commands. `cmd` forces `cmd.exe` on Windows and `/bin/sh` on macOS/Linux, if matching your shell causes trouble — a profile that prints on startup, or is slow to load. On Windows, changing this switches the shell straight away but the agent is told which dialect to write when a conversation starts, so **start a new conversation** for the change to apply to both halves. **Tip: install PowerShell 7 (`pwsh`)** — the 5.1 fallback rejects `&&` chains and reports every failing command's exit code as 1."
         },
         "grok.showThinking": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "Show Grok's reasoning (thinking) traces in chat. Off by default \u2014 a lightweight \"Thinking\u2026\" indicator stands in while Grok reasons. Also toggleable live from the gear menu \u2192 **Config & debug \u2192 Show thinking traces** (applies to already-loaded sessions too)."
+          "markdownDescription": "Show Grok's reasoning (thinking) traces in chat. Off by default — a lightweight \"Thinking…\" indicator stands in while Grok reasons. Also toggleable live from the gear menu → **Config & debug → Show thinking traces** (applies to already-loaded sessions too)."
         },
         "grok.expandCommandOutputs": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "Expand tool details by default \u2014 each shell command's IN/OUT block (full command text + captured output) and each edit's inline diff (useful for auditing Auto-accept sessions). With this setting on, groups containing command or edit details (such as \"Ran N commands\" or \"Edited N files\") open too; read/explore-only groups stay collapsed, and a lone command outside a group opens its details. Off: click a row or group header (\u203a) to expand it \u2014 edit rows always show a `+N \u2212M` change count, even when their diff is closed. Also toggleable live from the gear menu \u2192 **Config & debug \u2192 Expand tool details**."
+          "markdownDescription": "Expand tool details by default — each shell command's IN/OUT block (full command text + captured output) and each edit's inline diff (useful for auditing Auto-accept sessions). With this setting on, groups containing command or edit details (such as \"Ran N commands\" or \"Edited N files\") open too; read/explore-only groups stay collapsed, and a lone command outside a group opens its details. Off: click a row or group header (›) to expand it — edit rows always show a `+N −M` change count, even when their diff is closed. Also toggleable live from the gear menu → **Config & debug → Expand tool details**."
         },
         "grok.expandDiffCard": {
           "type": "boolean",
@@ -400,7 +400,7 @@
         "grok.steerByDefault": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "Send straight into the running turn instead of queueing it. Off (default): a message you send while the agent is working waits, and is sent as one prompt when the turn ends \u2014 you can still steer it on demand with the **Steer** button on the pending message. On: sending while it works **skips the queue** and injects the message into the turn immediately, so the agent changes course mid-answer. Steering never cancels the turn and never discards in-flight tool work \u2014 it is not a Stop. It carries your text and the files you attached to that message, but not the ambient editor selection. **Grok** and **OpenAI Codex** take a mid-turn correction; **Claude Code** does not, and there a message always falls back to the queue. Images are the one thing that can still be refused: an older Grok Build CLI ignores them, so a message carrying pictures is queued whole rather than arriving without them. Also toggleable live from the gear menu \u2192 **Config & debug \u2192 Steer by default**."
+          "markdownDescription": "Send straight into the running turn instead of queueing it. Off (default): a message you send while the agent is working waits, and is sent as one prompt when the turn ends — you can still steer it on demand with the **Steer** button on the pending message. On: sending while it works **skips the queue** and injects the message into the turn immediately, so the agent changes course mid-answer. Steering never cancels the turn and never discards in-flight tool work — it is not a Stop. It carries your text and the files you attached to that message, but not the ambient editor selection. **Grok** and **OpenAI Codex** take a mid-turn correction; **Claude Code** does not, and there a message always falls back to the queue. Images are the one thing that can still be refused: an older Grok Build CLI ignores them, so a message carrying pictures is queued whole rather than arriving without them. Also toggleable live from the gear menu → **Config & debug → Steer by default**."
         },
         "grok.promptNav": {
           "type": "boolean",
@@ -410,12 +410,12 @@
         "grok.soundNotifications": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "Play a short sound when Grok finishes a turn or hits an error \u2014 a rising chime on completion, a lower tone on error. Off by default. Plays **only when the Grok panel isn't focused** (you've switched to the editor or another window), so it notifies you when you've stepped away without beeping while you watch. Also toggleable live from the gear menu \u2192 **Config & debug \u2192 Sound notifications**."
+          "markdownDescription": "Play a short sound when Grok finishes a turn or hits an error — a rising chime on completion, a lower tone on error. Off by default. Plays **only when the Grok panel isn't focused** (you've switched to the editor or another window), so it notifies you when you've stepped away without beeping while you watch. Also toggleable live from the gear menu → **Config & debug → Sound notifications**."
         },
         "grok.processingSound": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "Play a quiet repeating sound while Grok is still working. The first cue waits seven seconds, then repeats every eight seconds until the turn ends. Off by default and separate from the completion/error sound. Also toggleable live from the gear menu \u2192 **Config & debug \u2192 Still-processing sound**."
+          "markdownDescription": "Play a quiet repeating sound while Grok is still working. The first cue waits seven seconds, then repeats every eight seconds until the turn ends. Off by default and separate from the completion/error sound. Also toggleable live from the gear menu → **Config & debug → Still-processing sound**."
         },
         "grok.readRepliesAloud": {
           "type": "boolean",
@@ -430,24 +430,24 @@
         "grok.remote.keepAwake": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Keep this machine awake while it's linked to an **AFK Pilot** account, so a remote turn isn't cut off by idle sleep. Only active once you've signed in (gear \u2192 AFK Pilot \u2192 *Sign in*); unlinking releases the lock immediately. The display is still free to sleep \u2014 only system/idle sleep is blocked. Uses `caffeinate` on macOS, `SetThreadExecutionState` on Windows and `systemd-inhibit` on Linux. **A closed laptop lid still sleeps** on every platform \u2014 that's an OS-level decision no application can override."
+          "markdownDescription": "Keep this machine awake while it's linked to an **AFK Pilot** account, so a remote turn isn't cut off by idle sleep. Only active once you've signed in (gear → AFK Pilot → *Sign in*); unlinking releases the lock immediately. The display is still free to sleep — only system/idle sleep is blocked. Uses `caffeinate` on macOS, `SetThreadExecutionState` on Windows and `systemd-inhibit` on Linux. **A closed laptop lid still sleeps** on every platform — that's an OS-level decision no application can override."
         },
         "grok.thumbsFeedback": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "Show thumbs on a finished Grok turn so you can send a rating to SpaceXAI. **Off by default.** On, thumbs appear only when this Grok session actually supports feedback \u2014 never on Codex or Claude. Ratings are not stored. Toggle live from Settings \u2192 General \u2192 **Thumbs feedback to SpaceXAI**."
+          "markdownDescription": "Show thumbs on a finished Grok turn so you can send a rating to SpaceXAI. **Off by default.** On, thumbs appear only when this Grok session actually supports feedback — never on Codex or Claude. Ratings are not stored. Toggle live from Settings → General → **Thumbs feedback to SpaceXAI**."
         },
         "grok.telemetry.enabled": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Send anonymous, privacy-first usage telemetry. A single `session_start` event per session carries an anonymous install id (a random GUID, no account/identity) plus a low-cardinality settings snapshot (including mode/model/effort, host kind, UI preferences, whether voice input is available, and which providers are connected; full list in [docs/privacy.md](https://github.com/PawelHuryn/grok-vscode/blob/main/docs/privacy.md)) \u2014 **never** any message content, code, file paths, or free-text settings. Also requires VS Code's global `telemetry.telemetryLevel` to be enabled and this to be the official build; turning either setting off stops all sending."
+          "markdownDescription": "Send anonymous, privacy-first usage telemetry. A single `session_start` event per session carries an anonymous install id (a random GUID, no account/identity) plus a low-cardinality settings snapshot (including mode/model/effort, host kind, UI preferences, whether voice input is available, and which providers are connected; full list in [docs/privacy.md](https://github.com/PawelHuryn/grok-vscode/blob/main/docs/privacy.md)) — **never** any message content, code, file paths, or free-text settings. Also requires VS Code's global `telemetry.telemetryLevel` to be enabled and this to be the official build; turning either setting off stops all sending."
         },
         "grok.chatFontScale": {
           "type": "number",
           "default": 100,
           "minimum": 60,
           "maximum": 300,
-          "markdownDescription": "Zoom for the Grok chat panel only, as a percent (100 = default). Scales the whole chat UI \u2014 text, icons, spacing \u2014 without affecting the rest of VS Code (unlike `Ctrl/Cmd+Shift+=`). Applies live, no reload needed. Supports User (global) and Workspace (local) scope."
+          "markdownDescription": "Zoom for the Grok chat panel only, as a percent (100 = default). Scales the whole chat UI — text, icons, spacing — without affecting the rest of VS Code (unlike `Ctrl/Cmd+Shift+=`). Applies live, no reload needed. Supports User (global) and Workspace (local) scope."
         },
         "grok.voiceApiKey": {
           "type": "string",
@@ -467,7 +467,7 @@
         "grok.voiceSendPhrase": {
           "type": "string",
           "default": "grok send",
-          "description": "Spoken phrase that auto-submits the message when it ends a voice transcription (e.g. say \"\u2026fix the bug, grok send\"). The phrase is stripped before sending. Leave empty to disable hands-free sending."
+          "description": "Spoken phrase that auto-submits the message when it ends a voice transcription (e.g. say \"…fix the bug, grok send\"). The phrase is stripped before sending. Leave empty to disable hands-free sending."
         },
         "grok.voiceKeyterms": {
           "type": "array",

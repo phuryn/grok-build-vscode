@@ -1,5 +1,27 @@
 # Changelog
 
+## 4.13.2 — 2026-09-27
+
+**Subagents and workflows show up for every agent, and cloud machines can update themselves.**
+
+### Added
+
+- **Subagents and workflows for every agent.** Claude Code workflows show their progress live, with the steps a workflow declares listed from the start. Muse Code workflows get a card with a dot for each agent and what the run returned. Codex subagents get a card with what the subagent answered. A reopened Claude Code conversation shows a finished background task as a short notice instead of raw XML.
+- **Update a cloud machine from your phone.** When a newer release is out, a phone connected to a cloud machine offers **Update now**; an update marked as required applies by itself. Either way the machine waits until no agent is working — a workflow still running in the background counts — then updates and reconnects. If the new version can't be installed, it comes back on the version it had and says so.
+
+### Changed
+
+- **One quiet card for subagents and workflows.** Both kinds share one header: icon, kind, name, step dots for a workflow, status and time. Cards start closed. Open one for what it did (a subagent's activity, a workflow's steps and agents), the tokens where the agent reports them, and the result, which reads like a reply and has a copy button. A long workflow shows three dots around where the run is instead of every dot.
+- **Cloud machines keep Claude Code, Codex and Muse Code current**, as they already did Grok.
+
+### Fixed
+
+- **A paused workflow's message keeps its formatting** (#189).
+- **Messages sent while Muse Code posts a workflow's result go through.** They used to fail with "Internal error". Muse now queues them behind its own reply and runs them next.
+- **Reopening a Muse Code conversation no longer fails with "already in use"** when another Muse window touched it a moment before.
+- **Find opens a closed subagent or workflow card** when the match is inside it.
+- **Muse Code's history no longer lists blank "Untitled" conversations** that were never used.
+
 ## 4.13.1 — 2026-09-26
 
 **Connect uses the sign-in your agent's CLI already has.**
