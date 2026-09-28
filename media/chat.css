@@ -6579,6 +6579,23 @@ a.add-project-github-open {
   gap: 4px;
 }
 .onb-steps li { margin: 0; }
+/* Session startup lives inside the composer; machine wake keeps its existing strip. */
+.startup-strip {
+  display: flex; align-items: center; gap: 8px; min-width: 0;
+  padding: 7px 12px; border-radius: var(--radius) var(--radius) 0 0;
+  border-bottom: 1px solid var(--vscode-editorWidget-border, #3a3d43);
+  background: color-mix(in srgb, var(--vscode-charts-blue, #4aa3ff) 9%, var(--vscode-input-background, #26282c));
+  color: var(--vscode-foreground, #e4e6ea); font-size: 12.5px;
+}
+.startup-strip[hidden], body.host-wait-visible .startup-strip { display: none; }
+.startup-stage { font-weight: 600; }
+.startup-detail { color: var(--vscode-descriptionForeground, #9aa1ab); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.startup-seconds { margin-left: auto; flex: none; color: var(--vscode-descriptionForeground, #9aa1ab); font-variant-numeric: tabular-nums; }
+.startup-strip .host-wait-spinner { width: 12px; height: 12px; }
+.startup-slow { background: color-mix(in srgb, var(--vscode-editorWarning-foreground, #cca700) 12%, var(--vscode-input-background, #26282c)); }
+.startup-slow .startup-detail { white-space: normal; overflow: visible; }
+.startup-output { flex: none; border: 0; padding: 0; background: transparent; color: var(--vscode-textLink-foreground, #4aa3ff); font: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.startup-output[hidden] { display: none; }
 /* One strip above every covering surface, with space reserved for its chrome. */
 .host-wait-strip {
   position: fixed;

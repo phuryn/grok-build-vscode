@@ -850,6 +850,7 @@
     // the last emitted Codex (timestamp,id) tuple. The scalar offset remains the
     // append/legacy contract.
     sessionProviderCursor: null,
+    startupStatus: null,
     replaying: false,
     replayDepth: 0,
     // Open-path window (#102): hold the replay stream and render only the last
@@ -10255,6 +10256,8 @@
   }
 
   function resetForNewSession() {
+    state.startupStatus = null;
+    renderStartupStatus();
     clearSessionSuperseded();
     stopProcessingCue();
     cancelPendingSpeech();
@@ -17374,6 +17377,37 @@
 
   // ---------- send ----------
 
+  let startupTimer = null;
+  function renderStartupStatus() {
+    if (startupTimer !== null) clearTimeout(startupTimer);
+    startupTimer = null;
+    const startup = state.startupStatus;
+    let strip = $("startup-strip");
+    if (!startup) { if (strip) strip.hidden = true; return; }
+    if (!strip) {
+      strip = document.createElement("div");
+      strip.id = "startup-strip";
+      strip.className = "startup-strip";
+      strip.innerHTML = '<span class="host-wait-spinner" aria-hidden="true"></span><span class="startup-stage" role="status"></span><span class="startup-detail"></span><span class="startup-seconds" aria-hidden="true"></span><button type="button" class="startup-output" hidden>Show output</button>';
+      strip.querySelector("button").onclick = () => vscode.postMessage({ type: "showLogs" });
+      document.querySelector(".composer-card").prepend(strip);
+    }
+    const link = hostWait.snapshot();
+    strip.hidden = !!(link && (!link.reachable || !link.restored));
+    const seconds = Math.floor(Math.max(0, Date.now() - startup.startedAt) / 1000);
+    const slow = seconds >= 20;
+    const provider = { grok: "Grok", codex: "Codex", claude: "Claude", muse: "Muse" }[startup.provider] || "Grok";
+    const count = Number.isInteger(startup.messageCount) && startup.messageCount >= 0 ? startup.messageCount + " " : "";
+    const label = { updating: "Updating the Grok CLI", starting: "Starting " + provider,
+      opening: "Opening the conversation", loading: "Loading " + count + "messages" }[startup.stage];
+    strip.classList.toggle("startup-slow", slow);
+    strip.querySelector(".startup-stage").textContent = label;
+    strip.querySelector(".startup-detail").textContent = slow ? "· taking longer than usual" : startup.detail ? "· " + startup.detail : "";
+    strip.querySelector(".startup-seconds").textContent = seconds >= 3 ? seconds + "s" : "";
+    strip.querySelector(".startup-output").hidden = !slow || IS_REMOTE || state.hostCaps?.showOutput !== true;
+    startupTimer = setTimeout(renderStartupStatus, 1000 - Math.max(0, Date.now() - startup.startedAt) % 1000);
+  }
+
   function updateSendButton() {
     // Four states:
     //  - idle (!busy): send icon, enabled, click → send the typed message.
@@ -17414,6 +17448,12 @@
         newBtn.disabled = true;
         newBtn.title = "Add a project folder first";
       }
+    } else if (state.startupStatus) {
+      sendBtn.innerHTML = ICON.spinner;
+      const name = { grok: "Grok", codex: "Codex", claude: "Claude", muse: "Muse" }[state.startupStatus.provider] || "Grok";
+      sendBtn.title = name + " is still starting";
+      sendBtn.classList.add("initializing");
+      sendBtn.disabled = true;
     } else if (!state.busy) {
       sendBtn.innerHTML = ICON.arrowUp;
       sendBtn.title = "Send";
@@ -19325,6 +19365,7 @@
         // any control is drawn — and a host that says nothing is a host that
         // cannot, which is the safe way round.
         state.hostCaps = (msg.capabilities && typeof msg.capabilities === "object") ? msg.capabilities : {};
+        renderStartupStatus();
         if (providerConfigPanel && !providerConfigFilesAvailable()) providerConfigPanel.setOpen(false);
         renderQueuedBlocks();
         // Field presence: an older host never sends this, and command View all
@@ -19403,6 +19444,7 @@
           forgetCloudHostUpdate();
         }
         cloudUpdateConnection = msg.link.connection;
+        renderStartupStatus();
         if (msg.link.reachable) onRemoteHostReachable(msg.link);
         else noteRemoteFileDisconnect();
         break;
@@ -19922,6 +19964,15 @@
           ensureRailGear();
           renderAppUpdateAffordance();
         }
+        break;
+      }
+      case "startupStatus": {
+        const stages = ["updating", "starting", "opening", "loading"];
+        state.startupStatus = stages.includes(msg.stage) ? {
+          ...msg, startedAt: Date.now() - (Number.isFinite(msg.elapsedMs) ? Math.max(0, msg.elapsedMs) : 0),
+        } : null;
+        renderStartupStatus();
+        updateSendButton();
         break;
       }
       case "initialized": {
@@ -20976,6 +21027,7 @@
         // a spinner and is disabled (no interrupt option); when false (or
         // omitted) the button shows a stop icon and clicks cancel the in-flight
         // CLI work.
+        if (!msg.value) { state.startupStatus = null; renderStartupStatus(); }
         state.busy = !!msg.value;
         state.busyLocked = !!msg.locked;
         if (!state.busy && !state.replaying) {

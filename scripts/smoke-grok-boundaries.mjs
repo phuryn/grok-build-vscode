@@ -41,7 +41,7 @@ rows("ignored", "ACP method", "_x.ai/settings/update", "src/sidebar.ts: host con
 rows("ignored", "ACP update", "hook_execution", "src/sidebar.ts xaiNotification: CLI hook diagnostics have no host hook-execution surface.");
 rows("ignored", "ACP update", "pending_interaction interaction_resolved", "src/acp.ts handleServerRequest: session/request_permission and question RPC responses own interactive cards; lifecycle echoes are unused.");
 rows("ignored", "ACP update", "response_completed", "src/acp-dispatch.ts extractPromptUsage / src/sidebar.ts prompt completion: aggregate prompt usage is authoritative, not per-inference usage/signatures.");
-rows("ignored", "ACP update", "session_summary_generated", "src/sidebar.ts xaiNotification/postSessionName: summary notification is unused; cliSessionTitle reads persisted titles on history refresh (live title gap tracked by session_info_update).");
+rows("ignored", "ACP update", "session_summary_generated", "src/sidebar.ts xaiNotification/postSessionName: summary notification is unused; cliSessionTitle reads persisted titles on history refresh (live titles arrive through session_info_update).");
 rows("ignored", "ACP update", "tool_call_delta_chunk", "src/acp-dispatch.ts routeSessionUpdate: complete tool_call/rawInput creates cards; incremental pre-call argument fragments are not rendered.");
 rows("ignored", "ACP update", "subagent_progress", "src/acp-dispatch.ts isSubagentLifecycleUpdate: deliberately excluded periodic progress; spawn/finish and child streams own cards.");
 // Seen only in the full test:live run (edits, Stop, reopen, background tasks), 2026-09-27.
@@ -52,11 +52,9 @@ rows("ignored", "ACP method", "_x.ai/task_backgrounded _x.ai/task_completed", "s
 rows("ignored", "ACP method", "_x.ai/session/interjection", "ACCEPTED pre-existing gap (backlog): no host reader for Grok's interjection notice.");
 // ACCEPTED entries are real, pre-existing gaps that were triaged and backlogged. They stay
 // listed with their reason in every report; only a NEW unknown kind fails the audit.
-rows("ignored", "ACP update", "session_info_update", "ACCEPTED pre-existing gap (backlog: Grok renames a conversation mid-session and the rail does not follow): src/sidebar.ts xaiNotification has no title-update handler; the title arrives on history refresh via cliSessionTitle.");
 rows("ignored", "ACP update", "retry_state", "ACCEPTED pre-existing gap (backlog): Grok reports a model-request retry and no host code shows it; the turn continues normally once the retry succeeds.");
 // New in grok 1.0.41 (auto-updated 2026-09-28, after 4.13.3 shipped). All notifications, none awaits a reply;
 // the render sections stay clean without them. Backlog: "Grok 1.0.41 sends ten kinds nothing reads".
-rows("ignored", "ACP method", "_x.ai/session/setup", "ACCEPTED pre-existing gap (backlog: Grok 1.0.41 kinds): session/new startup phases (auth, resolve_workspace, …) as notifications; could drive a startup progress line.");
 rows("ignored", "ACP update", "hook_run_started", "ACCEPTED pre-existing gap (backlog: Grok 1.0.41 kinds): a pre/post tool hook started; the tool row itself is unaffected.");
 rows("ignored", "ACP update", "last_turn_summary", "ACCEPTED pre-existing gap (backlog: Grok 1.0.41 kinds): an end-of-turn summary notification; nothing shows it.");
 rows("ignored", "ACP update", "background_tasks", "ACCEPTED pre-existing gap (backlog: Grok 1.0.41 kinds): a snapshot list of the session's background tasks; the per-task task_backgrounded / task_completed events already drive the cards.");
@@ -67,5 +65,7 @@ rows("handled", "ACP update", "model_changed", "src/acp.ts handleServerRequest: 
 rows("handled", "ACP update", "agent_message_chunk agent_thought_chunk user_message_chunk available_commands_update tool_call tool_call_update", "src/acp-dispatch.ts routeSessionUpdate / src/sidebar.ts: standard message, command and tool event routing; hidden user chunks may deliberately be dropped.");
 rows("handled", "ACP method", "session/update", "src/acp-dispatch.ts parseAcpLine / src/acp.ts handleSessionUpdate: standard update routing.");
 rows("handled", "ACP method", "_x.ai/session_notification _x.ai/session/prompt_complete _x.ai/session/update", "src/acp.ts handleServerRequest / src/sidebar.ts: live notification, completion and replay lifecycle rails.");
+rows("handled", "ACP update", "session_info_update", "src/grok-backend.ts normalizeUpdate -> sessionTitle: live rail/header title, with customName taking precedence.");
+rows("handled", "ACP method", "_x.ai/session/setup", "src/acp.ts sessionSetup / src/sidebar.ts: session-scoped detail inside the Opening the conversation startup stage.");
 rows("handled", "ACP method", "_x.ai/mcp_initialized _x.ai/mcp/servers_updated", "src/acp.ts handleServerRequest / src/sidebar.ts applyMcpNotification: connector status refresh.");
 rows("handled", "ACP method", "fs/read_text_file", "src/acp.ts handleServerRequest: host file read response.");

@@ -32,6 +32,7 @@ describe("sessionUiSnapshot", () => {
     session.queuedSends = [{ text: "queued for B", chips: [] }];
 
     expect(sessionUiSnapshot(session, "plan")).toEqual([
+      { type: "startupStatus", provider: "grok", stage: null, elapsedMs: 0 },
       { type: "subscriptionUsage", windows: [] },
       { type: "modeChanged", modeId: "plan", modes: ["agent", "plan", "yolo"] },
       { type: "planModeAvailability", available: true, reason: undefined, recheckable: false },

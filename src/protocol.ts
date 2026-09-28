@@ -634,6 +634,7 @@ export type HostMsg =
   | { type: "updateReady"; version: string }
   | { type: "initialized"; info: { cliPath: string; cwd: string; version: string | null; provider?: AcpProvider; steeringSupported?: boolean; init: { protocolVersion?: unknown } } }
   | { type: "cliUpdating" }
+  | { type: "startupStatus"; provider: AcpProvider; stage: "updating" | "starting" | "opening" | "loading" | null; elapsedMs: number; detail?: string; messageCount?: number }
   // `worktree` gates the gear's Apply/Remove worktree items to worktree sessions.
   | { type: "session"; sessionId: string; models: ModelInfo[]; currentModelId: string | undefined; worktree?: boolean; provider?: AcpProvider }
   // The focused conversation's display name, using the same precedence as a
@@ -1566,7 +1567,7 @@ export type WebviewMsg =
 const HOST_MESSAGE_TYPE_MAP: Record<HostMsg["type"], true> = {
   museSettings: true,
   cloudHostUpdateState: true, initialState: true, moveViewHint: true, welcomeTips: true, projectSetup: true, githubState: true, githubRepos: true, providerState: true, mcpServers: true, mcpConnectors: true, mcpConnectorAuthorization: true, routines: true, codexInstallProgress: true, planModeAvailability: true, showThinking: true, appPurpose: true, fontScale: true, grokUpdateStatus: true, updateAvailable: true, updateReady: true, telemetryEnabled: true, thumbsFeedback: true,
-  initialized: true, cliUpdating: true, session: true, sessionName: true, composerDraftSession: true, modelChanged: true,
+  initialized: true, cliUpdating: true, startupStatus: true, session: true, sessionName: true, composerDraftSession: true, modelChanged: true,
   modeChanged: true, openModePopover: true, voiceState: true, voiceConfigured: true,
   voicePartial: true, voiceSubmit: true, voiceTranscript: true, voiceError: true,
   chips: true, commandsUpdate: true, mentionResults: true, projectDirListing: true, projectFileContent: true, projectFileWriteResult: true, gitStatusResult: true, gitFileDiffResult: true, turnFileDiffResult: true, turnDiffBaseline: true, gitRunResult: true, userMessage: true, agentStart: true,

@@ -6,6 +6,7 @@
  * cannot persist a raw prompt either.
  */
 import { describe, expect, it, vi } from "vitest";
+import { bootWebview, dispatch } from "./webview-harness";
 
 vi.mock("../src/acp", async (importOriginal) => {
   const { EventEmitter } = await import("node:events");
@@ -197,5 +198,115 @@ describe("adapter history write site", () => {
     expect(stored.autoName).toBe(capAutoName(FAT_TITLE));
     expect(stored.autoName.length).toBeLessThanOrEqual(AUTO_NAME_MAX_CHARS);
     expect(stored.provider).toBe("codex");
+  });
+});
+
+describe("live Grok titles and startup signals", () => {
+  it("publishes every startup stage from the existing lifecycle and clears readiness", async () => {
+    const sidebar = makeSidebar("/repo");
+    sidebar.maybeUpdateCliOnUpgrade = async (_path: string, session: Session) => sidebar.setStartupStage(session, "updating", "1.0.41");
+    await sidebar.startSession("resume-1", sidebar.focused);
+    const frames = sidebar.view.webview.postMessage.mock.calls.map(([m]: [HostMsg]) => m);
+    const stages = frames.filter((m: HostMsg) => m.type === "startupStatus").map((m: any) => m.stage);
+    expect(stages).toEqual(["starting", "updating", "starting", "starting", "opening", "loading", null]);
+    expect(sidebar.focused.startup).toBeUndefined();
+  });
+  it.each(["grok", "codex", "claude", "muse"] as const)("uses a known %s replay count and clears on teardown", (provider) => {
+    const sidebar = makeSidebar("/repo");
+    const session = sidebar.focused; session.provider = provider; session.activeSessionId = "counted";
+    if (provider === "grok") sidebar.sessionCache.set("counted", { entry: { numMessages: 42 } });
+    else sidebar.adapterHistory(provider).cache.set("/repo", [{ id: "counted", numMessages: 42 }]);
+    sidebar.emit(session, { type: "setBusy", value: true, locked: true });
+    sidebar.emit(session, { type: "historyReplay", active: true });
+    expect(session.startup.messageCount).toBe(42);
+    sidebar.detachClient(session);
+    expect(session.startup).toBeUndefined();
+  });
+  it("maps setup notifications only while Grok is opening", async () => {
+    const sidebar = makeSidebar("/repo");
+    const client = await sidebar.startSession("resume-1", sidebar.focused);
+    sidebar.setStartupStage(sidebar.focused, "opening");
+    client.emit("sessionSetup", { method: "session/new", phase: "auth", sessionId: null });
+    expect(sidebar.focused.startup.detail).toBe("signing in");
+    client.emit("sessionSetup", { method: "session/new", phase: "response_ready", sessionId: "resume-1" });
+    expect(sidebar.focused.startup.detail).toBeUndefined();
+    sidebar.setStartupStage(sidebar.focused, "loading");
+    client.emit("sessionSetup", { method: "session/load", phase: "auth" });
+    expect(sidebar.focused.startup.stage).toBe("loading");
+    sidebar.setStartupStage(sidebar.focused, null);
+    client.emit("sessionSetup", { method: "session/new", phase: "auth" });
+    expect(sidebar.focused.startup).toBeUndefined();
+  });
+  it.each(["grok", "codex", "claude", "muse"] as const)("uses host stages for %s", async (provider) => {
+    const sidebar = makeSidebar("/repo");
+    sidebar.connectedProviders = sidebar.usableProviders = () => [provider];
+    sidebar.focused.provider = provider;
+    sidebar.emit(sidebar.focused, { type: "setBusy", value: true, locked: true });
+    expect(sidebar.focused.startup.stage).toBe("starting");
+    sidebar.emit(sidebar.focused, { type: "initialized", info: { provider } });
+    expect(sidebar.focused.startup.stage).toBe("opening");
+    sidebar.emit(sidebar.focused, { type: "exit", code: 1 });
+    expect(sidebar.focused.startup).toBeUndefined();
+  });
+  it("refreshes live rail/header titles, with a manual name winning even over later agent renames", async () => {
+    const sidebar = makeSidebar("/repo");
+    const client = await sidebar.startSession("resume-1", sidebar.focused);
+    sidebar.resolveLocalRepoTarget = () => ({ cwd: "/repo" });
+    sidebar.postLocal = vi.fn();
+    sidebar.postSessionName = (GrokSidebar.prototype as any).postSessionName.bind(sidebar);
+    client.emit("sessionTitle", "Live Grok title");
+    await sidebar.sessionMetaWrites; await Promise.resolve();
+    expect(sidebar.postLocal).toHaveBeenLastCalledWith(expect.objectContaining({ type: "sessionName", name: "Live Grok title" }));
+    expect(sidebar.sendRemoteSession).toHaveBeenLastCalledWith(sidebar.focused, expect.objectContaining({ type: "sessionName", name: "Live Grok title" }));
+    const row = { id: "resume-1", displayName: "Old disk summary" };
+    expect(sidebar.withLiveSessionTitle(row, {}).displayName).toBe("Live Grok title");
+    expect(sidebar.sendLocalRepoSessionsPreview).toHaveBeenCalledWith("/repo");
+    sidebar.renameSession("resume-1", "My name", "local");
+    client.emit("sessionTitle", "Later Grok title");
+    await sidebar.sessionMetaWrites; await Promise.resolve();
+    const meta = sidebar._memento[SESSION_META_KEY];
+    expect(meta["resume-1"].customName).toBe("My name");
+    expect(sidebar.sessionDisplayName(sidebar.focused)).toBe("My name");
+    expect(sidebar.withLiveSessionTitle(row, meta).displayName).toBe("My name");
+    expect(sidebar.postLocal).toHaveBeenLastCalledWith(expect.objectContaining({ name: "My name" }));
+    sidebar.renameSession("resume-1", "", "local");
+    expect(sidebar.sessionDisplayName(sidebar.focused)).toBe("Later Grok title");
+  });
+});
+
+describe("Grok rename on the shipped surfaces", () => {
+  it.each([false, true])("updates the rail and header live (remote=%s)", async (remote) => {
+    vi.stubEnv("GROK_HOME", process.cwd() + "/.verification/lane1-empty-title-history");
+    const h = bootWebview({ remote, beforeScripts: (win) => {
+      const rail = win.document.createElement("aside"); rail.id = "projects-rail"; win.document.body.appendChild(rail);
+      const search = win.document.createElement("input"); search.id = "rail-search"; win.document.body.appendChild(search);
+    } });
+    try {
+      const sidebar = makeSidebar("/repo");
+      const client = await sidebar.startSession("resume-1", sidebar.focused);
+      sidebar.focused.hasHistory = true;
+      sidebar.authorizedSessionCwds = () => ["/repo"];
+      sidebar.refreshWorktreeCache = async () => {};
+      sidebar.sessionCwdsForRepo = () => ["/repo"];
+      sidebar.annotateWorktreeLabels = () => {};
+      sidebar.dotForId = () => "idle";
+      sidebar.resolveLocalRepoTarget = () => ({ cwd: "/repo" });
+      sidebar.postLocal = (m: HostMsg) => { if (!remote) dispatch(h.window, m); };
+      sidebar.sendRemoteSession = (_s: Session, m: HostMsg) => { if (remote) dispatch(h.window, m); };
+      sidebar.postSessionName = (GrokSidebar.prototype as any).postSessionName.bind(sidebar);
+      sidebar.postSessionsList = () => dispatch(h.window, sidebar.buildGrokSessionsList("/repo"));
+      dispatch(h.window, { type: "repos", entries: [{ cwd: "/repo", label: "repo", available: true, updatedAt: 1 }], selectedCwd: "/repo", activeCwd: "/repo" });
+      const title = () => h.doc.getElementById(remote ? "session-head-title" : "session-name-label")?.textContent;
+      const row = () => h.doc.querySelector('.rail-session[data-session-id="resume-1"] .rail-session-name')?.textContent;
+      client.emit("sessionTitle", "Live Grok rename");
+      await sidebar.sessionMetaWrites; await Promise.resolve();
+      expect(title()).toBe("Live Grok rename"); expect(row()).toBe("Live Grok rename");
+      sidebar.renameSession("resume-1", "Manual title", "local");
+      client.emit("sessionTitle", "Another agent title");
+      await sidebar.sessionMetaWrites; await Promise.resolve();
+      expect(title()).toBe("Manual title"); expect(row()).toBe("Manual title");
+    } finally {
+      await h.window.happyDOM.abort(); vi.unstubAllEnvs();
+    }
   });
 });

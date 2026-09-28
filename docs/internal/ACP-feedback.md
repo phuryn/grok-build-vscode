@@ -577,7 +577,8 @@ into `HTTP caching notes.md bullet points`, with `title_refresh_idx` stepping `"
 `_x.ai/session/list` reflecting it. There is a wire rail for it too —
 `_x.ai/session_notification [session_summary_generated]` and
 `session/update [session_info_update] {"title": …}` — so a client can follow a regenerated title live
-instead of polling `summary.json`. That part of the client-cost note below is obsolete.
+instead of polling `summary.json`. The client consumes `session_info_update.title` through its
+`sessionTitle` path, refreshing the rail and header while preserving manual names.
 
 One inconsistency worth a line: the incremental catalog rail `_x.ai/sessions/changed` pushed
 `"title": null` for a session whose `summary.json` and `_x.ai/session/list` both carried a title.

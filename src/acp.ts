@@ -1497,6 +1497,13 @@ export class AcpClient extends EventEmitter {
   private async handleServerRequest(msg: any): Promise<void> {
     const { method, id, params } = msg;
     try {
+      if (method === "_x.ai/session/setup") {
+        if (this.provider === "grok" && !isForeignSessionUpdate(params?.sessionId, this.sessionId)) {
+          this.emit("sessionSetup", params);
+        }
+        if (id != null) this.respondOk(id, {});
+        return;
+      }
       if (
         method === "_x.ai/mcp/servers_updated" ||
         method === "_x.ai/mcp/init_progress" ||

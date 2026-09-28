@@ -1006,6 +1006,7 @@ export const OUTBOUND_DISPOSITION: Record<HostMsg["type"], OutboundDisposition> 
   updateReady: "host-local",
   initialized: "mirror",
   cliUpdating: "mirror",
+  startupStatus: "mirror",
   session: "mirror",
   // Conversation names are already exposed in the remote history list, so
   // the focused-name update has the same display-only sensitivity.
@@ -1197,6 +1198,7 @@ export const OUTBOUND_PROJECT_AUTH: Record<HostMsg["type"], OutboundProjectAuth>
   initialState: "optional-cwd",
   // Session-start chrome; delivered via emit → sendRemoteSession with scope.
   initialized: "scope",
+  startupStatus: "scope",
   // voiceConfigured is project-scoped (sendPhrase / key resolution per cwd) —
   // a closed or re-homed tab must not keep the prior project's voice prefs.
   // Content-bearing voiceSubmit / voiceTranscript / voicePartial use scope so a

@@ -175,6 +175,8 @@ export class Session {
   /** True for the session-start window (spawn → newSession/load). Model/effort
    * changes that would race startup are ignored; the webview also locks busy. */
   priming = false;
+  startup?: { stage: "updating" | "starting" | "opening" | "loading"; startedAt: number; detail?: string; messageCount?: number };
+  agentTitle?: string;
 
   /** Drop streaming content from hidden summary/context-injection turns. */
   suppressContent = false;
@@ -685,6 +687,7 @@ export function sessionUiSnapshot(
   chips: FileChip[] = session.chips,
 ): HostMsg[] {
   const messages: HostMsg[] = [];
+  messages.push(startupStatusMessage(session));
   messages.push({ type: "subscriptionUsage", windows: session.subscriptionUsage?.snapshot() ?? [] });
   if (session.client?.currentModelId) {
     messages.push({ type: "modelChanged", modelId: session.client.currentModelId });
@@ -711,4 +714,14 @@ export function sessionUiSnapshot(
   messages.push({ type: "chips", chips });
   messages.push(queuedSendsMessage(session.queuedSends));
   return messages;
+}
+
+export function startupStatusMessage(session: Session): Extract<HostMsg, { type: "startupStatus" }> {
+  const startup = session.startup;
+  return {
+    type: "startupStatus", provider: session.provider, stage: startup?.stage ?? null,
+    elapsedMs: startup ? Math.max(0, Date.now() - startup.startedAt) : 0,
+    ...(startup?.detail ? { detail: startup.detail } : {}),
+    ...(startup?.messageCount !== undefined ? { messageCount: startup.messageCount } : {}),
+  };
 }

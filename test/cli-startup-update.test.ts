@@ -54,7 +54,7 @@ describe("CLI startup compatibility", () => {
     // keys that moved to ~/.grok, so it still lands in globalState. See
     // persisted-state.ts.
     expect(update).toContain("this.state.update(CLI_UPDATE_VERSION_KEY, current)");
-    expect(sessionStart).toContain("await this.maybeUpdateCliOnUpgrade(cliPath)");
+    expect(sessionStart).toContain("await this.maybeUpdateCliOnUpgrade(cliPath, session)");
   });
 
   it("bounds the silent update at 20s and spends it ONCE per extension version", () => {
@@ -89,7 +89,7 @@ describe("CLI startup compatibility", () => {
     expect(pin).toContain('this.downgradeBrokenCli(cliPath, detected, "proactive")');
     expect(sidebar).toContain('reason: "proactive" | "reactive"');
 
-    const update = sessionStart.indexOf("await this.maybeUpdateCliOnUpgrade(cliPath)");
+    const update = sessionStart.indexOf("await this.maybeUpdateCliOnUpgrade(cliPath, session)");
     const proactivePin = sessionStart.indexOf("await this.maybePinBrokenCli(cliPath)", update);
     const compatibilityCheck = sessionStart.indexOf("await this.planModeCompatibility(cliPath)", proactivePin);
     expect(proactivePin).toBeGreaterThan(update);
@@ -147,7 +147,7 @@ describe("CLI startup compatibility", () => {
     const capture = fullSessionStart.indexOf("const replacedClient = session.client");
     const clear = fullSessionStart.indexOf("session.client = undefined", capture);
     const dispose = fullSessionStart.indexOf("await replacedClient.dispose()", clear);
-    const update = fullSessionStart.indexOf("await this.maybeUpdateCliOnUpgrade(cliPath)", dispose);
+    const update = fullSessionStart.indexOf("await this.maybeUpdateCliOnUpgrade(cliPath, session)", dispose);
 
     expect(capture).toBeGreaterThan(-1);
     expect(clear).toBeGreaterThan(capture);
