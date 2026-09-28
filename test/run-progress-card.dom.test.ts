@@ -665,16 +665,16 @@ describe("the process on top, agents under their step", () => {
   it("groups agents under their step, strips the step from their labels, and folds a finished step", () => {
     const h = boot();
     send(h, { agents }); expand(h);
-    expect(groups(h).map(g => g.querySelector(".workflow-group-title")!.textContent)).toEqual(["Plan", "Research", "Verify", "Report"]);
+    // Steps not started and with no agents share one "Up next" line rather than a group each.
+    expect(groups(h).map(g => g.querySelector(".workflow-group-title")!.textContent)).toEqual(["Plan", "Research"]);
+    expect(h.doc.querySelector(".workflow-roster .workflow-group-next")!.textContent).toBe("Up next: Verify · Report");
     expect(names(group(h, "Research"))).toEqual(["web", "docs"]);
     expect(names(group(h, "Plan"))).toEqual(["outline"]);
     expect(open(group(h, "Research"))).toBe(true);
     expect(meta(group(h, "Research"))).toBe("2 agents");
     expect(open(group(h, "Plan"))).toBe(false);
     expect(meta(group(h, "Plan"))).toBe("1 agent · done · 8.2K tokens");
-    expect([meta(group(h, "Verify")), group(h, "Verify").querySelectorAll(".workflow-agent").length, open(group(h, "Verify"))])
-      .toEqual(["not started", 0, false]);
-    expect((group(h, "Verify").querySelector(".workflow-group-head") as HTMLButtonElement).disabled).toBe(true);
+    expect(group(h, "Verify")).toBeFalsy();
     // A heading opens and closes its own rows, and that choice holds.
     click(h.window, group(h, "Research").querySelector(".workflow-group-head")!);
     expect(open(group(h, "Research"))).toBe(false);
@@ -703,7 +703,9 @@ describe("the process on top, agents under their step", () => {
     ] });
     expand(h);
     expect(groups(h).map(g => g.querySelector(".workflow-group-title")!.textContent))
-      .toEqual(["Plan", "Research", "Verify", "Report", "Research", "Other"]);
+      .toEqual(["Plan", "Research", "Other"]);
+    // The steps with no agents yet are still named, on one line.
+    expect(h.doc.querySelector(".workflow-roster .workflow-group-next")!.textContent).toBe("Up next: Verify · Report · Research");
     const other = groups(h).at(-1)!;
     expect(names(other)).toEqual(["Mystery / stray", "loose", "Research / dup"]);
     expect([other.dataset.state, open(other), meta(other)]).toEqual(["active", true, "3 agents"]);
@@ -779,7 +781,10 @@ describe("reported capabilities", () => {
     const h = boot();
     const phases = Array.from({ length: 12 }, (_, i) => ({ title: `Extended research phase ${i} with a long title`, state: i === 7 ? "active" : "pending" }));
     send(h, { phases, current_phase: phases[7].title, agents: [] }); expand(h);
-    expect([...pin(h).querySelectorAll(".workflow-group-title")].map((p) => p.textContent)).toEqual(phases.map((p) => p.title));
+    // The running step is a group; every step with no agents that has not started is named, in order, on one line.
+    expect([...pin(h).querySelectorAll(".workflow-group-title")].map((p) => p.textContent)).toEqual([phases[7].title]);
+    expect(pin(h).querySelector(".workflow-group-next")!.textContent)
+      .toBe(`Up next: ${phases.filter((_, i) => i !== 7).map((p) => p.title).join(" · ")}`);
     expect([...pin(h).querySelectorAll(".workflow-phase")].map((p) => p.querySelector(".workflow-step")!.getAttribute("title")))
       .toEqual(phases.map((p, i) => `${p.title}: ${i === 7 ? "current" : "pending"}`));
     expect(pin(h).querySelectorAll(".workflow-phase")[7].getAttribute("aria-current")).toBe("step");

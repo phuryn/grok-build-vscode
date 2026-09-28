@@ -2881,6 +2881,11 @@ body.thinking-hidden .msg.thinking { display: none; }
 /* Agents under their step. A heading per step; a finished one folds to its
    count, time and tokens; a step not started is a heading and nothing more. */
 .workflow-roster > .workflow-group { border-top: 1px solid var(--vscode-editorWidget-border, #555); }
+.workflow-roster > .workflow-group-next {
+  border-top: 1px solid var(--vscode-editorWidget-border, #555);
+  padding: 6px 0 2px; font-size: 12px; color: var(--vscode-descriptionForeground);
+  overflow-wrap: anywhere;
+}
 .workflow-group-head {
   display: flex;
   align-items: center;

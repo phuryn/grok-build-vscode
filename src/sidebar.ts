@@ -10152,6 +10152,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // yet, so declining is a clean no-op rather than a half-started session.
     const consentAt = clock.now();
     if (target.provider === "grok" && !(await this.confirmRepoForcedAutoApprove(this.sessionCwd(target)))) {
+      // Back to idle: a caller that locked the conversation for this start
+      // would otherwise leave "Starting Grok" and a disabled Send up for good.
+      // Sending again asks again.
+      this.emit(target, { type: "setBusy", value: false });
       return undefined;
     }
     // Its own phase because a modal is a PERSON reading a dialog, and folded

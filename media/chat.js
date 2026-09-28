@@ -14733,7 +14733,14 @@
       groups.push(other);
     }
     const existing = new Map([...roster.children].filter((g) => g._groupKey).map((g) => [g._groupKey, g]));
-    return groups.map((group) => {
+    // Steps that have not started and have no agents share ONE muted line
+    // ("Up next: Verify · Report") instead of a row each: a row per step
+    // repeated the track and made a pinned card on a phone tall enough to crowd
+    // out the transcript, while the line still names every step the stepper
+    // folds away on a long run.
+    const waiting = (group) => !group.rows.length && /^(pending|queued|scheduled)$/.test(group.state);
+    const upNext = groups.filter(waiting).map((group) => group.title);
+    const items = groups.filter((group) => !waiting(group)).map((group) => {
       let item = existing.get(group.key);
       if (!item) {
         item = document.createElement("li");
@@ -14770,6 +14777,17 @@
       applyWorkflowGroupOpen(item, record);
       return item;
     });
+    if (upNext.length) {
+      let next = existing.get("__next");
+      if (!next) {
+        next = document.createElement("li");
+        next.className = "workflow-group-next";
+        next._groupKey = "__next";
+      }
+      next.textContent = `Up next: ${upNext.join(" · ")}`;
+      items.push(next);
+    }
+    return items;
   }
 
   function renderWorkflowSurface(el, record, reportHeader) {

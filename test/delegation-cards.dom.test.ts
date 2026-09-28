@@ -148,8 +148,11 @@ describe("header dots for long workflows", () => {
     expect(card.querySelectorAll(".workflow-phases > .workflow-phase")).toHaveLength(8);
     expect([...card.querySelectorAll(".workflow-phases > li")].filter(li => !(li as HTMLElement).hidden)
       .map(li => li.textContent)).toEqual(["Step 1", "Step 2", "Step 3", "+5"]);
+    // Every step stays named in the card: groups for the started ones, one line for the rest.
     expect([...card.querySelectorAll(".workflow-group-title")].map(el => el.textContent))
-      .toEqual([...Array.from({ length: 8 }, (_, i) => `Step ${i + 1}`), "Other"]);
+      .toEqual(["Step 1", "Step 2", "Other"]);
+    expect(card.querySelector(".workflow-group-next")!.textContent)
+      .toBe(`Up next: ${Array.from({ length: 6 }, (_, i) => `Step ${i + 3}`).join(" · ")}`);
   });
 });
 

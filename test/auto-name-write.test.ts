@@ -211,6 +211,18 @@ describe("live Grok titles and startup signals", () => {
     expect(stages).toEqual(["starting", "updating", "starting", "starting", "opening", "loading", null]);
     expect(sidebar.focused.startup).toBeUndefined();
   });
+  it("returns a locked conversation to idle when the always-approve warning is declined", async () => {
+    const sidebar = makeSidebar("/repo");
+    sidebar.confirmRepoForcedAutoApprove = vi.fn(async () => false);
+    // A sign-out or connect path locks the conversation before starting it.
+    sidebar.emit(sidebar.focused, { type: "setBusy", value: true, locked: true });
+    expect(sidebar.focused.startup?.stage).toBe("starting");
+    expect(await sidebar.startSession(undefined, sidebar.focused)).toBeUndefined();
+    const frames = sidebar.view.webview.postMessage.mock.calls.map(([m]: [HostMsg]) => m);
+    expect(frames.filter((m: HostMsg) => m.type === "setBusy").at(-1)).toMatchObject({ value: false });
+    expect(frames.filter((m: HostMsg) => m.type === "startupStatus").at(-1)).toMatchObject({ stage: null });
+    expect(sidebar.focused.startup).toBeUndefined();
+  });
   it.each(["grok", "codex", "claude", "muse"] as const)("uses a known %s replay count and clears on teardown", (provider) => {
     const sidebar = makeSidebar("/repo");
     const session = sidebar.focused; session.provider = provider; session.activeSessionId = "counted";
