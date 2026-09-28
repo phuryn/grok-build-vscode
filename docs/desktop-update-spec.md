@@ -19,7 +19,7 @@ The check lists GitHub Releases (`DESKTOP_RELEASES_API_URL`) and
 `noticeIfUpdateAvailable` picks the newest non-draft release that carries a
 desktop installer (`isDesktopInstallerAsset`: anchored
 `-mac-arm64.dmg` / `-mac-x64.dmg` / `-mac-arm64.zip` / `-mac-x64.zip` /
-`-win-x64.exe` / `-linux-x86_64.AppImage`; `.blockmap` and `.vsix` do not count). Pre-releases count.
+`-win-x64.exe` / `-linux-x86_64.AppImage` / `-linux-amd64.deb`; `.blockmap` and `.vsix` do not count). Pre-releases count.
 The running version is compared with `isNewerVersion` (numeric semver, not
 string order).
 
@@ -51,13 +51,23 @@ Do **not** use the GitHub provider. Point `electron-updater` at:
 Those paths are `desktopUpdateFeedBase` / `desktopUpdateFeedConfig` in
 `src/desktop/app-update.ts`.
 
-**Linux shares the cloud host's artifact, and that is safe without a check.**
+**Linux shares the cloud host's AppImage, and that is safe without a check.**
 One AppImage is attached per release; cloud machines extract it and exec
 `squashfs-root`, desks run the file. `AppImageUpdater.isUpdaterActive()`
 returns false when `process.env.APPIMAGE` is unset, which is exactly the
-extracted case — so a cloud machine's `checkForUpdates()` resolves null with a
+extracted case, so a cloud machine's `checkForUpdates()` resolves null with a
 log line, emits no error and posts no notice, and cannot self-update out from
-under the relay's `refresh-sprite-hosts.mjs`. Only a desk run reaches the feed.
+under the relay's `refresh-sprite-hosts.mjs`. Only a desk run of the AppImage
+reaches the feed.
+
+A `.deb` is attached as well. electron-builder writes `resources/package-type`
+with the contents `deb` into that package only, and only after the AppImage
+has already been sealed (`FpmTarget` is a sync target, the AppImage target is
+async, and `linux.target` lists AppImage first). electron-updater on Linux
+reads that file and selects `DebUpdater`, which downloads the `.deb` from
+`files[]` and installs it with `dpkg -i`. An AppImage has no `package-type`
+file, so it stays on `AppImageUpdater` and ignores the deb entry. Both
+updaters filter `latest-linux.yml` by extension.
 
 Before the Linux channel existed the client fell back to the phase-1 notice,
 which fired anyway — `pickLatestDesktopRelease` matches the mac and Windows
@@ -102,8 +112,12 @@ list **both** zip archives (`…-mac-arm64.zip` and `…-mac-x64.zip`).
 Squirrel.Mac updates from the zip, not the dmg. A yml that only has one
 arch is a failed build, not a feed the relay should publish. Linux
 `latest-linux.yml` must list `Grok-Build-Desktop-<version>-linux-x86_64.AppImage`
-— note `x86_64`, not the `x64` every other target uses. An AppImage embeds its
-own block map, so there is no sibling `.blockmap` to require or exclude.
+as `path` (note `x86_64`, not the `x64` every other target uses) and must also
+list `Grok-Build-Desktop-<version>-linux-amd64.deb` in `files`. The legacy
+`path` field stays the AppImage so a client that does not filter by extension
+does not install the deb as if it were the AppImage. Rewrite every `files[]`
+URL, including the deb. An AppImage embeds its own block map, so there is no
+sibling `.blockmap` to require or exclude. The deb has none either.
 
 A vsix-only release is not a desktop latest. Keep serving the previous
 installer-bearing yml until a new desktop build is attached.

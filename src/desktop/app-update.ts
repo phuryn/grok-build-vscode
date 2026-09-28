@@ -12,9 +12,9 @@
  * Anchored installer asset suffixes. `.exe.blockmap` / `.zip.blockmap` must
  * never match.
  *
- * `x86_64` is electron-builder's AppImage arch spelling; every other target
- * uses the short `x64`. A pattern that assumed otherwise matches nothing and
- * fails silently.
+ * `x86_64` is electron-builder's AppImage arch spelling. The Debian package
+ * uses `amd64`. Every other target uses the short `x64`. A pattern that
+ * assumed otherwise matches nothing and fails silently.
  */
 export const DESKTOP_INSTALLER_SUFFIXES = [
   "-mac-arm64.dmg",
@@ -23,6 +23,7 @@ export const DESKTOP_INSTALLER_SUFFIXES = [
   "-mac-x64.zip",
   "-win-x64.exe",
   "-linux-x86_64.AppImage",
+  "-linux-amd64.deb",
 ] as const;
 
 export type Semver = { major: number; minor: number; patch: number };
