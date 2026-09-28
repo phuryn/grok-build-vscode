@@ -226,7 +226,9 @@ describe("one live workflow surface", () => {
     expect(card(h).querySelector(".run-progress-actions")!.lastElementChild).toBe(toggle(h));
   });
 
-  it("uses the same markers for header, steps and agents, with arrows inside each step", () => {
+  // The track used to be arrows between steps, drawn like one more row of the
+  // list. It is rings on a track now; the marker vocabulary is unchanged.
+  it("uses the same markers for header, steps and agents, with rings on a track", () => {
     const h = boot();
     const style = h.doc.createElement("style");
     style.textContent = readFileSync(new URL("../media/chat.css", import.meta.url), "utf8");
@@ -237,12 +239,16 @@ describe("one live workflow surface", () => {
     expand(h);
     const steps = [...pin(h).querySelectorAll(".workflow-phase")];
     expect(steps.map(step => step.querySelector(".workflow-state-marker")?.getAttribute("data-state"))).toEqual(states);
-    expect(pin(h).querySelectorAll(".workflow-phase-arrow svg")).toHaveLength(states.length - 1);
-    expect(steps.slice(0, -1).every(step => step.lastElementChild?.classList.contains("workflow-phase-arrow"))).toBe(true);
-    expect(steps.at(-1)?.querySelector(".workflow-phase-arrow")).toBeNull();
+    expect(steps.every(step => step.querySelector(".workflow-state-marker")!.classList.contains("workflow-step-ring"))).toBe(true);
+    expect(pin(h).querySelector(".workflow-phase-arrow")).toBeNull();
+    // Seven steps fold: the current one with a neighbour each side, the rest in "+4".
+    const slots = [...pin(h).querySelector(".workflow-phases")!.children].filter(slot => !hidden(slot));
+    expect(slots.map(slot => [slot.textContent, (slot as HTMLElement).dataset.track]))
+      .toEqual([["done", "none"], ["active", "done"], ["pending", "todo"], ["+4", "todo"]]);
     expect(h.window.getComputedStyle(steps[1].querySelector(".workflow-phase-label") as any).fontWeight).toBe("700");
     expect(steps[1].getAttribute("aria-current")).toBe("step");
-    expect(steps.every(step => step.getAttribute("aria-label") === step.getAttribute("title"))).toBe(true);
+    const rings = steps.map(step => step.querySelector(".workflow-step")!);
+    expect(rings.every(ring => ring.tagName === "BUTTON" && ring.getAttribute("aria-label") === ring.getAttribute("title"))).toBe(true);
     expect(pin(h).querySelector(".delegation-section-label")).toBeNull();
     expect([...pin(h).querySelectorAll(".workflow-agent-toggle")].map(row => row.firstElementChild?.getAttribute("data-state"))).toEqual(states);
     expect(pin(h).querySelector("strong.workflow-agent-name")).toBeNull();
@@ -346,23 +352,33 @@ describe("approved workflow states", () => {
   });
   // A row printed the label AND the phase, and the label almost always already
   // contained the phase: "pick Pick", "object Object", "read:readme Read".
-  // One composed name, repeating nothing.
+  // One composed name, repeating nothing. Under its step's heading the step is
+  // already said, so the row keeps only what the label adds; with no declared
+  // steps (and in "Other") the composed name still carries it.
   it.each([
-    ["pick", "Pick", "Pick"],
-    ["object", "Object", "Object"],
-    ["read:readme", "Read", "Read / readme"],
-    ["read:agents", "Read", "Read / agents"],
-    ["researcher-0", "Research", "researcher-0"],
-    ["research-planner", "Plan", "Plan / research-planner"],
+    ["pick", "Pick", "Pick", "pick"],
+    ["object", "Object", "Object", "object"],
+    ["read:readme", "Read", "Read / readme", "readme"],
+    ["read:agents", "Read", "Read / agents", "agents"],
+    ["researcher-0", "Research", "researcher-0", "researcher-0"],
+    ["research-planner", "Plan", "Plan / research-planner", "research-planner"],
     // A remainder beginning with s: an earlier regex class lost its backslash
     // and ate the letter, rendering "Report / ynthesizer".
-    ["report-synthesizer", "Report", "Report / synthesizer"],
-    ["verify:stale", "Verify", "Verify / stale"],
-    ["plan:summary", "Plan", "Plan / summary"],
-  ])("names agent %s in phase %s as %s", (label, phase, expected) => {
+    ["report-synthesizer", "Report", "Report / synthesizer", "synthesizer"],
+    ["verify:stale", "Verify", "Verify / stale", "stale"],
+    ["plan:summary", "Plan", "Plan / summary", "summary"],
+  ])("names agent %s in phase %s as %s, and %s under its step", (label, phase, flat, grouped) => {
+    const agents = [{ agent_id: "a", label, phase, state: "done", tokens_used: 10 }];
     const h = boot();
-    send(h, { agents: [{ agent_id: "a", label, phase, state: "done", tokens_used: 10 }] }); expand(h);
-    expect(pin(h).querySelector(".workflow-agent-name")!.textContent).toBe(expected);
+    send(h, { agents, phases: undefined, current_phase: undefined }); expand(h);
+    expect(pin(h).querySelector(".workflow-agent-name")!.textContent).toBe(flat);
+    send(h, { agents, phases: [{ title: phase, state: "active" }], current_phase: phase });
+    expect(pin(h).querySelector(".workflow-group-title")!.textContent).toBe(phase);
+    expect(pin(h).querySelector(".workflow-group .workflow-agent-name")!.textContent).toBe(grouped);
+    send(h, { agents, phases: [{ title: "Elsewhere", state: "active" }], current_phase: "Elsewhere" });
+    const other = [...pin(h).querySelectorAll(".workflow-group")].at(-1)!;
+    expect(other.querySelector(".workflow-group-title")!.textContent).toBe("Other");
+    expect(other.querySelector(".workflow-agent-name")!.textContent).toBe(flat);
   });
   it("shows one line per agent and toggles each detail independently", () => {
     const h = boot();
@@ -573,6 +589,143 @@ describe("workflow evidence", () => {
   });
 });
 
+describe("the process on top, agents under their step", () => {
+  const slots = (h: Harness) => [...pin(h).querySelector(".workflow-phases")!.children].filter(slot => !hidden(slot)) as HTMLElement[];
+  const groups = (h: Harness) => [...pin(h).querySelectorAll(".workflow-group")] as HTMLElement[];
+  const group = (h: Harness, title: string) => groups(h).find(g => g.querySelector(".workflow-group-title")!.textContent === title)!;
+  const meta = (g: Element) => g.querySelector(".workflow-group-meta")!.textContent;
+  const open = (g: Element) => !hidden(g.querySelector(".workflow-group-rows"));
+  const names = (g: Element) => [...g.querySelectorAll(".workflow-agent-name")].map(el => el.textContent);
+  const agents = [
+    { agent_id: "p", label: "plan:outline", phase: "Plan", state: "done", tokens_used: 8200 },
+    { agent_id: "r1", label: "research:web", phase: "Research", state: "running", tokens_used: 1200 },
+    { agent_id: "r2", label: "research:docs", phase: "Research", state: "running", tokens_used: 0 },
+  ];
+
+  it("draws done, running, next and failed rings in their own band, the track green up to the step in progress", () => {
+    const h = boot();
+    send(h, { agents }); expand(h);
+    const band = pin(h).querySelector(".workflow-steps")!;
+    expect(band.closest(".workflow-expanded")).not.toBeNull();
+    expect(band.nextElementSibling?.classList.contains("workflow-agents")).toBe(true);
+    expect(slots(h).map(s => [s.textContent, s.dataset.state, s.dataset.track, s.getAttribute("aria-current")]))
+      .toEqual([["Plan", "done", "none", null], ["Research", "active", "done", "step"],
+        ["Verify", "pending", "todo", null], ["Report", "pending", "todo", null]]);
+    send(h, { agents, status: "failed" });
+    // A failed run lands in the transcript report.
+    const report = card(h);
+    expect([...report.querySelectorAll(".workflow-phase")].map(s => s.querySelector(".workflow-step-ring")!.getAttribute("data-state")))
+      .toEqual(["done", "failed", "pending", "pending"]);
+    const css = readFileSync(new URL("../media/chat.css", import.meta.url), "utf8");
+    expect(css).toMatch(/\.workflow-step \.workflow-step-ring\[data-state="failed"\] \{[^}]*background: transparent/);
+    expect(css).toMatch(/\.workflow-phases \[data-track="done"\]::before \{ background: var\(--vscode-charts-green/);
+  });
+
+  it("folds a long run around the step in progress into at most five slots", () => {
+    const h = boot();
+    const titles = ["Snapshot", "Plan", "Migrate", "Backfill", "Verify", "Swap", "Clean"];
+    const phases = titles.map((title, i) => ({ title, state: i < 4 ? "done" : i === 4 ? "active" : "pending" }));
+    send(h, { phases, current_phase: "Verify", agents: [] }); expand(h);
+    expect(slots(h).map(s => [s.querySelector(".workflow-phase-label")!.textContent, s.dataset.state]))
+      .toEqual([["+3 done", "done"], ["Backfill", "done"], ["Verify", "active"], ["Swap", "pending"], ["+1", "pending"]]);
+    expect(slots(h)[0].querySelector(".workflow-step")!.getAttribute("aria-label")).toBe("3 more steps: Snapshot, Plan, Migrate");
+    // Phone width is the grid's business: equal columns that may shrink to
+    // nothing, and labels that ellipsize rather than wrap.
+    const css = readFileSync(new URL("../media/chat.css", import.meta.url), "utf8");
+    expect(css).toMatch(/\.workflow-phase-label \{[^}]*text-overflow: ellipsis;[^}]*white-space: nowrap/);
+    // Five or fewer steps are never folded.
+    send(h, { phases: phases.slice(0, 5), current_phase: "Verify" });
+    expect(slots(h).map(s => s.textContent)).toEqual(titles.slice(0, 5));
+  });
+
+  it("opens and scrolls to a step's group from its ring, including a folded one", () => {
+    const h = boot();
+    const scrolled: string[] = [];
+    (h.window as any).HTMLElement.prototype.scrollIntoView = function () { scrolled.push(this.querySelector(".workflow-group-title").textContent); };
+    send(h, { agents }); expand(h);
+    expect(open(group(h, "Plan"))).toBe(false);
+    const ring = slots(h)[0].querySelector<HTMLButtonElement>(".workflow-step")!;
+    expect(ring.tagName).toBe("BUTTON");
+    expect(ring.tabIndex).toBe(0);
+    click(h.window, ring);
+    expect(open(group(h, "Plan"))).toBe(true);
+    expect(group(h, "Plan").querySelector(".workflow-group-head")!.getAttribute("aria-expanded")).toBe("true");
+    expect(scrolled).toEqual(["Plan"]);
+    // The choice holds through the next frame.
+    send(h, { agents });
+    expect(open(group(h, "Plan"))).toBe(true);
+    const titles = ["A", "B", "C", "D", "E", "F", "G"];
+    send(h, { phases: titles.map((title, i) => ({ title, state: i < 4 ? "done" : i === 4 ? "active" : "pending" })), current_phase: "E",
+      agents: [{ agent_id: "a", label: "a-1", phase: "A", state: "done", tokens_used: 5 }] });
+    click(h.window, slots(h)[0].querySelector(".workflow-step")!);
+    expect(open(group(h, "A"))).toBe(true);
+    expect(scrolled.at(-1)).toBe("A");
+  });
+
+  it("groups agents under their step, strips the step from their labels, and folds a finished step", () => {
+    const h = boot();
+    send(h, { agents }); expand(h);
+    expect(groups(h).map(g => g.querySelector(".workflow-group-title")!.textContent)).toEqual(["Plan", "Research", "Verify", "Report"]);
+    expect(names(group(h, "Research"))).toEqual(["web", "docs"]);
+    expect(names(group(h, "Plan"))).toEqual(["outline"]);
+    expect(open(group(h, "Research"))).toBe(true);
+    expect(meta(group(h, "Research"))).toBe("2 agents");
+    expect(open(group(h, "Plan"))).toBe(false);
+    expect(meta(group(h, "Plan"))).toBe("1 agent · done · 8.2K tokens");
+    expect([meta(group(h, "Verify")), group(h, "Verify").querySelectorAll(".workflow-agent").length, open(group(h, "Verify"))])
+      .toEqual(["not started", 0, false]);
+    expect((group(h, "Verify").querySelector(".workflow-group-head") as HTMLButtonElement).disabled).toBe(true);
+    // A heading opens and closes its own rows, and that choice holds.
+    click(h.window, group(h, "Research").querySelector(".workflow-group-head")!);
+    expect(open(group(h, "Research"))).toBe(false);
+    send(h, { agents });
+    expect(open(group(h, "Research"))).toBe(false);
+  });
+
+  it("says how long a finished step took when this view saw it start and finish", () => {
+    const h = boot();
+    send(h, { elapsed_ms: 1_000, current_phase: "Plan", phases: [{ title: "Plan", state: "active" }, { title: "Research", state: "pending" }],
+      agents: [{ ...agents[0], state: "running" }] });
+    send(h, { elapsed_ms: 63_000, current_phase: "Research", phases: [{ title: "Plan", state: "done" }, { title: "Research", state: "active" }],
+      agents: [agents[0], agents[1]] });
+    expand(h);
+    expect(meta(group(h, "Plan"))).toBe("1 agent · done · 1:02 · 8.2K tokens");
+    expect(open(group(h, "Plan"))).toBe(false);
+  });
+
+  it("puts an agent whose step is unknown in a last Other group, never a guessed one", () => {
+    const h = boot();
+    send(h, { phases: [...base.phases, { title: "Research", state: "pending" }], agents: [
+      { agent_id: "x", label: "stray", phase: "Mystery", state: "running" },
+      { agent_id: "y", label: "loose", state: "done" },
+      // Two steps are called Research: which one is not known.
+      { agent_id: "z", label: "research:dup", phase: "Research", state: "running" },
+    ] });
+    expand(h);
+    expect(groups(h).map(g => g.querySelector(".workflow-group-title")!.textContent))
+      .toEqual(["Plan", "Research", "Verify", "Report", "Research", "Other"]);
+    const other = groups(h).at(-1)!;
+    expect(names(other)).toEqual(["Mystery / stray", "loose", "Research / dup"]);
+    expect([other.dataset.state, open(other), meta(other)]).toEqual(["active", true, "3 agents"]);
+    expect(groups(h).slice(0, -1).every(g => !g.querySelector(".workflow-agent"))).toBe(true);
+  });
+
+  it("keeps a run with no declared steps as the flat agent list (Muse)", () => {
+    const h = boot();
+    dispatch(h.window, { type: "runProgress", update: { kind: "workflow", id: "muse", title: "plumbing-test", phase: "running", done: false,
+      controlsAvailable: false, agentProgressDots: true,
+      agents: [{ label: "Agent 1", state: "completed" }, { label: "Agent 2", state: "active" }] } });
+    expand(h);
+    expect(hidden(pin(h).querySelector(".workflow-steps"))).toBe(true);
+    expect(pin(h).querySelector(".workflow-group, .workflow-step")).toBeNull();
+    const roster = pin(h).querySelector(".workflow-roster")!;
+    expect([...roster.children].map(row => [row.className, row.querySelector(".workflow-agent-name")!.textContent,
+      row.querySelector(".workflow-agent-state")!.textContent])).toEqual([
+      ["workflow-agent", "Agent 1", "done"], ["workflow-agent", "Agent 2", "running"]]);
+    expect([...pin(h).querySelectorAll(".workflow-dot")].map(d => d.getAttribute("data-state"))).toEqual(["done", "active"]);
+  });
+});
+
 describe("reported capabilities", () => {
   it("uses reported order, ids and current phase through renames", () => {
     const h = boot(); send(h);
@@ -620,11 +773,15 @@ describe("reported capabilities", () => {
     expect(pin(h).querySelector(".workflow-spend")!.textContent).toBe("1,234 agents");
     expect(hidden(pin(h).querySelector(".run-progress-detail"))).toBe(true);
   });
-  it("keeps long phase names complete and ordered in the expanded strip", () => {
+  // The stepper folds a long run; the full, ordered list of steps is the step
+  // groups below it, and each ring keeps its whole name on its tooltip.
+  it("keeps long phase names complete and ordered in the expanded card", () => {
     const h = boot();
     const phases = Array.from({ length: 12 }, (_, i) => ({ title: `Extended research phase ${i} with a long title`, state: i === 7 ? "active" : "pending" }));
-    send(h, { phases, current_phase: phases[7].title }); expand(h);
-    expect([...pin(h).querySelectorAll(".workflow-phase")].map((p) => p.textContent)).toEqual(phases.map((p) => p.title));
+    send(h, { phases, current_phase: phases[7].title, agents: [] }); expand(h);
+    expect([...pin(h).querySelectorAll(".workflow-group-title")].map((p) => p.textContent)).toEqual(phases.map((p) => p.title));
+    expect([...pin(h).querySelectorAll(".workflow-phase")].map((p) => p.querySelector(".workflow-step")!.getAttribute("title")))
+      .toEqual(phases.map((p, i) => `${p.title}: ${i === 7 ? "current" : "pending"}`));
     expect(pin(h).querySelectorAll(".workflow-phase")[7].getAttribute("aria-current")).toBe("step");
   });
   it("hides affordances when the latest snapshot omits their fields", () => {
@@ -730,7 +887,9 @@ describe("reachable controls and tool fallback", () => {
     const css = readFileSync(new URL("../media/chat.css", import.meta.url), "utf8");
     expect(css.match(/\.workflow-pin \{([^}]+)\}/)![1]).not.toMatch(/position:\s*(fixed|absolute)/);
     expect(css).toMatch(/\.workflow-pin-runs\s*\{[^}]*overflow: auto/);
-    expect(css).toMatch(/\.workflow-phases\s*\{[^}]*flex-wrap: wrap/);
+    // The stepper never wraps: a long run folds into five equal slots instead.
+    expect(css).toMatch(/\.workflow-phases\s*\{[^}]*grid-auto-flow: column[^}]*grid-auto-columns: minmax\(0, 1fr\)/);
+    expect(css.match(/\.workflow-phases\s*\{[^}]*\}/)![0]).not.toMatch(/wrap/);
     expect(css).toMatch(/\.workflow-agent-toggle\s*\{[^}]*white-space: nowrap/);
     expect(css.match(/\.workflow-dot[^}]+}/g)!.join("")).not.toMatch(/animation|transition/);
   });

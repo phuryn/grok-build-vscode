@@ -1863,7 +1863,12 @@ describe("tab strip structure follows the overflow design", () => {
 
     const chip = h.document.querySelector(".gfp-overflow-chip") as HTMLButtonElement | null;
     expect(chip).toBeTruthy();
-    expect(chip!.textContent).toBe("…");
+    // How many files it holds, and a drop-down chevron: never the bare "…"
+    // that sat a thumb's reach from the viewer's own "⋯" menu on a phone.
+    expect(chip!.textContent).toBe("2");
+    expect(chip!.querySelector(".gfp-overflow-count")?.textContent).toBe("2");
+    expect(chip!.querySelector("svg path")?.getAttribute("d")).toBe("m6 9 6 6 6-6");
+    expect(chip!.getAttribute("aria-label")).toBe("2 more open files");
     expect(chip!.title).toContain("notes.md");
     expect(chip!.title).toContain("a.ts");
     expect(chip!.title).not.toContain("b.ts");
@@ -1931,6 +1936,15 @@ describe("tab strip structure follows the overflow design", () => {
     expect(names).toEqual(["a.ts", "b.ts"]);
     expect(h.document.querySelector(".gfp-tab-active .gfp-tab-name")?.textContent).toBe("b.ts");
     expect(h.document.querySelector(".gfp-overflow-menu")).toBeNull();
+    // The chip's count follows what it holds after a close, not what it held.
+    // (The forced plan still hides both remaining indexes.)
+    h.panel._forceStripPlan(planStrip({
+      stripWidth: 80, titleWidth: 80, titleIconWidth: 24, trailingWidth: 0, tabCount: 2, activeIndex: 1,
+      tabFullWidths: [120, 120], tabIconWidths: [32, 32], chipWidth: 36,
+    }));
+    const chip = h.document.querySelector(".gfp-overflow-chip");
+    expect({ chip: chip?.textContent ?? null, label: chip?.getAttribute("aria-label") ?? null })
+      .toEqual({ chip: "1", label: "1 more open file" });
   });
 
   it("marks the title as selected in treeMode and not while a file is showing", async () => {

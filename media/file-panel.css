@@ -343,7 +343,7 @@ body.desk-rail-collapsed .desk-rail-open-btn { display: inline-flex; }
 
 /* Something behind the chip is unsaved. Same dot the tabs and the menu rows
    use, in the corner rather than in the flow, because the chip's content is
-   the ellipsis and a second glyph beside it would read as two files. */
+   the count and a second glyph beside it would read as two files. */
 .gfp-overflow-chip-dirty::after {
   content: "•";
   position: absolute;
@@ -353,15 +353,17 @@ body.desk-rail-collapsed .desk-rail-open-btn { display: inline-flex; }
   color: var(--tdiff-mod-line, #d7ba7d);
 }
 /* The chip IS a tab (owner): same cell chrome as an idle tab — full height,
-   idle-tab tone, hover — holding "…" where a name would sit. The edges it used
-   to draw went with every other tab's: one idiom, and the idiom is spacing
-   plus an underline on whatever is current. */
+   idle-tab tone, hover — holding how many files it hides, and a drop-down
+   chevron, where a name would sit. The edges it used to draw went with every
+   other tab's: one idiom, and the idiom is spacing plus an underline on
+   whatever is current. */
 .gfp-overflow-chip {
   position: relative;
   display: flex;
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
+  gap: 3px;
   align-self: stretch;
   min-width: 40px;
   padding: 0 10px;
@@ -369,12 +371,13 @@ body.desk-rail-collapsed .desk-rail-open-btn { display: inline-flex; }
   background: transparent;
   color: var(--vscode-descriptionForeground, #999);
   font: inherit;
-  font-size: 16px;
+  font-size: 13px;
   font-weight: 600;
   line-height: 1;
-  letter-spacing: 0.08em;
+  font-variant-numeric: tabular-nums;
   cursor: pointer;
 }
+.gfp-overflow-chip svg { width: 12px; height: 12px; flex: none; }
 .gfp-overflow-chip:hover { background: var(--gfp-hover); color: inherit; }
 .gfp-overflow-item {
   display: flex;
