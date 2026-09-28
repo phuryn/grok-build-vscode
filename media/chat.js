@@ -1116,7 +1116,6 @@
     // neighbour, so the pair reads as one row of menu chrome rather than one
     // outline and one filled mark arguing about weight.
     shapes: `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.3 10a.7.7 0 0 1-.626-1.079L11.4 3a.7.7 0 0 1 1.198-.043L16.3 8.9a.7.7 0 0 1-.572 1.1Z"/><rect x="3" y="14" width="7" height="7" rx="1"/><circle cx="17.5" cy="17.5" r="3.5"/></svg>`,
-    arrowRight: `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14m-7-7 7 7-7 7"/></svg>`,
     pin: `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="m5 17 2-7V5l-2-2h14l-2 2v5l2 7Z"/></svg>`,
     // Same Lucide pin path with a filled head (outline stroke kept for the needle).
     pinFilled: `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="m5 17 2-7V5l-2-2h14l-2 2v5l2 7Z" fill="currentColor"/></svg>`,
@@ -2684,12 +2683,16 @@
     popover.style.bottom = (unzoomClientPx(composerRect.bottom - btnRect.top, z) + 4) + "px";
     popover.style.left = unzoomClientPx(btnRect.left - composerRect.left, z) + "px";
     popover.style.right = "auto";
+    // A menu pushed back from the right keeps the gap positionDropdownPopover
+    // keeps. On a phone the composer spans the screen, so a clamp to the
+    // composer's edge put the menu flush against the glass.
+    const EDGE = 6;
     requestAnimationFrame(() => {
       const pw = unzoomClientPx(popover.getBoundingClientRect().width, z);
       const leftOffset = unzoomClientPx(btnRect.left - composerRect.left, z);
       const parentW = unzoomClientPx(composerRect.width, z);
-      if (leftOffset + pw > parentW) {
-        popover.style.left = Math.max(0, parentW - pw) + "px";
+      if (leftOffset + pw > parentW - EDGE) {
+        popover.style.left = Math.max(EDGE, parentW - pw - EDGE) + "px";
       }
     });
   }
@@ -14404,6 +14407,52 @@
     return `${phase} / ${label}`;
   }
 
+  // Under its step's heading a row says only what its label adds: the step is
+  // already printed above it. A label that IS the step keeps the label.
+  function workflowAgentNameInStep(agent) {
+    const full = workflowAgentName(agent);
+    const phase = String(agent.phase || "").trim();
+    if (phase && full.startsWith(`${phase} / `)) return full.slice(phase.length + 3);
+    return full === phase ? String(agent.label || "").trim() || phase : full;
+  }
+
+  const WORKFLOW_TERMINAL_STEP = /^(done|complete|completed|failed|cancelled|stopped)$/;
+  const WORKFLOW_DONE_STEP = /^(done|complete|completed)$/;
+
+  // Position and state are both reported fields. Never guess completion from
+  // an index, or select an ambiguous name as the current step. The key names
+  // a step across frames: its id, else its title and which repeat of it.
+  function workflowPhaseStates(u) {
+    const phases = u.phases || [];
+    const reference = u.currentPhaseId || u.currentPhase;
+    const ids = reference ? phases.filter((p) => p.id === reference) : [];
+    const matches = u.currentPhaseId || ids.length ? ids : phases.filter((p) => reference && p.title === reference);
+    const repeats = new Map();
+    return phases.map((phase) => {
+      const atPosition = matches.length === 1 ? phase === matches[0] : !reference && phase.state === "active";
+      const reportedTerminal = WORKFLOW_TERMINAL_STEP.test(phase.state || "");
+      const current = !u.done && !reportedTerminal && atPosition;
+      // current_phase survives completion. It locates the final step; it must
+      // not revive it, nor leave an active step in a terminal transcript card.
+      const state = u.done && !reportedTerminal && (atPosition || phase.state === "active" || (!phase.state && !u.failed && !u.cancelled))
+        ? u.failed ? "failed" : u.cancelled ? "cancelled" : "done"
+        : current ? "active" : phase.state || "unknown";
+      const repeat = repeats.get(phase.title) || 0;
+      repeats.set(phase.title, repeat + 1);
+      return { phase, state, current, key: phase.id ? `id:${phase.id}` : `title:${phase.title}#${repeat}` };
+    });
+  }
+
+  // Which declared step an agent ran in, only when its reported phase names
+  // exactly one of them. Anything else goes under "Other", never a guess.
+  function workflowAgentStepIndex(agent, steps) {
+    const ref = String(agent.phase || "").trim();
+    if (!ref) return -1;
+    const byId = steps.filter((s) => s.phase.id && s.phase.id === ref);
+    const hits = byId.length ? byId : steps.filter((s) => String(s.phase.title).trim() === ref);
+    return hits.length === 1 ? steps.indexOf(hits[0]) : -1;
+  }
+
   // The live lifecycle word, humanized. An empty phase means ordinarily
   // running: the CLI only fills it once something has happened to the run.
   function workflowLiveStatus(update) {
@@ -14569,6 +14618,160 @@
     messagesEl.scrollTop = scrollTop;
   }
 
+  // The open card draws the run as rings on a track. A long run keeps the
+  // header's rule -- the step in progress with one on each side -- and folds
+  // the steps outside that window into a "+N done" ring before it and a "+N"
+  // ring after it, so five slots at most ever share a phone's width.
+  const WORKFLOW_STEPPER_SLOTS = 5;
+
+  function windowWorkflowSteps(strip, steps, record) {
+    const items = [...strip.children];
+    let start = 0;
+    let end = items.length;
+    if (items.length > WORKFLOW_STEPPER_SLOTS) {
+      const find = (test) => steps.findIndex(test);
+      let at = find((s) => s.current || s.state === "active");
+      if (at < 0) at = find((s) => s.state === "failed");
+      if (at < 0) at = find((s) => !WORKFLOW_TERMINAL_STEP.test(s.state));
+      if (at < 0) at = steps.length - 1;
+      start = Math.max(0, Math.min(at - 1, steps.length - 3));
+      end = start + 3;
+      items.forEach((item, i) => { item.hidden = i < start || i >= end; });
+    }
+    const fold = (from, to) => {
+      const folded = steps.slice(from, to);
+      const done = folded.every((s) => WORKFLOW_DONE_STEP.test(s.state));
+      const state = done ? "done" : folded.some((s) => s.state === "failed") ? "failed" : "pending";
+      const item = document.createElement("li");
+      item.className = "workflow-step-more";
+      item.dataset.state = state;
+      const button = workflowText(item, "workflow-step", "", "button");
+      button.type = "button";
+      button.title = `${folded.length} more ${folded.length === 1 ? "step" : "steps"}: ${folded.map((s) => s.phase.title).join(", ")}`;
+      button.setAttribute("aria-label", button.title);
+      workflowMarker(button, state).classList.add("workflow-step-ring");
+      workflowText(button, "workflow-phase-label", `+${folded.length}${done ? " done" : ""}`, "span");
+      button.onclick = () => openWorkflowStep(button, record, folded[0].key);
+      return item;
+    };
+    if (start > 0) strip.insertBefore(fold(0, start), items[0]);
+    if (end < items.length) strip.appendChild(fold(end, items.length));
+    // The track fills green into a slot once the slot before it is done.
+    let previous = null;
+    for (const slot of strip.children) {
+      if (slot.hidden) continue;
+      slot.dataset.track = !previous ? "none" : WORKFLOW_DONE_STEP.test(previous.dataset.state || "") ? "done" : "todo";
+      previous = slot;
+    }
+  }
+
+  // A ring opens its step's group below and brings it into view. The group is
+  // found in whichever surface holds the run now: pinning moves the body.
+  function openWorkflowStep(button, record, key) {
+    const body = button.closest(".workflow-expanded");
+    const group = body && [...body.querySelectorAll(".workflow-group")].find((g) => g._groupKey === key);
+    if (!group) return;
+    if (group._hasRows) {
+      record.groupOpen.set(key, true);
+      applyWorkflowGroupOpen(group, record);
+    }
+    if (typeof group.scrollIntoView === "function") group.scrollIntoView({ block: "nearest" });
+  }
+
+  // Finished steps fold to their heading; the step in progress stays open. A
+  // choice made by hand holds for the run, whichever surface shows it.
+  function applyWorkflowGroupOpen(item, record) {
+    const chosen = record.groupOpen.get(item._groupKey);
+    const open = item._hasRows && (chosen === undefined ? item._defaultOpen : chosen);
+    item._open = open;
+    item.classList.toggle("is-open", open);
+    const head = item.querySelector(".workflow-group-head");
+    head.disabled = !item._hasRows;
+    if (item._hasRows) head.setAttribute("aria-expanded", String(open));
+    else head.removeAttribute("aria-expanded");
+    const chevron = head.querySelector(".workflow-group-chevron");
+    chevron.hidden = !item._hasRows;
+    chevron.classList.toggle("is-open", open);
+    item.querySelector(".workflow-group-rows").hidden = !open;
+  }
+
+  function workflowGroupMeta(record, group) {
+    const count = group.rows.length;
+    const terminal = WORKFLOW_TERMINAL_STEP.test(group.state);
+    if (!count) {
+      return terminal ? workflowAgentStateLabel(group.state) : group.state === "active" ? "running"
+        : /^(pending|queued|scheduled)$/.test(group.state) ? "not started" : "";
+    }
+    const parts = [`${formatCount(count)} ${count === 1 ? "agent" : "agents"}`];
+    if (terminal) {
+      parts.push(workflowAgentStateLabel(group.state));
+      const span = record.stepSpans.get(group.key);
+      if (span && span.start != null && span.end != null) parts.push(workflowElapsed(span.end - span.start));
+      const tokens = group.agents.filter((a) => Number.isFinite(a.tokensUsed));
+      if (tokens.length === group.agents.length && tokens.some((a) => a.tokensUsed > 0)) {
+        parts.push(`${compactTokens(tokens.reduce((sum, a) => sum + a.tokensUsed, 0))} tokens`);
+      }
+    }
+    return parts.join(" · ");
+  }
+
+  // Agents under the step they ran in. A row whose phase names no single
+  // declared step goes into a last "Other" group.
+  function renderWorkflowGroups(roster, record, steps, rows, stepOf) {
+    const agents = record.update.agents || [];
+    const groups = steps.map((step) => ({ key: step.key, title: step.phase.title, state: step.state, rows: [], agents: [] }));
+    const other = { key: "other", title: "Other", state: "unknown", rows: [], agents: [] };
+    rows.forEach((row, i) => {
+      const group = stepOf[i] >= 0 ? groups[stepOf[i]] : other;
+      group.rows.push(row);
+      group.agents.push(agents[i]);
+    });
+    if (other.rows.length) {
+      const states = other.agents.map((a) => workflowAgentState(a.state || ""));
+      other.state = states.includes("failed") ? "failed" : states.includes("active") ? "active"
+        : states.every((s) => s === "done") ? "done" : "unknown";
+      groups.push(other);
+    }
+    const existing = new Map([...roster.children].filter((g) => g._groupKey).map((g) => [g._groupKey, g]));
+    return groups.map((group) => {
+      let item = existing.get(group.key);
+      if (!item) {
+        item = document.createElement("li");
+        item.className = "workflow-group";
+        item._groupKey = group.key;
+        const head = workflowText(item, "workflow-group-head", "", "button");
+        head.type = "button";
+        workflowMarker(head, "unknown");
+        workflowText(head, "workflow-group-title", "", "span");
+        workflowText(head, "workflow-group-meta", "", "span");
+        const chevron = workflowText(head, "workflow-group-chevron", "", "span");
+        chevron.setAttribute("aria-hidden", "true");
+        chevron.innerHTML = ICON.chevronRight;
+        workflowText(item, "workflow-group-rows", "", "ul");
+        const target = item;
+        head.onclick = () => {
+          if (!target._hasRows) return;
+          record.groupOpen.set(target._groupKey, !target._open);
+          applyWorkflowGroupOpen(target, record);
+        };
+      }
+      item.dataset.state = group.state;
+      if (group.rows.length) delete item.dataset.empty;
+      else item.dataset.empty = "true";
+      const head = item.querySelector(".workflow-group-head");
+      head.querySelector(".workflow-state-marker").dataset.state = group.state;
+      head.querySelector(".workflow-group-title").textContent = group.title;
+      head.querySelector(".workflow-group-meta").textContent = workflowGroupMeta(record, group);
+      const list = item.querySelector(".workflow-group-rows");
+      for (const child of [...list.children]) if (!group.rows.includes(child)) child.remove();
+      group.rows.forEach((row, i) => { if (list.children[i] !== row) list.insertBefore(row, list.children[i] || null); });
+      item._hasRows = group.rows.length > 0;
+      item._defaultOpen = item._hasRows && !WORKFLOW_DONE_STEP.test(group.state);
+      applyWorkflowGroupOpen(item, record);
+      return item;
+    });
+  }
+
   function renderWorkflowSurface(el, record, reportHeader) {
     const u = record.update;
     if (!el.firstChild) {
@@ -14590,7 +14793,6 @@
     refreshWorkflowHeader(toggle, record);
     const strip = el.querySelector(".workflow-phases");
     const dots = toggle.querySelector(".workflow-dots");
-    strip.replaceChildren();
     dots.replaceChildren();
     const hasPhases = Array.isArray(u.phases) && u.phases.length;
     strip.hidden = !hasPhases;
@@ -14598,38 +14800,36 @@
     dots.hidden = !hasPhases;
     strip.setAttribute("aria-label", "Reported workflow phases");
     dots.setAttribute("aria-label", "Reported workflow steps");
-    // Position and state are both reported fields. Never guess completion from
-    // an index, or select an ambiguous name as the current step.
-    const phases = u.phases || [];
-    const reference = u.currentPhaseId || u.currentPhase;
-    const ids = reference ? phases.filter((p) => p.id === reference) : [];
-    const matches = u.currentPhaseId || ids.length ? ids : phases.filter((p) => reference && p.title === reference);
-    for (const phase of phases) {
-      const atPosition = matches.length === 1 ? phase === matches[0] : !reference && phase.state === "active";
-      const reportedTerminal = /^(done|complete|completed|failed|cancelled|stopped)$/.test(phase.state || "");
-      const current = !u.done && !reportedTerminal && atPosition;
-      // current_phase survives completion. It locates the final step; it must
-      // not revive it, nor leave an active step in a terminal transcript card.
-      const phaseState = u.done && !reportedTerminal && (atPosition || phase.state === "active" || (!phase.state && !u.failed && !u.cancelled))
-        ? u.failed ? "failed" : u.cancelled ? "cancelled" : "done"
-        : current ? "active" : phase.state || "unknown";
-      for (const [parent, className, label, tag] of [[strip, "workflow-phase", "", "li"], [dots, "workflow-dot workflow-state-marker", "", "span"]]) {
-        const item = workflowText(parent, className, label, tag);
-        item.dataset.state = phaseState;
-        if (phase.id) item.dataset.phaseId = phase.id;
-        item.title = `${phase.title}: ${current ? "current" : phaseState === "unknown" ? "state unavailable" : phaseState}`;
-        item.setAttribute("aria-label", item.title);
-        if (current) item.setAttribute("aria-current", "step");
-        if (parent === strip) {
-          workflowMarker(item, phaseState);
-          workflowText(item, "workflow-phase-label", phase.title, "span");
-          if (phase !== phases[phases.length - 1]) {
-            const arrow = workflowText(item, "workflow-phase-arrow", "", "span");
-            arrow.setAttribute("aria-hidden", "true");
-            arrow.innerHTML = ICON.arrowRight;
-          }
-        }
+    const steps = workflowPhaseStates(u);
+    const describe = (step) => `${step.phase.title}: ${step.current ? "current" : step.state === "unknown" ? "state unavailable" : step.state}`;
+    for (const step of steps) {
+      const dot = workflowText(dots, "workflow-dot workflow-state-marker", "", "span");
+      dot.dataset.state = step.state;
+      if (step.phase.id) dot.dataset.phaseId = step.phase.id;
+      dot.title = describe(step);
+      dot.setAttribute("aria-label", dot.title);
+      if (step.current) dot.setAttribute("aria-current", "step");
+    }
+    // Rebuilt only when what it draws changed, so a focused ring survives the
+    // frames a live run sends every few seconds.
+    const stripKey = JSON.stringify(steps.map((s) => [s.key, s.phase.title, s.state, s.current]));
+    if (strip.dataset.stepsKey !== stripKey) {
+      strip.dataset.stepsKey = stripKey;
+      strip.replaceChildren();
+      for (const step of steps) {
+        const item = workflowText(strip, "workflow-phase", "", "li");
+        item.dataset.state = step.state;
+        if (step.phase.id) item.dataset.phaseId = step.phase.id;
+        if (step.current) item.setAttribute("aria-current", "step");
+        const button = workflowText(item, "workflow-step", "", "button");
+        button.type = "button";
+        button.title = describe(step);
+        button.setAttribute("aria-label", button.title);
+        workflowMarker(button, step.state).classList.add("workflow-step-ring");
+        workflowText(button, "workflow-phase-label", step.phase.title, "span");
+        button.onclick = () => openWorkflowStep(button, record, step.key);
       }
+      windowWorkflowSteps(strip, steps, record);
     }
     if (!hasPhases && u.agentProgressDots && Array.isArray(u.agents)) {
       dots.hidden = !u.agents.length;
@@ -14677,9 +14877,11 @@
     // paused and resumable, so that agent is paused, not stopped.
     const runPaused = !u.done && /paus/i.test(u.phase || "");
     const shownState = (agent) => runPaused && /^(cancelled|canceled)$/.test(agent.state || "") ? "paused" : agent.state;
-    roster.hidden = !u.agents?.length;
+    // A stepped run lists every step, so it shows even before any agent does.
+    roster.hidden = !u.agents?.length && !hasPhases;
     el.querySelector(".workflow-agents").hidden = roster.hidden;
-    const existing = new Map([...roster.children].filter((row) => row._agentKey).map((row) => [row._agentKey, row]));
+    const existing = new Map([...roster.querySelectorAll(".workflow-agent")].filter((row) => row._agentKey).map((row) => [row._agentKey, row]));
+    const stepOf = (u.agents || []).map((agent) => hasPhases ? workflowAgentStepIndex(agent, steps) : -1);
     const rows = (u.agents || []).map((agent, i, agents) => {
       const key = workflowAgentKey(agent, agents);
       const row = existing.get(key) || document.createElement("li");
@@ -14720,14 +14922,16 @@
         };
       }
       row.querySelector(".workflow-state-marker").dataset.state = workflowAgentState(shownState(agent));
-      row.querySelector(".workflow-agent-name").textContent = workflowAgentName(agent);
+      row.querySelector(".workflow-agent-name").textContent = stepOf[i] >= 0 ? workflowAgentNameInStep(agent) : workflowAgentName(agent);
       row.querySelector(".workflow-agent-state").textContent = [agent.state ? workflowAgentStateLabel(shownState(agent)) : "",
         agent.tokensUsed > 0 ? `${compactTokens(agent.tokensUsed)} tokens` : ""].filter(Boolean).join(" · ");
       row.querySelector(".workflow-agent-activity").textContent = activity;
       return row;
     });
-    for (const child of [...roster.children]) if (!rows.includes(child)) child.remove();
-    rows.forEach((row, i) => { if (roster.children[i] !== row) roster.insertBefore(row, roster.children[i] || null); });
+    // A run that declares no steps (Muse) keeps the flat list of agents.
+    const listed = hasPhases ? renderWorkflowGroups(roster, record, steps, rows, stepOf) : rows;
+    for (const child of [...roster.children]) if (!listed.includes(child)) child.remove();
+    listed.forEach((item, i) => { if (roster.children[i] !== item) roster.insertBefore(item, roster.children[i] || null); });
 
     const actions = el.querySelector(".run-progress-actions");
     const paused = /paus/i.test(u.phase || "");
@@ -14880,7 +15084,7 @@
       appendTranscriptChild(el);
     }
     let record = el._workflow;
-    if (!record) record = el._workflow = { update, activity: new Map(), receivedAt: null, pin: null, expanded: false };
+    if (!record) record = el._workflow = { update, activity: new Map(), receivedAt: null, pin: null, expanded: false, stepSpans: new Map(), groupOpen: new Map() };
     const historical = state.replaying;
     const stale = Number.isFinite(update.revision) && Number.isFinite(record.update.revision) && update.revision < record.update.revision;
     if (!stale) {
@@ -14910,6 +15114,16 @@
       }
       record.activity = nextActivity;
       record.update = update;
+      // How long a step took, from the frames that saw it start and finish on
+      // the run's own clock. Nothing is shown for a step not seen doing both.
+      const clock = Number.isFinite(update.elapsedMs) ? update.elapsedMs
+        : !historical && record.startedAt != null ? Date.now() - record.startedAt : null;
+      if (clock != null) for (const step of workflowPhaseStates(update)) {
+        const span = record.stepSpans.get(step.key) || {};
+        if (step.state === "active" && span.start == null) span.start = clock;
+        else if (WORKFLOW_TERMINAL_STEP.test(step.state) && span.start != null && span.end == null) span.end = clock;
+        record.stepSpans.set(step.key, span);
+      }
     }
     renderWorkflowTranscript(el, record);
     syncWorkflowLaunchRows();

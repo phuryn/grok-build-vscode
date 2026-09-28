@@ -117,10 +117,16 @@ describe("header dots for long workflows", () => {
       .toEqual(["…", "done", "done", "done"]);
   });
 
+  // The stepper folds like the header dots; the full list of steps is the
+  // step groups under it.
   it("keeps the full list of steps inside the card", () => {
     const h = view();
     const card = workflow(h, "grok", "running", { phases: steps(["done", "active", ...Array(6).fill("pending")]) });
-    expect(card.querySelectorAll(".workflow-phases > li")).toHaveLength(8);
+    expect(card.querySelectorAll(".workflow-phases > .workflow-phase")).toHaveLength(8);
+    expect([...card.querySelectorAll(".workflow-phases > li")].filter(li => !(li as HTMLElement).hidden)
+      .map(li => li.textContent)).toEqual(["Step 1", "Step 2", "Step 3", "+5"]);
+    expect([...card.querySelectorAll(".workflow-group-title")].map(el => el.textContent))
+      .toEqual([...Array.from({ length: 8 }, (_, i) => `Step ${i + 1}`), "Other"]);
   });
 });
 

@@ -280,13 +280,29 @@ conversation stopped showing its history.
   state is unknown), **red** for failed, and a **grey** ring with a stroke for
   stopped. Before, the steps used text glyphs of different widths and no
   colour, so they did not visibly match the coloured dots in the header.
-- **Steps run across, with arrows.** The steps form one wrapping row with an
-  arrow after each step but the last, so a wrapped line never starts with an
-  arrow. The current step is bold, the next ones muted, a failed one red and a
-  stopped one struck through. The "Steps" and "Agents" labels are gone. Agent
-  names are in regular weight, with state and tokens muted on the right; an
-  agent that is blocked or waiting on a permission stays orange, because that
-  one needs the person.
+- **The process on top, as rings on a track.** An open card draws its steps
+  in their own band under the header: a ring per step, green filled for done,
+  a blue ring for the step in progress, a hollow grey ring for what comes
+  next and a red ring for a failed one, with the track green up to the step
+  in progress. The step in progress is bold, a stopped one struck through.
+  Drawn as a row, the steps read as the first item of the agent list rather
+  than a picture of the run. A long run folds like the header dots: the step
+  in progress and one either side, the rest in a "+N done" ring before them
+  and a "+N" ring after, so at most five slots share a phone's width. Each
+  ring is a button that opens its step's group and brings it into view; the
+  closed header keeps its small dots.
+- **Agents grouped under their step.** Below the stepper each step is a
+  heading with its marker and agent count. A finished step folds to one line
+  with its count, time and tokens; the step in progress is open; a step not
+  started says so and has no rows. A row shows only what its label adds to
+  the step above it (`verifier-1`, not "Verify / verifier-1"), because a label
+  alone does not always say which step it ran in. An agent whose phase names
+  no single declared step goes in a last "Other" group, never a guessed one.
+  A step's time is shown only when the card saw the step start and finish,
+  measured on the run's own clock. A provider that declares no steps (Muse)
+  gets no stepper and no groups, just the agents. Agent names are in regular
+  weight, with state and tokens muted on the right; an agent that is blocked
+  or waiting on a permission stays orange, because that one needs the person.
 - **A Grok JSON result** that has no known human-facing field now shows as a
   JSON code block instead of no Output at all.
 - **A reopened Grok workflow sits after the row that launched it.** Grok's
@@ -312,7 +328,7 @@ conversation stopped showing its history.
 | [src/workflow-state.ts](../src/workflow-state.ts) | `readWorkflowCompletion`: a Grok run's finish from its state file |
 | [src/sidebar.ts](../src/sidebar.ts) | the live and replay listeners that emit `subagentUpdate`, `runProgress` and `childStream`; `controlWorkflow`; `refreshWorkflowCompletions` |
 | [media/webview-helpers.js](../media/webview-helpers.js) | `isSubagentToolCall`, `subagentLabel`, `cleanSubagentOutput`, `parseSubagentTaskResult` |
-| [media/chat.js](../media/chat.js) | `makeDelegationHeader`, `addSubagentCard`, `applyChildStream`, `renderDelegationResult`, `applyWorkflowProgress`, `renderWorkflowSurface`, `renderWorkflowTranscript`, `syncWorkflowPin`, `windowWorkflowDots`, `workflowOutputText`, and Find's `revealFindMatch` |
+| [media/chat.js](../media/chat.js) | `makeDelegationHeader`, `addSubagentCard`, `applyChildStream`, `renderDelegationResult`, `applyWorkflowProgress`, `renderWorkflowSurface`, `renderWorkflowTranscript`, `syncWorkflowPin`, `windowWorkflowDots`, `windowWorkflowSteps`, `renderWorkflowGroups`, `workflowPhaseStates`, `workflowOutputText`, and Find's `revealFindMatch` |
 | [media/chat.css](../media/chat.css) | `.delegation-*`, `.subagent-card`, `.workflow-*` |
 
 ## How to verify

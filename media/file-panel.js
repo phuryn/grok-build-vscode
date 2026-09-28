@@ -303,7 +303,7 @@
    * State A (fits): folder+name title, every tab is icon+name and its own X.
    * State B (tight): inactive tabs demote to icon-only (dirty dot kept) BEFORE
    *   any tab is hidden; active keeps icon+name+X; title may drop to icon-only.
-   * State C (minimal): folder icon + the active tab + one "…" chip of the rest.
+   * State C (minimal): folder icon + the active tab + one chip ("2" and a chevron) holding the rest.
    *
    * `preferChip` SKIPS B. On a touch screen an icon-only tab is an anonymous
    * square — three open files became three identical glyphs, and the strip
@@ -1324,11 +1324,19 @@
           chip.type = "button";
           chip.className = "gfp-overflow-chip";
           chip.setAttribute("aria-haspopup", "menu");
-          chip.setAttribute("aria-label", "More open files");
-          chip.textContent = "…";
           chip.addEventListener("click", () => openOverflowMenu(chip));
           tabsEl.appendChild(chip);
         }
+        // A count and a drop-down chevron, never a bare "…": on a phone the
+        // file viewer's own action menu is a "⋯" a thumb's reach away, and the
+        // two do different things.
+        const count = String(overflowRelPaths.length);
+        if (chip.dataset.count !== count) {
+          chip.dataset.count = count;
+          chip.innerHTML = '<span class="gfp-overflow-count"></span>' + ICON.chevronDown;
+          chip.querySelector(".gfp-overflow-count").textContent = count;
+        }
+        chip.setAttribute("aria-label", count + " more open " + (count === "1" ? "file" : "files"));
         // On a phone the chip IS the rest of the strip, so anything unsaved in
         // there has no other way to say so — the dot lives on the menu ROW,
         // which is one tap past the point of noticing. Nothing is lost either

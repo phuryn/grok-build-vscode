@@ -2807,32 +2807,114 @@ body.thinking-hidden .msg.thinking { display: none; }
 .workflow-card .run-progress-phase,
 .workflow-pin-run .run-progress-phase { flex: 0 1 auto; overflow-wrap: anywhere; }
 .workflow-agent-activity { font-size: 0.9em; opacity: 0.8; }
+/* The process as one picture, in its own band under the header: rings on a
+   track, never a row like the agent rows below it. Equal columns and no wrap,
+   so a long run is folded in chat.js (five slots at most) rather than wrapped
+   onto a second line of a phone. */
 .workflow-phases {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 8px;
-  padding: 0;
-  margin: 7px 0;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  padding: 10px 2px 8px;
+  margin: 8px 0 4px;
   list-style: none;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--vscode-foreground) 5%, transparent);
 }
-.workflow-phase {
-  display: inline-flex;
+.workflow-phase, .workflow-step-more { position: relative; min-width: 0; }
+.workflow-phase[hidden] { display: none; }
+/* The segment leading INTO a slot, from the ring before it. It stops short of
+   both rings, so a hollow ring stays hollow. */
+.workflow-phase::before, .workflow-step-more::before {
+  content: "";
+  position: absolute;
+  top: 6px;
+  left: calc(-50% + 11px);
+  right: calc(50% + 11px);
+  height: 2px;
+  border-radius: 1px;
+  background: var(--vscode-editorWidget-border, rgba(127, 127, 127, 0.45));
+}
+.workflow-phases [data-track="none"]::before { display: none; }
+.workflow-phases [data-track="done"]::before { background: var(--vscode-charts-green, #89d185); }
+.workflow-step {
+  display: flex;
+  flex-direction: column;
   align-items: center;
   gap: 5px;
+  width: 100%;
   min-width: 0;
-  max-width: 100%;
+  padding: 0 2px;
+  border: 0;
+  background: none;
   color: var(--vscode-descriptionForeground);
   font: inherit;
+  cursor: pointer;
 }
-.workflow-phase-label { min-width: 0; overflow-wrap: anywhere; }
-.workflow-phase[data-state="active"], .workflow-phase[data-state="done"],
-.workflow-phase[data-state="complete"], .workflow-phase[data-state="completed"] { color: var(--vscode-foreground); }
+.workflow-step:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; border-radius: 4px; }
+.workflow-step .workflow-step-ring { width: 14px; height: 14px; border-width: 2px; }
+.workflow-step .workflow-step-ring[data-state="active"] {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--vscode-charts-blue, #3794ff) 28%, transparent);
+}
+.workflow-step .workflow-step-ring[data-state="active"]::after { display: none; }
+/* Failed is a red RING here, as in the design; the small markers fill it. */
+.workflow-step .workflow-step-ring[data-state="failed"] {
+  background: transparent;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--vscode-errorForeground) 28%, transparent);
+}
+.workflow-step .workflow-step-ring[data-state="cancelled"]::after, .workflow-step .workflow-step-ring[data-state="stopped"]::after { top: 4px; width: 10px; }
+.workflow-step-more .workflow-step-ring:not([data-state="done"]) { border-style: dashed; }
+.workflow-phase-label {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.88em;
+}
+.workflow-phase[data-state="active"] .workflow-step, .workflow-phase[data-state="done"] .workflow-step,
+.workflow-phase[data-state="complete"] .workflow-step, .workflow-phase[data-state="completed"] .workflow-step,
+.workflow-step-more[data-state="done"] .workflow-step { color: var(--vscode-foreground); }
 .workflow-phase[data-state="active"] .workflow-phase-label { font-weight: 700; }
-.workflow-phase[data-state="failed"] { color: var(--vscode-errorForeground); }
+.workflow-phase[data-state="failed"] .workflow-step { color: var(--vscode-errorForeground); font-weight: 700; }
 .workflow-phase[data-state="cancelled"] .workflow-phase-label,
 .workflow-phase[data-state="stopped"] .workflow-phase-label { text-decoration: line-through; }
-.workflow-phase-arrow { display: inline-flex; flex: none; color: var(--vscode-descriptionForeground); }
-.workflow-phase-arrow svg { width: 12px; height: 12px; }
+/* Agents under their step. A heading per step; a finished one folds to its
+   count, time and tokens; a step not started is a heading and nothing more. */
+.workflow-roster > .workflow-group { border-top: 1px solid var(--vscode-editorWidget-border, #555); }
+.workflow-group-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  min-width: 0;
+  padding: 6px 0;
+  border: 0;
+  background: none;
+  color: var(--vscode-foreground);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.workflow-group-head:disabled { cursor: default; }
+.workflow-group-head:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
+.workflow-group-title { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.workflow-group-meta {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.88em;
+  color: var(--vscode-descriptionForeground);
+  font-variant-numeric: tabular-nums;
+}
+.workflow-group[data-empty] .workflow-group-title { font-weight: 400; color: var(--vscode-descriptionForeground); }
+.workflow-group-chevron { display: inline-flex; flex: none; margin-left: auto; opacity: 0.7; }
+.workflow-group-chevron svg { width: 12px; height: 12px; }
+.workflow-group-chevron.is-open { transform: rotate(90deg); }
+.workflow-group-chevron[hidden], .workflow-group-rows[hidden] { display: none; }
+.workflow-group-rows { list-style: none; margin: 0; padding: 0 0 4px 16px; }
+.workflow-group-rows > .workflow-agent { border-top: 0; padding: 1px 0; }
 /* Name, steps and stage on the left; elapsed and the chevron on the right; the
    controls on their OWN row at the foot of the card. Pause and Stop used to
    share this row, which clipped "Stop" off the right edge of a phone, and the
@@ -2950,7 +3032,8 @@ body.thinking-hidden .msg.thinking { display: none; }
   /* The finished report's summary is the tap target that opens it, so it
      needs the same target as the live card's disclosure -- a coarse pointer
      cannot reliably hit a line of text. */
-  .workflow-pin-toggle, .workflow-agent-toggle, .workflow-report-toggle, .workflow-pin .run-progress-btn { min-height: 36px; }
+  .workflow-pin-toggle, .workflow-agent-toggle, .workflow-report-toggle, .workflow-pin .run-progress-btn,
+  .workflow-step, .workflow-group-head { min-height: 36px; }
 }
 
 /* Shared header slots retain the same order and alignment at phone widths. */
@@ -5108,6 +5191,12 @@ body.dragging { outline: 2px dashed var(--vscode-focusBorder); outline-offset: -
   border-color: var(--vscode-foreground);
 }
 .msg.user.collapsible:hover .msg-expand-btn { display: block; }
+/* A touch screen has no hover, so the chip was never shown there and a long
+   prompt could be read but not expanded. Shown outright rather than making the
+   bubble a tap target, which would fight text selection. */
+@media (hover: none) {
+  .msg.user.collapsible .msg-expand-btn { display: block; }
+}
 .msg-collapse-btn {
   background: color-mix(in oklab, var(--vscode-foreground) 10%, var(--vscode-sideBar-background));
   border: 1px solid var(--vscode-editorWidget-border);

@@ -8,6 +8,7 @@
 //      buttons stopPropagation so they don't also resume
 //   3. Reasoning traces "no longer expandable" -> header click toggles the body
 import { describe, it, expect, vi } from "vitest";
+import { readFileSync } from "node:fs";
 import { openAppSettings, bootWebview, dispatch, click, Posted } from "./webview-harness";
 import { countsAsUserBubble } from "../src/plan-restore";
 import { bracketRemoteSnapshot } from "../src/remote-policy";
@@ -249,6 +250,28 @@ describe("history popover (regression: popover that never closed)", () => {
     expect(pop.style.maxWidth).toBe("228px");
     expect(pop.style.minWidth).toBe("228px"); // min(280, 228) — shrinks below the CSS floor
     expect(pop.style.right).toBe("6px");
+  });
+
+  // On a phone the composer spans the screen, so pushing a composer menu back
+  // to the composer's right edge put it flush against the glass.
+  it.each([
+    ["overflowing the right edge keeps the 6px gap", 300, "184px"],
+    ["fitting stays under its button", 100, "100px"],
+    ["wider than the room keeps the left gap", 0, "6px", 386],
+  ])("places a composer menu: %s", async (_name, buttonLeft, left, width = 200) => {
+    const { window, doc } = bootWebview({ remote: true });
+    const pop = $(doc, "add-popover");
+    const btn = $(doc, "add-btn");
+    const parent = pop.parentElement as HTMLElement;
+    (parent as any).getBoundingClientRect = () =>
+      ({ left: 0, right: 390, top: 0, bottom: 800, width: 390, height: 800 });
+    (btn as any).getBoundingClientRect = () =>
+      ({ left: buttonLeft, right: buttonLeft + 28, top: 700, bottom: 728, width: 28, height: 28 });
+    (pop as any).getBoundingClientRect = () => ({ left: 0, right: width, top: 0, bottom: 100, width, height: 100 });
+    click(window, btn);
+    await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+    expect(pop.hidden).toBe(false);
+    expect(pop.style.left).toBe(left);
   });
 
   it("re-measures the open popover when the panel is resized (no close+reopen needed)", () => {
@@ -4292,5 +4315,16 @@ describe("remote tab session reconnect", () => {
     dispatch(window, { type: "sessions", entries: [], activeId: null });
 
     expect(window.sessionStorage.getItem("grok.remote.tabSession:default")).toBeNull();
+  });
+});
+
+// A long prompt on a phone could be read but never expanded: "Show more" was
+// revealed only by hovering the bubble, and a touch screen has no hover.
+describe("long user messages on a touch screen", () => {
+  it("shows the Show more chip without hover, and does not make the bubble a tap target", () => {
+    const css = readFileSync(new URL("../media/chat.css", import.meta.url), "utf8");
+    const touch = [...css.matchAll(/@media \(hover: none\) \{([^@]*?)\n\}/g)].map((m) => m[1]).join("\n");
+    expect(touch).toMatch(/\.msg\.user\.collapsible \.msg-expand-btn \{ display: block; \}/);
+    expect(css).not.toMatch(/\.msg\.user\.collapsible\s*\{[^}]*cursor:\s*pointer/);
   });
 });
