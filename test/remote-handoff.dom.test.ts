@@ -1,13 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { bootWebview, click, dispatch, type Posted } from "./webview-harness";
 
-function setup(desktop = true) {
+function setup(desktop = true, draftReplies = true) {
   const h = bootWebview({ beforeScripts: window => {
     (window as any).grokDesktopShell = desktop;
     const rail = window.document.createElement("aside");
     rail.id = "projects-rail";
     window.document.body.appendChild(rail);
   } });
+  dispatch(h.window, { type: "initialState", capabilities: draftReplies ? { composerDraftSession: true } : {} });
   const rows = ["a", "b", "c"].map(id => ({ id, displayName: id, cwd: "/repo", numMessages: 2, updatedAt: 1 }));
   const focus = (sessionId: string) => dispatch(h.window, { type: "sessionName", sessionId, name: sessionId, cwd: "/repo" });
   dispatch(h.window, { type: "repos", entries: [{ cwd: "/repo", label: "repo", available: true }], selectedCwd: "/repo", activeCwd: "/repo" });
@@ -152,5 +153,26 @@ describe("phone code follows the displayed conversation", () => {
     h.focus("b");
     expect(h.requests()).toHaveLength(1);
     expect(h.doc.querySelector(".remote-handoff-popover")!.textContent).toContain("open a there");
+  });
+
+  it("follows a New on a host that never names the draft back", () => {
+    const h = setup(true, false);
+    h.newSession();
+    h.open();
+    h.waiting();
+    h.focus("a"); // the conversation being left, echoed late
+    h.waiting();
+    expect(h.requests()).toHaveLength(0);
+    h.focus("new");
+    expect(h.requests().at(-1)).toMatchObject({ sessionId: "new" });
+  });
+
+  it("returns to the conversation that stayed when an open is refused", () => {
+    const h = setup();
+    h.resume("b");
+    h.open();
+    h.waiting();
+    dispatch(h.window, { type: "error", text: "That conversation is no longer available." });
+    expect(h.requests().at(-1)).toMatchObject({ sessionId: "a" });
   });
 });

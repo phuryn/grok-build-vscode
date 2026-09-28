@@ -145,6 +145,10 @@ export const HOST_CAPABILITIES = {
   // Backend steering dispatch and its per-session capability. Older hosts
   // route Codex to Grok's method, so remotes must require this field.
   remoteSteering: true,
+  // `newSession.draftId` is answered with `composerDraftSession`. OPT-IN: an
+  // older host opens the conversation but never names the draft back, so a
+  // client that keyed a New's text to a private token would strand it there.
+  composerDraftSession: true,
 } as const;
 
 /** Device-code GitHub sign-in carried on `projectSetup`. Additive. */
@@ -261,6 +265,11 @@ export type HostUiCapabilities = {
   remoteRewind?: boolean;
   /** Backend steering is wired on this host. Absent/false hides remote Steer. */
   remoteSteering?: boolean;
+  /**
+   * `newSession.draftId` is answered with `composerDraftSession`. Absent/false
+   * = the client binds a New's composer on the first identity frame instead.
+   */
+  composerDraftSession?: boolean;
   /**
    * Whether a remote may sign an agent OUT on this host.
    *

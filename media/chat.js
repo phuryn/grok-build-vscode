@@ -6831,8 +6831,17 @@
   function confirmComposerSession(sessionId) {
     // Identity echoes can arrive after another gesture. Only the correlated
     // New reply may bind its draft; ordinary frames cannot guess which New.
-    if (pendingComposerDrafts.has(composerSessionId)
-        || (composerExpectedSessionId && sessionId !== composerExpectedSessionId)) return;
+    if (pendingComposerDrafts.has(composerSessionId)) {
+      // A host that predates that reply never sends it. There, the first
+      // identity that can only be the conversation the New created binds it.
+      if (!(state.hostCaps && state.hostCaps.composerDraftSession)
+          && state.railExpectedIdentity?.kind === "new"
+          && railIdentitySatisfies(sessionId)) {
+        bindComposerDraft(composerSessionId, sessionId);
+      }
+      return;
+    }
+    if (composerExpectedSessionId && sessionId !== composerExpectedSessionId) return;
     switchComposerDraft(sessionId);
     composerExpectedSessionId = null;
     syncFocusedRemoteHandoff();
@@ -6854,7 +6863,9 @@
   }
 
   function postNewSession() {
-    vscode.postMessage({ type: "newSession", draftId: composerSessionId });
+    vscode.postMessage(pendingComposerDrafts.has(composerSessionId)
+      ? { type: "newSession", draftId: composerSessionId }
+      : { type: "newSession" });
   }
 
   /**
@@ -6949,6 +6960,12 @@
     if (!state.railTransition) return;
     clearRailTransitionTimer();
     state.railTransition = null;
+    // The composer moved at the click. Put it back on the conversation the
+    // host still has, or Send would deliver the clicked one's draft there.
+    // A New's pending draft stays bindable if the host creates it after all.
+    composerExpectedSessionId = null;
+    if (state.activeSessionId) switchComposerDraft(state.activeSessionId);
+    syncFocusedRemoteHandoff();
     // historyReplay owns the veil while a transcript is materialising; leave
     // it up if we are mid-replay so aborting a superseded click cannot blank a
     // real load still in progress.

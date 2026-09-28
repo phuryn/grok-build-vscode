@@ -74,6 +74,8 @@ describe("host <-> webview message contract (src/protocol.ts is the source of tr
       // everyone who has not updated yet.
       remoteRewind: true,
       remoteSteering: true,
+      // A New's composer waits for this reply; an older host never sends it.
+      composerDraftSession: true,
     });
   });
 

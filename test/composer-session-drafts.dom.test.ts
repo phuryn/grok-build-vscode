@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { bootWebview, click, dispatch } from "./webview-harness";
 
 describe.each(["desktop", "vscode", "remote"])("composer session drafts (%s)", (surface) => {
-  function setup() {
+  function setup(draftReplies = true) {
     const h = bootWebview({
       remote: surface === "remote",
       beforeScripts: (window) => {
@@ -12,6 +12,7 @@ describe.each(["desktop", "vscode", "remote"])("composer session drafts (%s)", (
         window.document.body.appendChild(rail);
       },
     });
+    dispatch(h.window, { type: "initialState", capabilities: draftReplies ? { composerDraftSession: true } : {} });
     const input = h.doc.getElementById("input") as HTMLTextAreaElement;
     const focus = (sessionId: string) => dispatch(h.window, {
       type: "sessionName", sessionId, name: sessionId, cwd: "/repo",
@@ -158,6 +159,46 @@ describe.each(["desktop", "vscode", "remote"])("composer session drafts (%s)", (
     input.value = "additional text";
     bind(draftId, "new");
     expect(input.value).toBe("pending draft\n\nadditional text");
+  });
+
+  it("binds a New on a host that never names the draft back", () => {
+    const { window, input, focus, newSession } = setup(false);
+    focus("a");
+    input.value = "old draft";
+    newSession();
+    expect(input.value).toBe("");
+    input.value = "new draft";
+    dispatch(window, { type: "sessions", entries: [], activeId: "a" }); // the conversation being left
+    focus("a");
+    expect(input.value).toBe("new draft");
+    focus("new");
+    expect(input.value).toBe("new draft");
+    focus("a");
+    expect(input.value).toBe("old draft");
+    focus("new");
+    expect(input.value).toBe("new draft");
+  });
+
+  it.each(["resume", "new"])("puts the composer back when a %s is refused, and keeps the clicked draft", kind => {
+    const { window, input, focus, resume, newSession, bind } = setup();
+    focus("b");
+    input.value = "saved B";
+    focus("a");
+    input.value = "A draft";
+    const draftId = kind === "new" ? newSession() : (resume("b"), undefined);
+    input.value = kind === "new" ? "typed for New" : "saved B, edited";
+    dispatch(window, { type: "error", text: "That conversation is no longer available." });
+    expect(input.value).toBe("A draft");
+    focus("a"); // the host re-confirms the one it kept
+    expect(input.value).toBe("A draft");
+    if (kind === "new") {
+      bind(draftId, "new"); // the host created it after all
+      focus("new");
+      expect(input.value).toBe("typed for New");
+    } else {
+      focus("b");
+      expect(input.value).toBe("saved B, edited");
+    }
   });
 
   it("parks an Edit reply for the conversation left by a gesture before the host changes focus", () => {
