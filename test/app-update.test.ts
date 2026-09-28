@@ -77,6 +77,8 @@ describe("isDesktopInstallerAsset", () => {
     expect(isDesktopInstallerAsset("Grok-Build-Desktop-3.2.0-mac-arm64.zip")).toBe(true);
     expect(isDesktopInstallerAsset("Grok-Build-Desktop-3.2.0-mac-x64.zip")).toBe(true);
     expect(isDesktopInstallerAsset("Grok-Build-Desktop-3.2.0-win-x64.exe")).toBe(true);
+    expect(isDesktopInstallerAsset("Grok-Build-Desktop-4.11.0-linux-x86_64.AppImage")).toBe(true);
+    expect(isDesktopInstallerAsset("Grok-Build-Desktop-4.11.0-linux-amd64.deb")).toBe(true);
   });
 
   it("excludes .blockmap and other companions", () => {
@@ -84,6 +86,8 @@ describe("isDesktopInstallerAsset", () => {
     expect(isDesktopInstallerAsset("Grok-Build-Desktop-3.2.0-mac-arm64.dmg.blockmap")).toBe(false);
     expect(isDesktopInstallerAsset("Grok-Build-Desktop-3.2.0-mac-arm64.zip.blockmap")).toBe(false);
     expect(isDesktopInstallerAsset("Grok-Build-Desktop-3.2.0-mac-x64.zip.blockmap")).toBe(false);
+    expect(isDesktopInstallerAsset("Grok-Build-Desktop-4.11.0-linux-amd64.deb.blockmap")).toBe(false);
+    expect(isDesktopInstallerAsset("Grok-Build-Desktop-4.11.0-linux-x64.deb")).toBe(false);
     expect(isDesktopInstallerAsset("grok-vscode-phuryn-3.2.0.vsix")).toBe(false);
     expect(isDesktopInstallerAsset("Source code (zip)")).toBe(false);
     expect(isDesktopInstallerAsset("")).toBe(false);
@@ -309,6 +313,16 @@ describe("latest.yml dual-arch / installer checks", () => {
   it("requires the Linux AppImage name, with the long arch spelling", () => {
     expect(latestLinuxYmlHasAppImage("path: Grok-Build-Desktop-4.6.1-linux-x86_64.AppImage")).toBe(true);
     expect(latestLinuxYmlHasAppImage("url: Grok-Build-Desktop-4.6.1-linux-x86_64.AppImage\r")).toBe(true);
+    expect(
+      latestLinuxYmlHasAppImage(
+        [
+          "path: Grok-Build-Desktop-4.11.0-linux-x86_64.AppImage",
+          "files:",
+          "  - url: Grok-Build-Desktop-4.11.0-linux-x86_64.AppImage",
+          "  - url: Grok-Build-Desktop-4.11.0-linux-amd64.deb",
+        ].join("\n"),
+      ),
+    ).toBe(true);
     // `x64` is what every other target uses and what a reasonable person
     // writes. electron-builder does not, and a pattern built on the guess
     // matches nothing while looking correct.

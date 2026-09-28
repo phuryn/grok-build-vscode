@@ -24,7 +24,7 @@
                                        AND the .vsix attached as a release asset
     9. npm run publish:ovsx           publish that .vsix to Open VSX
    10. desktop installers             dispatch desktop-release.yml against the
-                                       TAG, wait, and assert the .exe/.dmg/.AppImage are
+                                       TAG, wait, and assert the .exe/.dmg/.AppImage/.deb are
                                        actually on the release (skip with
                                        -SkipInstallers)
    11. install.ps1 -VsixPath ... -All install the released .vsix into every
@@ -263,7 +263,7 @@ if ($SkipInstallers) {
   Step "waiting for the installers to be attached to $tag (up to $InstallerTimeoutMinutes min)"
   $deadline = (Get-Date).AddMinutes($InstallerTimeoutMinutes)
   $attached = $false
-  $missing = @(".exe", ".dmg", ".AppImage")
+  $missing = @(".exe", ".dmg", ".AppImage", ".deb")
   while ((Get-Date) -lt $deadline) {
     Start-Sleep -Seconds 20
     # No `2>$null` here. Redirecting a native command's stderr under
@@ -282,12 +282,14 @@ if ($SkipInstallers) {
     $hasWin = @($names | Where-Object { $_ -like "*.exe" }).Count -gt 0
     $hasMac = @($names | Where-Object { $_ -like "*.dmg" }).Count -gt 0
     $hasLinux = @($names | Where-Object { $_ -like "*.AppImage" }).Count -gt 0
+    $hasDeb = @($names | Where-Object { $_ -like "*-linux-amd64.deb" }).Count -gt 0
     $missing = @(
       if (-not $hasWin) { ".exe" }
       if (-not $hasMac) { ".dmg" }
       if (-not $hasLinux) { ".AppImage" }
+      if (-not $hasDeb) { ".deb" }
     )
-    if ($hasWin -and $hasMac -and $hasLinux) { $attached = $true; break }
+    if ($hasWin -and $hasMac -and $hasLinux -and $hasDeb) { $attached = $true; break }
   }
   if ($attached) {
     Step "installers attached to $tag"
@@ -328,7 +330,7 @@ if ($SkipInstallers) {
 } elseif ($installerFailure) {
   Write-Host "`nPublished $tag with $vsix attached and to Open VSX; installer completion failed." -ForegroundColor Yellow
 } else {
-  Write-Host "`nReleased $tag with $vsix and .exe/.dmg/.AppImage installers attached, and published to Open VSX." -ForegroundColor Green
+  Write-Host "`nReleased $tag with $vsix and .exe/.dmg/.AppImage/.deb installers attached, and published to Open VSX." -ForegroundColor Green
 }
 Write-Host "Marketplace publish is the owner's: npm run publish" -ForegroundColor DarkGray
 if ($installerFailure) { throw $installerFailure }

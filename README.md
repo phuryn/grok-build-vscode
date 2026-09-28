@@ -265,7 +265,7 @@ Grok defaults to the **Secondary Side Bar** (right side, next to other AI tools)
 
 ### Grok Build Desktop
 
-Standalone app for **macOS** (Apple Silicon + Intel), **Windows** (x64) and **Linux** (x86_64 AppImage). Same agent UI as the extension; no VS Code required.
+Standalone app for **macOS** (Apple Silicon + Intel), **Windows** (x64) and **Linux** (x86_64 AppImage, or a Debian package). Same agent UI as the extension; no VS Code required.
 
 **1. Download** the installer from **[afkpilot.com/desktop](https://afkpilot.com/desktop)** — it detects your platform and offers the right build. Asset names:
 
@@ -275,6 +275,7 @@ Standalone app for **macOS** (Apple Silicon + Intel), **Windows** (x64) and **Li
 | macOS Intel | `Grok-Build-Desktop-<version>-mac-x64.dmg` |
 | Windows x64 | `Grok-Build-Desktop-<version>-win-x64.exe` |
 | Linux x86_64 | `Grok-Build-Desktop-<version>-linux-x86_64.AppImage` |
+| Linux Debian / Ubuntu (amd64) | `Grok-Build-Desktop-<version>-linux-amd64.deb` |
 
 (Zip archives are also published for macOS: `…-mac-arm64.zip` / `…-mac-x64.zip`.)
 
@@ -284,7 +285,7 @@ Standalone app for **macOS** (Apple Silicon + Intel), **Windows** (x64) and **Li
 
 **Windows is not signed yet**, so Microsoft Defender SmartScreen may show “Windows protected your PC.” Choose **More info** → **Run anyway**.
 
-**Linux ships as a single AppImage** — nothing to install. `chmod +x` it and run it; it needs FUSE (`libfuse2` on Debian and Ubuntu). It updates itself in place from then on.
+**Linux** is an AppImage or a Debian package. The AppImage is one file: `chmod +x` it and run it. It needs FUSE (`libfuse2` on Debian and Ubuntu) and updates itself in place. Debian and Ubuntu can instead install `Grok-Build-Desktop-<version>-linux-amd64.deb`. That build adds an application menu entry, pulls the libraries Electron needs, and removes with the package manager. There is still exactly one AppImage per release.
 
 **Closing the window keeps the app running** on Windows and Linux: it hides to a tray icon so the agent — and any phone linked to this machine — keeps working. **Quit** from the tray menu to stop it, or turn the behaviour off in Settings → General. There is no tray on macOS, where closing the window still quits the app — the macOS answer is its own convention, the dock rather than a menu-bar item, and that is a separate change.
 

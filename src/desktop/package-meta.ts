@@ -19,20 +19,16 @@ export const PACKAGED_EXTENSION_NAME_FIELD = "grokExtensionName";
 /**
  * Marks a build made to run as a CLOUD ENVIRONMENT rather than on a desk.
  *
- * Injected by `dist:linux` only. It exists because a packaged build refuses the
- * environment entirely — no relay override, no injected device token, "no
- * token, no uplink, regardless of env" — which is exactly right for an app on
- * somebody's laptop and fatal for a machine with no keyboard, which can only
- * ever be told who it is by the relay that created it.
+ * Injected by `dist:linux` only, which builds both the AppImage and the deb
+ * in one invocation, so both carry the flag. A packaged build otherwise
+ * refuses the environment entirely: no relay override, no injected device
+ * token. That is right for an app on a laptop and fatal for a machine with
+ * no keyboard, which can only be told who it is by the relay that created it.
  *
- * A build-time flag rather than a runtime check, because the alternative was
- * relaxing that guard for every packaged build on the planet to serve machines
- * that are all ours. The mac and Windows installers are unchanged and still
- * cannot be talked into trusting their environment.
- *
- * This is why the Linux AppImage is not offered as a download: it is a build
- * that trusts its environment. Shipping it to a desk would hand that property
- * to people who never asked for it.
+ * The flag is not enough on its own. `resolveRelayUrl` also requires the
+ * machine to declare itself a cloud environment at runtime, so installing
+ * the AppImage or the deb on a desk does not trust the environment. The mac
+ * and Windows installers are unchanged and still cannot be talked into it.
  */
 export const PACKAGED_CLOUD_BUILD_FIELD = "grokCloudBuild";
 

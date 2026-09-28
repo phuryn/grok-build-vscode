@@ -18,6 +18,7 @@ Asset names are stable so a landing page can link them by version:
 | macOS | arm64 / x64 (archive) | `Grok-Build-Desktop-<version>-mac-arm64.zip` / `…-mac-x64.zip` |
 | Windows | x64 | `Grok-Build-Desktop-<version>-win-x64.exe` |
 | Linux | x86_64 (AppImage) | `Grok-Build-Desktop-<version>-linux-x86_64.AppImage` |
+| Linux | amd64 (Debian package) | `Grok-Build-Desktop-<version>-linux-amd64.deb` |
 
 Example for version `3.1.0`:
 
@@ -25,12 +26,24 @@ Example for version `3.1.0`:
 - `Grok-Build-Desktop-3.1.0-mac-x64.dmg`
 - `Grok-Build-Desktop-3.1.0-win-x64.exe`
 - `Grok-Build-Desktop-3.1.0-linux-x86_64.AppImage`
+- `Grok-Build-Desktop-3.1.0-linux-amd64.deb`
 
-**Note the Linux arch spelling.** electron-builder writes `x86_64` for AppImage
-targets and `x64` for every other one, so anything matching installer names by
-pattern needs both spellings. There is exactly one AppImage per release — see
+**Note the Linux arch spelling.** electron-builder writes `x86_64` for the
+AppImage, `amd64` for the Debian package, and `x64` for every other target, so
+anything matching installer names by pattern needs all three spellings. There
+is exactly one AppImage per release. See
 [Running in a cloud environment](cloud-environments.md) for why adding a second
-would break the fleet tooling.
+would break the fleet tooling. The `.deb` is a different filename and does not
+count as a second AppImage.
+
+On Debian and Ubuntu, install the package with
+`apt install ./Grok-Build-Desktop-<version>-linux-amd64.deb` (or double-click
+it). The package name is `grok-build-desktop`. It installs the binary under
+`/opt`, links `/usr/bin/grok-build-desktop`, and registers
+`grok-build-desktop.desktop` in the application menu. Remove it with
+`apt remove grok-build-desktop`. A newer package upgrades in place. The
+AppImage remains the single-file download and still needs FUSE (`libfuse2` on
+Debian and Ubuntu).
 
 ## Closing the window
 
@@ -54,7 +67,7 @@ npm install
 npm run compile          # required; electron-builder packs out/ + media/ + resources/
 
 npm run dist:win         # Windows x64 NSIS installer → dist-desktop/
-npm run dist:linux       # Linux x86_64 AppImage (must run on Linux)
+npm run dist:linux       # Linux x86_64 AppImage and amd64 .deb (must run on Linux)
 npm run dist:mac         # macOS arm64 + x64 dmg + zip (must run on macOS)
 npm run dist             # current host's default targets
 npm run dist:dir         # unpacked dir only (fast layout check; no installer)
@@ -82,7 +95,7 @@ privilege so the normal download path works.
 
 ### Cross-build limits
 
-| From → produces | Windows installer | macOS installers | Linux AppImage |
+| From → produces | Windows installer | macOS installers | Linux AppImage and .deb |
 |---|---|---|---|
 | **Windows** | yes (`dist:win`) | **no** | **no** |
 | **macOS** | possible* | yes (`dist:mac`, both archs) | possible* |

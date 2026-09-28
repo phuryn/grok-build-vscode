@@ -126,4 +126,8 @@ property is structural, and a check would be one more thing to keep true.
 There is **exactly one AppImage per release**, and the relay's boot script,
 `refresh-sprite-hosts.mjs` and `patch-sprite-host.mjs` all select it by the
 `.AppImage` extension alone. Attaching a second one would make every one of
-those selectors ambiguous — do not add a variant without changing them first.
+those selectors ambiguous. Do not add a variant without changing them first.
+The Debian package attached beside it (`Grok-Build-Desktop-<version>-linux-amd64.deb`)
+is not an AppImage, so those selectors stay unambiguous. The process inside
+the AppImage is named `grok-build-desktop`. Hosts that run the AppImage file,
+or `AppRun` after extracting it, do not depend on that inner name.

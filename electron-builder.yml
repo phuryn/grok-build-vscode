@@ -207,16 +207,85 @@ nsis:
 linux:
   # Same AppImage serves two audiences: the cloud machines, which extract it and
   # exec the payload, and Linux desks, which run the file itself. Only the
-  # second ever reaches the feed below — electron-updater's AppImageUpdater
+  # second ever reaches the feed below. electron-updater's AppImageUpdater
   # refuses to run unless `process.env.APPIMAGE` is set, which an extracted run
   # never has. That is what keeps a sprite from self-updating out from under
   # refresh-sprite-hosts.mjs without a cloud check anywhere in the app.
+  #
+  # The .deb is a third artifact, not a second AppImage. Cloud selectors match
+  # the `.AppImage` extension, so the Debian package does not make them
+  # ambiguous. `executableName` is shared by both Linux targets: the published
+  # AppImage filename stays `Grok-Build-Desktop-<version>-linux-x86_64.AppImage`.
+  #
+  # AppImage is listed first on purpose. electron-builder finishes async
+  # targets before sync fpm targets. The deb build then writes
+  # `resources/package-type` (`deb`) into the unpacked tree, which
+  # electron-updater reads to pick DebUpdater. That write must not land in
+  # the AppImage, or a desk running the file would try `dpkg` on quit.
   publish:
     provider: generic
     url: https://afkpilot.com/update/linux
   icon: resources/grok-icon-round-512.png
+  executableName: grok-build-desktop
+  maintainer: Paweł Huryn <support@productcompass.pm>
+  vendor: Paweł Huryn
+  synopsis: Desktop client for Grok Build
+  description: >-
+    Desktop client for the Grok Build agent. Talks to Grok, Codex,
+    Claude Code and Muse Code. Not affiliated with or endorsed by SpaceXAI.
   category: Development
+  packageCategory: devel
+  desktop:
+    Name: Grok Build Desktop
+    GenericName: AI coding agent
+    StartupWMClass: Grok Build Desktop (Community)
+    Keywords: grok;ai;agent;coding;
+    StartupNotify: true
   target:
     - target: AppImage
       arch:
         - x64
+    - target: deb
+      arch:
+        - x64
+
+# Debian package name follows extraMetadata.name (grok-build-desktop).
+# ${arch} for a deb is amd64, so the asset is
+# Grok-Build-Desktop-<version>-linux-amd64.deb. Depends lists both the
+# pre-t64 and t64 names: bookworm still ships libgtk-3-0, Ubuntu 24.04
+# ships libgtk-3-0t64, and apt accepts whichever alternative exists.
+deb:
+  packageName: grok-build-desktop
+  priority: optional
+  compression: xz
+  afterInstall: packaging/linux/after-install.tpl
+  afterRemove: packaging/linux/after-remove.tpl
+  depends:
+    - libgtk-3-0 | libgtk-3-0t64
+    - libglib2.0-0 | libglib2.0-0t64
+    - libnotify4
+    - libnss3
+    - libnspr4
+    - libxss1
+    - libxtst6
+    - libasound2 | libasound2t64
+    - libatk1.0-0 | libatk1.0-0t64
+    - libatk-bridge2.0-0 | libatk-bridge2.0-0t64
+    - libatspi2.0-0 | libatspi2.0-0t64
+    - libcups2 | libcups2t64
+    - libcairo2
+    - libpango-1.0-0
+    - libdrm2
+    - libgbm1
+    - libsecret-1-0
+    - libuuid1
+    - libx11-6
+    - libxcb1
+    - libxcomposite1
+    - libxdamage1
+    - libxext6
+    - libxfixes3
+    - libxkbcommon0
+    - libxrandr2
+    - libxshmfence1
+    - xdg-utils

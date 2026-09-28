@@ -50,7 +50,7 @@ done
 step() { printf '\033[36m==> %s\033[0m\n' "$1"; }
 
 installer_handoff() {
-  echo "This script does not dispatch or wait for desktop installers. The release is incomplete until .exe, .dmg and .AppImage artifacts are attached."
+  echo "This script does not dispatch or wait for desktop installers. The release is incomplete until .exe, .dmg, .AppImage and .deb artifacts are attached."
   echo "  gh workflow run desktop-release.yml --ref $tag -f release_tag=$tag"
   echo "  gh release view $tag --json assets"
 }

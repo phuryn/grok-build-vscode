@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Debian package for Linux desktop.** Releases attach `Grok-Build-Desktop-<version>-linux-amd64.deb` next to the AppImage. Debian and Ubuntu install it with apt, get an application menu entry, and remove it with the package manager. The AppImage is still the one file cloud hosts select.
+
 ## 4.11.1 — 2026-09-23
 
 **An agent you have not connected is never run.** Connecting an agent is now something you say, not something the extension works out by starting your CLI and seeing what happens.
