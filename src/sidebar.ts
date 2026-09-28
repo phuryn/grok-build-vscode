@@ -11509,11 +11509,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         }
         break;
       case "newSession": {
-        const onCreated = typeof msg.draftId === "string" ? (sessionId: string) => {
-          const reply: HostMsg = { type: "composerDraftSession", draftId: msg.draftId!, sessionId };
-          if (requester) this.sendRemoteRequester(requester, reply);
-          else this.postLocal(reply);
-        } : undefined;
+        const onCreated = this.composerDraftReply(msg.draftId, requester);
         // A remote's cwd is deliberately not forwarded: newRemoteSession starts
         // in that tab's own repo, which is the only project it is entitled to.
         if (origin === "remote" && clientId) await this.newRemoteSession(clientId, true, onCreated);
@@ -20206,6 +20202,16 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     this.restorePersistedDraft(session, { clientId });
   }
 
+  /** Names a New's composer draft back to the surface that asked, once the host has its id. */
+  private composerDraftReply(draftId: unknown, requester?: RemoteRequester): ((sessionId: string) => void) | undefined {
+    if (typeof draftId !== "string") return undefined;
+    return (sessionId) => {
+      const reply: HostMsg = { type: "composerDraftSession", draftId, sessionId };
+      if (requester) this.sendRemoteRequester(requester, reply);
+      else this.postLocal(reply);
+    };
+  }
+
   private async newRemoteSession(clientId: string, notifyCatalog = true, onCreated?: (id: string) => void): Promise<void> {
     this.clearSettledCliUpdates();
     const ownerTabToken = this.remoteClients.tabToken(clientId);
@@ -21256,7 +21262,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       const requester = this.captureRemoteRequester(clientId);
       const transition = async (currentClientId: string) => {
         if (m.type === "newSession") {
-          await this.newRemoteSession(currentClientId);
+          await this.newRemoteSession(currentClientId, true, this.composerDraftReply(m.draftId, requester));
         } else if (m.type === "resumeSession") {
           await this.openRemoteSession(currentClientId, m.id, m.cwd, true, m.claim === true);
         } else if (m.type === "selectRepo") {

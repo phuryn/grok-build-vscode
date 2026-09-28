@@ -75,6 +75,22 @@ describe("remote binding after the startup project closes", () => {
     expect(sidebar.sendRemoteClient).not.toHaveBeenCalledWith("phone", expect.objectContaining({ type: "error" }));
   });
 
+  it("names a phone New's composer draft back to that phone", async () => {
+    const { sidebar, changeProjects, dispatch } = harness();
+    changeProjects();
+    sidebar.handleRemoteClientReady("phone");
+    sidebar.startSession = vi.fn(async (_: string, session: Session) => {
+      session.client = {} as any;
+      session.activeSessionId = "phone-new";
+      return session.client;
+    });
+    await dispatch({ type: "newSession", draftId: "draft-1" });
+    expect(sidebar.sendRemoteRequester).toHaveBeenCalledWith(
+      expect.anything(),
+      { type: "composerDraftSession", draftId: "draft-1", sessionId: "phone-new" },
+    );
+  });
+
   it.each([false, true])("revalidates a restored tab (detached=%s) before starting its old session", (detached) => {
     const { sidebar, changeProjects } = harness();
     sidebar.remoteClients.ready("old-socket");
