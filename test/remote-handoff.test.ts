@@ -107,7 +107,7 @@ describe("host handoff routing", () => {
     h.host.withProgress = async (_: unknown, run: any) => run({ isCancellationRequested: false });
     h.host.showInformationMessage = vi.fn();
     h.host.showErrorMessage = vi.fn();
-    h.pollLinkApproval = vi.fn(async () => approved ? "token" : undefined);
+    h.pollLinkApproval = vi.fn(async () => approved ? { token: "token" } : undefined);
     h.maybeStartUplink = vi.fn(async () => {});
     h.uplink.dispose = vi.fn();
     vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ code: "ABCD" }) })));
@@ -119,6 +119,28 @@ describe("host handoff routing", () => {
       ]);
       expect(h.context.secrets.store).toHaveBeenCalledTimes(approved ? 1 : 0);
       expect(h.host.showErrorMessage).not.toHaveBeenCalled();
+    } finally { vi.unstubAllGlobals(); }
+  });
+  it("draws the code from the link reply's device id before the uplink names itself", async () => {
+    const h = hostHarness();
+    h.context = { secrets: { store: vi.fn(async () => {}) } };
+    h.installId = () => "install";
+    h.host.appName = "Visual Studio Code";
+    h.host.withProgress = async (_: unknown, run: any) => run({ isCancellationRequested: false });
+    h.host.showInformationMessage = vi.fn();
+    h.host.showErrorMessage = vi.fn();
+    h.pollLinkApproval = vi.fn(async () => ({ token: "token", deviceId: "linked-desk" }));
+    h.maybeStartUplink = vi.fn(async () => { h.uplink = { viewerCount: 0 }; }); // connected, no `self` yet
+    h.uplink.dispose = vi.fn();
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ code: "ABCD" }) })));
+    try {
+      await h.linkRemoteDevice("topbar");
+      expect(h.post).toHaveBeenLastCalledWith(expect.objectContaining({ type: "remoteStatus", linked: true, handoffReady: true }));
+      await h.replyRemoteHandoff({ type: "remoteHandoff", source: "topbar", sessionId: "other", repoCwd: "/project", requestId: 9 });
+      expect(h.postLocal.mock.calls.at(-1)[0].url).toContain("/chat?device=linked-desk#");
+      h.uplink.deviceId = "relay-named";
+      await h.replyRemoteHandoff({ type: "remoteHandoff", source: "topbar", sessionId: "other", repoCwd: "/project", requestId: 10 });
+      expect(h.postLocal.mock.calls.at(-1)[0].url).toContain("/chat?device=relay-named#");
     } finally { vi.unstubAllGlobals(); }
   });
   it("resolves a nonfocused worktree row without switching the desk conversation", async () => {

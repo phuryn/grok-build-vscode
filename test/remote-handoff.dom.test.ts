@@ -32,7 +32,7 @@ function setup(desktop = true, draftReplies = true) {
   });
   const waiting = () => {
     expect(h.doc.querySelector<HTMLElement>(".remote-handoff-popover")!.hidden).toBe(false);
-    expect(h.doc.querySelector(".remote-handoff-popover")!.textContent).toContain("Getting your code ready…");
+    expect(h.doc.querySelector(".remote-handoff-qr-pending")!.textContent).toContain("Generating QR code…");
     expect(h.doc.querySelector(".remote-handoff-qr")).toBeNull();
     expect(button("Copy link").disabled).toBe(true);
     expect(button("Open in browser").disabled).toBe(true);

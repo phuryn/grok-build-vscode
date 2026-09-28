@@ -1467,12 +1467,11 @@ describe("remote control onboarding", () => {
     expect(doc.querySelector("#add-popover")!.textContent).not.toMatch(/Remote control|Continue remotely|Your account|link this device|How it works/i);
   });
 
-  it("keeps account management in the linked popover without quick unlink", () => {
-    const { window, posted, doc } = bootWebview();
+  it("keeps the linked popover to the code and its actions, without account or unlink", () => {
+    const { window, doc } = bootWebview();
     dispatch(window, { type: "remoteStatus", linked: true, handoffReady: false });
     click(window, $(doc, "remote-btn"));
-    click(window, button(doc, "Your account")!);
-    expect(posted).toContainEqual({ type: "openRemotePortal", source: "topbar" });
+    expect(button(doc, "Your account")).toBeFalsy();
     expect(doc.querySelector(".remote-handoff-popover")!.textContent).not.toMatch(/unlink/i);
   });
 
@@ -1572,7 +1571,7 @@ describe("remote control onboarding", () => {
     dispatch(window, { type: "remoteStatus", linked: true, handoffReady: false });
     click(window, $(doc, "remote-btn"));
     expect(doc.querySelector(".remote-handoff-popover")!.textContent).toContain("Continue on your phone");
-    expect(doc.querySelector(".remote-handoff-popover")!.textContent).toContain("Your code is not ready yet");
+    expect(doc.querySelector(".remote-handoff-qr-pending")!.textContent).toContain("Generating QR code…");
     expect(doc.querySelector(".remote-handoff-qr")).toBeNull();
     expect(button(doc, "Copy link")!.disabled).toBe(true);
     click(window, button(doc, "Open in browser")!);

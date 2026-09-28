@@ -21502,6 +21502,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   private clearRemoteRuntime(): void {
     this.uplink?.dispose();
     this.uplink = undefined;
+    this.linkedDeviceId = undefined;
     this.stopVoiceInput();
     this.remoteClients.clear();
     this.refreshKeepAwake();
@@ -21590,14 +21591,16 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       if (!startRes.ok) throw new Error(`link/start ${startRes.status}`);
       const { code } = (await startRes.json()) as { code: string };
       void this.host.openExternal(`${base}/link?code=${encodeURIComponent(code)}`);
-      const token = await this.host.withProgress(
+      const approved = await this.host.withProgress(
         { title: `Approve this device in the browser (code ${code})…`, cancellable: true },
         (cancel) => this.pollLinkApproval(base, code, cancel),
       );
-      if (!token) return; // cancelled / expired — poll loop already surfaced why
-      await this.context.secrets.store(GrokSidebar.DEVICE_TOKEN_SECRET, token);
+      if (!approved) return; // cancelled / expired — poll loop already surfaced why
+      await this.context.secrets.store(GrokSidebar.DEVICE_TOKEN_SECRET, approved.token);
       this.uplink?.dispose();
       this.uplink = undefined;
+      // An older relay omits it; the uplink's `self` frame then supplies it.
+      this.linkedDeviceId = approved.deviceId;
       await this.maybeStartUplink();
       this.publishRemoteStatus(true);
       this.reportHandoffEvent("remote_link_completed", {});
@@ -21607,18 +21610,20 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     }
   }
 
-  private async pollLinkApproval(base: string, code: string, cancel: HostCancellationToken): Promise<string | undefined> {
+  private async pollLinkApproval(base: string, code: string, cancel: HostCancellationToken): Promise<{ token: string; deviceId?: string } | undefined> {
     const deadline = Date.now() + 5 * 60_000;
     while (Date.now() < deadline && !cancel.isCancellationRequested) {
-      await new Promise((r) => setTimeout(r, 2000));
+      await new Promise((r) => setTimeout(r, 1000));
       const res = await fetch(`${base}/api/link/poll`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ code }),
       });
       if (!res.ok) continue;
-      const body = (await res.json()) as { status: string; token?: string };
-      if (body.status === "approved" && body.token) return body.token;
+      const body = (await res.json()) as { status: string; token?: string; deviceId?: unknown };
+      if (body.status === "approved" && body.token) {
+        return { token: body.token, deviceId: typeof body.deviceId === "string" && body.deviceId ? body.deviceId : undefined };
+      }
       if (body.status === "expired" || body.status === "unknown") {
         void this.host.showErrorMessage("Remote link code expired — run the link command again.");
         return undefined;
@@ -21662,11 +21667,17 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   }
 
   private remoteStatusRevision = 0;
+  /** From the link reply, so the phone code can be drawn before the uplink's `self` frame arrives. */
+  private linkedDeviceId?: string;
+
+  private remoteDeviceId(): string | undefined {
+    return this.uplink?.deviceId ?? this.linkedDeviceId;
+  }
 
   private publishRemoteStatus(linked: boolean): void {
     this.remoteStatusRevision = (this.remoteStatusRevision ?? 0) + 1;
     const msg: HostMsg = { type: "remoteStatus", linked,
-      handoffReady: linked && !!this.uplink?.deviceId,
+      handoffReady: linked && !!this.remoteDeviceId(),
       viewerCount: linked ? this.uplink?.viewerCount ?? 0 : 0 };
     this.post(msg);
     void this.settingsEditor?.webview.postMessage(msg);
@@ -21724,7 +21735,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     const linked = !!await this.readDeviceToken();
     if (!msg.action || msg.action === "show") this.reportHandoffEvent("remote_handoff_shown", { source: msg.source, linked });
     const session = this.handoffSession(msg.sessionId, msg.repoCwd);
-    const url = linked ? remoteHandoffUrl(this.relayUrl(), this.uplink?.deviceId, session) : undefined;
+    const url = linked ? remoteHandoffUrl(this.relayUrl(), this.remoteDeviceId(), session) : undefined;
     if (msg.action === "open") {
       this.reportRemotePortalOpened(!url, msg.source);
       void this.host.openExternal(url ?? `${httpBaseFromRelayUrl(this.relayUrl())}/?remoteHint=1`);

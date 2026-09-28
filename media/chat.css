@@ -6752,6 +6752,11 @@ body.host-wait-visible .gfp-panel.gfp-overlay { bottom: var(--host-wait-height, 
 .remote-handoff-close { position: absolute; top: 8px; right: 8px; }
 .remote-handoff-qr { background: white; max-width: 260px; margin: 0 auto; }
 .remote-handoff-qr svg { display: block; width: 100%; height: auto; }
+.remote-handoff-qr-pending {
+  max-width: 260px; margin: 0 auto 12px; aspect-ratio: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+  background: var(--vscode-editorWidget-background, #252526); border: 1px dashed var(--vscode-widget-border, #555);
+  border-radius: 6px; color: var(--vscode-descriptionForeground, #aaa); font-size: 12px;
+}
+.remote-handoff-qr-pending .host-wait-spinner { width: 20px; height: 20px; }
 .remote-handoff-actions { display: flex; gap: 8px; flex-wrap: wrap; }
-.remote-handoff-footer { display: flex; align-items: center; justify-content: space-between; margin-top: 16px; }
 .remote-handoff-popover > .confirm-btn { margin: 4px 6px 0 0; }
