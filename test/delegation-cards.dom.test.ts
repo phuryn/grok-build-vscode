@@ -4,11 +4,17 @@ import { bootWebview, dispatch, click, type Harness } from "./webview-harness";
 const windows: Harness["window"][] = [];
 afterEach(() => { for (const window of windows.splice(0)) window.happyDOM.abort(); });
 
-function view(provider = "grok") {
+function view(provider = "grok", { searchYields = false } = {}) {
   let now = 100_000;
+  let perf = 0;
   const ticks: (() => void)[] = [];
   const h = bootWebview({ beforeScripts(window) {
     (window as any).Date = class extends window.Date { static now() { return now; } };
+    // Find searches in 8 ms slices timed by performance.now(). On the real
+    // clock a loaded machine could yield mid-search, and a test asserting
+    // straight after next() then raced the rest of the search. Frozen here
+    // unless a test asks for a search that yields after every node.
+    Object.defineProperty(window.performance, "now", { configurable: true, value: () => (searchYields ? (perf += 10) : perf) });
     const interval = window.setInterval.bind(window);
     window.setInterval = ((fn: () => void, ms: number) => {
       if (ms === 1000) { ticks.push(fn); return 123; }
@@ -78,6 +84,23 @@ describe("Find inside a closed card", () => {
     const body = card.querySelector(".workflow-expanded") as HTMLElement;
     expect(body.hidden).toBe(true);
     find(h, "Needle step");
+    expect(body.hidden).toBe(false);
+    workflow(h, "grok", "running", { phases: [{ title: "Needle step", state: "active" }] });
+    expect((card.querySelector(".workflow-expanded") as HTMLElement).hidden).toBe(false);
+  });
+
+  // What a slow machine does: the search yields between slices, so next()
+  // lands before the search reaches the card. The card must still open once
+  // the search finishes, and stay open.
+  it("opens the card once a search that yields mid-way finishes", async () => {
+    const h = view("grok", { searchYields: true });
+    const card = workflow(h, "grok", "running", { phases: [{ title: "Needle step", state: "active" }] });
+    const body = card.querySelector(".workflow-expanded") as HTMLElement;
+    find(h, "Needle step");
+    const count = () => h.doc.querySelector(".find-count")!.textContent || "";
+    expect(count()).toMatch(/…$/);
+    for (let i = 0; i < 2000 && /…$/.test(count()); i++) await new Promise(resolve => h.window.setTimeout(resolve, 0));
+    expect(count()).not.toMatch(/…$/);
     expect(body.hidden).toBe(false);
     workflow(h, "grok", "running", { phases: [{ title: "Needle step", state: "active" }] });
     expect((card.querySelector(".workflow-expanded") as HTMLElement).hidden).toBe(false);
