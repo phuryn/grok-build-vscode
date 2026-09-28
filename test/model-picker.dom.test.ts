@@ -47,6 +47,11 @@ describe("model picker provider marks and manage-providers", () => {
     expect($(h.doc, "mode-btn").textContent).toBe("Agent mode");
     expect($(h.doc, "mode-popover").textContent).not.toMatch(/Unknown mode|On request|Deny unmatched/);
     expect(h.posted).toContainEqual({ type: "setModel", modelId: "grok-4.7", provider: "grok" });
+    // Until Grok's session exists no mode can take effect, so none is clickable.
+    const planRow = [...h.doc.querySelectorAll(".mode-popover-item")].find(row => row.textContent?.includes("Plan mode"))!;
+    expect(planRow.textContent).toContain("Available once Grok has started");
+    click(h.window, planRow as HTMLElement);
+    expect(h.posted).not.toContainEqual({ type: "setMode", modeId: "plan" });
     // Older hosts omit modes and row providers. Their original fallbacks still
     // apply after the confirmed provider arrives, in startup's mode-first order.
     dispatch(h.window, { type: "modeChanged", modeId: "agent" });

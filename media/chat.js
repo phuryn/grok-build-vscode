@@ -4922,8 +4922,13 @@
       // advertised modes as well; there will be no host reply to restore them.
       const original = provider === modelBaseline.provider;
       state.offeredModes = original ? modelBaseline.modes : null;
-      state.disabledModes = original ? modelBaseline.disabledModes : {};
       state.currentModeId = original ? modelBaseline.modeId : "agent";
+      state.activeProvider = provider;
+      // Nothing can take a mode until the new provider's session exists, so
+      // show its modes but hold them; the host's modeChanged releases them.
+      const waiting = `Available once ${providerDisplayName(provider)} has started`;
+      state.disabledModes = original ? modelBaseline.disabledModes
+        : Object.fromEntries(offeredModeIds().map((id) => [id, waiting]));
     }
     state.activeProvider = provider;
     updateModeBtn(state.currentModeId);
