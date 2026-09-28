@@ -3728,6 +3728,7 @@ Only continue if you trust this code.`,
       }
       const remember = modeToRemember(modeId);
       const client = session.client;
+      let nativeAccepted = true;
       if (supportsApprovalModeSwitching(session.provider)) {
         try {
           await client.setMode(modeId);
@@ -3737,6 +3738,7 @@ Only continue if you trust this code.`,
             this.reportRequester(requester, "error", `Couldn't switch mode: ${(error as Error).message}`);
             return;
           }
+          nativeAccepted = false;
           this.host.appendLine(`[muse] Native Auto accept unavailable; using one-time approvals: ${error}`);
           this.reportRequester(requester, "warning", "Muse Code did not accept full access. Auto accept will answer its prompts once until you reopen the conversation.");
         }
@@ -3744,8 +3746,12 @@ Only continue if you trust this code.`,
       if (session.client !== client) return;
       if (remember) void this.rememberGrokConfig("defaultMode", remember);
       session.autoApprove = modeId === "yolo";
-      if (session.musePosture) session.musePosture = { ...session.musePosture, mode: modeId };
-      await this.rememberMusePosture(session);
+      // Muse kept its own mode after a refusal. Recording full access anyway
+      // would reopen the conversation unsandboxed under that mode's badge.
+      if (nativeAccepted && session.musePosture) {
+        session.musePosture = { ...session.musePosture, mode: modeId };
+        await this.rememberMusePosture(session);
+      }
       this.setPlanActive(session, false);
       if (session.autoApprove) this.autoApprovePendingPermissions(session);
       return;

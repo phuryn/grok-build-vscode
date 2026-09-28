@@ -19,6 +19,7 @@ const startControl = {
   efforts: [] as Array<string | undefined>,
   museMode: undefined as string | undefined,
   musePostures: [] as any[],
+  museRefusesFullAccess: false,
 };
 
 vi.mock("../src/acp", async (importOriginal) => {
@@ -82,6 +83,9 @@ vi.mock("../src/acp", async (importOriginal) => {
       startControl.disposes += 1;
     }
     async setMode(mode: string): Promise<void> {
+      if (this.provider === "muse" && mode === "yolo" && startControl.museRefusesFullAccess) {
+        throw new Error("approval mode allowAll was not accepted");
+      }
       if (this.provider === "muse") { this.currentModeId = mode; this.emit("modeChanged", mode); }
     }
     supportsInterject(): boolean { return this.provider === "grok"; }
@@ -231,6 +235,32 @@ describe("startSession bounded spawn retry", () => {
     await sidebar.startSession("new-session", session);
     expect(startControl.musePostures.at(-1)).toEqual(original);
   });
+  it("keeps Muse's kept mode for the next start when it refuses full access", async () => {
+    const sidebar = makeSidebar("/repo");
+    const session = sidebar.focused;
+    session.provider = "muse";
+    sidebar.connectedProviders = () => ["muse"];
+    sidebar.usableProviders = () => ["muse"];
+    sidebar.providerConnectionState = { muse: true };
+    delete sidebar.updateSessionMeta;
+    const config: Record<string, unknown> = { defaultMode: "agent" };
+    sidebar.host.getConfiguration.mockReturnValue({
+      get: (key: string, fallback: unknown) => config[key] ?? fallback,
+      inspect: () => undefined,
+      update: vi.fn(async (key: string, value: unknown) => { config[key] = value; }),
+    });
+    await sidebar.startSession(undefined, session);
+    await sidebar.sessionMetaWrites;
+    const agent = startControl.musePostures.at(-1);
+    expect(agent.mode).toBe("agent");
+    startControl.museRefusesFullAccess = true;
+    await sidebar.setMode("yolo", session);
+    await sidebar.sessionMetaWrites;
+    expect(session.autoApprove).toBe(true); // one-time approvals for this process
+    expect(sidebar.state.get("grok.sessionMeta", {})["new-session"].musePosture).toEqual(agent);
+    await sidebar.startSession("new-session", session);
+    expect(startControl.musePostures.at(-1)).toEqual(agent);
+  });
   it.each(["completed", "failed"])("the live tool update handler closes a question on %s", async (status) => {
     const sidebar = makeSidebar("/repo");
     const session = sidebar.focused;
@@ -321,6 +351,7 @@ describe("startSession bounded spawn retry", () => {
   beforeEach(() => {
     startControl.museMode = undefined;
     startControl.musePostures = [];
+    startControl.museRefusesFullAccess = false;
     startControl.failuresRemaining = 0;
     startControl.failWith = "Internal error";
     startControl.starts = 0;
