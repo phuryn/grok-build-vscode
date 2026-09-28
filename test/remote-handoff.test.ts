@@ -151,6 +151,10 @@ describe("host handoff routing", () => {
     expect(h.post).toHaveBeenLastCalledWith({ type: "remoteStatus", linked: true, handoffReady: true, viewerCount: 0 });
     await h.replyRemoteHandoff({ type: "remoteHandoff", source: "topbar", sessionId: "other", repoCwd: "/project", requestId: 1 });
     expect(h.postLocal.mock.calls.at(-1)[0].url).toContain("/chat?device=remembered#");
+    // A refusal inside the grace window: maybe our own stale socket, maybe another window. No code yet.
+    h.uplink.refused = true;
+    h.publishRemoteStatus(true);
+    expect(h.post).toHaveBeenLastCalledWith({ type: "remoteStatus", linked: true, handoffReady: false, viewerCount: 0 });
     h.uplink.heldElsewhere = true;
     h.publishRemoteStatus(true);
     expect(h.post).toHaveBeenLastCalledWith({ type: "remoteStatus", linked: true, handoffReady: false, heldElsewhere: true, viewerCount: 0 });

@@ -21686,9 +21686,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     void this.state.update(GrokSidebar.REMOTE_DEVICE_ID_KEY, deviceId);
   }
 
-  /** Undefined while another window holds this machine's link: a code from here would open that window's host. */
+  /** Undefined while this window's connection is being refused: another window may hold the link, and a code
+   *  from here would open that window's host. A refusal that outlasts the grace window becomes `heldElsewhere`. */
   private remoteDeviceId(): string | undefined {
-    if (this.uplink?.heldElsewhere) return undefined;
+    if (this.uplink?.refused || this.uplink?.heldElsewhere) return undefined;
     return this.uplink?.deviceId ?? this.linkedDeviceId;
   }
 

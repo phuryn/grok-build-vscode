@@ -1372,7 +1372,13 @@ async function testWorkflow() {
     report.model = selected;
     console.log(`grok workflow model=${selected.modelId}; effort=${selected.effort || "N/A (not advertised)"}; ${selected.basis}`);
     const from = peer.normalized.length;
-    const turn = peer.prompt(session.sessionId, WORKFLOW_PROMPT);
+    // Grok 1.0.41 rejects an explicit per-agent model ("Explicit subagent model selection is unavailable for this
+    // catalog"): asked for "the cheapest available model", the model set one, every step failed in 0 ms, and it
+    // relaunched the workflow — two runs where the check expects one. The session is already on the cheapest
+    // selectable model, so tell it not to set one (backlog: Grok 1.0.41 kinds).
+    const prompt = WORKFLOW_PROMPT.replace("Use the cheapest available model and lowest", "Do not set a model for the agents; use the lowest");
+    assert(prompt !== WORKFLOW_PROMPT, "WORKFLOW_PROMPT changed; update the Grok agent-model pin above");
+    const turn = peer.prompt(session.sessionId, prompt);
     const result = await turn.promise;
     assert(result.stopReason === "end_turn", "workflow prompt failed: " + JSON.stringify(result));
     const frames = () => peer.normalized.slice(from).filter(f => f.sessionId === session.sessionId);

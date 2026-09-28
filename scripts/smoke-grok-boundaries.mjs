@@ -54,6 +54,12 @@ rows("ignored", "ACP method", "_x.ai/session/interjection", "ACCEPTED pre-existi
 // listed with their reason in every report; only a NEW unknown kind fails the audit.
 rows("ignored", "ACP update", "session_info_update", "ACCEPTED pre-existing gap (backlog: Grok renames a conversation mid-session and the rail does not follow): src/sidebar.ts xaiNotification has no title-update handler; the title arrives on history refresh via cliSessionTitle.");
 rows("ignored", "ACP update", "retry_state", "ACCEPTED pre-existing gap (backlog): Grok reports a model-request retry and no host code shows it; the turn continues normally once the retry succeeds.");
+// New in grok 1.0.41 (auto-updated 2026-09-28, after 4.13.3 shipped). All notifications, none awaits a reply;
+// the render sections stay clean without them. Backlog: "Grok 1.0.41 sends ten kinds nothing reads".
+rows("ignored", "ACP method", "_x.ai/session/setup", "ACCEPTED pre-existing gap (backlog: Grok 1.0.41 kinds): session/new startup phases (auth, resolve_workspace, …) as notifications; could drive a startup progress line.");
+rows("ignored", "ACP update", "hook_run_started", "ACCEPTED pre-existing gap (backlog: Grok 1.0.41 kinds): a pre/post tool hook started; the tool row itself is unaffected.");
+rows("ignored", "ACP update", "last_turn_summary", "ACCEPTED pre-existing gap (backlog: Grok 1.0.41 kinds): an end-of-turn summary notification; nothing shows it.");
+meta("ignored", "bareName qualifiedName pluginName workflowPath workflowSource feedbackTraceOffer x.ai/memoryMode", "ACCEPTED pre-existing gap (backlog: Grok 1.0.41 kinds): extra labels on tool, workflow and session events; the fields the renderer reads are unchanged.");
 rows("handled", "ACP update", "workflow_updated", "src/run-progress.ts parseRunProgressUpdate / src/sidebar.ts xaiNotification: workflow phase/status/result snapshots drive cards.");
 rows("handled", "ACP update", "subagent_spawned subagent_finished turn_completed", "src/sidebar.ts subagentLifecycle/xaiNotification / media/chat.js: child lifecycle and replayed turn completion.");
 rows("handled", "ACP update", "model_changed", "src/acp.ts handleServerRequest: synchronizes current model and effective effort.");

@@ -300,10 +300,13 @@ describe("RemoteUplink client identity and targeted sends", () => {
     // Refusals at t = 0, 2s, 4s, 6s, 8s are inside the 10s window; the one at
     // 10s is a rival rather than a corpse — two windows on one desk share an
     // installId, so one of them has to lose slowly.
+    expect(uplink.refused).toBe(false);
     for (let i = 0; i < 6; i += 1) {
-      // Inside the window this is most likely our own frozen socket, not a rival.
+      // Inside the window this is most likely our own frozen socket, not a rival —
+      // but it is not ours yet either, so the host draws no code (`refused`).
       expect(uplink.heldElsewhere).toBe(false);
       wsMock.sockets.at(-1)!.emit("close", 4002);
+      expect(uplink.refused).toBe(true);
       await vi.advanceTimersByTimeAsync(2000);
     }
 
@@ -312,6 +315,7 @@ describe("RemoteUplink client identity and targeted sends", () => {
     // Once the rival lets go and the relay names this connection, it is ours again.
     wsMock.sockets.at(-1)!.emit("message", Buffer.from(JSON.stringify({ t: "self", deviceId: "desk" })));
     expect(uplink.heldElsewhere).toBe(false);
+    expect(uplink.refused).toBe(false);
     // The short retries must not have grown the backoff on the way past —
     // resetting or inflating it here is the flapping bug connectionWasHealthy
     // was written to prevent.

@@ -158,6 +158,8 @@ export class RemoteUplink {
   viewerCount = 0;
   /** Refused past the grace window: another host (another IDE window) holds this link. */
   heldElsewhere = false;
+  /** Any refusal since the last admission: the link may belong to another window, so no code yet. */
+  get refused(): boolean { return this.refusedSince > 0; }
   private backoff = INITIAL_BACKOFF_MS;
   /** When the current run of 4002 refusals began; 0 when there is none. */
   private refusedSince = 0;
@@ -423,6 +425,7 @@ export class RemoteUplink {
         case "self":
           this.deviceId = frame.deviceId;
           this.heldElsewhere = false;
+          this.refusedSince = 0;
           this.opts.onStatusChanged?.();
           return;
         case "client-ready":
@@ -496,7 +499,11 @@ export class RemoteUplink {
       // past the window the refusal is a real rival, and ordinary backoff
       // takes over with the delay it already had. See `refusalRetryMs`.
       if (code === CLOSE_DEVICE_BUSY) {
-        if (!this.refusedSince) this.refusedSince = Date.now();
+        if (!this.refusedSince) {
+          this.refusedSince = Date.now();
+          // Not ours until admitted: a remembered device id must not draw a code yet.
+          this.opts.onStatusChanged?.();
+        }
         const soon = refusalRetryMs(Date.now() - this.refusedSince);
         if (soon !== undefined) {
           this.opts.log(`[remote] uplink refused (device still held); retrying in ${(soon / 1000).toFixed(1)}s`);
