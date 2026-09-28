@@ -6830,6 +6830,7 @@
         || (composerExpectedSessionId && sessionId !== composerExpectedSessionId)) return;
     switchComposerDraft(sessionId);
     composerExpectedSessionId = null;
+    syncFocusedRemoteHandoff();
   }
 
   function bindComposerDraft(draftId, sessionId) {
@@ -6844,6 +6845,7 @@
       } else composerDrafts.set(sessionId, draft);
     }
     composerDrafts.delete(draftId);
+    syncFocusedRemoteHandoff();
   }
 
   function postNewSession() {
@@ -6892,6 +6894,7 @@
       switchComposerDraft(fields.sessionId);
       composerExpectedSessionId = fields.sessionId;
     }
+    syncFocusedRemoteHandoff();
     // Highlight without a veil would claim conversation X while Y is still on
     // screen and fully actionable. Pair them so the click is visibly owned.
     veilTranscriptForPendingOpen();
@@ -8275,7 +8278,7 @@
     if (!record) return;
     menuSlot.appendChild(railMenuButton(
       "Session actions",
-      () => railSessionMenuItems(record, repo, true, { inlineRename: true }),
+      () => railSessionMenuItems(record, repo, true, { inlineRename: true, followsFocus: true }),
       "session-head",
     ));
   }
@@ -8948,7 +8951,8 @@
       });
       if (!IS_REMOTE) items.push({
         label: "Continue on phone…", icon: ICON.smartphone,
-        onSelect: () => openRemoteHandoff("rail", s.id, repo.cwd),
+        onSelect: () => opts?.followsFocus
+          ? openRemoteHandoff("rail") : openRemoteHandoff("rail", s.id, repo.cwd),
       });
       // The live transcript this client is showing — same scope as Continue.
       items.push({
@@ -17367,8 +17371,28 @@
     remoteBtn.setAttribute("aria-label", remoteBtn.title);
   }
 
+  function focusedRemoteHandoffSessionId() {
+    // The composer follows the navigation gesture, including correlated New
+    // drafts. activeSessionId can still name the conversation being left.
+    if (composerExpectedSessionId || pendingComposerDrafts.has(composerSessionId)) return undefined;
+    return composerSessionId || undefined;
+  }
+
+  function syncFocusedRemoteHandoff() {
+    if (!remoteHandoff?.followsFocus) return;
+    const sessionId = focusedRemoteHandoffSessionId();
+    if (remoteHandoff.sessionId === sessionId) return;
+    remoteHandoff.sessionId = sessionId;
+    remoteHandoff.result = null;
+    // Retire the old reply even while no replacement request can be sent.
+    remoteHandoff.requestId = ++remoteHandoffSerial;
+    renderRemoteHandoff();
+    requestRemoteHandoff();
+  }
+
   function requestRemoteHandoff(action) {
     if (!remoteHandoff || !state.remoteHandoffSupported) return;
+    if (remoteHandoff.followsFocus && !remoteHandoff.sessionId) return;
     if (action !== "open") remoteHandoff.requestId = ++remoteHandoffSerial;
     vscode.postMessage({ type: "remoteHandoff", requestId: remoteHandoff.requestId,
       source: remoteHandoff.source, sessionId: remoteHandoff.sessionId,
@@ -17385,7 +17409,8 @@
       vscode.postMessage({ type: "openRemotePortal", withHint: true, source });
       return;
     }
-    remoteHandoff = { source, sessionId: sessionId || state.activeSessionId || undefined,
+    remoteHandoff = { source, followsFocus: !sessionId,
+      sessionId: sessionId || focusedRemoteHandoffSessionId(),
       repoCwd, afterLink: !!afterLink, requested: false, requestId: ++remoteHandoffSerial };
     if (!remoteHandoffPopover) {
       remoteHandoffPopover = document.createElement("div");
@@ -17436,11 +17461,13 @@
     if (state.remoteLinked === false) {
       text.textContent = "Sign in once and this machine shows up on afkpilot.com on any phone or browser; keep this app open and it stays awake while you are away; prompts and code are never stored.";
       popover.append(text, button("Sign in and link this machine", () => {
-        remoteLinkReturn = { source: context.source, sessionId: context.sessionId, repoCwd: context.repoCwd };
+        remoteLinkReturn = { source: context.source,
+          sessionId: context.followsFocus ? undefined : context.sessionId, repoCwd: context.repoCwd };
         vscode.postMessage({ type: "remoteSignIn", source: context.source });
         closePopovers();
       }, true), button("How it works", () => { closePopovers(); showRemoteExplainer(context.source); }));
     } else if (state.remoteLinked === true) {
+      const waitingForSession = context.followsFocus && !context.sessionId;
       if (result?.url && result.qrSvg && state.remoteHandoffReady) {
         const qr = document.createElement("div");
         qr.className = "remote-handoff-qr";
@@ -17450,15 +17477,18 @@
         popover.appendChild(qr);
         text.textContent = `Scan with your phone camera to open ${result.title} there.`;
       } else {
-        text.textContent = result?.url ? "The code could not be displayed. Copy the link or open it in your browser."
+        text.textContent = waitingForSession ? "Getting your code ready…"
+          : result?.url ? "The code could not be displayed. Copy the link or open it in your browser."
           : "Your code is not ready yet. You can open AFK Pilot in your browser.";
       }
       const actions = document.createElement("div");
       actions.className = "remote-handoff-actions";
-      actions.appendChild(button("Open in browser", () => {
+      const open = button("Open in browser", () => {
         if (state.remoteHandoffSupported) requestRemoteHandoff("open");
         else vscode.postMessage({ type: "openRemotePortal", withHint: true, source: context.source });
-      }, true));
+      }, true);
+      open.disabled = waitingForSession;
+      actions.appendChild(open);
       const copy = button("Copy link", async () => {
         try { await navigator.clipboard.writeText(result.url); copy.textContent = "Copied"; }
         catch { copy.textContent = "Could not copy"; }
@@ -19845,12 +19875,6 @@
         // Host-confirmed identity only. Optimistic rail clicks never write here.
         confirmComposerSession(msg.sessionId);
         state.activeSessionId = msg.sessionId;
-        // A palette action can reveal a cold chat before its first identity arrives.
-        // Bind that waiting popover once; an already named row never follows focus.
-        if (remoteHandoff && !remoteHandoff.sessionId && msg.sessionId) {
-          remoteHandoff.sessionId = msg.sessionId;
-          requestRemoteHandoff();
-        }
         // May complete a resume (id match) or bind a new-session resolved id.
         noteRailTransitionSessionName(msg);
         // AFTER the note: a surviving transition means this frame was about a

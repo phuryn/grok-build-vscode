@@ -191,6 +191,12 @@ and encodes SVG with pinned, host-only `qrcode-generator`; the optional cwd carr
 worktree identity. No device id or no valid session means no URL/QR; Open in browser
 falls back to the hinted portal. Fragment coordinates never enter HTTP requests.
 Request ids prevent stale replies repainting a newer popover.
+Handoffs without an explicit row id follow the composer's navigation target:
+resume waits for its matching identity, and New waits for its correlated
+`composerDraftSession` binding. The top bar and conversation header show
+“Getting your code ready…” during that wait, with link actions disabled.
+An open popover clears its previous code and requests another when focus changes;
+explicit rail and Projects row targets stay fixed.
 
 `showRemoteHandoff` reveals chat and opens the same popover from the separate
 Projects webview, Settings or `grok.continueOnPhone`; cold chat views queue that

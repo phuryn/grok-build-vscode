@@ -1508,6 +1508,7 @@ describe("remote control onboarding", () => {
 
   it("always shows the desk button and waits for the host before offering sign-in", () => {
     const { window, posted, doc } = bootWebview();
+    dispatch(window, { type: "sessionName", sessionId: "a", name: "My chat", cwd: "/repo" });
     const remoteBtn = $(doc, "remote-btn") as HTMLButtonElement;
     expect(remoteBtn.hidden).toBe(false);
     expect(remoteBtn.title).toBe("Remote control");
@@ -1544,15 +1545,17 @@ describe("remote control onboarding", () => {
     expect(doc.querySelector(".remote-handoff-popover")).toBeNull();
   });
 
-  it("binds a cold palette popover when the focused conversation becomes known", () => {
+  it("binds a cold palette popover and follows the focused conversation", () => {
     const { window, posted } = bootWebview();
     dispatch(window, { type: "remoteStatus", linked: true, handoffReady: true });
     dispatch(window, { type: "showRemoteHandoff", source: "palette" });
+    expect(posted.filter((m) => m.type === "remoteHandoff")).toHaveLength(0);
     dispatch(window, { type: "sessionName", sessionId: "loaded", name: "Loaded chat", cwd: "/repo" });
-    expect(posted.filter((m) => m.type === "remoteHandoff").at(-1)).toMatchObject({ sessionId: "loaded", source: "palette", action: "refresh" });
+    expect(posted.filter((m) => m.type === "remoteHandoff").at(-1)).toMatchObject({ sessionId: "loaded", source: "palette", action: "show" });
     const count = posted.filter((m) => m.type === "remoteHandoff").length;
     dispatch(window, { type: "sessionName", sessionId: "different", name: "Different chat", cwd: "/other" });
-    expect(posted.filter((m) => m.type === "remoteHandoff")).toHaveLength(count);
+    expect(posted.filter((m) => m.type === "remoteHandoff")).toHaveLength(count + 1);
+    expect(posted.filter((m) => m.type === "remoteHandoff").at(-1)).toMatchObject({ sessionId: "different", action: "refresh" });
   });
 
   it("never renders the button or popover on a remote", () => {
@@ -1565,6 +1568,7 @@ describe("remote control onboarding", () => {
 
   it("shows no QR until identity is ready and uses the fallback action", () => {
     const { window, posted, doc } = bootWebview();
+    dispatch(window, { type: "sessionName", sessionId: "a", name: "My chat", cwd: "/repo" });
     dispatch(window, { type: "remoteStatus", linked: true, handoffReady: false });
     click(window, $(doc, "remote-btn"));
     expect(doc.querySelector(".remote-handoff-popover")!.textContent).toContain("Continue on your phone");
