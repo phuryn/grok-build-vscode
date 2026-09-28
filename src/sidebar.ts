@@ -21401,6 +21401,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     if (this.uplink) return;
     const token = await this.readDeviceToken();
     if (!token) return; // not linked yet — the link command starts the uplink itself
+    this.linkedDeviceId ??= this.state.get<string>(GrokSidebar.REMOTE_DEVICE_ID_KEY) || undefined;
     const uplink = new RemoteUplink({
       relayUrl: this.relayUrl(),
       token,
@@ -21435,7 +21436,11 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         sameCwd: pathsEqual,
       },
       onConnected: () => this.cloudHostUpdate?.connected(),
-      onStatusChanged: () => { if (this.uplink === uplink) void this.postRemoteStatus(); },
+      onStatusChanged: () => {
+        if (this.uplink !== uplink) return;
+        if (uplink.deviceId && uplink.deviceId !== this.linkedDeviceId) this.rememberRemoteDeviceId(uplink.deviceId);
+        void this.postRemoteStatus();
+      },
       onClientReady: (clientId, tabToken) => this.handleRemoteClientReady(clientId, tabToken),
       onClientLeft: (clientId) => {
         this.releaseRemoteClient(clientId);
@@ -21506,7 +21511,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   private clearRemoteRuntime(): void {
     this.uplink?.dispose();
     this.uplink = undefined;
-    this.linkedDeviceId = undefined;
+    this.rememberRemoteDeviceId(undefined);
     this.stopVoiceInput();
     this.remoteClients.clear();
     this.refreshKeepAwake();
@@ -21604,7 +21609,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       this.uplink?.dispose();
       this.uplink = undefined;
       // An older relay omits it; the uplink's `self` frame then supplies it.
-      this.linkedDeviceId = approved.deviceId;
+      this.rememberRemoteDeviceId(approved.deviceId);
       await this.maybeStartUplink();
       this.publishRemoteStatus(true);
       this.reportHandoffEvent("remote_link_completed", {});
@@ -21671,10 +21676,19 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   }
 
   private remoteStatusRevision = 0;
-  /** From the link reply, so the phone code can be drawn before the uplink's `self` frame arrives. */
+  /** The linked device's id, from the link reply or the uplink's `self` frame, kept with the link so the phone
+   *  code never waits for a reconnect (after sleep, a network change or a relay deploy). Fixed for a token's life. */
   private linkedDeviceId?: string;
+  private static readonly REMOTE_DEVICE_ID_KEY = "grok.remote.deviceId";
 
+  private rememberRemoteDeviceId(deviceId: string | undefined): void {
+    this.linkedDeviceId = deviceId;
+    void this.state.update(GrokSidebar.REMOTE_DEVICE_ID_KEY, deviceId);
+  }
+
+  /** Undefined while another window holds this machine's link: a code from here would open that window's host. */
   private remoteDeviceId(): string | undefined {
+    if (this.uplink?.heldElsewhere) return undefined;
     return this.uplink?.deviceId ?? this.linkedDeviceId;
   }
 
@@ -21682,6 +21696,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     this.remoteStatusRevision = (this.remoteStatusRevision ?? 0) + 1;
     const msg: HostMsg = { type: "remoteStatus", linked,
       handoffReady: linked && !!this.remoteDeviceId(),
+      ...(linked && this.uplink?.heldElsewhere ? { heldElsewhere: true } : {}),
       viewerCount: linked ? this.uplink?.viewerCount ?? 0 : 0 };
     this.post(msg);
     void this.settingsEditor?.webview.postMessage(msg);

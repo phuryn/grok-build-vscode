@@ -1565,6 +1565,16 @@ describe("remote control onboarding", () => {
     expect(doc.querySelector(".remote-handoff-popover")).toBeNull();
   });
 
+  it("says so, instead of waiting forever, when another window holds this machine's link", () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, { type: "sessionName", sessionId: "a", name: "My chat", cwd: "/repo" });
+    dispatch(window, { type: "remoteStatus", linked: true, handoffReady: true });
+    click(window, $(doc, "remote-btn"));
+    dispatch(window, { type: "remoteStatus", linked: true, handoffReady: false, heldElsewhere: true });
+    expect(doc.querySelector(".remote-handoff-popover")!.textContent).toContain("Another window on this computer is connected");
+    expect(doc.querySelector(".remote-handoff-qr-pending")).toBeNull();
+  });
+
   it("shows no QR until identity is ready and uses the fallback action", () => {
     const { window, posted, doc } = bootWebview();
     dispatch(window, { type: "sessionName", sessionId: "a", name: "My chat", cwd: "/repo" });

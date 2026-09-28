@@ -587,7 +587,7 @@ export type HostMsg =
   | { type: "moveComposerCaret"; direction: "forward" | "previousLine" }
   // Device linking, handoff readiness and presence for the desk's remote button.
   // Local-webview chrome — never mirrored to remotes.
-  | { type: "remoteStatus"; linked: boolean; handoffReady?: boolean; viewerCount?: number }
+  | { type: "remoteStatus"; linked: boolean; handoffReady?: boolean; viewerCount?: number; heldElsewhere?: boolean }
   | { type: "showRemoteHandoff"; source: RemoteHandoffSource; sessionId?: string; repoCwd?: string; explain?: boolean }
   | { type: "remoteHandoff"; requestId: number; url?: string; qrSvg?: string; title: string }
   /**

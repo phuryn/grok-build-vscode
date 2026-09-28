@@ -82,7 +82,7 @@ function hostHarness() {
   h.pool = new Set([h.focused]);
   h.sessionCache = new Map([["other", { entry: { id: "other", cwd: "/tree", displayName: "Other chat" } }]]);
   h.allAdapterCatalogs = () => [];
-  h.state = { get: (_: string, fallback: unknown) => fallback };
+  h.state = { get: (_: string, fallback: unknown) => fallback, update: vi.fn(async () => {}) };
   h.localRepoCatalogEntries = () => [{ cwd: "/project", available: true }, { cwd: "/second", available: true }];
   h.sessionCwdsForRepo = (cwd: string) => cwd === "/project" ? [cwd, "/tree"] : [cwd];
   h.sessionCwd = (s: Session) => s.cwd;
@@ -142,6 +142,22 @@ describe("host handoff routing", () => {
       await h.replyRemoteHandoff({ type: "remoteHandoff", source: "topbar", sessionId: "other", repoCwd: "/project", requestId: 10 });
       expect(h.postLocal.mock.calls.at(-1)[0].url).toContain("/chat?device=relay-named#");
     } finally { vi.unstubAllGlobals(); }
+  });
+  it("keeps the device id with the link, and draws no code while another window holds it", async () => {
+    const h = hostHarness();
+    h.uplink = { viewerCount: 0 }; // reconnecting: no `self` yet
+    h.linkedDeviceId = "remembered";
+    h.publishRemoteStatus(true);
+    expect(h.post).toHaveBeenLastCalledWith({ type: "remoteStatus", linked: true, handoffReady: true, viewerCount: 0 });
+    await h.replyRemoteHandoff({ type: "remoteHandoff", source: "topbar", sessionId: "other", repoCwd: "/project", requestId: 1 });
+    expect(h.postLocal.mock.calls.at(-1)[0].url).toContain("/chat?device=remembered#");
+    h.uplink.heldElsewhere = true;
+    h.publishRemoteStatus(true);
+    expect(h.post).toHaveBeenLastCalledWith({ type: "remoteStatus", linked: true, handoffReady: false, heldElsewhere: true, viewerCount: 0 });
+    await h.replyRemoteHandoff({ type: "remoteHandoff", source: "topbar", sessionId: "other", repoCwd: "/project", requestId: 2 });
+    expect(h.postLocal.mock.calls.at(-1)[0]).toMatchObject({ url: undefined, qrSvg: undefined });
+    h.rememberRemoteDeviceId("relinked");
+    expect(h.state.update).toHaveBeenLastCalledWith("grok.remote.deviceId", "relinked");
   });
   it("resolves a nonfocused worktree row without switching the desk conversation", async () => {
     const h = hostHarness();

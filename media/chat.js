@@ -1011,6 +1011,7 @@
     remoteLinked: null,
     remoteHandoffSupported: false,
     remoteHandoffReady: false,
+    remoteHeldElsewhere: false,
     remoteViewerCount: 0,
     // Display form of the one directory new and cloned projects land in
     // (`projectSetup.root`, e.g. `~/Grok Build`). Empty until the host says —
@@ -17581,6 +17582,10 @@
         text.textContent = `Scan with your phone camera to open ${result.title} there.`;
       } else if (result?.url) {
         text.textContent = "The code could not be displayed. Copy the link or open it in your browser.";
+      } else if (state.remoteHeldElsewhere) {
+        // One link, one connection: another window of this app holds it, and a
+        // code from here would open that window's conversations, not this one's.
+        text.textContent = "Another window on this computer is connected to AFK Pilot. Use Remote control in that window, or close it and this one takes over.";
       } else {
         // Hold the code's space while the host resolves the conversation or
         // learns its device id, so the popover does not jump when it lands.
@@ -19600,7 +19605,9 @@
         }
         break;
       case "remoteStatus": {
-        const changed = state.remoteLinked !== !!msg.linked || state.remoteHandoffReady !== (msg.handoffReady === true);
+        const changed = state.remoteLinked !== !!msg.linked || state.remoteHandoffReady !== (msg.handoffReady === true)
+          || state.remoteHeldElsewhere !== (msg.heldElsewhere === true);
+        state.remoteHeldElsewhere = msg.heldElsewhere === true;
         state.remoteLinked = !!msg.linked;
         state.remoteHandoffSupported = typeof msg.handoffReady === "boolean";
         state.remoteHandoffReady = msg.handoffReady === true;

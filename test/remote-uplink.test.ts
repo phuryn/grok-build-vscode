@@ -301,11 +301,17 @@ describe("RemoteUplink client identity and targeted sends", () => {
     // 10s is a rival rather than a corpse — two windows on one desk share an
     // installId, so one of them has to lose slowly.
     for (let i = 0; i < 6; i += 1) {
+      // Inside the window this is most likely our own frozen socket, not a rival.
+      expect(uplink.heldElsewhere).toBe(false);
       wsMock.sockets.at(-1)!.emit("close", 4002);
       await vi.advanceTimersByTimeAsync(2000);
     }
 
     expect(logs.filter((l) => l.includes("refused (device still held)"))).toHaveLength(5);
+    expect(uplink.heldElsewhere).toBe(true);
+    // Once the rival lets go and the relay names this connection, it is ours again.
+    wsMock.sockets.at(-1)!.emit("message", Buffer.from(JSON.stringify({ t: "self", deviceId: "desk" })));
+    expect(uplink.heldElsewhere).toBe(false);
     // The short retries must not have grown the backoff on the way past —
     // resetting or inflating it here is the flapping bug connectionWasHealthy
     // was written to prevent.

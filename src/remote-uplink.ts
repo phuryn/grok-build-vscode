@@ -156,6 +156,8 @@ export class RemoteUplink {
   private ws?: WebSocket;
   deviceId?: string;
   viewerCount = 0;
+  /** Refused past the grace window: another host (another IDE window) holds this link. */
+  heldElsewhere = false;
   private backoff = INITIAL_BACKOFF_MS;
   /** When the current run of 4002 refusals began; 0 when there is none. */
   private refusedSince = 0;
@@ -420,6 +422,7 @@ export class RemoteUplink {
       switch (frame.t) {
         case "self":
           this.deviceId = frame.deviceId;
+          this.heldElsewhere = false;
           this.opts.onStatusChanged?.();
           return;
         case "client-ready":
@@ -500,8 +503,13 @@ export class RemoteUplink {
           this.reconnectTimer = setTimeout(() => this.connect(), soon);
           return;
         }
+        if (!this.heldElsewhere) {
+          this.heldElsewhere = true;
+          this.opts.onStatusChanged?.();
+        }
       } else {
         this.refusedSince = 0;
+        this.heldElsewhere = false;
       }
       if (connectionWasHealthy(connectedMs)) this.backoff = INITIAL_BACKOFF_MS;
       this.opts.log(`[remote] uplink disconnected (code ${code}); retrying in ${Math.round(this.backoff / 1000)}s`);
