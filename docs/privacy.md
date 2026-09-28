@@ -6,12 +6,17 @@
 
 Anonymous events go to [Aptabase](https://aptabase.com). **`session_start`** fires on the **first real message** of a conversation — never for empty or abandoned conversations. Legacy primer turns replayed from sessions created by older extension builds do not count as real messages. It gauges how many people use the extension, which models/modes are popular, and whether our default settings are the right ones.
 
-Two smaller events measure remote intent and use:
+The following smaller events measure remote intent, linking and use:
 
-- **`remote_portal_opened`** fires when someone opens the AFK Pilot portal from the local host. Its only custom props are the anonymous install id, `hostKind`, and `withHint` (whether the portal was opened with connection guidance). It can fire without starting a conversation.
+- **`remote_portal_opened`** fires when someone opens the AFK Pilot portal from the local host. Its only custom props are the anonymous install id, `hostKind`, `source` (`topbar`, `rail`, `projects`, `settings`, or `palette`), and `withHint` (whether the portal was opened with connection guidance). It can fire without starting a conversation.
+- **`remote_handoff_shown`** fires when the desk opens the phone handoff popover. Its only custom props are the anonymous install id, `hostKind`, `source` (the same five values above), and `linked` (a boolean). Refreshing a code does not emit another event.
+- **`remote_link_started`** fires when a device-link flow starts. Its only custom props are the anonymous install id, `hostKind`, and `source`.
+- **`remote_link_completed`** fires after a successful device link. Its only custom props are the anonymous install id and `hostKind`.
 - **`session_remote_started`** fires once on the first remote message of a live conversation, including one that began locally. Its only custom props are the anonymous install id, `hostKind`, `clientDevice` (touch/mobile or desktop browser), `sessionOrigin` (the original first-message origin), and `provider` (the current CLI). A remote-first conversation deliberately emits both this event and `session_start`. The origin and once-only flag are ephemeral, held on the live conversation; after a cold reload the original origin is unknown and omitted, and a new live instance can report remote use again.
 
-All three share the system fields below and the same opt-out/fork gates. Their random Aptabase envelope `sessionId` is shared across conversations within one extension host process and rotates after **more than one hour without an emitted event**, or on process restart. It is never a conversation id. Aptabase session totals therefore count activity windows, which may contain several conversations or just a portal open. **Use the unchanged `session_start` event count for conversation totals comparable with historical data**, rather than Aptabase session totals.
+All six share the system fields below and the same opt-out/fork gates. Their random Aptabase envelope `sessionId` is shared across conversations within one extension host process and rotates after **more than one hour without an emitted event**, or on process restart. It is never a conversation id. Aptabase session totals therefore count activity windows, which may contain several conversations or just a portal open. **Use the unchanged `session_start` event count for conversation totals comparable with historical data**, rather than Aptabase session totals.
+
+Handoff telemetry never includes a URL, QR code, relay device id, conversation id, conversation title, repository path, or working directory. The QR is generated locally; conversation coordinates are URL-fragment fields used by the phone tab, not HTTP request fields.
 
 The `session_start` event carries:
 

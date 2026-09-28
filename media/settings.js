@@ -1108,14 +1108,25 @@
       visible: (s, env) => !!(env && env.hostCaps && env.hostCaps.editProviderConfigFiles && env.hostCaps.editProjectFiles),
     },
     {
-      id: "continueRemotely",
+      id: "remoteMachineStatus",
       category: "account",
-      title: "Continue remotely",
-      description: "Open AFK Pilot so you can keep this session going from another device.",
+      title: "This machine",
+      kind: "status",
+      describe: (s, env) => env.remoteLinked === null ? "Checking…" : !env.remoteLinked ? "Not linked"
+        : env.remoteViewerCount > 0 ? "Linked · phone connected" : "Linked",
+      visible: (s, env) => !!(env && !env.isRemote),
+    },
+    {
+      id: "continueOnPhone",
+      category: "account",
+      title: "Continue on phone",
+      description: "Show a code for the conversation open in chat.",
       kind: "action",
-      actionLabel: "Open",
+      actionLabel: "Show code",
       visible: (s, env) => !!(env && !env.isRemote && env.remoteLinked === true),
-      message: () => ({ type: "openRemotePortal", withHint: true }),
+      message: (s, env) => env.remoteHandoffSupported
+        ? { type: "showRemoteHandoff", source: "settings" }
+        : { type: "openRemotePortal", withHint: true, source: "settings" },
     },
     {
       id: "yourAccount",
@@ -1125,7 +1136,7 @@
       kind: "action",
       actionLabel: "Open",
       visible: (s, env) => !!(env && !env.isRemote && env.remoteLinked === true),
-      message: () => ({ type: "openRemotePortal" }),
+      message: () => ({ type: "openRemotePortal", source: "settings" }),
     },
     {
       id: "unlinkDevice",
@@ -1145,7 +1156,7 @@
       kind: "action",
       actionLabel: "Link this device",
       visible: (s, env) => !!(env && !env.isRemote && env.remoteLinked === false),
-      message: () => ({ type: "remoteSignIn" }),
+      message: () => ({ type: "remoteSignIn", source: "settings" }),
     },
     {
       id: "remoteHowItWorks",
@@ -1154,8 +1165,11 @@
       description: "AFK Pilot keeps this machine awake and lets you continue from a phone without storing prompts or code.",
       kind: "action",
       actionLabel: "Learn more",
-      visible: (s, env) => !!(env && !env.isRemote && env.remoteLinked === false && !env.standalone),
-      local: "explainRemote",
+      visible: (s, env) => !!(env && !env.isRemote && env.remoteLinked === false),
+      local: (s, env) => env.standalone ? null : "explainRemote",
+      message: (s, env) => !env.standalone ? null : env.remoteHandoffSupported
+        ? { type: "showRemoteHandoff", source: "settings", explain: true }
+        : { type: "openRemotePortal", source: "settings" },
     },
     {
       id: "remoteAccountStatus",
@@ -1605,10 +1619,10 @@
     return String(value);
   }
 
-  function rowMessage(row, value, snapshot) {
+  function rowMessage(row, value, snapshot, env = {}) {
     if (typeof row.message !== "function") return null;
-    // Action rows that need the snapshot receive it as the sole argument.
-    if (row.kind === "action") return row.message(snapshot);
+    // Actions may depend on the snapshot and host capabilities.
+    if (row.kind === "action") return row.message(snapshot, env);
     return row.message(value);
   }
 
@@ -3440,7 +3454,7 @@
         if (input) input.focus();
         return;
       }
-      if (local && !row.message) {
+      if (local && (!row.message || local === "explainRemote")) {
         if (onClose && !opts.standalone) onClose();
         if (onLocal) onLocal(local);
         return;
@@ -3450,7 +3464,7 @@
         openExternalHref(row.href);
         return;
       }
-      const message = rowMessage(row, undefined, snapshot);
+      const message = rowMessage(row, undefined, snapshot, env);
       // Sign-out is the one with nothing else to show for it: a sign-in opens
       // the wizard, and this page sits behind that.
       let marked = false;

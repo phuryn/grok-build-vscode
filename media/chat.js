@@ -487,6 +487,10 @@
   const newBtn = $("new-btn");
   const historyBtn = $("history-btn");
   const remoteBtn = $("remote-btn");
+  let remoteHandoffPopover = null;
+  let remoteHandoff = null;
+  let remoteHandoffSerial = 0;
+  let remoteLinkReturn = null;
   const repoBtn = $("repo-btn");
   const modeBtn = $("mode-btn");
   const gearBtn = $("gear-btn");
@@ -1002,14 +1006,11 @@
     // grok.worktree — true when the focused session runs in an isolated git
     // worktree (from the `session` message). Gates the gear Apply/Remove items.
     isWorktree: false,
-    // Whether the host machine holds a relay device token (`remoteStatus`).
-    // Drives the gear AFK Pilot items; never sent to remote clients.
-    // THREE states, not two: null = not answered yet. The host reads the token
-    // from secret storage asynchronously, so defaulting to false told an
-    // already-linked machine to "Sign in (link this device)" for that window —
-    // inviting the user to re-link a device that was working. Unknown shows
-    // nothing at all.
+    // null means the host has not answered: never invite an already-linked desk to link again.
     remoteLinked: null,
+    remoteHandoffSupported: false,
+    remoteHandoffReady: false,
+    remoteViewerCount: 0,
     // Display form of the one directory new and cloned projects land in
     // (`projectSetup.root`, e.g. `~/Grok Build`). Empty until the host says —
     // the Add project form shows the destination as you type, so it needs this
@@ -1411,13 +1412,16 @@
   newBtn.innerHTML = ICON.squarePen;
   historyBtn.innerHTML = ICON.clock;
   ensureVisibleNewSession();
-  // "Continue remotely", one tap from the chat instead of buried in the gear
-  // menu — the desk is where someone decides to get up and keep going on
-  // their phone. Local client only (a remote is already remote), and only
-  // once this machine is linked; syncRemoteButton flips it live.
   if (remoteBtn) {
-    remoteBtn.innerHTML = ICON.smartphone;
-    remoteBtn.onclick = () => vscode.postMessage({ type: "openRemotePortal", withHint: true });
+    remoteBtn.innerHTML = ICON.smartphone + '<span class="remote-viewer-dot" aria-hidden="true"></span>';
+    remoteBtn.setAttribute("aria-haspopup", "dialog");
+    remoteBtn.onclick = (e) => {
+      e.stopPropagation();
+      if (remoteHandoff) { closePopovers(); return; }
+      openRemoteHandoff("topbar");
+    };
+    if (IS_REMOTE) remoteBtn.remove();
+    syncRemoteButton();
   }
   updateSendButton(); // spinner by default — session is starting up (busy+locked)
   gearBtn.classList.remove("icon-btn");
@@ -2286,6 +2290,9 @@
 
   function closePopovers() {
     flushPicker();
+    if (remoteHandoffPopover) remoteHandoffPopover.hidden = true;
+    remoteHandoff = null;
+    if (remoteBtn) remoteBtn.setAttribute("aria-expanded", "false");
     gearBtn.setAttribute("aria-expanded", "false");
     gearPopover.classList.remove("model-picker");
     gearPopover.removeAttribute("role");
@@ -3354,6 +3361,8 @@
       steerSupported: steerableProvider(),
       providersKnown: !!state.providersKnown,
       remoteLinked: state.remoteLinked,
+      remoteHandoffSupported: state.remoteHandoffSupported,
+      remoteViewerCount: state.remoteViewerCount,
       hostCaps: state.hostCaps || {},
     };
   }
@@ -3749,7 +3758,7 @@
     });
   }
 
-  function showRemoteExplainer() {
+  function showRemoteExplainer(source = "settings") {
     const overlay = document.createElement("div");
     overlay.className = "confirm-overlay remote-explainer-overlay";
     const panel = document.createElement("div");
@@ -3828,7 +3837,7 @@
     };
     moreBtn.onclick = (e) => {
       e.stopPropagation();
-      vscode.postMessage({ type: "openRemotePortal" });
+      vscode.postMessage({ type: "openRemotePortal", source });
       done();
     };
 
@@ -3916,33 +3925,6 @@
       `<span class="gear-lead" title="Adds worktrees, thinking traces, and tool details (still off by default).">${ICON.squareChevronRight}<span>Coding</span></span>${state.appPurpose === "coding" ? '<span class="popover-check">✓</span>' : ""}`,
       () => { setAppPurpose("coding"); refresh(); },
     );
-
-    // ── Remote Control ────────────────────────────────────────────────────
-    // Hidden in the browser client: a remote can't (un)link the desk.
-    // `remoteLinked === null` = the host hasn't answered yet: show NOTHING
-    // rather than guessing. Unlink lives only in Settings → Account.
-    if (!IS_REMOTE && state.remoteLinked !== null) {
-      section(target === addPopover ? "Remote control" : "Remote Control");
-      if (state.remoteLinked) {
-        item(`<span class="gear-lead">${ICON.smartphone}<span>Continue remotely</span></span>`, () => {
-          vscode.postMessage({ type: "openRemotePortal", withHint: true });
-          closePopovers();
-        });
-        item(`<span class="gear-lead">${ICON.user}<span>Your account</span></span>`, () => {
-          vscode.postMessage({ type: "openRemotePortal" });
-          closePopovers();
-        });
-      } else {
-        item(`<span class="gear-lead">${ICON.user}<span>Sign in (link this device)</span></span>`, () => {
-          vscode.postMessage({ type: "remoteSignIn" });
-          closePopovers();
-        });
-        item(`<span class="gear-lead">${ICON.info}<span>How it works</span></span>`, () => {
-          closePopovers();
-          showRemoteExplainer();
-        });
-      }
-    }
 
     section("Settings");
     item(`<span class="gear-lead">${ICON.gear}<span>Settings</span></span>`, () => {
@@ -8925,6 +8907,10 @@
         ...waiting,
         onSelect: () => beginContinueInNewChat(s.id),
       });
+      if (!IS_REMOTE) items.push({
+        label: "Continue on phone…", icon: ICON.smartphone,
+        onSelect: () => openRemoteHandoff("rail", s.id, repo.cwd),
+      });
       // The live transcript this client is showing — same scope as Continue.
       items.push({
         label: "Export as Markdown",
@@ -8970,6 +8956,10 @@
         });
       }
     }
+    if (!active && !IS_REMOTE) items.push({
+      label: "Continue on phone…", icon: ICON.smartphone,
+      onSelect: () => openRemoteHandoff("rail", s.id, repo.cwd),
+    });
     // Capability, never a version: a host that has never sent `pinnedSessions`
     // will silently drop `toggleSessionPin`, so offering the control there gives
     // a control that does nothing — worse than not having one. The frame arrives
@@ -17321,7 +17311,121 @@
   }
 
   function syncRemoteButton() {
-    if (remoteBtn) remoteBtn.hidden = IS_REMOTE || !state.remoteLinked;
+    if (!remoteBtn) return;
+    remoteBtn.hidden = IS_REMOTE;
+    const connected = state.remoteLinked === true && state.remoteViewerCount > 0;
+    remoteBtn.classList.toggle("phone-connected", connected);
+    remoteBtn.title = connected ? "Remote control · phone connected" : "Remote control";
+    remoteBtn.setAttribute("aria-label", remoteBtn.title);
+  }
+
+  function requestRemoteHandoff(action) {
+    if (!remoteHandoff || !state.remoteHandoffSupported) return;
+    if (action !== "open") remoteHandoff.requestId = ++remoteHandoffSerial;
+    vscode.postMessage({ type: "remoteHandoff", requestId: remoteHandoff.requestId,
+      source: remoteHandoff.source, sessionId: remoteHandoff.sessionId,
+      repoCwd: remoteHandoff.repoCwd, action: action || (remoteHandoff.requested ? "refresh" : "show") });
+    remoteHandoff.requested = true;
+  }
+
+  function openRemoteHandoff(source, sessionId, repoCwd, afterLink) {
+    if (IS_REMOTE) return;
+    closeSettingsOverlay();
+    closePopovers();
+    // Old hosts only know the portal action. No unanswered QR request or guessed identity.
+    if (state.remoteLinked === true && !state.remoteHandoffSupported) {
+      vscode.postMessage({ type: "openRemotePortal", withHint: true, source });
+      return;
+    }
+    remoteHandoff = { source, sessionId: sessionId || state.activeSessionId || undefined,
+      repoCwd, afterLink: !!afterLink, requested: false, requestId: ++remoteHandoffSerial };
+    if (!remoteHandoffPopover) {
+      remoteHandoffPopover = document.createElement("div");
+      remoteHandoffPopover.className = "toolbar-popover remote-handoff-popover";
+      remoteHandoffPopover.setAttribute("role", "dialog");
+      remoteHandoffPopover.setAttribute("aria-label", "Remote control");
+      remoteHandoffPopover.addEventListener("click", (e) => e.stopPropagation());
+      remoteHandoffPopover.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closePopovers(); remoteBtn?.focus(); }
+      });
+      document.body.appendChild(remoteHandoffPopover);
+    }
+    remoteBtn?.setAttribute("aria-expanded", "true");
+    renderRemoteHandoff();
+    requestRemoteHandoff();
+    remoteHandoffPopover.querySelector("button")?.focus();
+  }
+
+  function renderRemoteHandoff() {
+    if (!remoteHandoff || !remoteHandoffPopover) return;
+    const context = remoteHandoff;
+    const result = context.result;
+    const popover = remoteHandoffPopover;
+    const focusedLabel = popover.contains(document.activeElement)
+      ? document.activeElement.getAttribute("aria-label") || document.activeElement.textContent : null;
+    popover.replaceChildren();
+    const close = document.createElement("button");
+    close.className = "icon-btn remote-handoff-close";
+    close.innerHTML = ICON.x;
+    close.setAttribute("aria-label", "Close remote control");
+    close.onclick = () => { closePopovers(); remoteBtn?.focus(); };
+    popover.appendChild(close);
+    const title = document.createElement("h3");
+    title.textContent = state.remoteLinked === null ? "Checking…"
+      : !state.remoteLinked ? "Use this chat from your phone"
+      : context.afterLink ? (result?.qrSvg ? "Linked. Now scan this." : "Linked. Getting your code ready…")
+      : "Continue on your phone";
+    popover.appendChild(title);
+    const button = (label, action, primary) => {
+      const el = document.createElement("button");
+      el.type = "button";
+      el.className = "confirm-btn" + (primary ? " confirm-primary" : "");
+      el.textContent = label;
+      el.onclick = action;
+      return el;
+    };
+    const text = document.createElement("p");
+    if (state.remoteLinked === false) {
+      text.textContent = "Sign in once and this machine shows up on afkpilot.com on any phone or browser; keep this app open and it stays awake while you are away; prompts and code are never stored.";
+      popover.append(text, button("Sign in and link this machine", () => {
+        remoteLinkReturn = { source: context.source, sessionId: context.sessionId, repoCwd: context.repoCwd };
+        vscode.postMessage({ type: "remoteSignIn", source: context.source });
+        closePopovers();
+      }, true), button("How it works", () => { closePopovers(); showRemoteExplainer(context.source); }));
+    } else if (state.remoteLinked === true) {
+      if (result?.url && result.qrSvg && state.remoteHandoffReady) {
+        const qr = document.createElement("div");
+        qr.className = "remote-handoff-qr";
+        qr.setAttribute("role", "img");
+        qr.setAttribute("aria-label", "Scan to continue on your phone");
+        qr.innerHTML = result.qrSvg; // SVG generated by the local host's pinned encoder.
+        popover.appendChild(qr);
+        text.textContent = `Scan with your phone camera to open ${result.title} there.`;
+      } else {
+        text.textContent = result?.url ? "The code could not be displayed. Copy the link or open it in your browser."
+          : "Your code is not ready yet. You can open AFK Pilot in your browser.";
+      }
+      const actions = document.createElement("div");
+      actions.className = "remote-handoff-actions";
+      actions.appendChild(button("Open in browser", () => {
+        if (state.remoteHandoffSupported) requestRemoteHandoff("open");
+        else vscode.postMessage({ type: "openRemotePortal", withHint: true, source: context.source });
+      }, true));
+      const copy = button("Copy link", async () => {
+        try { await navigator.clipboard.writeText(result.url); copy.textContent = "Copied"; }
+        catch { copy.textContent = "Could not copy"; }
+      });
+      copy.disabled = !result?.url;
+      actions.appendChild(copy);
+      const footer = document.createElement("div");
+      footer.className = "remote-handoff-footer";
+      footer.append("Linked", button("Your account", () => vscode.postMessage({ type: "openRemotePortal", source: context.source })));
+      popover.append(text, actions, footer);
+    }
+    popover.hidden = false;
+    positionDropdownPopover(popover, remoteBtn || gearBtn);
+    if (focusedLabel) [...popover.querySelectorAll("button")].find((el) =>
+      (el.getAttribute("aria-label") || el.textContent) === focusedLabel)?.focus();
   }
 
   // REMOTE ONLY — paint the user's message the instant they send it.
@@ -19293,17 +19397,38 @@
         state.planModeRecheckable = !state.planModeAvailable && msg.recheckable === true;
         updateSendButton();
         break;
-      case "remoteStatus":
+      case "showRemoteHandoff":
+        if (!IS_REMOTE) {
+          if (msg.explain) { closeSettingsOverlay(); closePopovers(); showRemoteExplainer(msg.source); }
+          else openRemoteHandoff(msg.source, msg.sessionId, msg.repoCwd);
+        }
+        break;
+      case "remoteHandoff":
+        if (!IS_REMOTE && remoteHandoff && msg.requestId === remoteHandoff.requestId) {
+          remoteHandoff.result = msg;
+          renderRemoteHandoff();
+        }
+        break;
+      case "remoteStatus": {
+        const changed = state.remoteLinked !== !!msg.linked || state.remoteHandoffReady !== (msg.handoffReady === true);
         state.remoteLinked = !!msg.linked;
+        state.remoteHandoffSupported = typeof msg.handoffReady === "boolean";
+        state.remoteHandoffReady = msg.handoffReady === true;
+        state.remoteViewerCount = Number.isFinite(msg.viewerCount) ? msg.viewerCount : 0;
         syncRemoteButton();
-        // The answer can land while the gear is already open (it usually
-        // arrives within a frame of boot, but a slow secret read is exactly
-        // the case this guards): repaint so the section appears rather than
-        // waiting for the next open.
-        if (!gearPopover.hidden && state.gearView === "main") renderGearMain();
-        if (!addPopover.hidden) renderAddPopover();
+        if (state.remoteLinked && remoteLinkReturn) {
+          const pending = remoteLinkReturn;
+          remoteLinkReturn = null;
+          openRemoteHandoff(pending.source, pending.sessionId, pending.repoCwd, true);
+        } else if (remoteHandoff && changed) {
+          remoteHandoff.result = null;
+          renderRemoteHandoff();
+          requestRemoteHandoff();
+        }
+        refreshSettingsOverlay();
         refreshModelControls();
         break;
+      }
       case "steerByDefault":
         // Live toggle (grok.steerByDefault). Pure policy for the next send —
         // the queued block's Steer button is unaffected.
@@ -19650,6 +19775,12 @@
         // Host-confirmed identity only. Optimistic rail clicks never write here.
         confirmComposerSession(msg.sessionId);
         state.activeSessionId = msg.sessionId;
+        // A palette action can reveal a cold chat before its first identity arrives.
+        // Bind that waiting popover once; an already named row never follows focus.
+        if (remoteHandoff && !remoteHandoff.sessionId && msg.sessionId) {
+          remoteHandoff.sessionId = msg.sessionId;
+          requestRemoteHandoff();
+        }
         // May complete a resume (id match) or bind a new-session resolved id.
         noteRailTransitionSessionName(msg);
         // AFTER the note: a surviving transition means this frame was about a

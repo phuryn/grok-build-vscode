@@ -79,7 +79,7 @@
     "promptComplete", "contextUsage", "commandOutput", "expandCommandOutputs", "setAllToolDetails", "focusInput", "findInSession", "restoreComposer", "truncateMessages", "uiConfirmRequest", "uiConfirmResolved", "agentReset", "agentError", "agentEnd", "exit", "setBusy", "summarizing",
     "sessionContext", "clearMessages", "onboarding", "error", "hostNotice", "xaiNotification", "subagentUpdate", "childStream", "runProgress", "sessions", "repoSessions", "pinnedSessions", "repos",
     "sessionDot", "queuedSends", "submitQueuedSend", "steerUnavailable", "feedbackAvailability", "turnFeedbackAck", "usage", "steerByDefault", "promptNav", "pinLiveWorkflows", "expandDiffCard", "soundNotifications", "processingSound", "readRepliesAloud", "summarizeRepliesAloud", "speechSummary", "imageFull", "imageOriginal", "moveComposerCaret",
-    "remoteStatus", "hostReachable", "hostLink",
+    "remoteStatus", "remoteHandoff", "showRemoteHandoff", "hostReachable", "hostLink",
   ];
   const WEBVIEW_MESSAGE_TYPES = [
     "cloudHostUpdate",
@@ -99,7 +99,7 @@
     "setSoundNotifications", "setProcessingSound", "setReadRepliesAloud", "setSummarizeRepliesAloud", "setVoiceSendPhrase", "setVoiceKeyterms", "setTelemetryEnabled", "setThumbsFeedback", "setDesktopTray", "summarizeSpeech", "requestImageFull", "requestImageOriginal", "composerFocus",
     "newWorktreeSession", "applyWorktree", "removeWorktree", "rewindSession", "editLastMessage", "uiConfirmAnswer", "workflowControl", "refreshContextDetails",
     "refreshSubscriptionUsage",
-    "remoteSignIn", "remoteSignOut", "unlinkRemoteDevice", "openRemotePortal",
+    "remoteSignIn", "remoteSignOut", "unlinkRemoteDevice", "openRemotePortal", "remoteHandoff", "showRemoteHandoff",
     "openUpdateRelease", "restartToUpdate",
   ];
   const HOST_MESSAGE_TYPE_SET = new Set(HOST_MESSAGE_TYPES);

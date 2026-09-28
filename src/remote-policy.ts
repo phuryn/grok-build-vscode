@@ -546,6 +546,8 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
   // relay account actions (link/unlink/portal) manage THIS machine's device
   // token — only the local webview may drive them
   remoteSignIn: "host-local",
+  remoteHandoff: "host-local",
+  showRemoteHandoff: "host-local",
   remoteSignOut: "host-local",
   // Desktop gear unlink — native confirm then drop THIS machine's device token.
   // A remote must never be able to unlink the desk it is driving.
@@ -713,6 +715,8 @@ export const REMOTE_REQUIRES_BOUND_SESSION: Record<WebviewMsg["type"], boolean> 
   requestImageOriginal: true,
   composerFocus: false,
   remoteSignIn: false,
+  remoteHandoff: false,
+  showRemoteHandoff: false,
   remoteSignOut: false,
   unlinkRemoteDevice: false,
   openRemotePortal: false,
@@ -1084,6 +1088,8 @@ export const OUTBOUND_DISPOSITION: Record<HostMsg["type"], OutboundDisposition> 
   imageOriginal: "mirror",
   moveComposerCaret: "host-local",
   remoteStatus: "host-local",
+  remoteHandoff: "host-local",
+  showRemoteHandoff: "host-local",
   setAllToolDetails: "mirror",
   focusInput: "mirror",
   // Desk/VS Code only — a phone opens find from its own ⋯, and a palette
@@ -1171,6 +1177,8 @@ export const OUTBOUND_PROJECT_AUTH: Record<HostMsg["type"], OutboundProjectAuth>
   summarizeRepliesAloud: "none",
   moveComposerCaret: "none",
   remoteStatus: "none",
+  remoteHandoff: "none",
+  showRemoteHandoff: "none",
   error: "none",
   hostNotice: "none",
   focusInput: "none",

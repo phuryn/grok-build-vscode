@@ -1842,6 +1842,10 @@
           },
         },
         {
+          label: "Continue on phone…",
+          onSelect: () => vscode.postMessage({ type: "showRemoteHandoff", source: "projects", sessionId: s.id, repoCwd: repo.cwd }),
+        },
+        {
           label: isPinned ? "Unpin conversation" : "Pin conversation",
           disabled: !state.pinnedKnown,
           onSelect: () =>

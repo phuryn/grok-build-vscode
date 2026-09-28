@@ -1,3 +1,5 @@
+export type RemoteHandoffSource = "topbar" | "rail" | "projects" | "settings" | "palette";
+
 import type { AcpProvider } from "./acp-backend";
 // Single source of truth for the host <-> webview message contract.
 //
@@ -570,9 +572,11 @@ export type HostMsg =
   | { type: "summarizeRepliesAloud"; value: boolean }
   | { type: "speechSummary"; requestId: number; text: string }
   | { type: "moveComposerCaret"; direction: "forward" | "previousLine" }
-  // Whether this machine holds a relay device token (gear "AFK Pilot" section).
+  // Device linking, handoff readiness and presence for the desk's remote button.
   // Local-webview chrome — never mirrored to remotes.
-  | { type: "remoteStatus"; linked: boolean }
+  | { type: "remoteStatus"; linked: boolean; handoffReady?: boolean; viewerCount?: number }
+  | { type: "showRemoteHandoff"; source: RemoteHandoffSource; sessionId?: string; repoCwd?: string; explain?: boolean }
+  | { type: "remoteHandoff"; requestId: number; url?: string; qrSvg?: string; title: string }
   /**
    * The connection carrying this webview's messages ended, and a new one is up.
    *
@@ -1521,13 +1525,15 @@ export type WebviewMsg =
   /** Read-only Grok context snapshot for the open donut popover. */
   | { type: "refreshContextDetails" }
   | { type: "refreshSubscriptionUsage" }
-  // Relay account (gear "AFK Pilot" section, local webview only): start the
+  // Relay account (remote popover / Settings, local webview only): start the
   // device-link flow / drop the device token / open the relay web portal.
-  | { type: "remoteSignIn" }
+  | { type: "remoteSignIn"; source?: RemoteHandoffSource }
+  | { type: "showRemoteHandoff"; source: RemoteHandoffSource; sessionId?: string; repoCwd?: string; explain?: boolean }
+  | { type: "remoteHandoff"; requestId: number; source: RemoteHandoffSource; sessionId?: string; repoCwd?: string; action?: "show" | "refresh" | "open" }
   | { type: "remoteSignOut" }
-  /** Desktop gear "Unlink this device…" — host confirms natively, then unlinks. */
+  /** Desktop Settings "Unlink this device…" — host confirms natively, then unlinks. */
   | { type: "unlinkRemoteDevice" }
-  | { type: "openRemotePortal"; withHint?: boolean }
+  | { type: "openRemotePortal"; withHint?: boolean; source?: RemoteHandoffSource }
   /** Open the desktop release page from the update notice. Host-local — a phone
    *  cannot update the desk. */
   | { type: "openUpdateRelease"; url: string }
@@ -1554,7 +1560,7 @@ const HOST_MESSAGE_TYPE_MAP: Record<HostMsg["type"], true> = {
   agentError: true, agentEnd: true, exit: true, setBusy: true, summarizing: true,
   sessionContext: true, clearMessages: true, onboarding: true, error: true, hostNotice: true,
   xaiNotification: true, subagentUpdate: true, childStream: true, runProgress: true, commandOutput: true, expandCommandOutputs: true, steerByDefault: true, promptNav: true, pinLiveWorkflows: true, expandDiffCard: true,
-  soundNotifications: true, processingSound: true, readRepliesAloud: true, summarizeRepliesAloud: true, speechSummary: true, imageFull: true, imageOriginal: true, moveComposerCaret: true, remoteStatus: true, hostReachable: true, hostLink: true,
+  soundNotifications: true, processingSound: true, readRepliesAloud: true, summarizeRepliesAloud: true, speechSummary: true, imageFull: true, imageOriginal: true, moveComposerCaret: true, remoteStatus: true, showRemoteHandoff: true, remoteHandoff: true, hostReachable: true, hostLink: true,
   setAllToolDetails: true, focusInput: true, findInSession: true, restoreComposer: true, truncateMessages: true, uiConfirmRequest: true, uiConfirmResolved: true,
   sessions: true, sessionRemoved: true, repoSessions: true, pinnedSessions: true, repos: true, sessionDot: true, queuedSends: true, submitQueuedSend: true,
   steerUnavailable: true, feedbackAvailability: true, turnFeedbackAck: true, usage: true,
@@ -1588,7 +1594,7 @@ const WEBVIEW_MESSAGE_TYPE_MAP: Record<WebviewMsg["type"], true> = {
   rewindSession: true, editLastMessage: true, uiConfirmAnswer: true, workflowControl: true,
   refreshContextDetails: true,
   refreshSubscriptionUsage: true,
-  remoteSignIn: true, remoteSignOut: true, unlinkRemoteDevice: true, openRemotePortal: true,
+  remoteSignIn: true, showRemoteHandoff: true, remoteHandoff: true, remoteSignOut: true, unlinkRemoteDevice: true, openRemotePortal: true,
   cloudHostUpdate: true, openUpdateRelease: true, restartToUpdate: true,
 };
 

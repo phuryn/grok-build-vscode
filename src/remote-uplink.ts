@@ -119,6 +119,8 @@ export interface RemoteUplinkOptions {
   auth: RemoteUplinkAuth;
   /** The uplink socket opened and sent hello (including reconnects). */
   onConnected?: () => void;
+  /** Host-local handoff identity / viewer presence changed. Never mirrored. */
+  onStatusChanged?: () => void;
   /** A browser connection is ready to receive its client-specific snapshot. */
   onClientReady?: (clientId: string, tabToken?: string) => void;
   /** A specific browser connection has left the relay. */
@@ -152,6 +154,8 @@ export function filterAuthorizedOutbound(
 
 export class RemoteUplink {
   private ws?: WebSocket;
+  deviceId?: string;
+  viewerCount = 0;
   private backoff = INITIAL_BACKOFF_MS;
   /** When the current run of 4002 refusals began; 0 when there is none. */
   private refusedSince = 0;
@@ -410,9 +414,14 @@ export class RemoteUplink {
       this.opts.onConnected?.();
     });
     ws.on("message", (raw) => {
+      if (this.disposed || this.ws !== ws) return;
       const frame = parseRelayFrame(raw.toString());
       if (!frame) return;
       switch (frame.t) {
+        case "self":
+          this.deviceId = frame.deviceId;
+          this.opts.onStatusChanged?.();
+          return;
         case "client-ready":
           // The relay-side twin of the LAN bridge's ready->snapshot: catch this
           // one browser client up, routed back through the relay by clientId.
@@ -443,6 +452,8 @@ export class RemoteUplink {
           this.reconnectRoster?.clientIds.delete(frame.clientId);
           return;
         case "clients":
+          this.viewerCount = frame.count;
+          this.opts.onStatusChanged?.();
           this.opts.log(`[remote] relay clients: ${frame.count}`);
           if (this.awaitingRosterCount) {
             this.awaitingRosterCount = false;
@@ -456,6 +467,9 @@ export class RemoteUplink {
     });
     ws.on("close", (code) => {
       if (this.disposed) return;
+      this.deviceId = undefined;
+      this.viewerCount = 0;
+      this.opts.onStatusChanged?.();
       // 4001 = relay rejected the token — retrying with the same token is
       // pointless; the user must re-link. Stop, loudly.
       if (code === CLOSE_BAD_TOKEN) {

@@ -189,7 +189,6 @@ describe("VS Code + app sections", () => {
     open(h, "add-btn");
     expect(sequence(h)).toEqual([
       "heading: Attach", "row: Upload from computer", "heading: Use this app for", "row: Knowledge work", "row: Coding✓",
-      "heading: Remote control", ...(linked ? ["row: Continue remotely", "row: Your account"] : ["row: Sign in (link this device)", "row: How it works"]),
       "heading: Settings", "row: Settings",
     ]);
     expect(h.doc.querySelectorAll("#add-popover .popover-sep")).toHaveLength(0); // Rules are on headings themselves.

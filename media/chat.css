@@ -6728,3 +6728,31 @@ body.host-wait-visible .gfp-panel.gfp-overlay { bottom: var(--host-wait-height, 
   font: inherit;
   cursor: pointer;
 }
+.remote-btn { position: relative; }
+.remote-viewer-dot { display: none; }
+.remote-btn.phone-connected .remote-viewer-dot {
+  display: block;
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  right: 3px;
+  bottom: 3px;
+  border-radius: 50%;
+  background: #3fb950;
+  box-shadow: 0 0 0 2px var(--vscode-editor-background);
+}
+.toolbar-popover.remote-handoff-popover {
+  width: min(330px, calc(100vw - 24px));
+  padding: 20px;
+  box-sizing: border-box;
+  max-height: calc(100vh - 72px);
+  overflow-y: auto;
+}
+.remote-handoff-popover h3 { margin: 0 24px 12px 0; font-size: 15px; }
+.remote-handoff-popover p { margin: 12px 0; line-height: 1.5; }
+.remote-handoff-close { position: absolute; top: 8px; right: 8px; }
+.remote-handoff-qr { background: white; max-width: 260px; margin: 0 auto; }
+.remote-handoff-qr svg { display: block; width: 100%; height: auto; }
+.remote-handoff-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.remote-handoff-footer { display: flex; align-items: center; justify-content: space-between; margin-top: 16px; }
+.remote-handoff-popover > .confirm-btn { margin: 4px 6px 0 0; }

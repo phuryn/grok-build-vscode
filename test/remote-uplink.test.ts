@@ -61,6 +61,38 @@ function makeUplink(overrides: Partial<ConstructorParameters<typeof RemoteUplink
 describe("RemoteUplink client identity and targeted sends", () => {
   beforeEach(() => { wsMock.sockets.length = 0; });
 
+  it("keeps identity and viewer presence host-local while preserving reconnect rosters", () => {
+    vi.useFakeTimers();
+    try {
+      const changed = vi.fn();
+      const roster = vi.fn();
+      const uplink = makeUplink({ onStatusChanged: changed, onClientRoster: roster });
+      uplink.start();
+      const ws = wsMock.sockets[0];
+      ws.emit("open");
+      // An old relay has no self frame: never derive its id from the token/hello.
+      expect(uplink.deviceId).toBeUndefined();
+      expect(uplink.viewerCount).toBe(0);
+      ws.emit("message", JSON.stringify({ t: "self", deviceId: "desk-1" }));
+      expect(uplink.deviceId).toBe("desk-1");
+      ws.emit("message", JSON.stringify({ t: "clients", count: 2 }));
+      expect(uplink.viewerCount).toBe(2);
+      ws.emit("message", JSON.stringify({ t: "client-ready", clientId: "one" }));
+      ws.emit("message", JSON.stringify({ t: "client-ready", clientId: "two" }));
+      expect(roster).toHaveBeenCalledWith(["one", "two"]);
+      ws.emit("message", JSON.stringify({ t: "clients", count: 1 }));
+      expect(uplink.viewerCount).toBe(1);
+      expect(changed).toHaveBeenCalledTimes(3);
+      ws.emit("close", 1006);
+      expect(uplink.viewerCount).toBe(0);
+      expect(uplink.deviceId).toBeUndefined();
+      expect(changed).toHaveBeenCalledTimes(4);
+      uplink.dispose();
+      ws.emit("message", JSON.stringify({ t: "self", deviceId: "stale" }));
+      expect(uplink.deviceId).toBeUndefined();
+    } finally { vi.useRealTimers(); }
+  });
+
   it("writes the one-hour maintenance frame and waits for the socket callback", async () => {
     const uplink = makeUplink(); uplink.start();
     const ws = wsMock.sockets[0];

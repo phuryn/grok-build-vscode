@@ -449,14 +449,16 @@ describe("dialogs above renderer layers", () => {
   it.each(["Escape", "Close", "backdrop", "FAQ"])("clears the explainer marker through %s", (exit) => {
     const h = bootLayers("settings", false);
     dispatch(h.window, { type: "remoteStatus", linked: false });
-    click(h.window, h.doc.getElementById("add-btn")!);
-    click(h.window, [...h.doc.querySelectorAll("#add-popover .toolbar-popover-item")].find((el) => el.textContent?.includes("How it works"))!);
+    click(h.window, h.doc.getElementById("remote-btn")!);
+    click(h.window, [...h.doc.querySelectorAll(".remote-handoff-popover button")].find((el) => el.textContent?.includes("How it works"))!);
     blocked(h);
     if (exit === "Escape") keydown(h.window, { key: "Escape" });
     else click(h.window, h.doc.querySelector(exit === "Close" ? ".remote-explainer-close"
       : exit === "backdrop" ? ".remote-explainer-overlay" : ".remote-explainer-panel .confirm-primary")!);
     expect(h.doc.querySelector(".remote-explainer-overlay")).toBeNull();
-    restored(h);
+    expect(h.doc.body.dataset.modalAbove).toBeUndefined();
+    expect(h.layers.depth).toBe(0);
+    expect(h.doc.getElementById("settings-overlay")).toBeNull();
   });
 
   it.each(["Escape", "Close", "backdrop", "session reset", "Back"])("dismisses the image lightbox as a LAYER through %s", (exit) => {
@@ -1999,7 +2001,7 @@ describe("review lows (settings / telemetry / voice write scope)", () => {
     expect(h.doc.querySelector(".remote-explainer-panel")).toBeTruthy();
   });
 
-  it("hides How it works on the VS Code settings tab", () => {
+  it("offers How it works on the VS Code settings tab", () => {
     const window = new Window({ url: "https://localhost/" });
     (window as unknown as { eval: (src: string) => void }).eval(settingsSrc);
     const api = (window as unknown as { GrokSettings: ReturnType<typeof loadSettings> }).GrokSettings;
@@ -2010,8 +2012,9 @@ describe("review lows (settings / telemetry / voice write scope)", () => {
       snapshot: api.defaultSnapshot(),
       env: api.defaultEnv(fullEnv({ isDesktop: false, remoteLinked: false })),
       standalone: true,
+      category: "account",
     });
-    expect(root.querySelector('[data-id="remoteHowItWorks"]')).toBeNull();
+    expect(root.querySelector('[data-id="remoteHowItWorks"]')).not.toBeNull();
   });
 
   it("broadcasts telemetryEnabled to every remote tab", () => {
@@ -2108,6 +2111,54 @@ describe("settings About section", () => {
       standalone: true,
     });
     expect(general.querySelector(".settings-about-disclaimer")).toBeNull();
+  });
+});
+
+describe("remote control live status", () => {
+  it("refreshes desktop rows on link and viewer changes and requests the focused chat", () => {
+    const h = bootWebview();
+    seedChat(h);
+    dispatch(h.window, { type: "remoteStatus", linked: false, handoffReady: false });
+    openSettings(h);
+    clickSettingsNav(h, "Remote control");
+    expect(h.doc.querySelector('[data-id="remoteMachineStatus"]')!.textContent).toContain("Not linked");
+    expect(h.doc.querySelector('[data-id="remoteSignIn"]')).not.toBeNull();
+    dispatch(h.window, { type: "remoteStatus", linked: true, handoffReady: true, viewerCount: 2 });
+    expect(h.doc.querySelector('[data-id="remoteSignIn"]')).toBeNull();
+    expect(h.doc.querySelector('[data-id="remoteMachineStatus"]')!.textContent).toContain("Linked · phone connected");
+    expect(h.doc.querySelector('[data-id="continueRemotely"]')).toBeNull();
+    dispatch(h.window, { type: "remoteStatus", linked: true, handoffReady: true, viewerCount: 0 });
+    expect(h.doc.querySelector('[data-id="remoteMachineStatus"]')!.textContent).not.toContain("phone connected");
+    click(h.window, h.doc.querySelector('[data-id="continueOnPhone"] .settings-action')!);
+    expect(h.posted).toContainEqual({ type: "showRemoteHandoff", source: "settings" });
+  });
+
+  it("refreshes the actual standalone Settings boot script without reopening the editor", () => {
+    const window = new Window({ url: "https://localhost/" });
+    const doc = window.document;
+    doc.body.innerHTML = '<div id="settings-root"></div>';
+    const posted: unknown[] = [];
+    (window as any).acquireVsCodeApi = () => ({ postMessage: (m: unknown) => posted.push(m) });
+    window.eval(readFileSync(new URL("../media/webview-helpers.js", import.meta.url), "utf8"));
+    window.eval(settingsSrc);
+    const api = (window as any).GrokSettings;
+    (window as any).__grokSettingsBoot = { snapshot: api.defaultSnapshot(), env: { isRemote: false, isDesktop: false, remoteLinked: false, remoteHandoffSupported: true }, category: "account" };
+    const hostSource = readFileSync(new URL("../src/sidebar.ts", import.meta.url), "utf8");
+    const start = hostSource.indexOf('      var vscode = acquireVsCodeApi();', hostSource.indexOf('private getSettingsHtml'));
+    const end = hostSource.indexOf('    })();', start);
+    window.eval('(function () {\n' + hostSource.slice(start, end) + '\n})();');
+    expect(posted).toContainEqual({ type: "ready" });
+    expect(doc.querySelector('[data-id="remoteSignIn"]')).not.toBeNull();
+    window.dispatchEvent(new window.MessageEvent("message", { data: { type: "remoteStatus", linked: true, handoffReady: true, viewerCount: 1 } }));
+    expect(doc.querySelector('[data-id="remoteSignIn"]')).toBeNull();
+    expect(doc.querySelector('[data-id="remoteMachineStatus"]')!.textContent).toContain("Linked · phone connected");
+    expect(doc.querySelector('[data-id="unlinkDevice"]')).toBeNull();
+    (doc.querySelector('[data-id="continueOnPhone"] .settings-action') as any).click();
+    expect(posted).toContainEqual({ type: "showRemoteHandoff", source: "settings" });
+    window.dispatchEvent(new window.MessageEvent("message", { data: { type: "remoteStatus", linked: false, handoffReady: false, viewerCount: 0 } }));
+    expect(doc.querySelector('[data-id="remoteSignIn"]')).not.toBeNull();
+    (doc.querySelector('[data-id="remoteHowItWorks"] .settings-action') as any).click();
+    expect(posted).toContainEqual({ type: "showRemoteHandoff", source: "settings", explain: true });
   });
 });
 

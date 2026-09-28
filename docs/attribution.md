@@ -28,6 +28,34 @@ Items 2–4 are good-faith etiquette built on top of the hard requirements. Do t
 
 ## Third-party assets
 
+### qrcode-generator (host-generated phone handoff codes)
+
+The host uses **[qrcode-generator](https://github.com/kazuhikoarase/qrcode-generator)**,
+pinned to **2.0.4**, to generate inline SVG QR codes. It has no runtime dependencies;
+the encoder is bundled only into the host, never into the phone webview.
+
+MIT License
+
+Copyright (c) 2009 Kazuhiko Arase
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
 ### Seti UI file icons (desktop file tree)
 
 The desktop app's file-tree panel uses a curated subset of the **[Seti UI](https://github.com/jesseweed/seti-ui)** icons (the same family VS Code's default file-icon theme derives from).

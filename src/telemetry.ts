@@ -1,3 +1,4 @@
+import type { RemoteHandoffSource } from "./protocol";
 import { INTERNAL_PROVIDERS } from "./acp-backend";
 import type { AcpProvider } from "./acp-backend";
 // Privacy-first, cookieless usage telemetry via Aptabase. `session_start` fires
@@ -110,6 +111,7 @@ export interface AptabaseEvent {
 
 export interface RemotePortalOpenedProps extends Pick<SessionStartProps, "installId" | "hostKind"> {
   withHint: boolean;
+  source?: RemoteHandoffSource;
 }
 
 export interface SessionRemoteStartedProps extends Pick<SessionStartProps, "installId" | "hostKind" | "clientDevice"> {
@@ -172,7 +174,7 @@ export const SESSION_START_ALLOWED_KEYS = [
   "returningInstall",
 ] as const;
 
-export const REMOTE_PORTAL_OPENED_ALLOWED_KEYS = ["installId", "hostKind", "withHint"] as const;
+export const REMOTE_PORTAL_OPENED_ALLOWED_KEYS = ["installId", "hostKind", "withHint", "source"] as const;
 export const SESSION_REMOTE_STARTED_ALLOWED_KEYS = [
   "installId", "hostKind", "clientDevice", "sessionOrigin", "provider",
 ] as const;
@@ -331,6 +333,10 @@ function sanitizeTelemetryProps(raw: unknown, allowedKeys: readonly string[]): R
 
   const withHint = pickBoolean(src.withHint);
   if (withHint !== undefined) picked.withHint = withHint;
+  const source = pickEnum(src.source, new Set(["topbar", "rail", "projects", "settings", "palette"]));
+  if (source !== undefined) picked.source = source;
+  const linked = pickBoolean(src.linked);
+  if (linked !== undefined) picked.linked = linked;
 
   // The allowlist is the only way a key can leave. A picker for an unlisted
   // name writes into `picked` and is dropped here.
@@ -409,6 +415,17 @@ export function buildRemotePortalOpenedEvent(
   timestamp: string,
 ): AptabaseEvent {
   return buildEvent("remote_portal_opened", sanitizeRemotePortalOpenedProps(props), sys, sessionId, timestamp);
+}
+
+/** Fixed event/field vocabulary: no conversation coordinates, title, or link. */
+export function buildRemoteHandoffEvent(
+  name: "remote_handoff_shown" | "remote_link_started" | "remote_link_completed",
+  props: Pick<RemotePortalOpenedProps, "installId" | "hostKind" | "source"> & { linked?: boolean },
+  sys: SystemProps, sessionId: string, timestamp: string,
+): AptabaseEvent {
+  const keys = name === "remote_handoff_shown" ? ["installId", "hostKind", "source", "linked"]
+    : name === "remote_link_started" ? ["installId", "hostKind", "source"] : ["installId", "hostKind"];
+  return buildEvent(name, sanitizeTelemetryProps(props, keys), sys, sessionId, timestamp);
 }
 
 export function buildSessionRemoteStartedEvent(

@@ -60,6 +60,23 @@ const repos = [
 const row = (id: string, cwd: string, name: string, updatedAt = 1) =>
   ({ id, cwd, displayName: name, rawSummary: "", updatedAt, createdAt: 1, numMessages: 2 });
 
+describe("phone handoff from the separate Projects webview", () => {
+  it("names the selected worktree conversation and its project without resuming it", () => {
+    const { window, doc, posted } = bootRail();
+    const api = railApi(window);
+    loadCatalog(api);
+    api.onMessage({ type: "sessions", entries: [row("other", "/work/tree", "Other chat")], activeId: null, dots: {}, offset: 0, total: 1, hasMore: false, query: "" });
+    const target = doc.querySelector('.rail-session[data-session-id="other"]')!;
+    const actionButton = target.querySelector('[title="Session actions"]') as any;
+    actionButton.click();
+    const action = [...doc.querySelectorAll("button")].find((el) => el.textContent === "Continue on phone…") as any;
+    expect(action).toBeTruthy();
+    action.click();
+    expect(posted).toContainEqual({ type: "showRemoteHandoff", source: "projects", sessionId: "other", repoCwd: "/work/alpha" });
+    expect(posted.some((m) => m.type === "resumeSession")).toBe(false);
+  });
+});
+
 function sectionTitles(doc: Document): string[] {
   return [...doc.querySelectorAll(".rail-head")].map((e) => (e.textContent || "").trim());
 }

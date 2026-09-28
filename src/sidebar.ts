@@ -1,3 +1,5 @@
+import { remoteHandoffUrl, remoteHandoffQr, type HandoffSession } from "./remote-handoff";
+import type { RemoteHandoffSource } from "./protocol";
 import { CloudHostUpdate, cloudHostIsIdle, cloudHostBootSupportsUpdate, cloudLiveWorkflowRuns, installedCloudHostVersion, parseCloudHostUpdateAttempt, removeCloudHostUpdateStamps, CLOUD_UPDATE_REFUSAL } from "./cloud-host-update";
 import { MuseBackend, withMuseCredentialBackend } from "./muse-backend";
 import { locateMuseCli, parseMuseVersionOutput } from "./muse-cli-locator";
@@ -167,6 +169,7 @@ import {
   APTABASE_APP_KEY_PROD,
   buildSessionStartEvent,
   buildRemotePortalOpenedEvent,
+  buildRemoteHandoffEvent,
   buildSessionRemoteStartedEvent,
   nextTelemetrySession,
   osNameFromPlatform,
@@ -1076,6 +1079,7 @@ export class GrokSidebar {
     "updateCodex",
     "updateClaude",
     "openRemotePortal",
+    "showRemoteHandoff",
     "remoteSignIn",
     "unlinkRemoteDevice",
   ]);
@@ -2947,6 +2951,7 @@ export class GrokSidebar {
       // Staging + grok home are genuinely local disk paths → Uri.file.
       localResourceRoots: this.chatLocalResourceRoots(),
     };
+    this.chatReadyForHandoff = false;
     view.webview.html = this.getHtml(view.webview);
     // Message handlers run async; without this catch a throw (e.g. an fs error
     // in an image-attach path) becomes a silent unhandled rejection and the
@@ -11297,7 +11302,12 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           this.host.webviewReloadsUnderLiveSession,
           !!this.focused.client,
         );
+        this.chatReadyForHandoff = true;
         this.postInitialState();
+        if (this.pendingRemoteHandoff) {
+          this.postLocal(this.pendingRemoteHandoff);
+          this.pendingRemoteHandoff = undefined;
+        }
         // Rehydrate already posts catalog + sessions. Cold start needs an early
         // disk list so the rail is not empty while startSession runs — but the
         // catalog scan is deferred so ready returns and the UI paints first
@@ -11519,8 +11529,14 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         if (this.refuseMismatchedSessionId(msg.sessionId, session, requester)) break;
         await this.removeFocusedWorktree(session, true);
         break;
+      case "showRemoteHandoff":
+        await this.continueOnPhone(msg.source, msg.sessionId, msg.repoCwd, msg.explain);
+        break;
+      case "remoteHandoff":
+        await this.replyRemoteHandoff(msg);
+        break;
       case "remoteSignIn":
-        await this.linkRemoteDevice();
+        await this.linkRemoteDevice(msg.source);
         break;
       case "remoteSignOut":
       case "unlinkRemoteDevice": {
@@ -11540,7 +11556,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         break;
       }
       case "openRemotePortal":
-        this.reportRemotePortalOpened(msg.withHint === true);
+        this.reportRemotePortalOpened(msg.withHint === true, msg.source);
         void this.host.openExternal(httpBaseFromRelayUrl(this.relayUrl()) + (msg.withHint ? "/?remoteHint=1" : ""));
         break;
       case "rewindSession":
@@ -15440,11 +15456,11 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     }
   }
 
-  private reportRemotePortalOpened(withHint: boolean): void {
+  private reportRemotePortalOpened(withHint: boolean, source: RemoteHandoffSource = "topbar"): void {
     this.reportTelemetry((sys, sessionId, timestamp) => buildRemotePortalOpenedEvent({
       installId: this.installId(),
       hostKind: sessionStartHostKind(this.host.canSwitchWorkspaceFolder, isCloudEnvironment()),
-      withHint,
+      withHint, source,
     }, sys, sessionId, timestamp));
   }
 
@@ -17962,6 +17978,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     "cancelDeviceLogin",
     "listSessions",
     "listRepoSessions",
+    "showRemoteHandoff",
     "selectRepo",
     "resumeSession",
     "newSession",
@@ -21304,6 +21321,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         sameCwd: pathsEqual,
       },
       onConnected: () => this.cloudHostUpdate?.connected(),
+      onStatusChanged: () => { if (this.uplink === uplink) void this.postRemoteStatus(); },
       onClientReady: (clientId, tabToken) => this.handleRemoteClientReady(clientId, tabToken),
       onClientLeft: (clientId) => {
         this.releaseRemoteClient(clientId);
@@ -21347,7 +21365,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     if (this.uplink !== revokedUplink || storedToken !== revokedToken) return;
 
     this.clearRemoteRuntime();
-    this.post({ type: "remoteStatus", linked: false });
+    this.publishRemoteStatus(false);
     try {
       await this.context.secrets.delete(GrokSidebar.DEVICE_TOKEN_SECRET);
     } catch (e) {
@@ -21431,7 +21449,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
    *  edge: start a link, open the browser for the (mock for now) approval, poll
    *  until the relay hands back a long-lived device token, store it in secrets,
    *  connect. Mirrors how a CLI links to a web account. */
-  async linkRemoteDevice(): Promise<void> {
+  async linkRemoteDevice(source: RemoteHandoffSource = "palette"): Promise<void> {
+    this.reportHandoffEvent("remote_link_started", { source });
     const base = httpBaseFromRelayUrl(this.relayUrl());
     try {
       // Already persisted by the time this returns — getOrCreate writes the file
@@ -21470,7 +21489,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       this.uplink?.dispose();
       this.uplink = undefined;
       await this.maybeStartUplink();
-      this.post({ type: "remoteStatus", linked: true });
+      this.publishRemoteStatus(true);
+      this.reportHandoffEvent("remote_link_completed", {});
       void this.host.showInformationMessage("Remote device linked — this workspace is now reachable from the web client.");
     } catch (e) {
       void this.host.showErrorMessage(`Remote link failed: ${(e as Error)?.message ?? String(e)}`);
@@ -21527,15 +21547,84 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       // Still tear the runtime down so the machine stops advertising.
     }
     this.clearRemoteRuntime();
-    this.post({ type: "remoteStatus", linked: false });
+    this.publishRemoteStatus(false);
     void this.host.showInformationMessage("Remote device unlinked.");
   }
 
-  /** Tell the webview whether this machine holds a relay device token (drives
-   *  the gear "AFK Pilot" section's sign-in vs account/sign-out items). */
+  private remoteStatusRevision = 0;
+
+  private publishRemoteStatus(linked: boolean): void {
+    this.remoteStatusRevision = (this.remoteStatusRevision ?? 0) + 1;
+    const msg: HostMsg = { type: "remoteStatus", linked,
+      handoffReady: linked && !!this.uplink?.deviceId,
+      viewerCount: linked ? this.uplink?.viewerCount ?? 0 : 0 };
+    this.post(msg);
+    void this.settingsEditor?.webview.postMessage(msg);
+  }
+
   private async postRemoteStatus(): Promise<void> {
+    const revision = this.remoteStatusRevision ?? 0;
     const token = await this.readDeviceToken();
-    this.post({ type: "remoteStatus", linked: !!token });
+    if ((this.remoteStatusRevision ?? 0) === revision) this.publishRemoteStatus(!!token);
+  }
+
+  private reportHandoffEvent(
+    name: "remote_handoff_shown" | "remote_link_started" | "remote_link_completed",
+    props: { source?: RemoteHandoffSource; linked?: boolean },
+  ): void {
+    this.reportTelemetry((sys, sessionId, timestamp) => buildRemoteHandoffEvent(name, {
+      installId: this.installId(),
+      hostKind: sessionStartHostKind(this.host.canSwitchWorkspaceFolder, isCloudEnvironment()),
+      ...props,
+    }, sys, sessionId, timestamp));
+  }
+
+  private pendingRemoteHandoff?: Extract<HostMsg, { type: "showRemoteHandoff" }>;
+  private chatReadyForHandoff = false;
+
+  async continueOnPhone(source: RemoteHandoffSource = "palette", sessionId?: string, repoCwd?: string, explain?: boolean): Promise<void> {
+    const msg: Extract<HostMsg, { type: "showRemoteHandoff" }> = { type: "showRemoteHandoff", source, sessionId, repoCwd, explain };
+    this.pendingRemoteHandoff = msg;
+    await this.host.revealChatView();
+    if (this.chatReadyForHandoff && this.pendingRemoteHandoff === msg) {
+      this.pendingRemoteHandoff = undefined;
+      this.postLocal(msg);
+    }
+  }
+
+  /** Resolve the row against host-owned catalogs; never substitute the focused chat for a missing id. */
+  private handoffSession(sessionId?: string, repoCwd?: string): HandoffSession | undefined {
+    const id = sessionId || this.focused.activeSessionId;
+    if (!id) return undefined;
+    const live = [...this.pool, this.focused].find((s) => s.activeSessionId === id);
+    const overrides = this.state.get<SessionMetaOverrides>(SESSION_META_KEY, {});
+    const cached = this.sessionCache.get(id)?.entry
+      ?? [...this.allAdapterCatalogs()].flat().find((s) => s.id === id);
+    const cwd = live ? this.sessionCwd(live) : cached?.cwd;
+    if (!cwd) return undefined;
+    const named = repoCwd ? this.localRepoCatalogEntries().find((r) => r.available && pathsEqual(r.cwd, repoCwd)) : undefined;
+    const repo = named && this.sessionCwdsForRepo(named.cwd, overrides).some((c) => pathsEqual(c, cwd))
+      ? named : this.resolveLocalRepoTarget(cwd);
+    if (!repo || (repoCwd && repo !== named)) return undefined;
+    const title = live ? this.sessionDisplayName(live) : cached?.displayName;
+    return { id, repoCwd: repo.cwd, cwd, title: title || "this conversation" };
+  }
+
+  private async replyRemoteHandoff(msg: Extract<WebviewMsg, { type: "remoteHandoff" }>): Promise<void> {
+    const linked = !!await this.readDeviceToken();
+    if (!msg.action || msg.action === "show") this.reportHandoffEvent("remote_handoff_shown", { source: msg.source, linked });
+    const session = this.handoffSession(msg.sessionId, msg.repoCwd);
+    const url = linked ? remoteHandoffUrl(this.relayUrl(), this.uplink?.deviceId, session) : undefined;
+    if (msg.action === "open") {
+      this.reportRemotePortalOpened(!url, msg.source);
+      void this.host.openExternal(url ?? `${httpBaseFromRelayUrl(this.relayUrl())}/?remoteHint=1`);
+      return;
+    }
+    let qrSvg: string | undefined;
+    if (url) {
+      try { qrSvg = remoteHandoffQr(url); } catch { /* Oversized link: Copy/Open still work. */ }
+    }
+    this.postLocal({ type: "remoteHandoff", requestId: msg.requestId, url, qrSvg, title: session?.title || "this conversation" });
   }
 
   /** Ordered catch-up built from this client's cwd and active remote session. */
@@ -21699,7 +21788,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   /**
    * Open the shared settings surface as a VS Code editor tab.
    *
-   * Snapshot-on-open: the tab does not subscribe to live chat updates. Every
+   * Settings receives host-local status updates while open. Every
    * change still posts an existing set-/open- message, so the sidebar and
    * chat webview stay in sync through the same handlers the gear uses.
    */
@@ -21740,6 +21829,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   }
 
   private async onSettingsPanelMessage(msg: WebviewMsg): Promise<void> {
+    if (msg.type === "ready") {
+      await this.postRemoteStatus();
+      return;
+    }
     if (!GrokSidebar.SETTINGS_PANEL_TYPES.has(msg.type)) {
       this.host.appendLine(`[settings] ignored ${msg.type}`);
       return;
@@ -21807,6 +21900,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         steerSupported: true,
         providersKnown: true,
         remoteLinked: opts.remoteLinked,
+        remoteHandoffSupported: true,
+        remoteViewerCount: this.uplink?.viewerCount ?? 0,
         hostCaps: {
           relocateView: this.host.canRelocateView,
           secondarySideBar: this.host.canUseSecondarySideBar,
@@ -21858,6 +21953,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       window.addEventListener("message", function (e) {
         var msg = e.data;
         if (!msg || !msg.type || !surface) return;
+        if (msg.type === "remoteStatus") {
+          surface.update({}, { remoteLinked: !!msg.linked, remoteViewerCount: msg.viewerCount || 0,
+            remoteHandoffSupported: typeof msg.handoffReady === "boolean" });
+        }
         if (msg.type === "voiceConfigured") {
           surface.update({ voiceConfigured: !!msg.value, voiceBackendState: msg.backendState,
             voiceSendPhrase: msg.sendPhrase, voiceKeyterms: msg.keyterms });
@@ -21906,6 +22005,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         }
         if (msg.type === "settingsCategory" && msg.category) surface.setCategory(msg.category);
       });
+      vscode.postMessage({ type: "ready" });
     })();
   </script>
 </body>
@@ -22029,7 +22129,7 @@ ${openMain}
       <button id="session-name-edit" class="session-name-edit icon-btn" type="button" hidden></button>
     </div>
     <button id="repo-btn" class="repo-chip" type="button" title="Choose repository"></button>
-    <button id="remote-btn" class="icon-btn remote-btn" title="Continue remotely" hidden></button>
+    <button id="remote-btn" class="icon-btn remote-btn" title="Remote control" hidden></button>
     <button id="history-btn" class="icon-btn" title="Session history"></button>
     <button id="new-btn" class="icon-btn" title="New session"></button>
     ${this.host.canSwitchWorkspaceFolder ? `<div id="session-head-actions"></div>` : ""}

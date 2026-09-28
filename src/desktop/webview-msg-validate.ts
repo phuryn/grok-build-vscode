@@ -179,7 +179,6 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
     case "newWorktreeSession":
     case "applyWorktree":
     case "removeWorktree":
-    case "remoteSignIn":
     case "remoteSignOut":
     case "unlinkRemoteDevice":
       break;
@@ -505,7 +504,19 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
       }
       if (!isString(raw.displayName)) return null;
       break;
+    case "showRemoteHandoff":
+    case "remoteHandoff":
+      if (!["topbar", "rail", "projects", "settings", "palette"].includes(raw.source as string)
+        || !opt(raw.sessionId, isString) || !opt(raw.repoCwd, isString)) return null;
+      if (type === "remoteHandoff" && (!Number.isSafeInteger(raw.requestId)
+        || (raw.action !== undefined && !["show", "refresh", "open"].includes(raw.action as string)))) return null;
+      if (type === "showRemoteHandoff" && !opt(raw.explain, isBoolean)) return null;
+      break;
+    case "remoteSignIn":
+      if (raw.source !== undefined && !["topbar", "rail", "projects", "settings", "palette"].includes(raw.source as string)) return null;
+      break;
     case "openRemotePortal":
+      if (raw.source !== undefined && !["topbar", "rail", "projects", "settings", "palette"].includes(raw.source as string)) return null;
       if (!opt(raw.withHint, isBoolean)) return null;
       break;
     // `credentials: false` asks for the local half only -- locators and

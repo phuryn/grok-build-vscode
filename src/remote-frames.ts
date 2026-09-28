@@ -74,6 +74,7 @@ export type UplinkFrame =
 
 /** relay -> extension */
 export type RelayFrame =
+  | { t: "self"; deviceId: string }
   | { t: "client-ready"; clientId: string; tabToken?: string }
   | { t: "client-left"; clientId: string }
   | { t: "msg"; clientId: string; msg: WebviewMsg }
@@ -117,6 +118,9 @@ export function parseRelayFrame(raw: string): RelayFrame | null {
   if (typeof obj !== "object" || obj === null) return null;
   const f = obj as Record<string, unknown>;
   switch (f.t) {
+    case "self":
+      return typeof f.deviceId === "string" && f.deviceId.trim().length > 0 && f.deviceId.length <= 256
+        ? { t: "self", deviceId: f.deviceId } : null;
     case "client-ready":
       if (typeof f.clientId !== "string") return null;
       if (
@@ -137,7 +141,8 @@ export function parseRelayFrame(raw: string): RelayFrame | null {
         return msg ? { t: "msg", clientId: f.clientId, msg } : null;
       }
     case "clients":
-      return typeof f.count === "number" ? { t: "clients", count: f.count } : null;
+      return typeof f.count === "number" && Number.isSafeInteger(f.count) && f.count >= 0
+        ? { t: "clients", count: f.count } : null;
     default:
       return null;
   }

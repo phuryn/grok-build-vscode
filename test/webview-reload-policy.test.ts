@@ -110,7 +110,8 @@ describe("source gates — capability at the ownership boundary", () => {
     expect(sidebar).toContain("formatRemoteInstallId");
     expect(sidebar).toContain("remoteInstallIdSuffix");
     // Must not send bare installId() alone without the helper.
-    const linkStart = sidebar.indexOf("async linkRemoteDevice()");
+    const linkStart = sidebar.indexOf("async linkRemoteDevice(");
+    expect(linkStart).toBeGreaterThanOrEqual(0);
     const linkEnd = sidebar.indexOf("async unlinkRemoteDevice()", linkStart);
     const linkBody = sidebar.slice(linkStart, linkEnd);
     expect(linkBody).toContain("formatRemoteInstallId(this.installId()");
