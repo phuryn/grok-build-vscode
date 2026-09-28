@@ -1381,7 +1381,7 @@
     const name = providerDisplayName(state.activeProvider);
     if (state.activeProvider === "muse") {
       if (state.hostCaps && state.hostCaps.museNativeModes) {
-        if (id === "agent") return "Muse Code asks for approval; sandbox and trust follow this conversation's settings";
+        if (id === "agent") return "Muse Code asks for approval. Sandbox and trust change on reopen or in a new conversation";
         if (id === "yolo") return "Muse Code full access (YOLO). Sandbox and trust change on reopen or in a new conversation";
       }
       if (id === "agent") return `Follows ${name}'s own approval rules`;
