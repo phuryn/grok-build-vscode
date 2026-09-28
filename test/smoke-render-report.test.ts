@@ -248,7 +248,9 @@ describe("live smoke regressions", () => {
     const audit = classifyBoundaries(events, known);
     expect(audit.seen.every((row: any) => row.reason?.match(/src\/|media\//))).toBe(true);
     expect(audit.unhandled).toEqual([]);
-    expect(audit.ignored.find((row: any) => row.kind === "session_info_update")?.reason).toMatch(/^ACCEPTED pre-existing gap \(backlog/);
+    // 4.14.1: Grok's live rename is read now, and so are its session-setup stages.
+    expect(audit.seen.find((row: any) => row.kind === "session_info_update")?.status).toBe("KNOWN");
+    expect(audit.ignored.find((row: any) => row.kind === "session_info_update")).toBeUndefined();
     expect(audit.seen.find((row: any) => row.kind === "usage").status).toBe("KNOWN");
     expect(audit.seen.find((row: any) => row.kind === "inputTokens").status).toBe("KNOWN");
     expect(audit.seen.find((row: any) => row.kind === "feedbackEnabled").status).toBe("KNOWN");
