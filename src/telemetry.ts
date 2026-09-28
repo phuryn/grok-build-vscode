@@ -179,7 +179,7 @@ export const SESSION_REMOTE_STARTED_ALLOWED_KEYS = [
   "installId", "hostKind", "clientDevice", "sessionOrigin", "provider",
 ] as const;
 
-const ALLOWED_MODES = new Set<string>(["agent", "plan", "yolo"]);
+const ALLOWED_MODES = new Set<string>(["agent", "plan", "yolo", "onRequest", "denyUnmatched"]);
 const ALLOWED_EFFORTS = new Set<string>(["", "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
 const ALLOWED_ORIGINS = new Set<string>(["local", "remote"]);
 const ALLOWED_DEVICES = new Set<string>(["desktop", "mobile"]);

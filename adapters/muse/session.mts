@@ -11,6 +11,13 @@ import type { ApprovalMode, ReasoningEffort } from "@muse-code/sdk/dist/src/msp.
 // MSP exposes a session-wide vocabulary, with no per-model capability list.
 export const REASONING_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"] as const satisfies readonly ReasoningEffort[];
 
+// This adapter has its own NodeNext rootDir; the host keeps the wire ids in mode-prefs.ts.
+const APPROVAL_MODES = { yolo: "allowAll", agent: "promptUnmatched", onRequest: "onRequest", denyUnmatched: "denyUnmatched" } as const satisfies Record<string, ApprovalMode>;
+const MODE_NAMES = { yolo: "Allow all", agent: "Prompt unmatched", onRequest: "On request", denyUnmatched: "Deny unmatched" };
+function approvalModeFor(id: string): ApprovalMode | undefined {
+  return Object.hasOwn(APPROVAL_MODES, id) ? APPROVAL_MODES[id as keyof typeof APPROVAL_MODES] : undefined;
+}
+
 const RESUME_RETRY_DELAY_MS = 300;
 const RESUME_RETRY_WINDOW_MS = 10_000;
 
@@ -68,6 +75,8 @@ export class MuseSession {
   private sessionId?: string;
   private reasoningEffort?: ReasoningEffort;
   private approvalMode: ApprovalMode = "promptUnmatched";
+  private shellSandbox = true;
+  private cloud = false;
   private creating = false;
   private replayBuffer?: { method: string; params: Record<string, any> }[];
   private pending?: PendingTurn;
@@ -109,10 +118,16 @@ export class MuseSession {
     // Node's quotes around a spaced executable path before cmd resolves it.
     const needsShell = museCliNeedsShell(executable);
     const posture = JSON.parse(process.env.GROK_MUSE_POSTURE || "{}");
-    this.approvalMode = posture.mode === "yolo" ? "allowAll" : "promptUnmatched";
+    this.cloud = posture.cloud === true;
+    this.approvalMode = approvalModeFor(posture.mode) ?? "promptUnmatched";
+    // The process is not attached yet. A saved On request history is checked
+    // by session/read before resume; a new cloud session uses the safe default.
+    if (this.cloud && this.approvalMode === "onRequest") this.approvalMode = "promptUnmatched";
+    this.shellSandbox = !this.cloud && (posture.mode === "onRequest" || (posture.mode !== "yolo" && posture.shellSandbox !== false));
+    this.assertSandbox(this.approvalMode);
     const args = ["serve"];
-    if (posture.mode === "yolo" || posture.shellSandbox === false) args.push("--disable-sandbox");
-    if (posture.sandboxNetwork === "restricted" || posture.sandboxNetwork === "enabled") {
+    if (!this.shellSandbox) args.push("--disable-sandbox");
+    if (!this.cloud && (posture.sandboxNetwork === "restricted" || posture.sandboxNetwork === "enabled")) {
       args.push("--sandbox-network", posture.sandboxNetwork);
     }
     if (posture.mode === "yolo" || posture.trustWorkspaces === true) args.push("--trust-workspace");
@@ -166,6 +181,8 @@ export class MuseSession {
       const session = result.session as { sessionId?: string; modelId?: string; approvalMode?: { mode: ApprovalMode } } | undefined;
       if (!session?.sessionId) throw new Error("Muse session/start returned no sessionId");
       this.sessionId = session.sessionId;
+      this.approvalMode = session.approvalMode?.mode ?? this.approvalMode;
+      this.assertSandbox(this.approvalMode);
       return { sessionId: session.sessionId, models: await this.models(session.modelId), ...this.modes(session.approvalMode?.mode) };
     } finally { this.creating = false; }
   }
@@ -205,15 +222,25 @@ export class MuseSession {
   }
 
   private modes(mode: unknown) {
-    if (!["allowAll", "promptUnmatched", "onRequest", "denyUnmatched"].includes(mode as string)) return {};
-    return { modes: { currentModeId: mode === "allowAll" ? "yolo" : "agent", availableModes: [
-      { id: "agent", name: "Agent" }, { id: "yolo", name: "Auto accept" },
-    ] } };
+    const currentModeId = Object.keys(APPROVAL_MODES).find(id => approvalModeFor(id) === mode);
+    if (!currentModeId) return {};
+    return { modes: { currentModeId, availableModes: Object.entries(MODE_NAMES)
+      .filter(([id]) => !this.cloud || id !== "onRequest").map(([id, name]) => ({ id, name })) } };
+  }
+
+  private assertSandbox(mode: unknown): void {
+    if (mode === "onRequest" && this.cloud) {
+      throw new RequestError(-32602, "Muse On request is unavailable on cloud machines. Open this conversation on a desktop to change its mode, or start a new cloud conversation in Prompt unmatched.");
+    }
+    if (mode === "onRequest" && !this.shellSandbox) {
+      throw new Error("Muse On request requires the shell sandbox. Reopen with a sandboxed process before continuing.");
+    }
   }
 
   private publishMode(mode: unknown): Promise<void> {
     const modes = this.modes(mode).modes;
     if (!modes) return this.updates;
+    this.approvalMode = mode as ApprovalMode;
     this.updates = this.updates.then(() => this.client.notify("session/update", {
       sessionId: this.sessionId!, update: { sessionUpdate: "current_mode_update", currentModeId: modes.currentModeId },
     }));
@@ -223,11 +250,13 @@ export class MuseSession {
 
   async setMode(sessionId: string, modeId: string) {
     this.assertSession(sessionId);
-    if (modeId !== "agent" && modeId !== "yolo") throw new Error("Muse does not offer Plan mode");
-    const mode = modeId === "yolo" ? "allowAll" : "promptUnmatched";
+    const mode = approvalModeFor(modeId);
+    if (!mode) throw new Error("Muse does not offer Plan mode or unknown approval modes");
+    this.assertSandbox(mode);
     const result = await this.connection().command("session/setApprovalMode", { sessionId, mode });
     const effective = result.effectiveMode as { mode?: string } | undefined;
     if (result.status !== "accepted" || effective?.mode !== mode) throw new Error("Muse approval mode was not accepted");
+    this.approvalMode = mode;
     return { _meta: this.modes(effective.mode) };
   }
 
@@ -265,11 +294,21 @@ export class MuseSession {
     this.sessionId = sessionId;
     this.replayBuffer = [];
     try {
+      if (this.cloud) {
+        // Read the durable mode without attaching: a refused On request history
+        // must not acquire a writer or resume its work in an unsandboxed VM.
+        const stored = await this.connection().request("session/read", { sessionId });
+        const storedSession = stored.session as { approvalMode?: { mode: ApprovalMode } } | undefined;
+        this.assertSandbox(storedSession?.approvalMode?.mode);
+      }
       const result = await this.resumeSession(sessionId);
       const resumed = result.session as any;
       if (resumed?.sessionId !== sessionId || resumed.workspaceRoot !== cwd) throw new Error("Muse resume workspace/session mismatch");
       // Native mode must reach the host before Muse reissues pending approvals.
       await this.publishMode(resumed.approvalMode?.mode);
+      // Preserve the replayed fact for the host's next start, but never admit
+      // tools or pending approvals under On request in this unsandboxed child.
+      this.assertSandbox(this.approvalMode);
       const history = result.history as any;
       this.reasoningEffort = history?.snapshot?.state?.reasoningEffort?.reasoningEffort;
       const seen = new Set<string>();
@@ -307,13 +346,15 @@ export class MuseSession {
       const buffered = this.replayBuffer;
       this.replayBuffer = undefined;
       for (const event of buffered) if (!seen.has(event.params.viewCursor)) this.notification(event.method, event.params);
+      await this.updates;
+      this.assertSandbox(this.approvalMode);
       if (Array.isArray(result.pendingRequests) && result.pendingRequests.length) {
         const pending = await this.connection().request("approval/listPending", { sessionId });
         if (Array.isArray(pending.userInputs) && pending.userInputs.length) throw new Error("Muse resume has an unsupported user-input request");
         for (const approval of (pending.approvals as any[] ?? [])) this.approvals.accept("approval/requested", approval);
       }
       await this.updates;
-      return { _meta: { models: await this.models(resumed.modelId) }, ...this.modes(resumed.approvalMode?.mode) };
+      return { _meta: { models: await this.models(resumed.modelId) }, ...this.modes(this.approvalMode) };
     } catch (error) {
       this.sessionId = undefined;
       this.projection.clear();
@@ -324,6 +365,7 @@ export class MuseSession {
 
   async prompt(sessionId: string, prompt: ContentBlock[]): Promise<PromptResponse> {
     this.assertSession(sessionId);
+    this.assertSandbox(this.approvalMode);
     if (this.pending) throw new Error("Muse session already has an active prompt");
     if (!prompt.length || prompt.some(part => part.type !== "text")) throw new Error("Muse adapter accepts text prompts only");
     let pending!: PendingTurn;
@@ -420,9 +462,10 @@ export class MuseSession {
     if (params.sessionId !== this.sessionId) return;
     if (this.replayBuffer) { this.replayBuffer.push({ method, params }); return; }
     if (method === "session/approvalModeChanged") {
-      void this.publishMode(params.mode);
+      void this.publishMode(params.mode).then(() => this.assertSandbox(params.mode)).catch(error => this.fail(error));
       return;
     }
+    this.assertSandbox(this.approvalMode);
     this.projection.accept(method, params);
     this.approvals.accept(method, params);
     if (method === "turn/completed" && typeof params.turnId === "string") this.approvals.forgetTurn(params.turnId);

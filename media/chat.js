@@ -586,6 +586,7 @@
     // Null until a host sends `modeChanged.modes`. Absent means the old rule:
     // Muse's button hidden, Codex without Plan.
     offeredModes: null,
+    disabledModes: {},
     effort: "",
     cwd: "",
     contextWindow: 200000,
@@ -1139,6 +1140,12 @@
     plan: { icon: ICON.listTree, label: "Plan mode" },
     yolo: { icon: ICON.zap, label: "Auto accept" },
   };
+  const MUSE_MODE_META = {
+    yolo: { icon: ICON.zap, label: "Allow all", description: "No prompts; everything runs." },
+    agent: { icon: ICON.bot, label: "Prompt unmatched", description: "Prompt for anything no rule matches (the interactive default)." },
+    onRequest: { icon: ICON.bot, label: "On request", description: "Tools run sandboxed; prompt only on explicit permission requests." },
+    denyUnmatched: { icon: ICON.bot, label: "Deny unmatched", description: "Anything no rule matches is denied." },
+  };
 
   // Three blinking dots — the tool rows' in-progress animation, reused by every
   // progress indicator (Grokking / Thinking) so they all pulse the same way
@@ -1377,7 +1384,18 @@
     return Object.keys(MODE_META).filter((id) => id !== "plan" || state.activeProvider !== "codex");
   }
 
+  function offersMuseModes() {
+    return state.activeProvider === "muse" && Array.isArray(state.offeredModes)
+      && ["yolo", "agent", "denyUnmatched"].every(id => state.offeredModes.includes(id));
+  }
+
+  function modeMeta(id) {
+    const dictionary = offersMuseModes() ? MUSE_MODE_META : MODE_META;
+    return Object.hasOwn(dictionary, id) ? dictionary[id] : { icon: ICON.bot, label: "Unknown mode" };
+  }
+
   function modeDescription(id) {
+    if (offersMuseModes() && Object.hasOwn(MUSE_MODE_META, id)) return MUSE_MODE_META[id].description;
     const name = providerDisplayName(state.activeProvider);
     if (state.activeProvider === "muse") {
       if (state.hostCaps && state.hostCaps.museNativeModes) {
@@ -1396,7 +1414,7 @@
   // first thing dropped in a narrow composer — take the id from the caller so
   // the tooltip can never name a different mode than the icon is showing.
   function modeButtonTitle(modeId) {
-    const meta = MODE_META[modeId] || MODE_META.agent;
+    const meta = modeMeta(modeId);
     if (state.busyLocked) return `${meta.label} — available once the session is ready`;
     if (offeredModeIds().includes("plan") && !state.planModeAvailable) {
       return `${meta.label} — Pick mode — ${state.planModeUnavailableReason}`;
@@ -1406,7 +1424,7 @@
 
   function updateModeBtn(modeId) {
     modeBtn.hidden = offeredModeIds().length === 0;
-    const meta = MODE_META[modeId] || MODE_META.agent;
+    const meta = modeMeta(modeId);
     modeBtn.innerHTML = `${meta.icon}<span class="btn-label">${escapeHtml(meta.label)}</span>`;
     modeBtn.classList.toggle("plan-active", modeId === "plan");
     modeBtn.classList.toggle("yolo-active", modeId === "yolo");
@@ -5042,7 +5060,7 @@
     closePopovers();
     modePopover.innerHTML = "";
     for (const id of offered) {
-      const meta = MODE_META[id];
+      const meta = modeMeta(id);
       const el = document.createElement("div");
       const active = id === state.currentModeId;
       // Verified-old CLI: hard-disable Plan. Unverified probe: keep it clickable
@@ -5051,11 +5069,13 @@
       // cannot show it.
       const planUnavailable = id === "plan" && !state.planModeAvailable;
       const planRecheckable = planUnavailable && state.planModeRecheckable;
-      const disabled = !!meta.disabled || (planUnavailable && !planRecheckable);
-      const disabledNote = planUnavailable ? state.planModeUnavailableReason : meta.disabledNote;
+      const hostReason = Object.hasOwn(state.disabledModes, id) ? state.disabledModes[id] : "";
+      const disabled = !!hostReason || !!meta.disabled || (planUnavailable && !planRecheckable);
+      const disabledNote = hostReason || (planUnavailable ? state.planModeUnavailableReason : meta.disabledNote);
       el.className = "toolbar-popover-item mode-popover-item" +
         (active ? " active" : "") +
         (disabled ? " disabled" : "");
+      el.setAttribute("aria-disabled", String(disabled));
       el.innerHTML =
         `<span class="mode-item-icon">${meta.icon}</span>` +
         `<span class="mode-item-body">` +
@@ -19942,9 +19962,11 @@
       case "modeChanged":
         state.currentModeId = msg.modeId;
         state.offeredModes = Array.isArray(msg.modes)
-          ? msg.modes.filter((id) => Object.hasOwn(MODE_META, id))
+          ? msg.modes.filter((id) => Object.hasOwn(MODE_META, id) || Object.hasOwn(MUSE_MODE_META, id))
           : null;
+        state.disabledModes = msg.disabledModes && typeof msg.disabledModes === "object" ? msg.disabledModes : {};
         updateModeBtn(msg.modeId);
+        if (!modePopover.hidden) { modePopover.hidden = true; openModePopover(); }
         break;
       case "openModePopover":
         openModePopover();

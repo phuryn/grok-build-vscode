@@ -1,3 +1,5 @@
+import { isModeId } from "../mode-prefs";
+
 /**
  * Runtime schema validation for renderer → host messages.
  *
@@ -197,7 +199,7 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
       if (!opt(raw.provider, isInternalProvider)) return null;
       break;
     case "setMode":
-      if (raw.modeId !== "agent" && raw.modeId !== "plan" && raw.modeId !== "yolo") {
+      if (!isModeId(raw.modeId)) {
         return null;
       }
       break;

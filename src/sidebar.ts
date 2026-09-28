@@ -89,6 +89,7 @@ import {
   sessionHasWorkInFlight,
   sessionReadyForPrompt,
   sessionUiSnapshot,
+  sessionModeMessage,
   turnIsInFlight,
 } from "./session";
 import { buildReapCandidates, selectReapable, computeDot, Dot } from "./session-pool";
@@ -101,7 +102,7 @@ import { summarizeForSpeech } from "./speech-summary";
 import type { PromptResultMeta, PromptUsage, SessionInfoContext } from "./acp-dispatch";
 import { MediaRef, adapterCompactSignal, adapterContextOccupancy, agentTimestampMsFromMeta, autoCompactStartedNote, childStreamFromRoute, commandOutputForToolCall, commandOutputFromLiveTerminal, contextUsedFromCompactNotification, enforceCompleteSessionCost, errorDetail, gateZeroTokenMeta, isAuthErrorText, isCredentialError, isIncompatibleAgentError, isResumeNotFound, isRateLimitError, isSubagentLifecycleUpdate, occupancyFromAdapterTurn, parseSessionInfoContext, permissionOutcomeFor, promptErrorText, rateLimitNoticeText, sessionInfoCacheFresh, sumUsage, summarizeBackgroundCommand, usageIsRealMeasurement, type UpdateRoute } from "./acp-dispatch";
 import { createMcpPrepareState, prepareMcpToolCall } from "./mcp-tool";
-import { EFFORT_PREFS_KEY, configWriteTarget, modeToRemember, rememberedEffort, sessionModes, startsInYolo, musePosture, usesClientAutoAccept, type MuseSettings, type EffortPrefs } from "./mode-prefs";
+import { EFFORT_PREFS_KEY, MUSE_MODE_PREF_KEY, MUSE_ON_REQUEST_UNAVAILABLE, MUSE_CLOUD_ON_REQUEST_UNAVAILABLE, configWriteTarget, isMuseModeId, modeToRemember, rememberedEffort, sessionModes, startsInYolo, musePosture, museShellSandboxEnabled, usesClientAutoAccept, type ModeId, type MuseSettings, type EffortPrefs } from "./mode-prefs";
 import { supportsApprovalModeSwitching } from "./acp-backend";
 import { beginAuthRecovery, oauthShadowsXaiApiKey } from "./auth-recovery";
 import {
@@ -1832,8 +1833,8 @@ export class GrokSidebar {
     };
   }
 
-  private async rememberMusePosture(session: Session): Promise<void> {
-    const id = session.client?.sessionId ?? session.activeSessionId;
+  private async rememberMusePosture(session: Session, resumeId?: string): Promise<void> {
+    const id = resumeId ?? session.client?.sessionId ?? session.activeSessionId;
     const posture = session.musePosture;
     if (!id || session.provider !== "muse" || !posture) return;
     await this.updateSessionMeta(current => ({
@@ -1844,7 +1845,7 @@ export class GrokSidebar {
   private createProviderBackend(provider: AcpProvider): CodexBackend | ClaudeBackend | MuseBackend | undefined {
     if (provider === "codex") return new CodexBackend();
     if (provider === "claude") return new ClaudeBackend();
-    if (provider === "muse") return new MuseBackend();
+    if (provider === "muse") return new MuseBackend(undefined, isCloudEnvironment());
     return undefined;
   }
 
@@ -3537,22 +3538,18 @@ See design doc for the full state machine diagram.`;
   }
 
   /**
-   * The mode the UI should show. Plan and YOLO are *client* states that the CLI
-   * doesn't model (the CLI only knows agent/plan), so we derive the button label
-   * here rather than echoing the CLI's raw mode id.
+   * Muse reports its native approval mode. Other providers combine their CLI
+   * state with the host's Plan and auto-approval flags.
    */
-  private displayMode(session: Session = this.focused): "agent" | "plan" | "yolo" {
+  private displayMode(session: Session = this.focused): string {
+    if (session.provider === "muse") return session.client?.currentModeId ?? session.musePosture?.mode ?? "agent";
     if (session.planActive) return "plan";
     if (session.autoApprove) return "yolo";
     return "agent";
   }
 
   private postMode(session: Session = this.focused): void {
-    const message: HostMsg = {
-      type: "modeChanged",
-      modeId: this.displayMode(session),
-      modes: sessionModes(session.provider),
-    };
+    const message = sessionModeMessage(session, this.displayMode(session));
     if (session === this.focused) this.view?.webview.postMessage(message);
     this.sendRemoteSession(session, message);
   }
@@ -3703,7 +3700,7 @@ Only continue if you trust this code.`,
   }
 
   async setMode(
-    modeId: "agent" | "plan" | "yolo",
+    modeId: ModeId,
     session: Session = this.focused,
     requester?: RemoteRequester,
   ): Promise<void> {
@@ -3715,6 +3712,12 @@ Only continue if you trust this code.`,
     // setMode throws "no session" (and for Plan that error is surfaced to the user).
     // The mode button is disabled while busy; this backstops the toggle-mode command.
     if (!session.client || !session.client.sessionId || session.priming) return;
+    if (session.provider === "muse" && session.museCloud && modeId === "onRequest") {
+      this.reportRequester(requester, "warning", MUSE_CLOUD_ON_REQUEST_UNAVAILABLE);
+      return;
+    }
+    // Backstop the picker for stale clients and direct/remote commands.
+    if (!sessionModes(session.provider, session.museCloud).includes(modeId) && modeId !== "plan") return;
     // Muse switches approval without enabling the Plan path.
     if (!supportsModeSwitching(session.provider)) {
       if (!supportsAutoAccept(session.provider)) return;
@@ -3728,27 +3731,25 @@ Only continue if you trust this code.`,
       }
       const remember = modeToRemember(modeId);
       const client = session.client;
-      let nativeAccepted = true;
+      if (modeId === "onRequest" && session.museShellSandbox !== true) {
+        this.reportRequester(requester, "warning", MUSE_ON_REQUEST_UNAVAILABLE);
+        return;
+      }
       if (supportsApprovalModeSwitching(session.provider)) {
         try {
           await client.setMode(modeId);
         } catch (error) {
           if (session.client !== client) return;
-          if (modeId === "agent") {
-            this.reportRequester(requester, "error", `Couldn't switch mode: ${(error as Error).message}`);
-            return;
-          }
-          nativeAccepted = false;
-          this.host.appendLine(`[muse] Native Auto accept unavailable; using one-time approvals: ${error}`);
-          this.reportRequester(requester, "warning", "Muse Code did not accept full access. Auto accept will answer its prompts once until you reopen the conversation.");
+          this.reportRequester(requester, "error", `Couldn't switch mode: ${(error as Error).message}`);
+          return;
         }
       }
       if (session.client !== client) return;
       if (remember) void this.rememberGrokConfig("defaultMode", remember);
+      await this.state.update(MUSE_MODE_PREF_KEY, modeId);
+      if (session.client !== client) return;
       session.autoApprove = modeId === "yolo";
-      // Muse kept its own mode after a refusal. Recording full access anyway
-      // would reopen the conversation unsandboxed under that mode's badge.
-      if (nativeAccepted && session.musePosture) {
+      if (session.musePosture) {
         session.musePosture = { ...session.musePosture, mode: modeId };
         await this.rememberMusePosture(session);
       }
@@ -3756,6 +3757,7 @@ Only continue if you trust this code.`,
       if (session.autoApprove) this.autoApprovePendingPermissions(session);
       return;
     }
+    if (modeId === "onRequest" || modeId === "denyUnmatched") return;
     if (modeId === "plan" && !session.planModeAvailable) {
       // Unverified probe: re-check now rather than forcing a session restart.
       // A verified-old CLI is latched and stays refused.
@@ -4324,7 +4326,7 @@ Only continue if you trust this code.`,
     // Auto accept is not a verdict on a plan-review card. Same rule as
     // autoApprovePendingPermissions, including after a failed mode RPC
     // that already cleared the Plan bit.
-    if (supportsAutoAccept(session.provider) && usesClientAutoAccept(session.provider, client.currentModeId) && session.autoApprove && !planActive && !isPlanReviewPermission(req.toolCall?.kind)) {
+    if (supportsAutoAccept(session.provider) && usesClientAutoAccept(session.provider) && session.autoApprove && !planActive && !isPlanReviewPermission(req.toolCall?.kind)) {
       const opt = pickAutoAcceptOption(req.options, session.provider);
       if (opt) { client.respondPermission(req.id, opt.optionId); return; }
     }
@@ -4426,7 +4428,7 @@ Only continue if you trust this code.`,
   private autoApprovePendingPermissions(session: Session): void {
     if (!supportsAutoAccept(session.provider)) return;
     const client = session.client;
-    if (!usesClientAutoAccept(session.provider, client?.currentModeId)) return;
+    if (!usesClientAutoAccept(session.provider)) return;
     if (!client || session.pendingPermissions.size === 0) return;
     let resolved = 0;
     // Snapshot first — persistPermissionAnswer mutates pendingPermissions.
@@ -10246,11 +10248,14 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // it so the button shows "Auto accept" instead of a misleading "Agent" (#31).
     // Applies to resumed sessions too (the config is global, not per-session).
     const configAutoApprove = session.provider === "grok" && this.configForcesAutoApprove(this.sessionCwd(session));
+    session.museCloud = session.provider === "muse" && isCloudEnvironment();
     session.musePosture = session.provider === "muse" ? musePosture(
-      rememberedYolo ? "yolo" : "agent", !!resumeId,
+      this.state.get<string>(MUSE_MODE_PREF_KEY) ?? (rememberedYolo ? "yolo" : "agent"), !!resumeId,
       resumeId ? this.state.get<SessionMetaOverrides>(SESSION_META_KEY, {})[resumeId]?.musePosture : undefined,
       this.museSettings(),
+      session.museCloud,
     ) : undefined;
+    session.museShellSandbox = session.musePosture ? museShellSandboxEnabled(session.musePosture, session.museCloud) : undefined;
     session.autoApprove = session.musePosture ? session.musePosture.mode === "yolo" : rememberedYolo || configAutoApprove;
     session.planActive = false;
     session.hasHistory = !!resumeId;
@@ -10294,11 +10299,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // calls startSession as its own retry, and a reset would let an entitlement
     // failure (#58) pay a full restart+resend cycle on every prompt. Only a clean
     // turn re-arms it.
-    this.emit(session, {
-      type: "modeChanged",
-      modeId: session.autoApprove ? "yolo" : "agent",
-      modes: sessionModes(session.provider),
-    });
+    this.emit(session, sessionModeMessage(session, session.musePosture?.mode ?? (session.autoApprove ? "yolo" : "agent")));
     if (configAutoApprove) this.noticeAlwaysApproveOnce(this.sessionCwd(session));
     if (resumeId) this.emit(session, { type: "clearMessages" });
 
@@ -10394,7 +10395,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       mcpServers: (onDispose) => supportsClientMcpServers(session.provider) ? this.hostMcpServersFor(session, onDispose) : [],
       ...(session.provider === "grok"
         ? { grokVersion: grokHandshakeVersion, grokVersionVerified }
-        : { backend: session.provider === "muse" ? new MuseBackend(session.musePosture) : this.createProviderBackend(session.provider) }),
+        : { backend: session.provider === "muse" ? new MuseBackend(session.musePosture, session.museCloud) : this.createProviderBackend(session.provider) }),
     });
     session.client = client;
     this.syncHumanWait(session);
@@ -10501,10 +10502,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     });
     client.on("modeChanged", (id) => {
       if (gen !== session.gen) return;
-      if (session.provider === "muse" && (id === "agent" || id === "yolo")) {
+      if (session.provider === "muse" && isMuseModeId(id)) {
         session.autoApprove = id === "yolo";
         if (session.musePosture) session.musePosture = { ...session.musePosture, mode: id };
-        void this.rememberMusePosture(session);
+        void this.rememberMusePosture(session, resumeId);
         this.setPlanActive(session, false);
         return;
       }

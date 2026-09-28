@@ -7,6 +7,8 @@ const CHAT_CSS = readFileSync(new URL("../media/chat.css", import.meta.url), "ut
 const MUSE_AGENT = "Follows Muse Code's own approval rules";
 const MUSE_YOLO = "Answers every approval Muse Code raises. This may look the same as Agent, because Muse Code asks rarely by default";
 const PLAN_REASON = "Plan mode requires a newer CLI.";
+const MUSE_MODES = ["yolo", "agent", "onRequest", "denyUnmatched"];
+const MUSE_LABELS = ["Allow all", "Prompt unmatched", "On request", "Deny unmatched"];
 
 function connect(h: ReturnType<typeof bootWebview>) {
   dispatch(h.window, { type: "providerState", providers: [
@@ -32,6 +34,84 @@ function openModes(h: ReturnType<typeof bootWebview>) {
 }
 
 describe("Muse Agent / Auto accept", () => {
+  it.each([{ vscode: true }, {}, { remote: true }])("uses Muse labels for the cloud host's three advertised choices on %j", surface => {
+    const h = bootWebview(surface);
+    connect(h);
+    dispatch(h.window, { type: "session", sessionId: "m", provider: "muse", models: [] });
+    const modes = ["yolo", "agent", "denyUnmatched"];
+    const labels = ["Allow all", "Prompt unmatched", "Deny unmatched"];
+    for (const [index, modeId] of modes.entries()) {
+      dispatch(h.window, { type: "modeChanged", modeId, modes });
+      expect(h.doc.getElementById("mode-btn")!.textContent).toBe(labels[index]);
+      openModes(h);
+      expect(labelsOf(h.doc)).toEqual(labels);
+      expect(h.doc.querySelector(".mode-item-disabled-note")).toBeNull();
+      click(h.window, h.doc.querySelectorAll(".mode-popover-item")[index]);
+      expect(h.posted.at(-1)).toEqual({ type: "setMode", modeId });
+    }
+    expect(h.posted).not.toContainEqual({ type: "setMode", modeId: "onRequest" });
+  });
+
+  it.each([{ vscode: true }, {}, { remote: true }])("offers the four advertised Muse modes on %j", surface => {
+    const h = bootWebview(surface);
+    connect(h);
+    dispatch(h.window, { type: "session", sessionId: "m", provider: "muse", models: [] });
+    for (const [index, modeId] of MUSE_MODES.entries()) {
+      dispatch(h.window, { type: "modeChanged", modeId, modes: MUSE_MODES });
+      expect(h.doc.getElementById("mode-btn")!.textContent).toBe(MUSE_LABELS[index]);
+      expect(h.doc.getElementById("mode-btn")!.title).toContain(MUSE_LABELS[index]);
+      openModes(h);
+      expect(labelsOf(h.doc)).toEqual(MUSE_LABELS);
+      expect(descsOf(h.doc)).toEqual([
+        "No prompts; everything runs.", "Prompt for anything no rule matches (the interactive default).",
+        "Tools run sandboxed; prompt only on explicit permission requests.", "Anything no rule matches is denied.",
+      ]);
+      click(h.window, h.doc.querySelectorAll(".mode-popover-item")[index] as HTMLElement);
+      expect(h.posted.at(-1)).toEqual({ type: "setMode", modeId });
+    }
+  });
+
+  it.each([{ vscode: true }, {}, { remote: true }])("keeps On request visible but disabled with the host reason on %j", surface => {
+    const h = bootWebview(surface);
+    connect(h);
+    dispatch(h.window, { type: "session", sessionId: "m", provider: "muse", models: [] });
+    const reason = "On request requires the shell sandbox.";
+    dispatch(h.window, { type: "modeChanged", modeId: "yolo", modes: MUSE_MODES, disabledModes: { onRequest: reason } });
+    openModes(h);
+    const row = h.doc.querySelectorAll(".mode-popover-item")[2];
+    expect(row.getAttribute("aria-disabled")).toBe("true");
+    expect(row.textContent).toContain(reason);
+    click(h.window, row);
+    expect(h.posted.some(msg => msg.type === "setMode")).toBe(false);
+    // A fresh process updates an already open menu, including its click guard.
+    dispatch(h.window, { type: "modeChanged", modeId: "agent", modes: MUSE_MODES });
+    click(h.window, h.doc.querySelectorAll(".mode-popover-item")[2]);
+    expect(h.posted.at(-1)).toEqual({ type: "setMode", modeId: "onRequest" });
+  });
+
+  it.each([false, true])("renders an unknown current mode harmlessly and never invents choices, remote=%s", remote => {
+    const h = bootWebview({ remote });
+    connect(h);
+    dispatch(h.window, { type: "session", sessionId: "m", provider: "muse", models: [] });
+    dispatch(h.window, { type: "modeChanged", modeId: "<future>", modes: ["agent", "yolo", "future"] });
+    expect(h.doc.getElementById("mode-btn")!.textContent).toBe("Unknown mode");
+    openModes(h);
+    expect(labelsOf(h.doc)).toEqual(["Agent mode", "Auto accept"]);
+  });
+
+  it.each(["grok", "codex", "claude"])("keeps %s's labels and choices with both old and current hosts", provider => {
+    const h = bootWebview();
+    connect(h);
+    dispatch(h.window, { type: "session", sessionId: "s", provider, models: [] });
+    const modes = provider === "codex" ? ["agent", "yolo"] : ["agent", "plan", "yolo"];
+    const labels = provider === "codex" ? ["Agent mode", "Auto accept"] : ["Agent mode", "Plan mode", "Auto accept"];
+    for (const advertised of [undefined, modes]) {
+      dispatch(h.window, { type: "modeChanged", modeId: "agent", modes: advertised });
+      openModes(h);
+      expect(labelsOf(h.doc)).toEqual(labels);
+    }
+  });
+
   it.each([false, true])("shows native mode semantics and the replayed badge on remote=%s", remote => {
     const h = bootWebview({ remote });
     connect(h);

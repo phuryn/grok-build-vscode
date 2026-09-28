@@ -3,7 +3,19 @@
 
 import type { ConfigTarget } from "./host";
 
-export type ModeId = "agent" | "plan" | "yolo";
+export type MuseModeId = "agent" | "yolo" | "onRequest" | "denyUnmatched";
+export type ModeId = MuseModeId | "plan";
+export const MUSE_MODE_PREF_KEY = "grok.defaultMuseMode";
+export const MUSE_CLOUD_ON_REQUEST_UNAVAILABLE = "Muse On request is unavailable on cloud machines. Open this conversation on a desktop to change its mode, or start a new cloud conversation in Prompt unmatched.";
+export const MUSE_ON_REQUEST_UNAVAILABLE = "On request requires the shell sandbox. Switch to Prompt unmatched, enable Shell sandbox in Settings → Providers → Muse Code, then start a new conversation.";
+
+export function isMuseModeId(value: unknown): value is MuseModeId {
+  return value === "agent" || value === "yolo" || value === "onRequest" || value === "denyUnmatched";
+}
+
+export function isModeId(value: unknown): value is ModeId {
+  return value === "plan" || isMuseModeId(value);
+}
 
 export interface MuseSettings {
   shellSandbox: boolean;
@@ -11,29 +23,33 @@ export interface MuseSettings {
   trustWorkspaces: boolean;
 }
 
-/** Agent settings stay fixed for a conversation; only its selected mode changes. */
+/** Process preferences stay fixed for a conversation; only its selected mode changes. */
 export interface MusePosture extends MuseSettings {
-  mode: "agent" | "yolo";
+  mode: MuseModeId;
+}
+
+export function museShellSandboxEnabled(posture: MusePosture, isCloud = false): boolean {
+  return !isCloud && (posture.mode === "onRequest" || (posture.mode !== "yolo" && posture.shellSandbox));
 }
 
 export function musePosture(defaultMode: string | undefined, isResume: boolean,
-  saved: MusePosture | undefined, settings: MuseSettings): MusePosture {
+  saved: MusePosture | undefined, settings: MuseSettings, isCloud = false): MusePosture {
   // Unknown/terminal-created histories start conservatively until Muse replays.
   if (isResume) return saved ? { ...saved } : { mode: "agent", shellSandbox: true, sandboxNetwork: "proxy-only", trustWorkspaces: false };
-  return { ...settings, mode: startsInYolo(defaultMode, false) ? "yolo" : "agent" };
+  return { ...settings, mode: isMuseModeId(defaultMode) && !(isCloud && defaultMode === "onRequest") ? defaultMode : "agent" };
 }
 
-export function usesClientAutoAccept(provider: string, effectiveMode: string | undefined): boolean {
-  return provider !== "muse" || effectiveMode !== "yolo";
+export function usesClientAutoAccept(provider: string): boolean {
+  return provider !== "muse";
 }
 
 /**
  * The mode value to persist for a user's mode switch, or `null` to leave the
- * remembered preference unchanged. Plan is a transient per-task choice, so it is
- * never remembered (#25). Mirrors how `defaultModel`/`defaultEffort` persist.
+ * shared preference unchanged. Plan is transient (#25); Muse-only modes belong
+ * in MUSE_MODE_PREF_KEY, never in the shared grok.defaultMode enum.
  */
 export function modeToRemember(modeId: ModeId): "agent" | "yolo" | null {
-  return modeId === "plan" ? null : modeId;
+  return modeId === "agent" || modeId === "yolo" ? modeId : null;
 }
 
 /**
@@ -47,8 +63,9 @@ export function startsInYolo(defaultMode: string | undefined, isResume: boolean)
 }
 
 /** Modes this session's picker offers. Codex's plan review is outside this menu; Muse has no Plan. */
-export function sessionModes(provider: string): ModeId[] {
-  return provider === "codex" || provider === "muse"
+export function sessionModes(provider: string, isCloud = false): ModeId[] {
+  if (provider === "muse") return isCloud ? ["yolo", "agent", "denyUnmatched"] : ["yolo", "agent", "onRequest", "denyUnmatched"];
+  return provider === "codex"
     ? ["agent", "yolo"]
     : ["agent", "plan", "yolo"];
 }

@@ -1,148 +1,220 @@
-# Muse native modes (#192)
+# Muse native approval modes (#192)
 
-## Behavior
+## Mode dictionary
 
-The public mode ids remain `agent` and `yolo`. Muse's narrow
-`supportsApprovalModeSwitching` capability leaves `supportsModeSwitching`
-false, so it cannot enable Plan. `museNativeModes` advertises the new menu
-wording to renderers; older hosts retain their previous wording and behavior.
+Muse's installed SDK defines a closed four-value ApprovalMode union in
+node_modules/@muse-code/sdk/dist/src/msp.d.ts. The menu uses the owner's
+selected Muse names and the CLI descriptions supplied in the brief; the SDK
+has no better per-mode descriptions. Terminal permission profiles are outside
+serve's selectable dictionary. Muse has no Plan.
 
-For a new conversation, the host passes its selected mode and Agent settings
-to the adapter in `GROK_MUSE_POSTURE`. Auto accept selects `allowAll` on
-`session/start` and spawns `serve --disable-sandbox --trust-workspace`.
-Agent explicitly selects `promptUnmatched`. Its process defaults remain
-sandbox on, network proxy-only, and no explicit trust flag. The host never
-reads or writes Muse's trust file to promote trust.
+| Wire id | Muse approvalMode | Label | Description |
+|---|---|---|---|
+| yolo | allowAll | Allow all | No prompts; everything runs. |
+| agent | promptUnmatched | Prompt unmatched | Prompt for anything no rule matches (the interactive default). |
+| onRequest | onRequest | On request | Tools run sandboxed; prompt only on explicit permission requests. |
+| denyUnmatched | denyUnmatched | Deny unmatched | Anything no rule matches is denied. |
 
-The three host settings are `grok.museShellSandbox`,
-`grok.museSandboxNetwork`, and `grok.museTrustWorkspaces`. They configure new
-Agent conversations, are available on desktop and the separate VS Code
-Settings webview, and have defaults `true`, `"proxy-only"`, and `false`.
-No cloud-specific defaults or boot scripts change.
+The existing agent and yolo ids retain their meanings in saved postures,
+shared settings, telemetry, and other providers. session/start.approvalMode
+selects the initial mode; session/setApprovalMode changes it live. Muse's
+SDK documents that a switch applies from the next action, is durable and
+replays on resume; it does not resolve an already pending approval.
 
-A live switch sends `session/setApprovalMode` and does not restart the
-process. Sandbox and trust change at the next process start. Each
-conversation keeps its original Agent settings and its latest selected mode
-in `SessionMetaOverride.musePosture`, independently of `grok.defaultMode`.
-Reopening uses that saved posture before spawning, then lets Muse's replayed
-approval mode drive the badge. A history with no host record starts with
-conservative flags; the replayed mode is saved for its next reopen.
+## Desktop process and persistence decisions
 
-Accepted native full access disables the host's one-time approval path.
-If Muse rejects a live switch to Auto accept, the host warns and retains the
-once-only fallback. A rejected switch to Agent leaves the previous mode
-visible. MSP documents that a mode switch does not retroactively answer a
-pending approval: such cards remain answerable by the person. Replayed mode
-is published before pending approvals are forwarded, preventing the fallback
-from granting them during reopen.
+- Allow all starts serve with --disable-sandbox --trust-workspace.
+- Prompt unmatched and Deny unmatched use the conversation's shell sandbox,
+  sandbox network and workspace trust preferences.
+- On request always starts with the shell sandbox enabled, even when the
+  host's Shell sandbox setting is off. Network and trust remain configured
+  preferences; this mode does not implicitly grant workspace trust.
+- Sandbox and trust are launch flags. Live approval changes do not restart
+  Muse or alter those flags. Session.museShellSandbox records the launch
+  fact separately from the mutable SessionMetaOverride.musePosture.mode.
+- The host offers On request but disables it with a reason while that process
+  has no sandbox. The host and adapter also reject direct requests for that
+  unsafe switch. Switching an unsandboxed Allow all process to Prompt
+  unmatched does not make On request available. Switch to Prompt unmatched,
+  enable Shell sandbox under Settings > Providers > Muse Code, then start a
+  new conversation to obtain a sandboxed process.
+- The last successful Muse selection is remembered in host memento state
+  under grok.defaultMuseMode, independently of grok.defaultMode. This lets
+  a new Muse conversation start in either new mode without leaking it into
+  another provider's defaults. Until Muse has its own preference, the shared
+  default remains the fallback. Choosing agent/yolo still writes those values
+  to grok.defaultMode; onRequest/denyUnmatched never do.
+- Reopening uses the conversation's saved posture rather than either default.
+  The badge and saved posture then follow all four replayed native modes.
+  Unknown/terminal-created histories start with conservative launch flags.
+  If stale saved launch flags are unsandboxed but Muse replays On request,
+  the adapter publishes that fact and fails closed before forwarding pending
+  approvals or admitting a prompt. The host saves On request for that resume
+  id even before ACP load completes; reopening again launches sandboxed.
+- Refused switches change neither the badge nor saved posture/defaults. The
+  old one-time host approval fallback has been removed: Allow all means Muse
+  accepted allowAll. The host does not auto-answer Muse's pending cards.
 
-## Step 0: attempted on 2026-09-28, blocked
+The host-local Settings rows name the four modes and explain the sandbox
+exception. They remain unavailable to phones. Boot scripts, terminal
+permission profiles and trust files are unchanged.
 
-These are access failures, **not measurements of Muse behavior**:
+## Cloud rule: the VM is the sandbox
 
-1. `gh issue view 192 -R phuryn/grok-build-vscode --json body` failed with a
-   forbidden socket access error. The web fetch also failed. Implementation
-   used the issue description included in the task; the issue body was not
-   independently retrieved.
-2. `Get-Content "$env:USERPROFILE/.config/muse/trust.json" -Encoding UTF8`
-   failed with access denied. No trust file was modified.
-3. The CLI check was attempted from a new temporary directory:
+The host decides cloud-ness using isCloudEnvironment(). Conversation and
+catalog MuseBackend instances pass that launch fact in GROK_MUSE_POSTURE;
+it is never inferred by the renderer or saved in the conversation's posture.
+The isolated cloud VM supplies the boundary. Every cloud Muse process uses
+--disable-sandbox and omits --sandbox-network. Prompt unmatched and Deny
+unmatched keep their native prompts/denials. Workspace trust is unchanged:
+Allow all forces it; the other modes use the saved preference.
 
-   ```powershell
-   $probeDir = Join-Path $env:TEMP ('muse-mode-probe-' + [guid]::NewGuid().ToString('N'))
-   New-Item -ItemType Directory -Path $probeDir | Out-Null
-   Push-Location $probeDir
-   try { & "$env:LOCALAPPDATA/Programs/muse/muse.cmd" serve --help } finally { Pop-Location }
-   ```
+The cloud host advertises only Allow all, Prompt unmatched and Deny unmatched,
+with no disabled On request row. Direct requests for On request are also
+refused. Session.museCloud and sessionModeMessage carry the same restriction
+through live messages and reconnect snapshots. Desktop mode advertisement,
+launch rules and sandbox guards are unchanged.
 
-   The sandbox could not resolve/access that executable. No Muse process,
-   MSP session, or model turn ran. No other repository was accessed.
+Existing On request conversations are **refused**, rather than silently
+changing their durable mode. The adapter reads session/read before attaching
+on cloud and returns a clear ACP error if its durable mode is On request;
+the resume and live-notification guards also refuse it if the effective mode
+changes after that read. No pending approval or prompt is admitted. This
+preserves the conversation's desktop mode. Opening it on a desktop and
+changing its mode permits a later cloud resume, even with stale host metadata.
+A remembered On request default seeds a **new** cloud conversation as Prompt
+unmatched; that safe startup default never overrides an existing history.
+On request is never run without Muse's sandbox.
 
-Consequently, **whether `serve` inherits terminal trust and the actual default
-MSP approval mode remain unverified**. The Settings description does not claim
-trust inheritance. `promptUnmatched` is an explicit implementation choice
-based on the owner's supplied local observation, not a new measurement.
-Nothing in the brief was disproved by a live probe. The pending-approval
-semantics above come from the installed SDK's `SessionSetApprovalModeResult`
-documentation.
+The three Muse Settings rows are host-local, and host-local rows never render on
+a remote. A cloud machine is only ever seen from a remote, so no cloud-specific
+visibility rule is needed: the rows cannot appear there. On cloud the launch
+rule above decides sandbox and network, whatever the stored settings say.
 
-## Validation
+## Receiver and compatibility audit
 
-Node/npm were initially absent from the effective PATH. A readable installation
-was found under `C:\Program Files\nodejs`. Commands use its `.cmd` launchers
-to avoid PowerShell's npm wrapper probing the inaccessible user npm prefix:
+This extends the existing mode plumbing; it is not a second picker or policy
+system. New values on setMode/modeChanged are **not inherently additive**.
 
-```powershell
-$env:PATH = 'C:\Program Files\nodejs;' + $env:PATH
-npx.cmd tsc -p . --noEmit
-npm.cmd run compile:muse-adapter
-npx.cmd vitest run C:/GitHub/grok-build-vscode/test/protocol.test.ts C:/GitHub/grok-build-vscode/test/muse-session.test.ts C:/GitHub/grok-build-vscode/test/muse-backend.test.ts C:/GitHub/grok-build-vscode/test/muse-mode.test.ts C:/GitHub/grok-build-vscode/test/muse-mode.dom.test.ts C:/GitHub/grok-build-vscode/test/mode-prefs.test.ts C:/GitHub/grok-build-vscode/test/settings-surface.dom.test.ts C:/GitHub/grok-build-vscode/test/session-start-retry.test.ts C:/GitHub/grok-build-vscode/test/muse-effort-request.test.ts
-```
+- protocol.ts uses ModeId for setMode.modeId and modeChanged.modes. The
+  current modeId remains a string to tolerate a future host. Optional
+  disabledModes carries per-process reasons.
+- chat.js offers only the ids advertised in modes. Muse names activate when
+  yolo, agent and denyUnmatched are advertised: four choices on desktop and
+  three on cloud. Old hosts advertising
+  agent/yolo retain Agent mode / Auto accept and their existing descriptions,
+  including the museNativeModes capability's earlier wording. No modes frame
+  retains the old hidden Muse button. Unknown current ids show Unknown mode;
+  unknown offered ids are not selectable. Grok, Codex and Claude keep their
+  existing menus and labels.
+- The desktop validator and remote parser accept exactly the known ModeId
+  vocabulary. The remote parser previously passed setMode through its default
+  known-message branch without inspecting the value; it now validates and
+  reconstructs that payload. The host also rejects Muse-only ids for every
+  other provider, including the VS Code path that casts renderer messages.
+- remote-policy.ts already proposes setMode against the bound conversation
+  and mirrors modeChanged whole. No policy row changes are needed. Both live
+  messages and sessionUiSnapshot use sessionModeMessage, preserving disabled
+  reasons on desktop refresh and phone reconnect.
+- telemetry.ts accepts the two new ids; modeToRemember returns null for them.
+  displayMode uses Muse's reported mode, while other providers retain the
+  host's existing Plan/auto-approval state logic.
 
-Both TypeScript commands passed. The final focused run passed all **382 tests
-in 9 files** (9.53 seconds). `git diff --check` also passed.
+REMOTE_PROTO_VERSION remains 1 because the current renderer never sends a
+new mode value to an older host: the host's modes advertisement gates the
+choices. This is deliberate capability negotiation, not an assumption that
+adding enum values is compatible. No claim is made that an old receiver
+accepts a new value.
 
-The adapter tests inject fake MSP connections. They cover Windows/Linux spawn
-arguments, startup approval modes, live changes, refused/missing effective
-modes, replay, and pending-approval ordering. Host tests cover per-conversation
-persistence and replay authority. DOM tests cover Settings messages and live
-refresh in the actual standalone boot script, plus old-host and phone behavior.
+## Local probe limitation - 2026-09-28
 
-`npm.cmd test > .verification/muse-x4-npm-test.log 2>&1` was attempted in full.
-Three protocol-registry failures found there were fixed and passed in the
-focused rerun. Two existing lifecycle tests failed; 308 of 310 files reported
-before the run stalled and was interrupted. The unfinished files were
-`acp-integration.test.ts` and `remote-preview.dom.test.ts`.
+Attempted from this repository:
 
-Additional isolation commands:
+    & "$env:LOCALAPPDATA/Programs/muse/muse.cmd" serve --help
 
-```powershell
-npx.cmd vitest run C:/GitHub/grok-build-vscode/test/lifecycle-host.test.ts
-npx.cmd vitest run C:/GitHub/grok-build-vscode/test/acp-integration.test.ts -t 'lifecycle: spawn'
-npx.cmd vitest run C:/GitHub/grok-build-vscode/test/remote-preview.dom.test.ts
-```
+PowerShell reported that C:\Users\Dell\AppData\Local/Programs/muse/muse.cmd
+was not recognized as a command. The executable is inaccessible/unresolvable
+in this sandbox. No Muse process, MSP session or model turn ran, and no trust
+file was accessed. This is an access failure, not a measurement of Muse's
+behavior. The SDK schema and injected connection tests verify mapping and
+launch flags; they cannot establish actual runtime sandbox enforcement.
 
-Lifecycle: 11 passed, 2 failed. A disposable Node-child reproduction confirmed
-`taskkill /T /F /PID <owned-child>` returns `ERROR: Access denied`, exit 1, in
-this sandbox. The ACP test's prompt succeeds but cleanup fails with `EBUSY`
-because its child retains the temporary workspace: 1 failed, 24 unselected.
-Remote preview: 1 passed in isolation. These files were not modified.
+## First real cloud measurement - 2026-09-28
 
-A second full-suite attempt ran:
+Measured on an AFK Pilot Cloud sprite, Linux, Muse 1.4.0; results supplied by
+the owner in the follow-up brief, not measured by this local agent:
 
-```powershell
-npm.cmd test -- --maxWorkers=2 > .verification/muse-x4-npm-test-final.log 2>&1
-```
+- System bwrap failed for plain, user-namespace and net-namespace sandboxes:
+  "bwrap: Unexpected capabilities but not setuid, old file caps config?"
+  Muse had no usable embedded fallback.
+- With the sandbox on, muse exec --approval-mode never **failed closed**.
+  Its shell tool reported "environment failure: sandbox enforcement
+  unavailable" and "Bubblewrap is unavailable for linux", followed by
+  "The execution environment is broken: the command was never started and
+  every later command will fail the same way." No command ran.
+- Consequently, sandboxed Prompt unmatched, On request and Deny unmatched
+  could not execute shell commands there. Allow all worked because it
+  disabled Muse's sandbox. The default sandbox had also blocked cloud Muse
+  before the four-mode change.
 
-It reproduced the two lifecycle failures and again stopped reporting at
-**308 of 310 files**. After more than eight minutes, with the same ACP and
-remote-preview files unreported, it was interrupted (exit 1). Reducing worker
-contention did not resolve the stall. Both full runs are incomplete; there is
-**no passing full-suite result**. The ACP cleanup and lifecycle failures have
-the isolated evidence above; the remote-preview full-run stall is unexplained.
-The final 382-test focused run includes the pending-approval ordering fix.
+This supersedes the earlier unmeasured-cloud caveat. The owner's decision is
+the launch and visibility rule above: the VM is the cloud sandbox. These
+measurements are specific to that cloud environment and Muse version; they
+are not a claim that Muse's desktop sandbox is unavailable.
 
-No `test:integration`, `test:live`, `smoke:*`, VS Code, Electron, browser,
-commit, push, install, or release was run. The package version was left at the
-current development version; the task's release label was not treated as a
-request to publish or bump it. `docs/subagents-and-workflows.md` was read and
-left unchanged because it does not describe Muse's permission posture.
+No substantive error in the supplied four-mode dictionary or protocol brief
+was found. The docs audit did find older architecture prose claiming Muse
+had no mode command; that prose and the older two-label descriptions have
+been replaced. Commits 8be0ec8, 6bf651a and 4e26215 were reviewed as the
+starting behavior, including refused-switch persistence and launch timing.
 
-## Files changed
+## Verification
 
-- Adapter: `adapters/muse/main.mts`, `adapters/muse/session.mts`.
-- Host mode, process, and persistence: `src/muse-backend.ts`,
-  `src/acp-backend.ts`, `src/acp.ts`, `src/mode-prefs.ts`, `src/sidebar.ts`,
-  `src/session.ts`, `src/sessions.ts`.
-- Settings and compatibility: `package.json`, `src/desktop/config-store.ts`,
-  `src/desktop/webview-msg-validate.ts`, `src/protocol.ts`,
-  `src/remote-policy.ts`, `media/chat.js`, `media/settings.js`,
-  `media/webview-helpers.js`.
-- Tests: `test/protocol.test.ts`, `test/muse-session.test.ts`,
-  `test/muse-backend.test.ts`, `test/muse-mode.test.ts`,
-  `test/muse-mode.dom.test.ts`, `test/mode-prefs.test.ts`,
-  `test/settings-surface.dom.test.ts`, `test/session-start-retry.test.ts`,
-  `test/muse-effort-request.test.ts`.
-- Documentation: `README.md`, generated `README.marketplace.md`, `CLAUDE.md`,
-  `research/muse-adapter.md`, and this report. Marketplace text was refreshed
-  with `node scripts/gen-marketplace-readme.cjs`.
+The focused tests cover all four starts, switches and replays; the SDK's
+closed dictionary; Windows/Linux spawn arguments; sandbox-off settings;
+refused switches; stale-posture resume recovery; defaults and telemetry;
+VS Code/desktop/phone DOM behavior; older hosts; unknown current ids;
+non-Muse menus; desktop/remote validation; reconnect restrictions; and
+host-local Settings copy. Connections are injected doubles, not real CLIs.
+
+Initial four-mode validation passed on 2026-09-28:
+
+- npx.cmd tsc -p . --noEmit
+- npm.cmd run compile:muse-adapter
+- npm.cmd run compile (extension and Electron host TypeScript, plus adapter)
+- Focused Vitest run: **799 tests in 15 files passed**, with --maxWorkers=2.
+  Files: muse-mode.test.ts, muse-mode.dom.test.ts, muse-session.test.ts,
+  mode-prefs.test.ts, session-start-retry.test.ts, muse-backend.test.ts,
+  settings-surface.dom.test.ts, protocol.test.ts, remote-frames.test.ts,
+  desktop-host-pure.test.ts, telemetry.test.ts, provider-enumerations.test.ts,
+  session-ui-snapshot.test.ts, marketplace-readme.test.ts,
+  muse-effort-request.test.ts (all under test/).
+- git diff --check.
+
+Node/npm use C:\Program Files\nodejs on PATH and the .cmd launchers.
+README.marketplace.md was regenerated from README.md with the repository's
+script. Earlier focused failures were outdated fallback/snapshot expectations;
+the final run above is passing.
+
+The cloud follow-up additionally verifies all cloud launch postures, the
+three advertised native choices, pre-attach refusal and replay refusal of
+On request, safe startup defaults, restoration after a desktop mode change,
+and hidden sandbox settings in host and standalone Settings surfaces. The
+desktop mode and sandbox tests run alongside them. The focused command uses
+the first seven files above plus session-ui-snapshot.test.ts and
+marketplace-readme.test.ts; temporary files and the npm cache stay inside
+the repository's ignored .verification directory.
+
+Cloud follow-up validation on 2026-09-28: **461 tests in 9 files passed**;
+npx.cmd tsc -p . --noEmit, npm.cmd run compile:muse-adapter and
+git diff --check also passed.
+
+npm.cmd run package rebuilt the host and adapter successfully, then stopped
+in check:vsix: npm list reported ELSPROBLEMS for builder-util-runtime@9.7.0
+and js-yaml@4.3.0. Their installed versions match both lockfiles; the cloud
+change does not alter dependency versions or overrides. No dependency repair
+or packaging-check bypass was attempted. No new VSIX was produced.
+
+No full npm test,
+VS Code/Electron/browser launch, install, commit, push or release is part of
+this task. Changes remain uncommitted at the existing package version.

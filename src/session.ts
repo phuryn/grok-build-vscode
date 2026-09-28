@@ -3,7 +3,7 @@ import type { HostMsg } from "./protocol";
 import type { FileChip } from "./chips";
 import { permissionOptionsForPlan } from "./plan-gate";
 import type { AcpProvider } from "./acp-backend";
-import { sessionModes } from "./mode-prefs";
+import { MUSE_ON_REQUEST_UNAVAILABLE, sessionModes } from "./mode-prefs";
 import type { SubscriptionUsageBinding } from "./subscription-usage";
 import type { TelemetrySessionOrigin } from "./telemetry";
 import {
@@ -130,6 +130,9 @@ export class Session {
   /** YOLO: auto-approve every permission request for this session. */
   autoApprove = false;
   musePosture?: import("./mode-prefs").MusePosture;
+  /** Launch fact, never changed by a live approval-mode switch. */
+  museShellSandbox?: boolean;
+  museCloud = false;
 
   /** Explicit card grants only. Never serialized or inherited by a loaded session. */
   readonly allowedCommandPrograms = new Set<string>();
@@ -667,6 +670,14 @@ export function finishQueuedSendCommit(
   return true;
 }
 
+/** The same choices and restrictions feed live UI updates and reconnects. */
+export function sessionModeMessage(session: Session, modeId: string): Extract<HostMsg, { type: "modeChanged" }> {
+  return { type: "modeChanged", modeId, modes: sessionModes(session.provider, session.museCloud),
+    ...(session.provider === "muse" && !session.museCloud && session.museShellSandbox !== true
+      ? { disabledModes: { onRequest: MUSE_ON_REQUEST_UNAVAILABLE } } : {}),
+  };
+}
+
 /** Current non-chat UI state for rebuilding a view of this live session. */
 export function sessionUiSnapshot(
   session: Session,
@@ -678,7 +689,7 @@ export function sessionUiSnapshot(
   if (session.client?.currentModelId) {
     messages.push({ type: "modelChanged", modelId: session.client.currentModelId });
   }
-  messages.push({ type: "modeChanged", modeId, modes: sessionModes(session.provider) });
+  messages.push(sessionModeMessage(session, modeId));
   messages.push({
     type: "planModeAvailability",
     available: session.planModeAvailable,

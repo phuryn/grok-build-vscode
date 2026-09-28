@@ -29,7 +29,7 @@ import type { FileChip } from "./chips";
 import type { SttPreference, VoiceBackendState } from "./voice";
 import type { RepoListEntry, SessionListEntry } from "./sessions";
 import type { Dot } from "./session-pool";
-import type { MuseSettings } from "./mode-prefs";
+import type { ModeId, MuseSettings } from "./mode-prefs";
 import type { RunProgressUpdate } from "./run-progress";
 import type { McpServerView } from "./mcp";
 import type { ConnectorView } from "./mcp-connectors";
@@ -650,7 +650,9 @@ export type HostMsg =
   | { type: "modelChanged"; modelId: string }
   // `modes` is the set this session offers. Absent on an older host: the page
   // keeps its previous rule (Muse's button hidden, Codex without Plan).
-  | { type: "modeChanged"; modeId: string; modes?: Array<"agent" | "plan" | "yolo"> }
+  // Muse's native-id advertisement (three on cloud, four on desk) gates its names and new setMode values;
+  // disabledModes adds launch restrictions without removing the choices.
+  | { type: "modeChanged"; modeId: string; modes?: ModeId[]; disabledModes?: Partial<Record<ModeId, string>> }
   | { type: "openModePopover" }
   | { type: "voiceState"; status: "listening" | "transcribing" | "idle" }
   | { type: "voiceConfigured"; value: boolean; sendPhrase?: string; keyterms?: string[]; backendState?: VoiceBackendState }
@@ -1115,7 +1117,7 @@ export type WebviewMsg =
   | { type: "newSession"; cwd?: string; draftId?: string }
   | { type: "cancel" }
   | { type: "pickModel" }
-  | { type: "setMode"; modeId: "agent" | "plan" | "yolo" }
+  | { type: "setMode"; modeId: ModeId }
   | { type: "removeChip"; id: string }
   | { type: "toggleChip"; id: string }
   | { type: "openFile"; path: string }

@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RemoteClientState } from "../src/remote-client-state";
 import { Session } from "../src/session";
 import type { HostMsg } from "../src/protocol";
+import { CLOUD_ENVIRONMENT_ENV } from "../src/remote-frames";
 
 const startControl = {
   failuresRemaining: 0,
@@ -20,6 +21,7 @@ const startControl = {
   museMode: undefined as string | undefined,
   musePostures: [] as any[],
   museRefusesFullAccess: false,
+  museFailsAfterReplay: false,
 };
 
 vi.mock("../src/acp", async (importOriginal) => {
@@ -75,6 +77,7 @@ vi.mock("../src/acp", async (importOriginal) => {
         this.currentModeId = startControl.museMode ?? "agent";
         this.emit("modeChanged", this.currentModeId);
       }
+      if (startControl.museFailsAfterReplay) throw new Error("On request requires the shell sandbox");
       this.emit("session", { sessionId });
       this.emit("sessionLoaded", { sessionId });
       return { sessionId };
@@ -130,6 +133,7 @@ function makeSidebar(cwd: string): any {
     appendLine: vi.fn(),
     showInformationMessage: vi.fn(async () => undefined),
     showWarningMessage: vi.fn(async () => undefined),
+    showErrorMessage: vi.fn(async () => undefined),
     getConfiguration: vi.fn(() => ({
       get: (_key: string, fallback: unknown) => fallback,
       inspect: () => undefined,
@@ -196,6 +200,94 @@ function onboardings(sidebar: any): HostMsg[] {
 }
 
 describe("startSession bounded spawn retry", () => {
+  it.each(["agent", "yolo", "onRequest", "denyUnmatched"])("applies the host cloud launch rule for remembered %s without persisting cloud flags", async mode => {
+    vi.stubEnv(CLOUD_ENVIRONMENT_ENV, "1");
+    const sidebar = makeSidebar("/repo");
+    const session = sidebar.focused;
+    session.provider = "muse";
+    sidebar.connectedProviders = () => ["muse"];
+    sidebar.usableProviders = () => ["muse"];
+    sidebar.providerConnectionState = { muse: true };
+    delete sidebar.updateSessionMeta;
+    await sidebar.state.update("grok.defaultMuseMode", mode);
+    await sidebar.startSession(undefined, session);
+    await sidebar.sessionMetaWrites;
+    const effective = mode === "onRequest" ? "agent" : mode;
+    expect(startControl.musePostures.at(-1)).toMatchObject({ mode: effective, cloud: true, shellSandbox: false });
+    expect(session.museCloud).toBe(true);
+    expect(session.museShellSandbox).toBe(false);
+    expect(sidebar.displayMode(session)).toBe(effective);
+    const saved = sidebar.state.get("grok.sessionMeta", {})["new-session"].musePosture;
+    expect(saved).toMatchObject({ mode: effective, shellSandbox: true });
+    expect(saved).not.toHaveProperty("cloud");
+    expect(sidebar.state.get("grok.defaultMuseMode")).toBe(mode);
+    expect(sidebar.posted.filter((message: HostMsg) => message.type === "modeChanged").every((message: any) =>
+      !message.modes.includes("onRequest") && !message.disabledModes)).toBe(true);
+    // Shared catalog connections use the same host launch rule.
+    const catalog = sidebar.createProviderBackend("muse").spawn({ cliPath: "/fake/muse", cwd: "/repo", env: {} });
+    expect(JSON.parse(catalog.env.GROK_MUSE_POSTURE)).toMatchObject({ cloud: true, shellSandbox: false });
+  });
+  it("saves a replayed On request before a sandbox mismatch aborts resume", async () => {
+    const sidebar = makeSidebar("/repo");
+    const session = sidebar.focused;
+    session.provider = "muse";
+    sidebar.connectedProviders = () => ["muse"];
+    sidebar.usableProviders = () => ["muse"];
+    sidebar.providerConnectionState = { muse: true };
+    delete sidebar.updateSessionMeta;
+    await sidebar.state.update("grok.sessionMeta", { history: { musePosture: { mode: "yolo", shellSandbox: false, sandboxNetwork: "proxy-only", trustWorkspaces: true } } });
+    startControl.museMode = "onRequest";
+    startControl.museFailsAfterReplay = true;
+    await sidebar.startSession("history", session);
+    await sidebar.sessionMetaWrites;
+    expect(sidebar.state.get("grok.sessionMeta", {}).history.musePosture.mode).toBe("onRequest");
+    startControl.museFailsAfterReplay = false;
+    await sidebar.startSession("history", session);
+    expect(startControl.musePostures.at(-1).mode).toBe("onRequest");
+    expect(session.museShellSandbox).toBe(true);
+  });
+  it.each(["agent", "yolo", "onRequest", "denyUnmatched"])("follows replayed Muse %s and preserves it for the next process start", async mode => {
+    const sidebar = makeSidebar("/repo");
+    const session = sidebar.focused;
+    session.provider = "muse";
+    sidebar.connectedProviders = () => ["muse"];
+    sidebar.usableProviders = () => ["muse"];
+    sidebar.providerConnectionState = { muse: true };
+    delete sidebar.updateSessionMeta;
+    startControl.museMode = mode;
+    await sidebar.startSession("history", session);
+    await sidebar.sessionMetaWrites;
+    expect(sidebar.displayMode(session)).toBe(mode);
+    expect(sidebar.state.get("grok.sessionMeta", {}).history.musePosture.mode).toBe(mode);
+    await sidebar.startSession("history", session);
+    expect(startControl.musePostures.at(-1).mode).toBe(mode);
+    expect(session.museShellSandbox).toBe(mode !== "yolo");
+  });
+
+  it.each(["onRequest", "denyUnmatched"])("starts a new Muse conversation in remembered %s without writing the shared default", async mode => {
+    const sidebar = makeSidebar("/repo");
+    const session = sidebar.focused;
+    session.provider = "muse";
+    sidebar.connectedProviders = () => ["muse"];
+    sidebar.usableProviders = () => ["muse"];
+    sidebar.providerConnectionState = { muse: true };
+    delete sidebar.updateSessionMeta;
+    const update = vi.fn();
+    let sandboxSetting = true;
+    sidebar.host.getConfiguration.mockReturnValue({
+      get: (key: string, fallback: unknown) => key === "museShellSandbox" ? sandboxSetting : fallback,
+      inspect: () => undefined, update,
+    });
+    await sidebar.startSession(undefined, session);
+    await sidebar.setMode(mode, session);
+    expect(update).not.toHaveBeenCalled();
+    sandboxSetting = false;
+    await sidebar.startSession(undefined, session);
+    expect(startControl.musePostures.at(-1)).toMatchObject({ mode, shellSandbox: false });
+    expect(session.museShellSandbox).toBe(mode === "onRequest");
+    expect(sidebar.displayMode(session)).toBe(mode);
+  });
+
   it("starts remembered Muse full access, persists live switches, and follows replay on reopen", async () => {
     const sidebar = makeSidebar("/repo");
     const session = sidebar.focused;
@@ -256,7 +348,7 @@ describe("startSession bounded spawn retry", () => {
     startControl.museRefusesFullAccess = true;
     await sidebar.setMode("yolo", session);
     await sidebar.sessionMetaWrites;
-    expect(session.autoApprove).toBe(true); // one-time approvals for this process
+    expect(session.autoApprove).toBe(false);
     expect(sidebar.state.get("grok.sessionMeta", {})["new-session"].musePosture).toEqual(agent);
     await sidebar.startSession("new-session", session);
     expect(startControl.musePostures.at(-1)).toEqual(agent);
@@ -352,6 +444,7 @@ describe("startSession bounded spawn retry", () => {
     startControl.museMode = undefined;
     startControl.musePostures = [];
     startControl.museRefusesFullAccess = false;
+    startControl.museFailsAfterReplay = false;
     startControl.failuresRemaining = 0;
     startControl.failWith = "Internal error";
     startControl.starts = 0;
@@ -359,6 +452,7 @@ describe("startSession bounded spawn retry", () => {
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     startControl.failuresRemaining = 0;
     startControl.failWith = "Internal error";
     startControl.starts = 0;

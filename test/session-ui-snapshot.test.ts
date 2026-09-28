@@ -6,13 +6,14 @@ const OFFERED_MODES = {
   grok: ["agent", "plan", "yolo"],
   claude: ["agent", "plan", "yolo"],
   codex: ["agent", "yolo"],
-  muse: ["agent", "yolo"],
+  muse: ["yolo", "agent", "onRequest", "denyUnmatched"],
 };
 
 describe("sessionUiSnapshot", () => {
   it.each(INTERNAL_PROVIDERS)("advertises %s modes on every modeChanged", (provider) => {
     const session = new Session();
     session.provider = provider;
+    session.museShellSandbox = true;
     expect(sessionUiSnapshot(session, "agent")).toContainEqual({
       type: "modeChanged",
       modeId: "agent",

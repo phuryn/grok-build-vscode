@@ -1,4 +1,5 @@
 import { isInternalProvider } from "./acp-backend";
+import { isModeId } from "./mode-prefs";
 // Extension <-> relay wire contract (Phase 1, topology B — the extension dials
 // OUT to a relay; browsers connect to the same relay; the relay ferries the
 // existing HostMsg/WebviewMsg protocol between them).
@@ -206,6 +207,8 @@ function parseRemoteWebviewMsg(msg: unknown): WebviewMsg | null {
   const value = msg as Record<string, unknown>;
   if (typeof value.type !== "string" || !WEBVIEW_TYPE_SET.has(value.type)) return null;
   switch (value.type) {
+    case "setMode":
+      return isModeId(value.modeId) ? { type: "setMode", modeId: value.modeId } : null;
     case "cloudHostUpdate":
       return Object.keys(value).length === 1 ? { type: "cloudHostUpdate" } : null;
     case "connectMcpConnector":
