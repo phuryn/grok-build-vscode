@@ -1008,6 +1008,7 @@ export const OUTBOUND_DISPOSITION: Record<HostMsg["type"], OutboundDisposition> 
   // Conversation names are already exposed in the remote history list, so
   // the focused-name update has the same display-only sensitivity.
   sessionName: "mirror",
+  composerDraftSession: "mirror",
   sessionRemoved: "mirror",
   modelChanged: "mirror",
   modeChanged: "mirror",
@@ -1208,6 +1209,7 @@ export const OUTBOUND_PROJECT_AUTH: Record<HostMsg["type"], OutboundProjectAuth>
   pinnedSessions: "entries",
   repoSessions: "message-cwd",
   sessionName: "message-cwd",
+  composerDraftSession: "scope",
   sessionRemoved: "message-cwd",
   // Session-scoped live + restore payload — requires authorized session/repo cwd.
   session: "scope",
@@ -1577,7 +1579,7 @@ export function transformHostMsgForRemote(msg: HostMsg, deps: MediaInlineDeps): 
   if (msg.type === "chips") {
     return { ...msg, chips: msg.chips.map((chip) => inlineChipPreviewForRemote(chip, deps)) };
   }
-  if (msg.type === "userMessage") {
+  if (msg.type === "userMessage" || msg.type === "restoreComposer") {
     return {
       ...msg,
       ...(msg.chips ? { chips: msg.chips.map((chip) => inlineChipPreviewForRemote(chip, deps)) } : {}),

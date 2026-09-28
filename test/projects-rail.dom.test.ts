@@ -1054,7 +1054,7 @@ describe("projects rail", () => {
     it("starts directly in the repo already selected", () => {
       const { doc, window, posted } = boot("/work/alpha");
       click(window, addFor(doc, "alpha") as HTMLElement);
-      expect(posted.filter((p) => p.type === "newSession")).toEqual([{ type: "newSession" }]);
+      expect(posted.filter((p) => p.type === "newSession")).toEqual([{ type: "newSession", draftId: expect.any(String) }]);
       expect(posted.filter((p) => p.type === "selectRepo")).toEqual([]);
     });
 

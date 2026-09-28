@@ -25,6 +25,15 @@ import {
 } from "../src/remote-frames";
 
 describe("uplink frame builders", () => {
+  it("preserves New draft correlation and accepts attachment ids without trusting paths on Send", () => {
+    const wrap = (msg: unknown) => JSON.stringify({ t: "msg", clientId: "phone", msg });
+    const draftId = "01234567-89ab-cdef-0123-456789abcdef";
+    expect(parseRelayFrame(wrap({ type: "newSession", draftId }))).toMatchObject({ msg: { type: "newSession", draftId } });
+    expect(parseRelayFrame(wrap({ type: "newSession", draftId: {} }))).toBeNull();
+    expect(parseRelayFrame(wrap({ type: "send", text: "edit", chips: [{ id: "file", path: "/private" }] })))
+      .toMatchObject({ msg: { type: "send", text: "edit", chips: [{ id: "file", path: "", relPath: "", hidden: false }] } });
+    expect(parseRelayFrame(wrap({ type: "send", text: "edit", chips: [{ path: "/private" }] }))).toBeNull();
+  });
   it("rejects the unreleased paste RPC and validates remote connector payloads", () => {
     const wrap = (msg: unknown) => JSON.stringify({ t: "msg", clientId: "phone", msg });
     expect(parseRelayFrame(wrap({ type: "completeMcpConnectorOAuth", id: "notion", attemptId: "old", redirectUrl: "pasted" }))).toBeNull();
@@ -190,6 +199,7 @@ describe("parseRelayFrame", () => {
         text: "from the phone",
         bare: false,
         submissionId,
+        chips: [{ id: "unchecked-legacy-render-copy", path: "", relPath: "", hidden: false }],
       },
     });
 

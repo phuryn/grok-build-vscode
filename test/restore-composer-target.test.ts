@@ -39,7 +39,7 @@ describe("who receives a rewound message", () => {
     const body = methodBody("private restoreComposerFor(");
     expect(body).toContain("this.resolveRemoteRequester(requester)");
     expect(body).toContain("this.sendRemoteClient(clientId, message)");
-    expect(body).toContain("this.postLocal(message)");
+    expect(body).toContain("this.postLocal(this.view ? this.localizeHistoryMessage(message, this.view.webview) : message)");
   });
 
   /**
@@ -74,26 +74,14 @@ describe("who receives a rewound message", () => {
    * the store must not be the one place that silently drops a message.
    */
   it("appends to an already-parked draft instead of replacing it", () => {
-    const body = methodBody("private restoreComposerFor(");
-    expect(body).toContain("?.queuedDraft");
-    expect(body).toContain("parked ? `${parked}\\n\\n${text}` : text");
+    const body = methodBody("private rememberQueuedDraft(");
+    expect(body).toContain("this.updateSessionMeta");
+    expect(body).toContain("previous.queuedDraft");
   });
 
-  /**
-   * And the re-focus paths deliberately do NOT hand it back.
-   *
-   * `restorePersistedDraft` delivers with session-wide `emit`, so calling it
-   * from a re-focus appends the parked text to every surface viewing the
-   * conversation — recreating, at the moment you switch back, exactly the
-   * desk-composer pollution this sequence removed. Four review rounds went into
-   * who receives this text; the settled answer is that parked text returns on
-   * the conversation's next LOAD, not the instant it is re-focused. A narrower
-   * promise, kept.
-   */
-  it("does not hand a parked draft back on re-focus, because that path broadcasts", () => {
-    for (const signature of ["private focusRemoteSession(", "private focusSession("]) {
-      expect(methodBody(signature), signature).not.toContain("this.restorePersistedDraft(session)");
-    }
+  it("restores on re-focus through an explicitly targeted recipient", () => {
+    expect(methodBody("private focusRemoteSession(")).toContain("this.restorePersistedDraft(session, { clientId })");
+    expect(methodBody("private focusSession(")).toContain('this.restorePersistedDraft(session, "local")');
   });
 
   it("is how both rewind and edit hand the text back", () => {

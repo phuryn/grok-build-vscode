@@ -6791,15 +6791,31 @@
   // Composer text belongs to a conversation, independently of transcript replay.
   const composerDrafts = new Map();
   let composerSessionId = null;
+  let composerExpectedSessionId = null;
+  const pendingComposerDrafts = new Set();
+  let composerRestoredChips = [];
+
+  function setComposerRestoredChips(chips) {
+    if (!composerRestoredChips.length && !chips.length) return;
+    const oldIds = new Set(composerRestoredChips.map((chip) => chip.id));
+    composerRestoredChips = chips;
+    state.chips = [...state.chips.filter((chip) => !oldIds.has(chip.id)), ...chips];
+    renderChips();
+    updateSendButton();
+  }
 
   function switchComposerDraft(sessionId) {
     if (composerSessionId === sessionId) return;
     if (composerSessionId !== null) {
-      if (input.value) composerDrafts.set(composerSessionId, input.value);
+      if (input.value || composerRestoredChips.length) composerDrafts.set(composerSessionId, {
+        text: input.value, chips: composerRestoredChips,
+      });
       else composerDrafts.delete(composerSessionId);
     }
-    if (composerSessionId !== null || typeof sessionId === "symbol") {
-      input.value = composerDrafts.get(sessionId) || "";
+    if (composerSessionId !== null || pendingComposerDrafts.has(sessionId)) {
+      const draft = composerDrafts.get(sessionId);
+      input.value = draft?.text || "";
+      setComposerRestoredChips(draft?.chips || []);
     }
     composerSessionId = sessionId;
     slashPopover.hidden = true;
@@ -6808,15 +6824,30 @@
   }
 
   function confirmComposerSession(sessionId) {
-    // A new conversation has no host id while the user is already typing.
-    if (typeof composerSessionId === "symbol"
-        && state.railExpectedIdentity?.kind === "new") {
-      if (!railIdentitySatisfies(sessionId)) return;
-      composerDrafts.delete(composerSessionId);
-      composerSessionId = sessionId;
-      return;
-    }
+    // Identity echoes can arrive after another gesture. Only the correlated
+    // New reply may bind its draft; ordinary frames cannot guess which New.
+    if (pendingComposerDrafts.has(composerSessionId)
+        || (composerExpectedSessionId && sessionId !== composerExpectedSessionId)) return;
     switchComposerDraft(sessionId);
+    composerExpectedSessionId = null;
+  }
+
+  function bindComposerDraft(draftId, sessionId) {
+    if (!sessionId || !pendingComposerDrafts.delete(draftId)) return;
+    if (composerSessionId === draftId) composerSessionId = sessionId;
+    else if (composerDrafts.has(draftId)) {
+      const draft = composerDrafts.get(draftId);
+      if (composerSessionId === sessionId) {
+        input.value = [draft.text, input.value].filter(Boolean).join("\n\n");
+        setComposerRestoredChips([...draft.chips, ...composerRestoredChips]);
+        renderInputHighlight();
+      } else composerDrafts.set(sessionId, draft);
+    }
+    composerDrafts.delete(draftId);
+  }
+
+  function postNewSession() {
+    vscode.postMessage({ type: "newSession", draftId: composerSessionId });
   }
 
   /**
@@ -6852,7 +6883,15 @@
         // as confirmation of a conversation the host had not created yet.
         knownIds: railKnownSessionIds(),
       };
-    if (fields.kind === "new") switchComposerDraft(Symbol("new-session"));
+    if (fields.kind === "new") {
+      const draftId = newRemoteTabToken();
+      pendingComposerDrafts.add(draftId);
+      switchComposerDraft(draftId);
+      composerExpectedSessionId = null;
+    } else {
+      switchComposerDraft(fields.sessionId);
+      composerExpectedSessionId = fields.sessionId;
+    }
     // Highlight without a veil would claim conversation X while Y is still on
     // screen and fully actionable. Pair them so the click is visibly owned.
     veilTranscriptForPendingOpen();
@@ -8117,7 +8156,7 @@
     // transcript must not grow an empty-state panel on top of it.
     startRailNewTransition(repoCwd, "creating", previousSessionId);
     resetForNewSession();
-    vscode.postMessage({ type: "newSession" });
+    postNewSession();
   }
 
   function wireSessionNewButton(btn) {
@@ -17054,6 +17093,10 @@
         rm.onclick = (e) => {
           e.stopPropagation();
           if (chip.previewId) imagePreviews.delete(chip.previewId);
+          if (composerRestoredChips.some((c) => c.id === chip.id)) {
+            setComposerRestoredChips(composerRestoredChips.filter((c) => c.id !== chip.id));
+            return;
+          }
           vscode.postMessage({ type: "removeChip", id: chip.id });
         };
         el.appendChild(rm);
@@ -17065,7 +17108,11 @@
       el.title = chip.path + rangeTitle;
       el.innerHTML = (chip.hidden ? ICON.eyeOff : ICON.file) +
         `<span>${escapeHtml(label)}</span>`;
-      el.onclick = () => vscode.postMessage({ type: "toggleChip", id: chip.id });
+      el.onclick = () => {
+        if (composerRestoredChips.some((c) => c.id === chip.id)) {
+          setComposerRestoredChips(composerRestoredChips.map((c) => c.id === chip.id ? { ...c, hidden: !c.hidden } : c));
+        } else vscode.postMessage({ type: "toggleChip", id: chip.id });
+      };
       chipsEl.appendChild(el);
     }
   }
@@ -17303,6 +17350,7 @@
     stopVoiceForManualSend();
     queueOutgoing(t, chips);
     input.value = "";
+    setComposerRestoredChips([]);
     renderInputHighlight(); // also flips the busy button back to Stop (empty composer)
     updateSlash();
     updateMention();
@@ -17549,8 +17597,11 @@
     // reattach, a CLI respawn) resets the pending-submission state below, and
     // the echo must still be able to settle the strip it belongs to.
     sendWait.submissionId = submissionId;
-    vscode.postMessage({ type: "send", text, ...(submissionId ? { submissionId } : {}) });
+    vscode.postMessage({ type: "send", text,
+      ...(composerRestoredChips.length ? { chips: explicitVisibleChips(state.chips) } : {}),
+      ...(submissionId ? { submissionId } : {}) });
     input.value = "";
+    setComposerRestoredChips([]);
     renderInputHighlight();
     slashPopover.hidden = true;
     hideMention();
@@ -19654,13 +19705,32 @@
         forceScrollToBottom();
         break;
       }
+      case "composerDraftSession":
+        bindComposerDraft(msg.draftId, msg.sessionId);
+        break;
       case "restoreComposer": {
+        // The renderer's navigation gesture can precede the host's focus move.
+        // Keep a reply for the old conversation with that conversation's draft.
+        if (msg.sessionId && composerSessionId && msg.sessionId !== composerSessionId) {
+          const draft = composerDrafts.get(msg.sessionId);
+          const chips = new Map((draft?.chips || []).map((chip) => [chip.id, chip]));
+          for (const chip of msg.chips || []) chips.set(chip.id, chip);
+          composerDrafts.set(msg.sessionId, {
+            text: [draft?.text, msg.text].filter(Boolean).join("\n\n"), chips: [...chips.values()],
+          });
+          break;
+        }
         // Edit-and-resend (#56): the rewound message comes back so it can be
         // fixed and sent again. APPEND rather than overwrite — anything already
         // typed is the user's, and silently destroying it would be the same
         // class of bug as the one Edit exists to fix.
         const existing = input.value.trim();
         input.value = existing ? existing + "\n\n" + (msg.text || "") : (msg.text || "");
+        if (msg.chips) {
+          const merged = new Map(composerRestoredChips.map((chip) => [chip.id, chip]));
+          for (const chip of msg.chips) merged.set(chip.id, chip);
+          setComposerRestoredChips([...merged.values()]);
+        }
         input.focus();
         updateSlash();
         updateMention();
@@ -19929,7 +19999,9 @@
         setMic("error");
         break;
       case "chips":
-        state.chips = msg.chips;
+        state.chips = composerRestoredChips.length
+          ? [...msg.chips.filter((chip) => !composerRestoredChips.some((c) => c.id === chip.id)), ...composerRestoredChips]
+          : msg.chips;
         renderChips();
         updateSendButton();
         break;
@@ -21205,7 +21277,7 @@
             // the placeholder stays in creating rather than looking stuck on
             // a switch that already completed.
             noteRailTransitionRepos(msg);
-            vscode.postMessage({ type: "newSession" });
+            postNewSession();
           } else {
             noteRailTransitionRepos(msg);
           }

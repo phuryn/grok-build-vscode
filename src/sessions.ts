@@ -1,4 +1,5 @@
 import type { AcpProvider } from "./acp-backend";
+import type { FileChip } from "./chips";
 import * as nodeFs from "node:fs";
 import { homedir } from "node:os";
 import * as path from "node:path";
@@ -148,6 +149,7 @@ export interface SessionMetaOverride {
    *  typed it. Restored into the composer the next time the conversation starts,
    *  and cleared in the same write so a reopen cannot append it twice. */
   queuedDraft?: string;
+  queuedDraftChips?: FileChip[];
 }
 export type SessionMetaOverrides = Record<string, SessionMetaOverride>;
 

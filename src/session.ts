@@ -120,6 +120,8 @@ export class Session {
   provider: AcpProvider = "grok";
   /** Host-owned composer attachments for this session/view. */
   chips: FileChip[] = [];
+  /** Attachment authority for targeted Edit restores, never shared composer state. */
+  restoredChips: FileChip[] = [];
   /** The live ACP client (one spawned `grok agent stdio` process), once started. */
   client?: AcpClient;
   /** Latest account capacity, held outside conversation history. */

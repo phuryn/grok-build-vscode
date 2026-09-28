@@ -239,6 +239,8 @@ function parseRemoteWebviewMsg(msg: unknown): WebviewMsg | null {
         (typeof value.submissionId !== "string" ||
           !REMOTE_TAB_TOKEN_RE.test(value.submissionId))
       ) return null;
+      const chips = value.chips === undefined ? undefined : parseRemoteWebviewMsg({ type: "queueSend", text: "", chips: value.chips });
+      if (value.chips !== undefined && (!chips || chips.type !== "queueSend")) return null;
       // Reconstruct this newly-extended payload instead of passing the remote
       // object wholesale. That keeps future send fields outside the host until
       // this boundary explicitly validates and copies them.
@@ -248,6 +250,7 @@ function parseRemoteWebviewMsg(msg: unknown): WebviewMsg | null {
         ...(value.bare !== undefined ? { bare: value.bare } : {}),
         ...(value.queuedSendId !== undefined ? { queuedSendId: value.queuedSendId } : {}),
         ...(value.submissionId !== undefined ? { submissionId: value.submissionId } : {}),
+        ...(chips?.type === "queueSend" ? { chips: chips.chips } : {}),
       };
     }
     case "remotePreferences":
@@ -319,6 +322,9 @@ function parseRemoteWebviewMsg(msg: unknown): WebviewMsg | null {
         (value.cwd === undefined || isRemoteCwd(value.cwd))
         ? msg as WebviewMsg
         : null;
+    case "newSession":
+      if (value.draftId !== undefined && (typeof value.draftId !== "string" || !REMOTE_TAB_TOKEN_RE.test(value.draftId))) return null;
+      return { type: "newSession", ...(value.draftId !== undefined ? { draftId: value.draftId } : {}) };
     case "resumeSession": {
       if (!isRemoteSessionId(value.id)) return null;
       if (value.cwd !== undefined && !isRemoteCwd(value.cwd)) return null;

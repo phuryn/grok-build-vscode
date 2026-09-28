@@ -4481,7 +4481,7 @@ Only continue if you trust this code.`,
       // for — re-submitting the queued fallback through the relay would
       // charge it twice. Same for the two fallbacks below.
       if (takeQueue) return;
-      const chips = chipsForQueueSend(session.chips, requestedChips);
+      const chips = this.composerChipsForSend(session, requestedChips);
       if (!authored.trim() && !chips.length) return;
       session.queuedSends = enqueueQueuedSend(session.queuedSends, authored, chips);
       if (chips.length) {
@@ -4506,7 +4506,7 @@ Only continue if you trust this code.`,
       session.queuedSendCommit = undefined;
       this.emitQueuedSends(session);
     } else {
-      const chips = chipsForQueueSend(session.chips, requestedChips);
+      const chips = this.composerChipsForSend(session, requestedChips);
       if (!authored.trim() && !chips.length) return;
       contributions = [{ text: authored, chips }];
       if (chips.length) {
@@ -5115,13 +5115,10 @@ Only continue if you trust this code.`,
   ): void {
     if (!text && (!chips || !chips.length)) return;
     
-    if (chips && chips.length) {
-      session.chips = restoreQueuedChips(session.chips, [{ text: "", chips }]);
-      if (session === this.focused) this.refreshImplicitChip(true);
-      else this.postChips(session);
-    }
-    
-    const message: HostMsg = { type: "restoreComposer", text };
+    const message: HostMsg = { type: "restoreComposer", text, sessionId: session.activeSessionId || undefined, ...(chips ? { chips } : {}) };
+    const retainChips = () => {
+      if (chips) session.restoredChips = restoreQueuedChips(session.restoredChips, [{ text, chips }]);
+    };
     if (requester) {
       // Resolve through the tab, so a phone that reconnected while the rewind
       // was in flight still receives its own text — then check the tab is still
@@ -5129,13 +5126,15 @@ Only continue if you trust this code.`,
       // whatever that tab is showing NOW.
       const clientId = this.resolveRemoteRequester(requester);
       if (clientId && this.remoteClients.active(clientId) === session) {
+        retainChips();
         this.sendRemoteClient(clientId, message);
         return;
       }
     } else if (this.focused === session) {
       // Same check for the desk: postLocal posts to the focused webview
       // whatever it is displaying.
-      this.postLocal(message);
+      retainChips();
+      this.postLocal(this.view ? this.localizeHistoryMessage(message, this.view.webview) : message);
       return;
     }
     // The asking surface has moved to another conversation. Refusing to deliver
@@ -5154,8 +5153,7 @@ Only continue if you trust this code.`,
     // The webview's own `restoreComposer` appends for exactly this reason
     // ("anything already typed is the user's"); the store follows the same rule
     // rather than being the one place that silently drops a message.
-    const parked = this.state.get<SessionMetaOverrides>(SESSION_META_KEY, {})[id]?.queuedDraft;
-    void this.rememberQueuedDraft(id, parked ? `${parked}\n\n${text}` : text);
+    void this.rememberQueuedDraft(id, text, chips ?? [], true);
   }
 
   /** See {@link editLastMessage} for why `session` and `requester` are explicit. */
@@ -8213,33 +8211,50 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   /** Park a composer draft on the conversation it was typed into, because that
    *  conversation is the only place it can be handed back without guessing who
    *  is watching what. */
-  private rememberQueuedDraft(id: string, text: string): Promise<void> {
-    if (!text) return Promise.resolve();
-    return this.updateSessionMeta((current) => ({
-      ...current,
-      [id]: { ...(current[id] ?? {}), queuedDraft: text },
-    }));
+  private rememberQueuedDraft(id: string, text: string, chips?: FileChip[], append = false): Promise<void> {
+    if (!text && !chips?.length) return Promise.resolve();
+    return this.updateSessionMeta((current) => {
+      const { queuedDraftChips: previousChips, ...previous } = current[id] ?? {};
+      return {
+        ...current,
+        [id]: {
+          ...previous,
+          queuedDraft: append && previous?.queuedDraft ? `${previous.queuedDraft}\n\n${text}` : text,
+          ...(chips || (append && previousChips) ? {
+            queuedDraftChips: restoreQueuedChips(append ? previousChips ?? [] : [], [{ text, chips: chips ?? [] }]),
+          } : {}),
+        },
+      };
+    });
   }
 
   /** Hand a parked draft back to this session's live composer, exactly once.
    *  Detached tabs keep META untouched until reattachment because
    *  `restoreComposer` is transient and has no recipient while detached. */
-  private restorePersistedDraft(session: Session): void {
-    const hasComposer =
-      (session === this.focused && this.view !== undefined) ||
-      this.remoteClients.isActiveValueVisible(session);
-    if (!hasComposer || session.needsProvider) return;
+  private restorePersistedDraft(session: Session, recipient?: RemoteRequester | "local"): void {
     const id = session.activeSessionId;
     if (!id) return;
-    const draft = this.state.get<SessionMetaOverrides>(SESSION_META_KEY, {})[id]?.queuedDraft;
-    if (!draft) return;
     void this.updateSessionMeta((current) => {
+      const hasComposer =
+        (session === this.focused && this.view !== undefined) ||
+        this.remoteClients.isActiveValueVisible(session);
+      if (!hasComposer || session.needsProvider || session.activeSessionId !== id) return null;
       const meta = current[id];
-      if (!meta?.queuedDraft) return null;
-      const { queuedDraft: _restored, ...rest } = meta;
+      if (!meta?.queuedDraft && !meta?.queuedDraftChips?.length) return null;
+      if (recipient && recipient !== "local") {
+        const clientId = this.resolveRemoteRequester(recipient);
+        if (!clientId || this.remoteClients.active(clientId) !== session) return null;
+      } else if (recipient === "local" && (session !== this.focused || !this.view)) return null;
+      const draft = meta.queuedDraft ?? "";
+      if (recipient || meta.queuedDraftChips) {
+        const clientId = this.remoteClients.clientsForActiveValue(session)[0];
+        const requester = recipient === "local" ? undefined : recipient ??
+          (session === this.focused && this.view ? undefined : clientId ? { clientId } : undefined);
+        this.restoreComposerFor(session, requester, draft, meta.queuedDraftChips);
+      } else this.emit(session, { type: "restoreComposer", text: draft });
+      const { queuedDraft: _restored, queuedDraftChips: _chips, ...rest } = meta;
       return { ...current, [id]: rest };
     });
-    this.emit(session, { type: "restoreComposer", text: draft });
   }
 
   /** Restore a replacement's captured draft only after its provider start
@@ -11426,17 +11441,23 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           // A phone can take over a running turn: its send may be queued before
           // handleSend reaches the prompt commit point. Receipt is remote use.
           if (session.hasHistory) this.reportRemoteMessage(session, origin);
-          await this.handleSend(msg.text, msg.bare === true, session, origin, queuedSendCommit, msg.submissionId);
+          await this.handleSend(msg.text, msg.bare === true, session, origin, queuedSendCommit, msg.submissionId, undefined, msg.chips);
         } finally {
           if (queuedSendCommit) finishQueuedSendCommit(session, queuedSendCommit, false);
         }
         break;
-      case "newSession":
+      case "newSession": {
+        const onCreated = typeof msg.draftId === "string" ? (sessionId: string) => {
+          const reply: HostMsg = { type: "composerDraftSession", draftId: msg.draftId!, sessionId };
+          if (requester) this.sendRemoteRequester(requester, reply);
+          else this.postLocal(reply);
+        } : undefined;
         // A remote's cwd is deliberately not forwarded: newRemoteSession starts
         // in that tab's own repo, which is the only project it is entitled to.
-        if (origin === "remote" && clientId) await this.newRemoteSession(clientId);
-        else await this.newFocusedSession(origin, msg.cwd);
+        if (origin === "remote" && clientId) await this.newRemoteSession(clientId, true, onCreated);
+        else await this.newFocusedSession(origin, msg.cwd, onCreated);
         break;
+      }
       case "cancel": {
         const cancelled = session.turnToken;
         this.clearPendingHumanRequests(session);
@@ -11452,7 +11473,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         // messages survive focus switches and flush even while backgrounded.
         const s = session;
         const text = typeof msg.text === "string" ? msg.text : "";
-        const chips = chipsForQueueSend(s.chips, msg.chips);
+        const chips = this.composerChipsForSend(s, msg.chips);
         if (text.trim() || chips.length) {
           if (s.hasHistory) this.reportRemoteMessage(s, origin);
           s.queuedSendDispatch = undefined;
@@ -17083,18 +17104,20 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     queuedSendCommit?: { text: string; items: QueuedSendEntry[] },
     submissionId?: string,
     onStarted?: () => void,
+    requestedChips?: FileChip[],
   ): Promise<void> {
     if (this.cloudHostUpdate && !this.cloudHostUpdate.admitting) {
       this.emit(target ?? this.focused, { type: "error", text: CLOUD_UPDATE_REFUSAL });
       return;
     }
-    await this.withCloudHostWork(() => this.handleAdmittedSend(text, bare, target, origin, queuedSendCommit, submissionId, onStarted));
+    await this.withCloudHostWork(() => this.handleAdmittedSend(text, bare, target, origin, queuedSendCommit, submissionId, onStarted, requestedChips));
   }
 
   private async handleAdmittedSend(
     text: string, bare: boolean, target: Session | undefined, origin: MsgOrigin,
     queuedSendCommit?: { text: string; items: QueuedSendEntry[] }, submissionId?: string,
     onStarted?: () => void,
+    requestedChips?: FileChip[],
   ): Promise<void> {
     // `target` lets a queued-send flush fire into a BACKGROUNDED session (its
     // turn ended while another was focused). Only the focused session may spawn
@@ -17126,7 +17149,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // maybeFlushQueuedSends can never re-enter this branch: it only flushes
     // when the turn is over (queuedSendReadyText).
     if (this.turnInFlight(session)) {
-      if (!queuedSendCommit) this.divertRacingSend(session, text, bare);
+      if (!queuedSendCommit) this.divertRacingSend(session, text, bare, this.composerChipsForSend(session, requestedChips));
       return;
     }
     // Priming is latched before a client exists (sign-out replacements start
@@ -17134,14 +17157,14 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // race the planned replace. Queue whenever startup already owns this
     // session — not only when a client is sitting without a session id.
     if (session.priming || (session.client && !sessionReadyForPrompt(session))) {
-      if (!queuedSendCommit) this.divertRacingSend(session, text, bare);
+      if (!queuedSendCommit) this.divertRacingSend(session, text, bare, this.composerChipsForSend(session, requestedChips));
       return;
     }
     const client = session.client ?? await this.ensureClient(session);
     if (!client) return;
     // ensureClient may return mid-startSession; re-check before committing work.
     if (!sessionReadyForPrompt(session)) {
-      if (!queuedSendCommit) this.divertRacingSend(session, text, bare);
+      if (!queuedSendCommit) this.divertRacingSend(session, text, bare, this.composerChipsForSend(session, requestedChips));
       return;
     }
     const gen = session.gen;
@@ -17187,7 +17210,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       }
       chips = [...queuedChips, ...implicitChips];
     } else {
-      chips = [...session.chips];
+      chips = requestedChips === undefined ? [...session.chips]
+        : [...this.composerChipsForSend(session, requestedChips), ...implicitChips];
     }
 
     // Pre-read every visible image BEFORE anything is cleared or sent. Any
@@ -17869,6 +17893,13 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     }
   }
 
+  private composerChipsForSend(session: Session, requested?: FileChip[]): FileChip[] {
+    // Only the recipient's explicit ids can opt restored attachments into a
+    // send. Other surfaces (including old clients) see only shared chips.
+    return chipsForQueueSend(requested === undefined ? session.chips :
+      restoreQueuedChips(session.chips, [{ text: "", chips: session.restoredChips }]), requested);
+  }
+
   private postChips(session: Session = this.focused): void {
     const remoteMessage: HostMsg = { type: "chips", chips: session.chips };
     if (session === this.focused && this.view) {
@@ -17887,7 +17918,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   }
 
   private localizeHistoryMessage(message: HostMsg, webview: HostWebview): HostMsg {
-    if (message.type === "userMessage" && message.chips) {
+    if ((message.type === "userMessage" || message.type === "restoreComposer") && message.chips) {
       return { ...message, chips: message.chips.map((chip) => isImageChip(chip)
         ? { ...chip, ...(fs.existsSync(chip.path)
           ? { previewSrc: webview.asWebviewUri(Uri.file(chip.path)), fullId: this.registerFullImage(chip.path) }
@@ -18950,8 +18981,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // the small frame the client actually needs, instead of rebuilding a list
     // that has not changed.
     this.postSessionName(session);
-    // Same as the remote path, and for the same reason: restorePersistedDraft
-    // broadcasts, so it is not called here.
+    this.restorePersistedDraft(session, "local");
   }
 
   /**
@@ -20005,7 +20035,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   }
 
   /** Start a brand-new session, keeping the current one alive in the background. */
-  private async newFocusedSession(origin: MsgOrigin, requestedCwd?: string): Promise<void> {
+  private async newFocusedSession(origin: MsgOrigin, requestedCwd?: string, onCreated?: (id: string) => void): Promise<void> {
     // The answer to a CLI update belongs to the update, not to every
     // conversation opened afterwards. This lives in the two session
     // constructors rather than in `case "newSession"` because a remote's
@@ -20044,6 +20074,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     const leavingId = this.focused.activeSessionId;
     this.parkFocused();
     const unused = this.findUnusedEmptySession(targetCwd, "local", leavingId);
+    if (unused) onCreated?.(unused.id);
     if (unused?.session?.client) {
       this.focusSession(unused.session);
     } else if (unused?.session) {
@@ -20062,7 +20093,9 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       // the old transcript stayed onscreen under the fresh session. (The toolbar
       // path just clears twice, a no-op.)
       this.emit(this.focused, { type: "clearMessages" });
-      await this.startSession();
+      const created = this.focused;
+      await this.startSession(undefined, created);
+      if (created.activeSessionId) onCreated?.(created.activeSessionId);
     }
     await this.persistWorktreeBinding(this.focused);
     this.sweepEmptySessions(this.sessionCwd(this.focused));
@@ -20097,15 +20130,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // name has to be re-announced here or the header loses its rename affordance
     // until something unrelated refreshes it.
     this.postSessionName(session);
-    // NOT restorePersistedDraft. It hands the draft back with session-wide
-    // `emit`, which appends it to every surface viewing the conversation — so
-    // calling it here re-created, on the switch-back, the desk-composer
-    // pollution this whole sequence removed. Parked text therefore returns on
-    // the next load of the conversation rather than the instant you switch to
-    // it. That is a narrower promise, kept, instead of a wider one that leaks.
+    this.restorePersistedDraft(session, { clientId });
   }
 
-  private async newRemoteSession(clientId: string, notifyCatalog = true): Promise<void> {
+  private async newRemoteSession(clientId: string, notifyCatalog = true, onCreated?: (id: string) => void): Promise<void> {
     this.clearSettledCliUpdates();
     const ownerTabToken = this.remoteClients.tabToken(clientId);
     const cwd = this.remoteClients.cwd(clientId);
@@ -20113,6 +20141,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     this.parkRemoteSession(clientId);
     this.dropRemoteVoice(clientId);
     const unused = this.findUnusedEmptySession(cwd, "remote", leavingId);
+    if (unused) onCreated?.(unused.id);
     if (unused?.session?.client) {
       this.focusRemoteSession(clientId, unused.session, notifyCatalog);
       return;
@@ -20137,6 +20166,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     this.remoteClients.setActive(clientId, session);
     this.emit(session, { type: "clearMessages" });
     await this.startSession(undefined, session);
+    if (session.activeSessionId) onCreated?.(session.activeSessionId);
     await this.persistWorktreeBinding(session);
     this.sweepEmptySessions(this.sessionCwd(session));
     if (notifyCatalog) this.postRepoCatalog();

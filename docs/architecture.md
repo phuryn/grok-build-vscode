@@ -298,7 +298,7 @@ When the panel opens (or you click **+** for a new session):
 4. Normalize backend updates at the host boundary and stream the established
    message, thought, tool, permission, model, and usage events into the chat.
 
-The composer keeps unsent text in webview-local, per-session drafts: host identity frames switch drafts, transcript replay preserves them, and New starts an empty draft that binds to the new session id. Drafts last for the lifetime of the webview.
+The composer keeps unsent text in webview-local, per-session drafts. Rail/history picks and New switch drafts at the gesture; transcript replay preserves them. Each New carries a `draftId`, and the host's targeted `composerDraftSession` reply binds that draft to its assigned session id even after another navigation or New. Drafts last for the lifetime of the webview. Edit delivers text and files together through targeted `restoreComposer`; restored file ids resolve against host-owned `Session.restoredChips`, outside the shared attachment buffer. If the requester leaves during rewind, `queuedDraft` and `queuedDraftChips` park together and `restorePersistedDraft` returns them to the next focusing surface.
 
 The composer unlocks as soon as the session is live. Its placeholder follows the
 session provider (**Ask Grok…** / **Ask GPT…** / **Ask Claude…** / **Ask Muse…**).

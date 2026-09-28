@@ -633,6 +633,7 @@ export type HostMsg =
   // another project's name, it presents one project's conversation as another's.
   // Optional and additive: a client that never sees it keeps its old fallback.
   | { type: "sessionName"; sessionId: string; name: string; cwd: string; repoCwd?: string }
+  | { type: "composerDraftSession"; draftId: string; sessionId: string }
   | { type: "modelChanged"; modelId: string }
   // `modes` is the set this session offers. Absent on an older host: the page
   // keeps its previous rule (Muse's button hidden, Codex without Plan).
@@ -987,7 +988,7 @@ export type HostMsg =
   | { type: "findInSession" }
   /** Put text back in the composer (Edit-and-resend, #56). Posted after the
    *  rewind + reload so it survives the clearMessages/replay that follows. */
-  | { type: "restoreComposer"; text: string }
+  | { type: "restoreComposer"; text: string; chips?: FileChip[]; sessionId?: string }
   /** Drop everything after the Nth visible user message (rewind/edit, P2-9).
    *  Replaces the old clearMessages + full reload, which blanked the panel to
    *  the welcome logo and re-rendered the whole conversation. */
@@ -1097,7 +1098,7 @@ export type WebviewMsg =
   // omitted, the host starts in its own scope exactly as before. The host
   // resolves it through the catalog and ignores anything unknown, and a remote's
   // value is discarded outright (`newRemoteSession` starts in that tab's repo).
-  | { type: "newSession"; cwd?: string }
+  | { type: "newSession"; cwd?: string; draftId?: string }
   | { type: "cancel" }
   | { type: "pickModel" }
   | { type: "setMode"; modeId: "agent" | "plan" | "yolo" }
@@ -1546,7 +1547,7 @@ export type WebviewMsg =
 // union without failing the build.
 const HOST_MESSAGE_TYPE_MAP: Record<HostMsg["type"], true> = {
   cloudHostUpdateState: true, initialState: true, moveViewHint: true, welcomeTips: true, projectSetup: true, githubState: true, githubRepos: true, providerState: true, mcpServers: true, mcpConnectors: true, mcpConnectorAuthorization: true, routines: true, codexInstallProgress: true, planModeAvailability: true, showThinking: true, appPurpose: true, fontScale: true, grokUpdateStatus: true, updateAvailable: true, updateReady: true, telemetryEnabled: true, thumbsFeedback: true,
-  initialized: true, cliUpdating: true, session: true, sessionName: true, modelChanged: true,
+  initialized: true, cliUpdating: true, session: true, sessionName: true, composerDraftSession: true, modelChanged: true,
   modeChanged: true, openModePopover: true, voiceState: true, voiceConfigured: true,
   voicePartial: true, voiceSubmit: true, voiceTranscript: true, voiceError: true,
   chips: true, commandsUpdate: true, mentionResults: true, projectDirListing: true, projectFileContent: true, projectFileWriteResult: true, gitStatusResult: true, gitFileDiffResult: true, turnFileDiffResult: true, turnDiffBaseline: true, gitRunResult: true, userMessage: true, agentStart: true,
