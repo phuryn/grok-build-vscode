@@ -641,7 +641,9 @@ describe("the process on top, agents under their step", () => {
   it("opens and scrolls to a step's group from its ring, including a folded one", () => {
     const h = boot();
     const scrolled: string[] = [];
-    (h.window as any).HTMLElement.prototype.scrollIntoView = function () { scrolled.push(this.querySelector(".workflow-group-title").textContent); };
+    (h.window as any).HTMLElement.prototype.scrollIntoView = function () {
+      scrolled.push(this.querySelector(".workflow-group-title")?.textContent ?? this.textContent);
+    };
     send(h, { agents }); expand(h);
     expect(open(group(h, "Plan"))).toBe(false);
     const ring = slots(h)[0].querySelector<HTMLButtonElement>(".workflow-step")!;
@@ -660,6 +662,12 @@ describe("the process on top, agents under their step", () => {
     click(h.window, slots(h)[0].querySelector(".workflow-step")!);
     expect(open(group(h, "A"))).toBe(true);
     expect(scrolled.at(-1)).toBe("A");
+    // A step not started has no group; its ring (and the "+1" fold) brings the "Up next" line into view.
+    const f = slots(h).find(s => s.textContent === "F")!;
+    click(h.window, f.querySelector(".workflow-step")!);
+    expect(scrolled.at(-1)).toBe("Up next: F · G");
+    click(h.window, slots(h).at(-1)!.querySelector(".workflow-step")!);
+    expect(scrolled.at(-1)).toBe("Up next: F · G");
   });
 
   it("groups agents under their step, strips the step from their labels, and folds a finished step", () => {

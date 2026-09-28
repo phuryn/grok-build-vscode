@@ -10152,9 +10152,12 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // yet, so declining is a clean no-op rather than a half-started session.
     const consentAt = clock.now();
     if (target.provider === "grok" && !(await this.confirmRepoForcedAutoApprove(this.sessionCwd(target)))) {
-      // Back to idle: a caller that locked the conversation for this start
-      // would otherwise leave "Starting Grok" and a disabled Send up for good.
-      // Sending again asks again.
+      // Back to idle, the same two steps as the early return above: a caller
+      // that locked the conversation for this start (sign-out replacement,
+      // connect) set `priming` and busy. Leaving `priming` set would queue the
+      // next Send against a start that never comes; clearing both lets that
+      // Send start the session again, which asks again.
+      target.priming = false;
       this.emit(target, { type: "setBusy", value: false });
       return undefined;
     }

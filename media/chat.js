@@ -14670,7 +14670,13 @@
   function openWorkflowStep(button, record, key) {
     const body = button.closest(".workflow-expanded");
     const group = body && [...body.querySelectorAll(".workflow-group")].find((g) => g._groupKey === key);
-    if (!group) return;
+    if (!group) {
+      // A step that has not started and has no agents lives on the "Up next"
+      // line; bring that into view, which is where its name is.
+      const next = body && body.querySelector(".workflow-group-next");
+      if (next && typeof next.scrollIntoView === "function") next.scrollIntoView({ block: "nearest" });
+      return;
+    }
     if (group._hasRows) {
       record.groupOpen.set(key, true);
       applyWorkflowGroupOpen(group, record);
