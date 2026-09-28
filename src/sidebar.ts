@@ -3367,6 +3367,10 @@ export class GrokSidebar {
         try { await client.deleteSession(discardId); }
         catch (error) { this.host.appendLine(`[${oldProvider}] could not discard empty session ${discardId}: ${(error as Error).message}`); }
       }
+      // Catalog refreshes can run while the preference write/startup awaits.
+      // Retire the old client before its models or callbacks can be attributed
+      // to the replacement provider.
+      await this.detachClient(session)?.dispose();
       session.provider = provider;
       await this.rememberProjectProvider(this.sessionCwd(session), provider, modelId || undefined);
       await this.startSession(undefined, session);

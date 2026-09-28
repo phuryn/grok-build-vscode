@@ -306,7 +306,10 @@ describe("multi-provider review regressions", () => {
     const session = new Session();
     session.provider = "grok";
     session.activeSessionId = "empty-grok";
-    session.client = { setModel: vi.fn() } as any;
+    const client = { setModel: vi.fn(), dispose: vi.fn(async () => {}) };
+    session.client = client as any;
+    instance.clearPendingHumanRequests = vi.fn();
+    instance.drainPendingConfirms = vi.fn();
     instance.connectedProviders = vi.fn(() => ["grok", "codex"]);
     instance.sessionCwd = vi.fn(() => "/repo");
     instance.rememberProjectProvider = vi.fn(async () => {});
@@ -319,7 +322,9 @@ describe("multi-provider review regressions", () => {
     expect(instance.rememberProjectProvider).toHaveBeenCalledWith("/repo", "codex", "gpt-5.6-sol");
     expect(instance.startSession).toHaveBeenCalledWith(undefined, session);
     expect(instance.discardRestartedEmptySession).toHaveBeenCalledWith("empty-grok", session);
-    expect(session.client.setModel).not.toHaveBeenCalled();
+    expect(client.setModel).not.toHaveBeenCalled();
+    expect(client.dispose).toHaveBeenCalledOnce();
+    expect(session.client).toBeUndefined();
   });
 
   it("infers an old client's cross-provider model and returns a targeted backstop", async () => {

@@ -4893,9 +4893,8 @@
     const effortMoved = level !== null && level !== wasLevel;
     if (model && (model.modelId !== wasModel.modelId || model.provider !== wasModel.provider)) {
       const message = { type: "setModel", modelId: model.modelId };
-      // The row's OWN provider, not the one the preview resolved: a row that
-      // declares none leaves the host to infer it from the model id, which is
-      // what an older catalog needs (providerForRequestedModel).
+      // Model rows keep the provider that supplied them. Older hosts without
+      // providerState still receive their original model-id-only request.
       if (state.providersKnown && model.declared) message.provider = model.declared;
       if (effortMoved) message.effort = level;
       vscode.postMessage(message);
@@ -4911,9 +4910,24 @@
   function previewModel(m) {
     if (modelSelectionLocked()) return;
     const provider = m.provider || state.activeProvider;
-    if (!modelBaseline) modelBaseline = { modelId: state.currentModelId, provider: state.activeProvider };
+    if (!modelBaseline) modelBaseline = {
+      modelId: state.currentModelId, provider: state.activeProvider,
+      modeId: state.currentModeId, modes: state.offeredModes, disabledModes: state.disabledModes,
+    };
     state.currentModelId = m.modelId;
+    if (provider !== state.activeProvider) {
+      // The old session's advertised modes do not belong to this preview.
+      // Use the new provider's defaults until the host supplies its modes.
+      // Returning to the original pick is a no-op on close, so restore its
+      // advertised modes as well; there will be no host reply to restore them.
+      const original = provider === modelBaseline.provider;
+      state.offeredModes = original ? modelBaseline.modes : null;
+      state.disabledModes = original ? modelBaseline.disabledModes : {};
+      state.currentModeId = original ? modelBaseline.modeId : "agent";
+    }
     state.activeProvider = provider;
+    updateModeBtn(state.currentModeId);
+    syncProviderVoice();
     modelPending = { modelId: m.modelId, provider, declared: m.provider };
     // A model carries its own ladder, so a level previewed against the PREVIOUS
     // model stays a choice only while THIS one still offers it: an off-menu
@@ -19898,7 +19912,11 @@
         renderCodexUpdateNudge();
         if (state.railTransition?.kind === "new") renderRail();
         state.isWorktree = !!msg.worktree; // gates the gear Apply/Remove worktree items
-        state.availableModels = (msg.models || []).filter(m => (m.provider || msg.provider) !== "muse" || museAvailable);
+        // Untagged rows from older hosts belong to THIS session frame, not to
+        // whichever provider a later optimistic model pick happens to select.
+        state.availableModels = (msg.models || [])
+          .map(m => ({ ...m, provider: m.provider || state.activeProvider }))
+          .filter(m => m.provider !== "muse" || museAvailable);
         if (currentModel()?.reasoningEffort) state.effort = currentModel().reasoningEffort;
         refreshModelControls();
         renderProviderSignInCard();

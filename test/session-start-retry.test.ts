@@ -8,6 +8,7 @@ import { RemoteClientState } from "../src/remote-client-state";
 import { Session } from "../src/session";
 import type { HostMsg } from "../src/protocol";
 import { CLOUD_ENVIRONMENT_ENV } from "../src/remote-frames";
+import { bootWebview, click, dispatch } from "./webview-harness";
 
 const startControl = {
   failuresRemaining: 0,
@@ -22,6 +23,8 @@ const startControl = {
   musePostures: [] as any[],
   museRefusesFullAccess: false,
   museFailsAfterReplay: false,
+  catalogs: {} as Record<string, { modelId: string; name: string }[]>,
+  startWait: undefined as Promise<void> | undefined,
 };
 
 vi.mock("../src/acp", async (importOriginal) => {
@@ -41,10 +44,13 @@ vi.mock("../src/acp", async (importOriginal) => {
     constructor(opts: { log: (msg: string) => void; effort?: string; backend?: any }) {
       super();
       this.provider = opts.backend?.provider ?? "grok";
+      this.availableModels = startControl.catalogs[this.provider] ?? [];
+      this.currentModelId = this.availableModels[0]?.modelId ?? "fake-model";
       startControl.efforts.push(opts.effort);
       if (this.provider === "muse") startControl.musePostures.push(JSON.parse(opts.backend.spawn({ cliPath: "/fake/muse", cwd: "/repo", env: {} }).env.GROK_MUSE_POSTURE));
     }
     async start(): Promise<void> {
+      await startControl.startWait;
       startControl.starts += 1;
       if (startControl.failuresRemaining > 0) {
         startControl.failuresRemaining -= 1;
@@ -85,6 +91,7 @@ vi.mock("../src/acp", async (importOriginal) => {
     async dispose(): Promise<void> {
       startControl.disposes += 1;
     }
+    async deleteSession(): Promise<void> {}
     async setMode(mode: string): Promise<void> {
       if (this.provider === "muse" && mode === "yolo" && startControl.museRefusesFullAccess) {
         throw new Error("approval mode allowAll was not accepted");
@@ -200,6 +207,136 @@ function onboardings(sidebar: any): HostMsg[] {
 }
 
 describe("startSession bounded spawn retry", () => {
+  const switchCatalogs = {
+    muse: [
+      { modelId: "muse-spark-1.3", name: "muse-spark-1.3" },
+      { modelId: "muse-spark-1.3-contributor", name: "muse-spark-1.3-contributor" },
+      { modelId: "muse-spark-1.2", name: "muse-spark-1.2" },
+    ],
+    grok: [{ modelId: "grok-4.7", name: "Grok 4.7" }],
+    codex: [{ modelId: "gpt-test", name: "GPT Test" }],
+    claude: [{ modelId: "claude-test", name: "Claude Test" }],
+  };
+
+  async function switchingSidebar(provider: keyof typeof switchCatalogs) {
+    const sidebar = makeSidebar(process.cwd());
+    startControl.catalogs = switchCatalogs;
+    sidebar.providerConnectionState = { grok: true, muse: true, codex: true, claude: true };
+    sidebar.focused.provider = provider;
+    sidebar.connectedProviders = () => Object.keys(switchCatalogs);
+    sidebar.usableProviders = sidebar.connectedProviders;
+    // Keep the real cache, catalog composition and project-default methods.
+    delete sidebar.cacheProviderModels;
+    delete sidebar.modelsForSession;
+    delete sidebar.providerDefaultForProject;
+    sidebar.discardRestartedEmptySession = vi.fn();
+    for (const [id, models] of Object.entries(switchCatalogs)) {
+      await sidebar.cacheProviderModels(id, models, models[0].modelId);
+    }
+    await sidebar.startSession(undefined, sidebar.focused);
+    expect(startErrors(sidebar)).toEqual([]);
+    const update = sidebar.state.update;
+    sidebar.state.update = async (key: string, value: unknown) => {
+      await update(key, value);
+      if (key === "grok.projectProviderDefaults") {
+        // A catalog warm-up finishes while switchModel awaits the preference
+        // write, before startSession can detach the old client. Use the real
+        // refresh path so its emitted session frame/order is not hand-written.
+        await sidebar.cacheProviderModels("grok", switchCatalogs.grok, "grok-4.7");
+        await Promise.resolve();
+      }
+    };
+    return sidebar;
+  }
+
+  it.each(["grok", "codex", "claude", "muse"] as const)(
+    "never attributes the retiring %s client's catalog to its replacement",
+    async provider => {
+      const sidebar = await switchingSidebar(provider);
+      const session = sidebar.focused;
+      const oldClient = session.client;
+      const next = provider === "grok" ? "muse" : "grok";
+      sidebar.posted.length = 0;
+      await sidebar.switchModel(switchCatalogs[next][0].modelId, session, undefined, next);
+      expect(startErrors(sidebar)).toEqual([]);
+      expect(session.client).not.toBe(oldClient);
+      expect(session.client.provider).toBe(next);
+      expect(startControl.disposes).toBe(1);
+      const frames = sidebar.posted.filter((m: HostMsg) => m.type === "session");
+      expect(frames.length).toBeGreaterThan(0);
+      for (const frame of frames) {
+        expect(frame.currentModelId).toBe(switchCatalogs[frame.provider as keyof typeof switchCatalogs][0].modelId);
+        for (const model of frame.models) {
+          expect(switchCatalogs[model.provider as keyof typeof switchCatalogs]).toContainEqual({
+            modelId: model.modelId, name: model.name,
+          });
+        }
+      }
+    },
+  );
+
+  it.each([false, true])("drives Muse → Grok through the host's restart frames, remote=%s", async remote => {
+    const sidebar = await switchingSidebar("muse");
+    const h = bootWebview({ remote });
+    const el = (id: string) => h.doc.getElementById(id)!;
+    dispatch(h.window, { type: "providerState", providers: Object.keys(switchCatalogs).map(id => ({ id, connected: true })) });
+    for (const frame of sidebar.posted) dispatch(h.window, frame);
+    const modes = () => [...h.doc.querySelectorAll(".mode-item-label")].map(row => row.textContent);
+    click(h.window, el("mode-btn"));
+    expect(modes()).toEqual(["Allow all", "Prompt unmatched", "On request", "Deny unmatched"]);
+    expect(el("mode-btn").textContent).toBe("Prompt unmatched");
+    click(h.window, el("gear-btn"));
+    const grokRow = [...h.doc.querySelectorAll(".model-picker-row")].find(row => row.textContent?.includes("Grok 4.7"))!;
+    click(h.window, grokRow);
+    expect(el("gear-btn").textContent).toContain("Grok 4.7");
+    expect(h.posted.filter(m => m.type === "setModel")).toEqual([]);
+    // Opening the mode menu commits the picker, just as closing it on desk
+    // or phone does. Inspect the first transient before any host response.
+    click(h.window, el("mode-btn"));
+    expect.soft(modes()).toEqual(["Agent mode", "Plan mode", "Auto accept"]);
+    expect.soft(el("mode-btn").textContent).toBe("Agent mode");
+    expect.soft((el("input") as HTMLTextAreaElement).placeholder).toContain("Ask Grok");
+    const pick = h.posted.find(m => m.type === "setModel")!;
+    expect(pick).toEqual({ type: "setModel", provider: "grok", modelId: "grok-4.7" });
+
+    const assertUi = () => {
+      // Inspect each frame, including the catalog refresh during the switch
+      // and modeChanged BEFORE session; final-only assertions miss both bugs.
+      dispatch(h.window, { type: "openModePopover" });
+      if ((el("mode-popover") as HTMLElement).hidden) dispatch(h.window, { type: "openModePopover" });
+      expect.soft(modes()).toEqual(["Agent mode", "Plan mode", "Auto accept"]);
+      expect.soft(el("mode-btn").textContent).toBe("Agent mode");
+      expect.soft(el("mode-popover").textContent).not.toMatch(/Unknown mode|Muse|Prompt unmatched|Deny unmatched|On request/);
+      click(h.window, el("gear-btn"));
+      let heading = "";
+      for (const row of h.doc.querySelectorAll(".model-picker-list > *")) {
+        if (row.classList.contains("model-provider-heading")) heading = row.textContent ?? "";
+        else if (heading === "Grok") expect.soft(row.textContent).not.toContain("muse-spark");
+      }
+      expect.soft(el("gear-btn").textContent).toContain("Grok 4.7");
+    };
+    sidebar.posted.length = 0;
+    let release!: () => void;
+    startControl.startWait = new Promise<void>(resolve => { release = resolve; });
+    const switching = sidebar.switchModel(pick.modelId, sidebar.focused, remote ? { clientId: "phone" } : undefined, pick.provider);
+    try {
+      await vi.waitFor(() => expect(sidebar.focused.priming).toBe(true));
+      const beforeReady = sidebar.posted.splice(0);
+      expect(beforeReady.find((m: HostMsg) => m.type === "modeChanged")).toMatchObject({ modeId: "agent", modes: ["agent", "plan", "yolo"] });
+      for (const frame of beforeReady) { dispatch(h.window, frame); assertUi(); }
+    } finally {
+      release();
+      await switching;
+    }
+    const readyFrames = sidebar.posted;
+    expect(readyFrames.find((m: HostMsg) => m.type === "session")).toMatchObject({ provider: "grok", currentModelId: "grok-4.7" });
+    for (const frame of readyFrames) { dispatch(h.window, frame); assertUi(); }
+    expect(startErrors(sidebar)).toEqual([]);
+    expect((el("input") as HTMLTextAreaElement).placeholder).toContain("Ask Grok");
+    expect(h.doc.querySelector(".model-picker-row.active")?.textContent).toContain("Grok 4.7");
+    await h.window.happyDOM.close();
+  });
+
   it.each(["agent", "yolo", "onRequest", "denyUnmatched"])("applies the host cloud launch rule for remembered %s without persisting cloud flags", async mode => {
     vi.stubEnv(CLOUD_ENVIRONMENT_ENV, "1");
     const sidebar = makeSidebar("/repo");
@@ -441,6 +578,8 @@ describe("startSession bounded spawn retry", () => {
   });
 
   beforeEach(() => {
+    startControl.catalogs = {};
+    startControl.startWait = undefined;
     startControl.museMode = undefined;
     startControl.musePostures = [];
     startControl.museRefusesFullAccess = false;

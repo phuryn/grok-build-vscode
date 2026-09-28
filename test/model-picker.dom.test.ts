@@ -24,6 +24,74 @@ function openModelPicker(h: ReturnType<typeof bootWebview>, models: object[], ex
 }
 
 describe("model picker provider marks and manage-providers", () => {
+  it.each([false, true])("keeps untagged legacy Muse rows with their supplying provider during a preview, remote=%s", async remote => {
+    const h = bootWebview({ remote });
+    dispatch(h.window, { type: "providerState", providers: [
+      { id: "muse", connected: true }, { id: "grok", connected: true },
+    ] });
+    dispatch(h.window, { type: "session", sessionId: "muse", provider: "muse", currentModelId: "muse-spark-1.3", models: [
+      { modelId: "muse-spark-1.3", name: "muse-spark-1.3" },
+      { modelId: "muse-spark-1.2", name: "muse-spark-1.2" },
+      { provider: "grok", modelId: "grok-4.7", name: "Grok 4.7" },
+    ] });
+    dispatch(h.window, { type: "modeChanged", modeId: "onRequest", modes: ["yolo", "agent", "onRequest", "denyUnmatched"] });
+    click(h.window, $(h.doc, "gear-btn"));
+    click(h.window, [...h.doc.querySelectorAll(".model-picker-row")].find(row => row.textContent?.includes("Grok 4.7"))!);
+    expect($(h.doc, "gear-btn").textContent).toContain("Grok 4.7");
+    let heading = "";
+    for (const row of h.doc.querySelectorAll(".model-picker-list > *")) {
+      if (row.classList.contains("model-provider-heading")) heading = row.textContent ?? "";
+      else if (row.textContent?.includes("muse-spark")) expect(heading).toBe("Muse Code");
+    }
+    click(h.window, $(h.doc, "mode-btn"));
+    expect($(h.doc, "mode-btn").textContent).toBe("Agent mode");
+    expect($(h.doc, "mode-popover").textContent).not.toMatch(/Unknown mode|On request|Deny unmatched/);
+    expect(h.posted).toContainEqual({ type: "setModel", modelId: "grok-4.7", provider: "grok" });
+    // Older hosts omit modes and row providers. Their original fallbacks still
+    // apply after the confirmed provider arrives, in startup's mode-first order.
+    dispatch(h.window, { type: "modeChanged", modeId: "agent" });
+    dispatch(h.window, { type: "session", sessionId: "grok", provider: "grok", currentModelId: "grok-4.7", models: [
+      { modelId: "grok-4.7", name: "Grok 4.7" },
+    ] });
+    expect([...h.doc.querySelectorAll(".mode-item-label")].map(row => row.textContent)).toEqual(["Agent mode", "Plan mode", "Auto accept"]);
+    expect($(h.doc, "gear-btn").textContent).toContain("Grok 4.7");
+    await h.window.happyDOM.close();
+  });
+
+  it("preserves all four Muse modes when previewing another Muse model", async () => {
+    const h = bootWebview();
+    dispatch(h.window, { type: "providerState", providers: [{ id: "muse", connected: true }] });
+    openModelPicker(h, [
+      { provider: "muse", modelId: "muse-spark-1.3", name: "muse-spark-1.3" },
+      { provider: "muse", modelId: "muse-spark-1.2", name: "muse-spark-1.2" },
+    ], { provider: "muse", currentModelId: "muse-spark-1.3" });
+    dispatch(h.window, { type: "modeChanged", modeId: "denyUnmatched", modes: ["yolo", "agent", "onRequest", "denyUnmatched"] });
+    click(h.window, h.doc.querySelectorAll(".model-picker-row")[1]);
+    click(h.window, $(h.doc, "mode-btn"));
+    expect($(h.doc, "mode-btn").textContent).toBe("Deny unmatched");
+    expect([...h.doc.querySelectorAll(".mode-item-label")].map(row => row.textContent)).toEqual(["Allow all", "Prompt unmatched", "On request", "Deny unmatched"]);
+    await h.window.happyDOM.close();
+  });
+
+  it("restores Muse's modes when a cross-provider preview returns to the original pick", async () => {
+    const h = bootWebview();
+    dispatch(h.window, { type: "providerState", providers: [{ id: "muse", connected: true }, { id: "grok", connected: true }] });
+    openModelPicker(h, [
+      { provider: "muse", modelId: "muse-spark-1.3", name: "muse-spark-1.3" },
+      { provider: "grok", modelId: "grok-4.7", name: "Grok 4.7" },
+    ], { provider: "muse", currentModelId: "muse-spark-1.3" });
+    dispatch(h.window, { type: "modeChanged", modeId: "onRequest", modes: ["yolo", "agent", "onRequest", "denyUnmatched"], disabledModes: { denyUnmatched: "Test restriction" } });
+    const pick = (name: string) => click(h.window, [...h.doc.querySelectorAll(".model-picker-row")].find(row => row.textContent?.includes(name))!);
+    pick("Grok 4.7");
+    pick("muse-spark-1.3");
+    click(h.window, $(h.doc, "mode-btn"));
+    expect(h.posted.filter(m => m.type === "setModel")).toEqual([]);
+    expect($(h.doc, "mode-btn").textContent).toBe("On request");
+    expect([...h.doc.querySelectorAll(".mode-item-label")].map(row => row.textContent)).toEqual(["Allow all", "Prompt unmatched", "On request", "Deny unmatched"]);
+    expect(h.doc.querySelector(".mode-item-disabled-note")?.textContent).toBe("Test restriction");
+    await h.window.happyDOM.close();
+  });
+
   it("puts a provider mark on every model row even when only one agent is connected", () => {
     const h = bootWebview();
     dispatch(h.window, {
