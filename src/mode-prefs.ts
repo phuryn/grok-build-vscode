@@ -35,8 +35,8 @@ export function museShellSandboxEnabled(posture: MusePosture, isCloud = false): 
 export function musePosture(defaultMode: string | undefined, isResume: boolean,
   saved: MusePosture | undefined, settings: MuseSettings, isCloud = false): MusePosture {
   // Unknown/terminal-created histories start conservatively until Muse replays.
-  if (isResume) return saved ? { ...saved } : { mode: "agent", shellSandbox: true, sandboxNetwork: "proxy-only", trustWorkspaces: false };
-  return { ...settings, mode: isMuseModeId(defaultMode) && !(isCloud && defaultMode === "onRequest") ? defaultMode : "agent" };
+  if (isResume) return saved ? { ...saved, mode: saved.mode === "denyUnmatched" ? "agent" : saved.mode } : { mode: "agent", shellSandbox: true, sandboxNetwork: "proxy-only", trustWorkspaces: false };
+  return { ...settings, mode: isMuseModeId(defaultMode) && defaultMode !== "denyUnmatched" && !(isCloud && defaultMode === "onRequest") ? defaultMode : "agent" };
 }
 
 export function usesClientAutoAccept(provider: string): boolean {
@@ -64,7 +64,8 @@ export function startsInYolo(defaultMode: string | undefined, isResume: boolean)
 
 /** Modes this session's picker offers. Codex's plan review is outside this menu; Muse has no Plan. */
 export function sessionModes(provider: string, isCloud = false): ModeId[] {
-  if (provider === "muse") return isCloud ? ["yolo", "agent", "denyUnmatched"] : ["yolo", "agent", "onRequest", "denyUnmatched"];
+  // Deny unmatched stalls Muse's end-of-turn reminder agent; see research/muse-modes.md.
+  if (provider === "muse") return isCloud ? ["yolo", "agent"] : ["yolo", "agent", "onRequest"];
   return provider === "codex"
     ? ["agent", "yolo"]
     : ["agent", "plan", "yolo"];

@@ -8,12 +8,16 @@ selected Muse names and the CLI descriptions supplied in the brief; the SDK
 has no better per-mode descriptions. Terminal permission profiles are outside
 serve's selectable dictionary. Muse has no Plan.
 
+The SDK dictionary is retained below, but Deny unmatched is temporarily not
+offered. Desktop offers Allow all, Prompt unmatched and On request; cloud
+offers Allow all and Prompt unmatched.
+
 | Wire id | Muse approvalMode | Label | Description |
 |---|---|---|---|
 | yolo | allowAll | Allow all | No prompts; everything runs. |
 | agent | promptUnmatched | Prompt unmatched | Prompt for anything no rule matches (the interactive default). |
 | onRequest | onRequest | On request | Tools run sandboxed; prompt only on explicit permission requests. |
-| denyUnmatched | denyUnmatched | Deny unmatched | Anything no rule matches is denied. |
+| denyUnmatched | denyUnmatched | Deny unmatched (hidden) | Anything no rule matches is denied. |
 
 The existing agent and yolo ids retain their meanings in saved postures,
 shared settings, telemetry, and other providers. session/start.approvalMode
@@ -21,10 +25,44 @@ selects the initial mode; session/setApprovalMode changes it live. Muse's
 SDK documents that a switch applies from the next action, is durable and
 replays on resume; it does not resolve an already pending approval.
 
+## Deny unmatched hold — 2026-09-28
+
+Reported upstream as [meta-models/muse-code-sdk#63](https://github.com/meta-models/muse-code-sdk/issues/63);
+re-enable the mode when a Muse release closes it.
+
+Owner-supplied measurement from Muse's own session log on a cloud machine:
+after every turn, Muse starts its background `verify-reminder` agent. Its
+internal `submit_reminder_decision` call is denied with
+`deny_unmatched: no policy rule allows this action`. The agent retries and
+Muse's end-of-turn gate waits until it gives up: **`eot_gate_ms: 62806`**.
+The answer is visible but the conversation remains busy for about a minute,
+and the next message waits in the queue. This is a Muse bug; the owner chose
+to hide Deny unmatched on every host until a Muse release fixes it.
+
+`musePosture` maps remembered defaults and saved Deny unmatched postures to
+Prompt unmatched, preserving the conversation's other preferences. The
+adapter also normalizes startup posture. On resume (including a buffered
+mode notification), `publishMode` calls `session/setApprovalMode` with
+`promptUnmatched`, verifies acceptance, then publishes `agent`. Pending
+approvals and prompts wait for that repair. The host saves the effective
+mode and its badge follows. A refused repair fails resume instead of running
+another turn in the broken mode. Stale direct Deny unmatched picks are not
+applied. The wire id, validators, telemetry and native dictionary stay valid.
+
+To re-enable after verifying an upstream fix against the reminder and a
+queued follow-up: restore `denyUnmatched` to both `sessionModes` lists in
+`src/mode-prefs.ts` and remove the adapter's `modes` filter for it. Remove
+the Deny unmatched normalization in `musePosture` and adapter `initialize`,
+the adapter `setMode` refusal, the `publishMode` repair and its prompt wait.
+Restore the Settings/README mode lists and the corresponding tests. Keep
+the renderer's native-order label detection: dropping a mode must not change
+the remaining modes' names. Converted conversations remain Prompt unmatched
+unless the owner selects another mode; there is no migration to reverse.
+
 ## Desktop process and persistence decisions
 
 - Allow all starts serve with --disable-sandbox --trust-workspace.
-- Prompt unmatched and Deny unmatched use the conversation's shell sandbox,
+- Prompt unmatched uses the conversation's shell sandbox,
   sandbox network and workspace trust preferences.
 - On request always starts with the shell sandbox enabled, even when the
   host's Shell sandbox setting is off. Network and trust remain configured
@@ -40,12 +78,13 @@ replays on resume; it does not resolve an already pending approval.
   new conversation to obtain a sandboxed process.
 - The last successful Muse selection is remembered in host memento state
   under grok.defaultMuseMode, independently of grok.defaultMode. This lets
-  a new Muse conversation start in either new mode without leaking it into
+  a new Muse conversation start in On request without leaking it into
   another provider's defaults. Until Muse has its own preference, the shared
   default remains the fallback. Choosing agent/yolo still writes those values
-  to grok.defaultMode; onRequest/denyUnmatched never do.
+  to grok.defaultMode; onRequest never does. A stored denyUnmatched defaults to agent.
 - Reopening uses the conversation's saved posture rather than either default.
-  The badge and saved posture then follow all four replayed native modes.
+  The badge and saved posture follow the effective native mode after any
+  Deny unmatched repair.
   Unknown/terminal-created histories start with conservative launch flags.
   If stale saved launch flags are unsandboxed but Muse replays On request,
   the adapter publishes that fact and fails closed before forwarding pending
@@ -55,7 +94,7 @@ replays on resume; it does not resolve an already pending approval.
   old one-time host approval fallback has been removed: Allow all means Muse
   accepted allowAll. The host does not auto-answer Muse's pending cards.
 
-The host-local Settings rows name the four modes and explain the sandbox
+The host-local Settings rows name the offered modes and explain the sandbox
 exception. They remain unavailable to phones. Boot scripts, terminal
 permission profiles and trust files are unchanged.
 
@@ -65,11 +104,11 @@ The host decides cloud-ness using isCloudEnvironment(). Conversation and
 catalog MuseBackend instances pass that launch fact in GROK_MUSE_POSTURE;
 it is never inferred by the renderer or saved in the conversation's posture.
 The isolated cloud VM supplies the boundary. Every cloud Muse process uses
---disable-sandbox and omits --sandbox-network. Prompt unmatched and Deny
-unmatched keep their native prompts/denials. Workspace trust is unchanged:
+--disable-sandbox and omits --sandbox-network. Prompt unmatched keeps its
+native prompts. Workspace trust is unchanged:
 Allow all forces it; the other modes use the saved preference.
 
-The cloud host advertises only Allow all, Prompt unmatched and Deny unmatched,
+The cloud host advertises only Allow all and Prompt unmatched,
 with no disabled On request row. Direct requests for On request are also
 refused. Session.museCloud and sessionModeMessage carry the same restriction
 through live messages and reconnect snapshots. Desktop mode advertisement,
@@ -100,9 +139,9 @@ system. New values on setMode/modeChanged are **not inherently additive**.
   current modeId remains a string to tolerate a future host. Optional
   disabledModes carries per-process reasons.
 - chat.js offers only the ids advertised in modes. Muse names activate when
-  yolo, agent and denyUnmatched are advertised: four choices on desktop and
-  three on cloud. Old hosts advertising
-  agent/yolo retain Agent mode / Auto accept and their existing descriptions,
+  the native menu starts with yolo, agent: three choices on desktop and
+  two on cloud. This existing order distinguishes the native menu from old
+  hosts advertising agent/yolo, which retain Agent mode / Auto accept and their existing descriptions,
   including the museNativeModes capability's earlier wording. No modes frame
   retains the old hidden Muse button. Unknown current ids show Unknown mode;
   unknown offered ids are not selectable. Grok, Codex and Claude keep their
@@ -170,7 +209,8 @@ starting behavior, including refused-switch persistence and launch timing.
 
 ## Verification
 
-The focused tests cover all four starts, switches and replays; the SDK's
+The focused tests cover offered starts, switches and replays, Deny unmatched
+default/saved-posture normalization and durable resume repair; the SDK's
 closed dictionary; Windows/Linux spawn arguments; sandbox-off settings;
 refused switches; stale-posture resume recovery; defaults and telemetry;
 VS Code/desktop/phone DOM behavior; older hosts; unknown current ids;

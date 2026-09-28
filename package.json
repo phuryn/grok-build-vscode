@@ -294,18 +294,18 @@
         "grok.museShellSandbox": {
           "type": "boolean",
           "default": true,
-          "description": "Use Muse Code's shell sandbox for new conversations in Prompt unmatched or Deny unmatched. On request always uses it; Allow all disables it. On request is unavailable in a running process without the sandbox."
+          "description": "Use Muse Code's shell sandbox for new conversations in Prompt unmatched. On request always uses it; Allow all disables it. On request is unavailable in a running process without the sandbox."
         },
         "grok.museSandboxNetwork": {
           "type": "string",
           "enum": ["proxy-only", "restricted", "enabled"],
           "default": "proxy-only",
-          "description": "Muse Code sandbox network access for new conversations in Prompt unmatched, On request or Deny unmatched."
+          "description": "Muse Code sandbox network access for new conversations in Prompt unmatched or On request."
         },
         "grok.museTrustWorkspaces": {
           "type": "boolean",
           "default": false,
-          "description": "Trust workspaces for new Muse Code conversations in Prompt unmatched, On request or Deny unmatched. Allow all always trusts the workspace. A trusted workspace also runs the repository's hooks."
+          "description": "Trust workspaces for new Muse Code conversations in Prompt unmatched or On request. Allow all always trusts the workspace. A trusted workspace also runs the repository's hooks."
         },
         "grok.claudeCliPath": {
           "type": "string",

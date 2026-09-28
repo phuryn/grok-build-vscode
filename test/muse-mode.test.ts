@@ -85,6 +85,15 @@ function harness(remembered = "") {
 }
 
 describe("Muse mode switch", () => {
+  it("ignores a stale Deny unmatched pick without changing the conversation or default", async () => {
+    const { sidebar, session, setMode, configUpdate } = harness();
+    session.client!.currentModeId = "agent";
+    await sidebar.setMode("denyUnmatched", session);
+    expect(setMode).not.toHaveBeenCalled();
+    expect(sidebar.displayMode(session)).toBe("agent");
+    expect(sidebar.state.update).not.toHaveBeenCalled();
+    expect(configUpdate).not.toHaveBeenCalled();
+  });
   it("refuses a direct cloud On request pick without recording it or contacting Muse", async () => {
     const { sidebar, session, setMode, configUpdate } = harness();
     session.museCloud = true;
@@ -95,7 +104,7 @@ describe("Muse mode switch", () => {
     expect(sidebar.state.update).not.toHaveBeenCalled();
     expect(sidebar.host.showWarningMessage).toHaveBeenCalledWith(expect.stringContaining("unavailable on cloud machines"));
   });
-  it.each(["onRequest", "denyUnmatched"])("remembers %s only for Muse, and shows its effective badge", async mode => {
+  it.each(["onRequest"])("remembers %s only for Muse, and shows its effective badge", async mode => {
     const { sidebar, session, configUpdate, setMode, modeMessages } = harness();
     await sidebar.setMode(mode, session);
     expect(setMode).toHaveBeenCalledWith(mode);
@@ -307,7 +316,7 @@ describe("modeChanged.modes on the relay", () => {
     session.museCloud = true;
     session.museShellSandbox = false;
     const message = sessionUiSnapshot(session, "agent").find(msg => msg.type === "modeChanged");
-    expect(message).toEqual({ type: "modeChanged", modeId: "agent", modes: ["yolo", "agent", "denyUnmatched"] });
+    expect(message).toEqual({ type: "modeChanged", modeId: "agent", modes: ["yolo", "agent"] });
     expect(transformHostMsgForRemote(message!, {} as never)).toEqual(message);
   });
   it.each([false, true])("reconnect snapshots carry the running sandbox availability (%s)", sandbox => {

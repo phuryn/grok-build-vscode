@@ -283,7 +283,7 @@ describe("startSession bounded spawn retry", () => {
     for (const frame of sidebar.posted) dispatch(h.window, frame);
     const modes = () => [...h.doc.querySelectorAll(".mode-item-label")].map(row => row.textContent);
     click(h.window, el("mode-btn"));
-    expect(modes()).toEqual(["Allow all", "Prompt unmatched", "On request", "Deny unmatched"]);
+    expect(modes()).toEqual(["Allow all", "Prompt unmatched", "On request"]);
     expect(el("mode-btn").textContent).toBe("Prompt unmatched");
     click(h.window, el("gear-btn"));
     const grokRow = [...h.doc.querySelectorAll(".model-picker-row")].find(row => row.textContent?.includes("Grok 4.7"))!;
@@ -349,7 +349,7 @@ describe("startSession bounded spawn retry", () => {
     await sidebar.state.update("grok.defaultMuseMode", mode);
     await sidebar.startSession(undefined, session);
     await sidebar.sessionMetaWrites;
-    const effective = mode === "onRequest" ? "agent" : mode;
+    const effective = mode === "onRequest" || mode === "denyUnmatched" ? "agent" : mode;
     expect(startControl.musePostures.at(-1)).toMatchObject({ mode: effective, cloud: true, shellSandbox: false });
     expect(session.museCloud).toBe(true);
     expect(session.museShellSandbox).toBe(false);
@@ -383,7 +383,36 @@ describe("startSession bounded spawn retry", () => {
     expect(startControl.musePostures.at(-1).mode).toBe("onRequest");
     expect(session.museShellSandbox).toBe(true);
   });
-  it.each(["agent", "yolo", "onRequest", "denyUnmatched"])("follows replayed Muse %s and preserves it for the next process start", async mode => {
+  it.each([false, true])("starts saved/default Deny unmatched as Prompt unmatched and shows its badge (cloud=%s)", async cloud => {
+    vi.stubEnv(CLOUD_ENVIRONMENT_ENV, cloud ? "1" : "");
+    const sidebar = makeSidebar("/repo");
+    const session = sidebar.focused;
+    session.provider = "muse";
+    sidebar.connectedProviders = () => ["muse"];
+    sidebar.usableProviders = () => ["muse"];
+    sidebar.providerConnectionState = { muse: true };
+    delete sidebar.updateSessionMeta;
+    await sidebar.state.update("grok.defaultMuseMode", "denyUnmatched");
+    await sidebar.state.update("grok.sessionMeta", { history: { musePosture: {
+      mode: "denyUnmatched", shellSandbox: true, sandboxNetwork: "proxy-only", trustWorkspaces: true,
+    } } });
+    // The adapter's durable replay repair is tested in muse-session.test.ts.
+    startControl.museMode = "agent";
+    const h = bootWebview({ remote: cloud });
+    dispatch(h.window, { type: "providerState", providers: [{ id: "muse", connected: true }] } as any);
+    for (const resumeId of [undefined, "history"]) {
+      await sidebar.startSession(resumeId, session);
+      await sidebar.sessionMetaWrites;
+      expect(startControl.musePostures.at(-1).mode).toBe("agent");
+      expect(sidebar.displayMode(session)).toBe("agent");
+      dispatch(h.window, { type: "session", sessionId: "m", provider: "muse", models: [] } as any);
+      dispatch(h.window, sidebar.posted.filter((message: HostMsg) => message.type === "modeChanged").at(-1));
+      expect(h.doc.getElementById("mode-btn")!.textContent).toBe("Prompt unmatched");
+    }
+    expect(sidebar.state.get("grok.sessionMeta", {}).history.musePosture).toMatchObject({ mode: "agent", trustWorkspaces: true });
+    await h.window.happyDOM.close();
+  });
+  it.each(["agent", "yolo", "onRequest"])("follows replayed Muse %s and preserves it for the next process start", async mode => {
     const sidebar = makeSidebar("/repo");
     const session = sidebar.focused;
     session.provider = "muse";
@@ -401,7 +430,7 @@ describe("startSession bounded spawn retry", () => {
     expect(session.museShellSandbox).toBe(mode !== "yolo");
   });
 
-  it.each(["onRequest", "denyUnmatched"])("starts a new Muse conversation in remembered %s without writing the shared default", async mode => {
+  it.each(["onRequest"])("starts a new Muse conversation in remembered %s without writing the shared default", async mode => {
     const sidebar = makeSidebar("/repo");
     const session = sidebar.focused;
     session.provider = "muse";

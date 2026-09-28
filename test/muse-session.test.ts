@@ -66,7 +66,7 @@ async function ready() {
 }
 
 describe("Muse native modes", () => {
-  it.each([["agent", "promptUnmatched"], ["yolo", "allowAll"], ["denyUnmatched", "denyUnmatched"]])("starts cloud %s without the Muse sandbox, preserving approvals and trust", async (mode, approvalMode) => {
+  it.each([["agent", "promptUnmatched"], ["yolo", "allowAll"], ["denyUnmatched", "promptUnmatched"]])("starts cloud %s without the Muse sandbox, preserving approvals and trust", async (mode, approvalMode) => {
     const s = setup();
     const posture = { mode, shellSandbox: true, sandboxNetwork: "restricted", trustWorkspaces: false } as any;
     const spec = new MuseBackend(posture, true).spawn({ cliPath: "/fake/muse", cwd: "/workspace", env: {} });
@@ -76,10 +76,10 @@ describe("Muse native modes", () => {
     expect(s.spawn.mock.calls[0][0].args).toEqual(["serve", "--disable-sandbox", ...(mode === "yolo" ? ["--trust-workspace"] : [])]);
     const result = await s.session.newSession("/workspace", []);
     expect(s.command).toHaveBeenCalledWith("session/start", { workspaceRoot: "/workspace", approvalMode });
-    expect(result.modes?.currentModeId).toBe(mode);
-    expect(result.modes?.availableModes.map(m => m.id)).toEqual(["yolo", "agent", "denyUnmatched"]);
+    expect(result.modes?.currentModeId).toBe(mode === "denyUnmatched" ? "agent" : mode);
+    expect(result.modes?.availableModes.map(m => m.id)).toEqual(["yolo", "agent"]);
     s.command.mockResolvedValueOnce({ status: "accepted", effectiveMode: { mode: approvalMode } } as any);
-    await s.session.setMode("session", mode);
+    await s.session.setMode("session", mode === "denyUnmatched" ? "agent" : mode);
     expect(s.command).toHaveBeenLastCalledWith("session/setApprovalMode", { sessionId: "session", mode: approvalMode });
     await expect(s.session.setMode("session", "onRequest")).rejects.toThrow("unavailable on cloud machines");
   });
@@ -118,7 +118,7 @@ describe("Muse native modes", () => {
       history: { mode: "inline", items: [] } } as any);
     const result = await s.session.loadSession("session", "/workspace", []);
     expect(result.modes?.currentModeId).toBe("agent");
-    expect(result.modes?.availableModes.map(m => m.id)).toEqual(["yolo", "agent", "denyUnmatched"]);
+    expect(result.modes?.availableModes.map(m => m.id)).toEqual(["yolo", "agent"]);
   });
 
   it("also refuses On request when the cloud replay differs from the preflight read", async () => {
@@ -135,7 +135,7 @@ describe("Muse native modes", () => {
     expect(s.command.mock.calls.some(([method]) => method === "turn/start")).toBe(false);
   });
 
-  it("offers exactly the SDK's closed approval dictionary under Muse's names", async () => {
+  it("keeps the SDK dictionary but offers only available modes under Muse's names", async () => {
     const require = createRequire(import.meta.url);
     const schema = readFileSync(join(dirname(require.resolve("@muse-code/sdk")), "msp.d.ts"), "utf8");
     const vocabulary = schema.match(/export type ApprovalMode = ([^;]+);/)![1];
@@ -143,7 +143,7 @@ describe("Muse native modes", () => {
     const s = await ready();
     expect(s.result.modes?.availableModes).toEqual([
       { id: "yolo", name: "Allow all" }, { id: "agent", name: "Prompt unmatched" },
-      { id: "onRequest", name: "On request" }, { id: "denyUnmatched", name: "Deny unmatched" },
+      { id: "onRequest", name: "On request" },
     ]);
   });
 
@@ -179,8 +179,10 @@ describe("Muse native modes", () => {
       return { session: { sessionId: "session", workspaceRoot: "/workspace", approvalMode: { mode: "promptUnmatched" } },
         history: { mode: "inline", items: [] } } as any;
     });
+    s.command.mockResolvedValueOnce({ status: "accepted", effectiveMode: { mode: "promptUnmatched" } } as any);
     const result = await s.session.loadSession("session", "/workspace", []);
-    expect(result.modes?.currentModeId).toBe("denyUnmatched");
+    expect(result.modes?.currentModeId).toBe("agent");
+    expect(s.command).toHaveBeenLastCalledWith("session/setApprovalMode", { sessionId: "session", mode: "promptUnmatched" });
   });
 
   it.each([
@@ -192,8 +194,8 @@ describe("Muse native modes", () => {
     [{ mode: "yolo", shellSandbox: true, trustWorkspaces: false }, ["serve", "--disable-sandbox", "--trust-workspace"], "allowAll"],
     [{ mode: "onRequest", shellSandbox: false }, ["serve"], "onRequest"],
     [{ mode: "onRequest", shellSandbox: true, sandboxNetwork: "restricted" }, ["serve", "--sandbox-network", "restricted"], "onRequest"],
-    [{ mode: "denyUnmatched", shellSandbox: true }, ["serve"], "denyUnmatched"],
-    [{ mode: "denyUnmatched", shellSandbox: false }, ["serve", "--disable-sandbox"], "denyUnmatched"],
+    [{ mode: "denyUnmatched", shellSandbox: true }, ["serve"], "promptUnmatched"],
+    [{ mode: "denyUnmatched", shellSandbox: false }, ["serve", "--disable-sandbox"], "promptUnmatched"],
   ])("spawns %j and starts in %s", async (posture, args, approvalMode) => {
     for (const platform of ["win32", "linux"] as const) {
       const s = setup();
@@ -207,7 +209,7 @@ describe("Muse native modes", () => {
       expect(s.spawn.mock.calls[0][0].args).toEqual(platform === "win32" ? ["/d", "/c", executable, ...args] : args);
       const result = await s.session.newSession("/workspace", []);
       expect(s.command).toHaveBeenCalledWith("session/start", { workspaceRoot: "/workspace", approvalMode });
-      expect(result.modes?.currentModeId).toBe(posture.mode);
+      expect(result.modes?.currentModeId).toBe(posture.mode === "denyUnmatched" ? "agent" : posture.mode);
     }
   });
 
@@ -223,7 +225,7 @@ describe("Muse native modes", () => {
     host.on("modeChanged", changed);
     await host.newSession();
     expect(host.currentModeId).toBe("agent");
-    for (const [modeId, mode] of [["yolo", "allowAll"], ["agent", "promptUnmatched"], ["onRequest", "onRequest"], ["denyUnmatched", "denyUnmatched"]]) {
+    for (const [modeId, mode] of [["yolo", "allowAll"], ["agent", "promptUnmatched"], ["onRequest", "onRequest"]]) {
       s.command.mockResolvedValueOnce({ status: "accepted", effectiveMode: { mode, source: "approvalReconfigure" } } as any);
       await host.setMode(modeId);
       expect(s.command).toHaveBeenLastCalledWith("session/setApprovalMode", { sessionId: "session", mode });
@@ -238,6 +240,7 @@ describe("Muse native modes", () => {
     await s.session.initialize();
     s.command.mockResolvedValueOnce({ session: { sessionId: "session", workspaceRoot: "/workspace", modelId: "default-model",
       approvalMode: { mode, source: "replay", lastCommandId: "stored" } }, history: { mode: "inline", items: [] } } as any);
+    if (mode === "denyUnmatched") s.command.mockResolvedValueOnce({ status: "accepted", effectiveMode: { mode: "promptUnmatched" } } as any);
     const host = new AcpClient({ cliPath: "/unused", cwd: "/workspace", backend: new MuseBackend(), log: () => {} });
     vi.spyOn(host as any, "request").mockImplementation(async (method: string, p: any) => {
       expect(method).toBe("session/load");
@@ -246,9 +249,47 @@ describe("Muse native modes", () => {
     const changed = vi.fn();
     host.on("modeChanged", changed);
     await host.loadSession("session");
-    expect(host.currentModeId).toBe(mode === "allowAll" ? "yolo" : mode === "promptUnmatched" ? "agent" : mode);
+    expect(host.currentModeId).toBe(mode === "allowAll" ? "yolo" : mode === "promptUnmatched" || mode === "denyUnmatched" ? "agent" : mode);
     expect(changed).toHaveBeenLastCalledWith(host.currentModeId);
-    expect(s.command.mock.calls).toEqual([["session/resume", { sessionId: "session", history: "inline" }]]);
+    expect(s.command.mock.calls).toEqual([
+      ["session/resume", { sessionId: "session", history: "inline" }],
+      ...(mode === "denyUnmatched" ? [["session/setApprovalMode", { sessionId: "session", mode: "promptUnmatched" }]] : []),
+    ]);
+  });
+
+  it.each([false, true])("repairs durable Deny unmatched before pending approvals and a turn (cloud=%s)", async cloud => {
+    vi.stubEnv("GROK_MUSE_POSTURE", JSON.stringify({ mode: "denyUnmatched", cloud }));
+    const s = setup();
+    await s.session.initialize();
+    s.command.mockResolvedValueOnce({ session: { sessionId: "session", workspaceRoot: "/workspace", approvalMode: { mode: "denyUnmatched" } },
+      history: { mode: "inline", items: [] }, pendingRequests: [{}] } as any);
+    const repair = deferred<any>();
+    s.command.mockReturnValueOnce(repair.promise);
+    s.connection.request.mockImplementation(async (method?: string) => method === "approval/listPending"
+      ? { approvals: [], userInputs: [] } as any : { models: [] });
+    const loading = s.session.loadSession("session", "/workspace", []);
+    await vi.waitFor(() => expect(s.command).toHaveBeenCalledWith("session/setApprovalMode", { sessionId: "session", mode: "promptUnmatched" }));
+    expect(s.connection.request).not.toHaveBeenCalledWith("approval/listPending", expect.anything());
+    repair.resolve({ status: "accepted", effectiveMode: { mode: "promptUnmatched" } });
+    expect((await loading).modes?.currentModeId).toBe("agent");
+    expect(s.client.notify).toHaveBeenCalledWith("session/update", { sessionId: "session", update: { sessionUpdate: "current_mode_update", currentModeId: "agent" } });
+    expect(s.client.notify.mock.calls.some(([, payload]) => payload.update?.currentModeId === "denyUnmatched")).toBe(false);
+    s.admission.resolve({ status: "accepted", turnId: "next", disposition: "started" });
+    const prompt = s.session.prompt("session", [{ type: "text", text: "go" }]);
+    await vi.waitFor(() => expect(s.command).toHaveBeenCalledWith("turn/start", expect.anything()));
+    s.event("turn/completed", { turnId: "next", terminal: "completed" });
+    await prompt;
+  });
+
+  it("fails resume without approvals or a turn if the Deny unmatched repair is refused", async () => {
+    const s = setup();
+    await s.session.initialize();
+    s.command.mockResolvedValueOnce({ session: { sessionId: "session", workspaceRoot: "/workspace", approvalMode: { mode: "denyUnmatched" } },
+      history: { mode: "inline", items: [] }, pendingRequests: [{}] } as any);
+    s.command.mockResolvedValueOnce({ status: "rejected" } as any);
+    await expect(s.session.loadSession("session", "/workspace", [])).rejects.toThrow("not accepted");
+    expect(s.client.request).not.toHaveBeenCalled();
+    await expect(s.session.prompt("session", [{ type: "text", text: "go" }])).rejects.toThrow("Unknown Muse session");
   });
 
   it("does not report a refused or missing effective mode as accepted", async () => {
@@ -258,6 +299,7 @@ describe("Muse native modes", () => {
       await expect(s.session.setMode("session", "yolo")).rejects.toThrow("not accepted");
     }
     s.command.mockClear();
+    await expect(s.session.setMode("session", "denyUnmatched")).rejects.toThrow("temporarily unavailable");
     await expect(s.session.setMode("session", "plan")).rejects.toThrow("Plan");
     await expect(s.session.setMode("foreign", "yolo")).rejects.toThrow("Unknown Muse session");
     expect(s.command).not.toHaveBeenCalled();

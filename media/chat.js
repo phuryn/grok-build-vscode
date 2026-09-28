@@ -1388,8 +1388,10 @@
   }
 
   function offersMuseModes() {
+    // Native Muse menus put Allow all first; legacy hosts send agent, yolo.
+    // Keep that signal when cloud offers only these two native choices.
     return state.activeProvider === "muse" && Array.isArray(state.offeredModes)
-      && ["yolo", "agent", "denyUnmatched"].every(id => state.offeredModes.includes(id));
+      && ["yolo", "agent"].every((id, index) => state.offeredModes[index] === id);
   }
 
   function modeMeta(id) {
@@ -11896,7 +11898,7 @@
   }
 
   const TOOL_VERB = {
-    read_file: "Read", file_read: "Read",
+    read_file: "Read", file_read: "Read", view_file: "Read", view: "Read",
     write_file: "Write", file_write: "Write", write: "Write",
     bash: "Run", execute: "Run", run_command: "Run", run_terminal_command: "Run",
     shell: "Run", run_bash: "Run",
@@ -11922,7 +11924,7 @@
     if (!title) return "";
     const tick = title.match(/`([^`]+)`/);
     if (tick && tick[1]) return tick[1].trim();
-    const stripped = title.replace(/^(edit|write|read|delete|create|update)\s+/i, "").trim();
+    const stripped = title.replace(/^(edit|write|read|view|delete|create|update)\s+/i, "").trim();
     if (stripped && stripped !== title && /[\\/]|\.\w{1,8}$/.test(stripped)) return stripped;
     return "";
   }
@@ -11934,13 +11936,22 @@
       r.new_path || r.new_file || r.file || r.filename ||
       r.target_directory || r.directory || r.dir ||
       (Array.isArray(r.paths) ? r.paths[0] : "") ||
+      (call.locations && call.locations[0] && call.locations[0].path) ||
       pathFromToolTitle(call);
   }
   function isReadTool(call) {
     if (!call) return false;
     const name = toolName(call);
     const kind = toolKind(call);
-    return name === "read_file" || name === "file_read" || kind === "read";
+    return /^(read_file|file_read|view_file|view)$/.test(name) || kind === "read";
+  }
+  function isMissingFileRead(call, message) {
+    if (!isReadTool(call) || /^(list|glob|grep|search)/i.test(toolName(call))) return false;
+    // Match failure text only, never a successful file's contents. Leave mixed
+    // missing/permission/I/O failures red. Provider evidence: research/missing-file-reads.md.
+    return typeof message === "string"
+      && !/permission denied|access (?:is )?denied|operation not permitted|\b(?:EACCES|EPERM|EIO)\b|(?:input\/output|I\/O) error/i.test(message)
+      && /\bENOENT\b|\bNo such file or directory\b|\bFile does not exist\b/i.test(message);
   }
   function asLineNum(v) {
     return typeof v === "number" && Number.isFinite(v) ? v : null;
@@ -12045,7 +12056,7 @@
   // through to the "command" catch-all.
   function titleKind(call) {
     const t = (call.title || "").trim().toLowerCase();
-    if (/^read\b/.test(t)) return "read";
+    if (/^(read|view)\b/.test(t)) return "read";
     if (/^(grep|glob|search|ripgrep)\b/.test(t)) return "search";
     if (/^(shell|execute|run|bash)\b/.test(t)) return "execute";
     if (/^(write|create)\b/.test(t)) return "write";
@@ -12166,6 +12177,8 @@
     const r = call.rawInput || call.input || {};
     const filePath = toolFilePath(call);
     const command = r.command || r.cmd;
+    const failure = state.toolFailuresById.get(call.toolCallId) || toolFailureText(call);
+    if (isMissingFileRead(call, failure)) return `${filePath ? prettyPath(filePath) : "File"} — doesn't exist yet`;
     const pattern = r.glob_pattern || r.pattern || r.query || r.regex || r.search;
     const url = r.url || r.uri;
     // Collapsed rows read as a scannable summary, not a wall of shell — the
@@ -12340,6 +12353,8 @@
         if (!carrier) wireCommandToggle(flat, detailsEl);
       }
       el.replaceWith(flat);
+      flat._call = calls[0];
+      if (calls[0].toolCallId) state.toolItemsByToolCallId.set(calls[0].toolCallId, flat);
       const fail = calls[0].toolCallId && state.toolFailuresById.get(calls[0].toolCallId);
       if (fail) applyToolFailure(flat, fail); // a single tool that failed carries its error
     } else {
@@ -12806,7 +12821,7 @@
       const idx = groupCalls._calls.findIndex((c) => c && c.toolCallId === id);
       if (idx >= 0) groupCalls._calls[idx] = merged;
     }
-    const labelEl = item.querySelector(".tool-item-label");
+    const labelEl = item.querySelector(".tool-item-label, .tool-label");
     if (labelEl) applyToolLabel(labelEl, merged);
     // The running header names the NEWEST call (addToToolGroup), and its
     // argument often arrives on an update rather than the first tool_call —
@@ -13399,6 +13414,30 @@
   // (grok's "image reference not readable: …" etc.) shows beneath it. Idempotent.
   function applyToolFailure(rowEl, message) {
     if (!rowEl || rowEl.classList.contains("tool-failed")) return;
+    if (isMissingFileRead(rowEl._call, message)) {
+      applyToolLabel(rowEl.querySelector(".tool-item-label, .tool-label"), rowEl._call);
+      if (rowEl.querySelector(".tool-missing-message")) return;
+      let details = rowEl.querySelector(".tool-item-details");
+      if (!details) {
+        details = document.createElement("div");
+        details.className = "tool-item-details";
+        rowEl.appendChild(details);
+      }
+      details.classList.remove("tool-read-carrier");
+      details.hidden = !detailShouldExpand();
+      const reason = document.createElement("pre");
+      reason.className = "tool-missing-message";
+      reason.textContent = message;
+      details.replaceChildren(reason);
+      if (!rowEl.classList.contains("has-details")) {
+        const chevron = document.createElement("span");
+        chevron.className = "tool-chevron";
+        chevron.textContent = "›";
+        rowEl.insertBefore(chevron, details);
+        wireCommandToggle(rowEl, details, "Show read result");
+      }
+      return;
+    }
     rowEl.classList.add("tool-failed");
     const err = document.createElement("div");
     err.className = "tool-error";
@@ -13413,7 +13452,7 @@
     if (item) {
       applyToolFailure(item, message);
       const group = item.closest && item.closest(".tool-group");
-      if (group) group.classList.add("has-error"); // collapsed group still signals the failure
+      if (group && item.classList.contains("tool-failed")) group.classList.add("has-error");
       scrollToBottom();
     }
   }
@@ -20376,7 +20415,7 @@
         syncWorkflowLaunchRows();
         // Reads replay as a completed tool_call with the file text in `content`.
         // Shell rows wait for host `commandOutput` (grok) or a later update (Claude).
-        if (isReadTool(msg.call)) maybeAttachToolResultOutput(msg.call);
+        if (isReadTool(msg.call) && !toolFailureText(msg.call)) maybeAttachToolResultOutput(msg.call);
         // On session/load a completed edit replays as a single `tool_call` that
         // already carries its diff (no follow-up update) — attach the preview here
         // or the restored edit has no "open diff →" (#30).

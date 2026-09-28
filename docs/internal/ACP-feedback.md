@@ -2,6 +2,16 @@
 
 Muse MSP resume contention and its ACP error mapping are documented separately in [Muse Code adapter](../../research/muse-adapter.md). A prompt arriving while Muse runs a turn of its own (a workflow's result delivery) is queued by Muse (`ifBusy: "queue"`, disposition `queued`) and awaited; Stop reclaims it with `turn/unqueue`.
 
+Muse Deny unmatched is temporarily omitted from the picker: it denies its own
+`submit_reminder_decision` tool and holds the end-of-turn gate while the
+reminder agent retries. Saved/default Deny unmatched uses Prompt unmatched;
+the adapter durably repairs replayed modes before continuing. The owner's
+measurement and re-enable steps are in [Muse modes](../../research/muse-modes.md#deny-unmatched-hold--2026-09-28).
+
+Missing-file reads retain their failed provider result but render as neutral
+“doesn't exist yet” rows. Other read failures remain red. Provider envelopes
+and verification limits: [missing-file reads](../../research/missing-file-reads.md).
+
 Feedback for the xAI team from a thin ACP client (`grok agent stdio`, JSON-RPC over stdio). It
 carries open behavior only, plus a short record of what has closed. The 0.2.3–0.2.112 record is
 [archived separately](ACP-feedback-through-0.2.112.md); headings below cite the archive section

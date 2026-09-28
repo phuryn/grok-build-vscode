@@ -7,8 +7,8 @@ const CHAT_CSS = readFileSync(new URL("../media/chat.css", import.meta.url), "ut
 const MUSE_AGENT = "Follows Muse Code's own approval rules";
 const MUSE_YOLO = "Answers every approval Muse Code raises. This may look the same as Agent, because Muse Code asks rarely by default";
 const PLAN_REASON = "Plan mode requires a newer CLI.";
-const MUSE_MODES = ["yolo", "agent", "onRequest", "denyUnmatched"];
-const MUSE_LABELS = ["Allow all", "Prompt unmatched", "On request", "Deny unmatched"];
+const MUSE_MODES = ["yolo", "agent", "onRequest"];
+const MUSE_LABELS = ["Allow all", "Prompt unmatched", "On request"];
 
 function connect(h: ReturnType<typeof bootWebview>) {
   dispatch(h.window, { type: "providerState", providers: [
@@ -34,12 +34,12 @@ function openModes(h: ReturnType<typeof bootWebview>) {
 }
 
 describe("Muse Agent / Auto accept", () => {
-  it.each([{ vscode: true }, {}, { remote: true }])("uses Muse labels for the cloud host's three advertised choices on %j", surface => {
+  it.each([{ vscode: true }, {}, { remote: true }])("uses Muse labels for the cloud host's two advertised choices on %j", surface => {
     const h = bootWebview(surface);
     connect(h);
     dispatch(h.window, { type: "session", sessionId: "m", provider: "muse", models: [] });
-    const modes = ["yolo", "agent", "denyUnmatched"];
-    const labels = ["Allow all", "Prompt unmatched", "Deny unmatched"];
+    const modes = ["yolo", "agent"];
+    const labels = ["Allow all", "Prompt unmatched"];
     for (const [index, modeId] of modes.entries()) {
       dispatch(h.window, { type: "modeChanged", modeId, modes });
       expect(h.doc.getElementById("mode-btn")!.textContent).toBe(labels[index]);
@@ -52,7 +52,7 @@ describe("Muse Agent / Auto accept", () => {
     expect(h.posted).not.toContainEqual({ type: "setMode", modeId: "onRequest" });
   });
 
-  it.each([{ vscode: true }, {}, { remote: true }])("offers the four advertised Muse modes on %j", surface => {
+  it.each([{ vscode: true }, {}, { remote: true }])("offers the three advertised Muse modes on %j", surface => {
     const h = bootWebview(surface);
     connect(h);
     dispatch(h.window, { type: "session", sessionId: "m", provider: "muse", models: [] });
@@ -64,7 +64,7 @@ describe("Muse Agent / Auto accept", () => {
       expect(labelsOf(h.doc)).toEqual(MUSE_LABELS);
       expect(descsOf(h.doc)).toEqual([
         "No prompts; everything runs.", "Prompt for anything no rule matches (the interactive default).",
-        "Tools run sandboxed; prompt only on explicit permission requests.", "Anything no rule matches is denied.",
+        "Tools run sandboxed; prompt only on explicit permission requests.",
       ]);
       click(h.window, h.doc.querySelectorAll(".mode-popover-item")[index] as HTMLElement);
       expect(h.posted.at(-1)).toEqual({ type: "setMode", modeId });

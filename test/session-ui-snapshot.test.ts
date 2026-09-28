@@ -6,7 +6,7 @@ const OFFERED_MODES = {
   grok: ["agent", "plan", "yolo"],
   claude: ["agent", "plan", "yolo"],
   codex: ["agent", "yolo"],
-  muse: ["yolo", "agent", "onRequest", "denyUnmatched"],
+  muse: ["yolo", "agent", "onRequest"],
 };
 
 describe("sessionUiSnapshot", () => {

@@ -1050,14 +1050,14 @@
     },
     {
       id: "museShellSandbox", category: "providers", title: "Shell sandbox",
-      description: "For new Muse Code conversations in Prompt unmatched or Deny unmatched. On request always uses the sandbox; Allow all disables it. On request is unavailable in a running process without the sandbox.", kind: "toggle", hostLocal: true,
+      description: "For new Muse Code conversations in Prompt unmatched. On request always uses the sandbox; Allow all disables it. On request is unavailable in a running process without the sandbox.", kind: "toggle", hostLocal: true,
       visible: (s) => !!s.museSettings && (s.providers || []).some(p => p.id === "muse"),
       defaultValue: true, get: (s) => s.museSettings.shellSandbox,
       message: (value) => ({ type: "setMuseSetting", key: "museShellSandbox", value }),
     },
     {
       id: "museSandboxNetwork", category: "providers", title: "Sandbox network",
-      description: "Sandbox network access for new Muse Code conversations in Prompt unmatched, On request or Deny unmatched.", kind: "select", hostLocal: true,
+      description: "Sandbox network access for new Muse Code conversations in Prompt unmatched or On request.", kind: "select", hostLocal: true,
       visible: (s) => !!s.museSettings && (s.providers || []).some(p => p.id === "muse"),
       defaultValue: "proxy-only", get: (s) => s.museSettings.sandboxNetwork,
       options: [{ value: "proxy-only", label: "Proxy only" }, { value: "restricted", label: "Restricted" }, { value: "enabled", label: "Enabled" }],
@@ -1065,7 +1065,7 @@
     },
     {
       id: "museTrustWorkspaces", category: "providers", title: "Trust workspaces",
-      description: "For new Muse Code conversations in Prompt unmatched, On request or Deny unmatched. Allow all always trusts the workspace. A trusted workspace also runs the repository's hooks.",
+      description: "For new Muse Code conversations in Prompt unmatched or On request. Allow all always trusts the workspace. A trusted workspace also runs the repository's hooks.",
       kind: "toggle", hostLocal: true,
       visible: (s) => !!s.museSettings && (s.providers || []).some(p => p.id === "muse"),
       defaultValue: false, get: (s) => s.museSettings.trustWorkspaces,

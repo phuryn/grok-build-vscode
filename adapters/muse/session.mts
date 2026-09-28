@@ -120,6 +120,7 @@ export class MuseSession {
     const posture = JSON.parse(process.env.GROK_MUSE_POSTURE || "{}");
     this.cloud = posture.cloud === true;
     this.approvalMode = approvalModeFor(posture.mode) ?? "promptUnmatched";
+    if (this.approvalMode === "denyUnmatched") this.approvalMode = "promptUnmatched";
     // The process is not attached yet. A saved On request history is checked
     // by session/read before resume; a new cloud session uses the safe default.
     if (this.cloud && this.approvalMode === "onRequest") this.approvalMode = "promptUnmatched";
@@ -225,7 +226,7 @@ export class MuseSession {
     const currentModeId = Object.keys(APPROVAL_MODES).find(id => approvalModeFor(id) === mode);
     if (!currentModeId) return {};
     return { modes: { currentModeId, availableModes: Object.entries(MODE_NAMES)
-      .filter(([id]) => !this.cloud || id !== "onRequest").map(([id, name]) => ({ id, name })) } };
+      .filter(([id]) => id !== "denyUnmatched" && (!this.cloud || id !== "onRequest")).map(([id, name]) => ({ id, name })) } };
   }
 
   private assertSandbox(mode: unknown): void {
@@ -241,15 +242,22 @@ export class MuseSession {
     const modes = this.modes(mode).modes;
     if (!modes) return this.updates;
     this.approvalMode = mode as ApprovalMode;
-    this.updates = this.updates.then(() => this.client.notify("session/update", {
-      sessionId: this.sessionId!, update: { sessionUpdate: "current_mode_update", currentModeId: modes.currentModeId },
-    }));
+    this.updates = this.updates.then(async () => {
+      // Repair the durable mode before publishing or admitting a resumed turn.
+      // Deny unmatched blocks Muse's own reminder agent (research/muse-modes.md).
+      if (mode === "denyUnmatched") await this.setMode(this.sessionId!, "agent");
+      else this.approvalMode = mode as ApprovalMode;
+      await this.client.notify("session/update", {
+        sessionId: this.sessionId!, update: { sessionUpdate: "current_mode_update", currentModeId: mode === "denyUnmatched" ? "agent" : modes.currentModeId },
+      });
+    });
     void this.updates.catch(error => this.fail(error));
     return this.updates;
   }
 
   async setMode(sessionId: string, modeId: string) {
     this.assertSession(sessionId);
+    if (modeId === "denyUnmatched") throw new Error("Muse Deny unmatched is temporarily unavailable; use Prompt unmatched.");
     const mode = approvalModeFor(modeId);
     if (!mode) throw new Error("Muse does not offer Plan mode or unknown approval modes");
     this.assertSandbox(mode);
@@ -365,6 +373,7 @@ export class MuseSession {
 
   async prompt(sessionId: string, prompt: ContentBlock[]): Promise<PromptResponse> {
     this.assertSession(sessionId);
+    if (this.approvalMode === "denyUnmatched") await this.updates;
     this.assertSandbox(this.approvalMode);
     if (this.pending) throw new Error("Muse session already has an active prompt");
     if (!prompt.length || prompt.some(part => part.type !== "text")) throw new Error("Muse adapter accepts text prompts only");

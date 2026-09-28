@@ -2213,11 +2213,11 @@ describe("Muse settings parity", () => {
     expect(h.root.querySelector('[data-id="museTrustWorkspaces"] [role="switch"]')!.getAttribute("aria-checked")).toBe("false");
     expect(h.root.querySelector('[data-id="museTrustWorkspaces"]')!.textContent).toContain("repository's hooks");
     const sandboxCopy = h.root.querySelector('[data-id="museShellSandbox"]')!.textContent;
-    expect(sandboxCopy).toContain("Prompt unmatched or Deny unmatched");
+    expect(sandboxCopy).toContain("Prompt unmatched");
     expect(sandboxCopy).toContain("On request always uses the sandbox");
     expect(sandboxCopy).toContain("Allow all disables it");
     expect(sandboxCopy).toContain("unavailable in a running process without the sandbox");
-    expect(h.root.querySelector('[data-id="museSandboxNetwork"]')!.textContent).toContain("Prompt unmatched, On request or Deny unmatched");
+    expect(h.root.querySelector('[data-id="museSandboxNetwork"]')!.textContent).toContain("Prompt unmatched or On request");
     (h.root.querySelector('[data-id="museShellSandbox"] [role="switch"]') as HTMLElement).click();
     (h.root.querySelector('[data-id="museTrustWorkspaces"] [role="switch"]') as HTMLElement).click();
     const network = h.root.querySelector('[data-id="museSandboxNetwork"] select') as HTMLSelectElement;

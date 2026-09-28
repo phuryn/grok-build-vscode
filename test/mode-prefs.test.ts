@@ -5,6 +5,12 @@ import { Session } from "../src/session";
 
 describe("remembered mode preference (#25)", () => {
   const defaults = { shellSandbox: true, sandboxNetwork: "proxy-only" as const, trustWorkspaces: false };
+  it.each([false, true])("replaces saved and default Deny unmatched with Prompt unmatched (cloud=%s)", cloud => {
+    expect(musePosture("denyUnmatched", false, undefined, defaults, cloud)).toEqual({ ...defaults, mode: "agent" });
+    const saved = { ...defaults, mode: "denyUnmatched" as const, trustWorkspaces: true };
+    expect(musePosture("yolo", true, saved, defaults, cloud)).toEqual({ ...saved, mode: "agent" });
+    expect(saved.mode).toBe("denyUnmatched");
+  });
   it.each(["agent", "yolo", "onRequest", "denyUnmatched"] as const)("uses the VM rather than the Muse sandbox for cloud %s", mode => {
     expect(museShellSandboxEnabled({ ...defaults, mode }, true)).toBe(false);
     expect(museShellSandboxEnabled({ ...defaults, mode })).toBe(mode !== "yolo");
@@ -58,8 +64,8 @@ describe("remembered mode preference (#25)", () => {
     expect(sessionModes("grok")).toEqual(["agent", "plan", "yolo"]);
     expect(sessionModes("claude")).toEqual(["agent", "plan", "yolo"]);
     expect(sessionModes("codex")).toEqual(["agent", "yolo"]);
-    expect(sessionModes("muse")).toEqual(["yolo", "agent", "onRequest", "denyUnmatched"]);
-    expect(sessionModes("muse", true)).toEqual(["yolo", "agent", "denyUnmatched"]);
+    expect(sessionModes("muse")).toEqual(["yolo", "agent", "onRequest"]);
+    expect(sessionModes("muse", true)).toEqual(["yolo", "agent"]);
     for (const provider of ["grok", "codex", "claude"]) expect(sessionModes(provider, true)).toEqual(sessionModes(provider));
   });
 });
