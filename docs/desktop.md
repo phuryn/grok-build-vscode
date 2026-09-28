@@ -210,6 +210,7 @@ resources/**          # icon
 LICENSE
 node_modules/ws
 node_modules/jpeg-js
+node_modules/qrcode-generator                 # package.json + dist/qrcode.js
 node_modules/electron-updater                 # + its hoisted tree; production
                                               # dep, packed automatically
 node_modules/@agentclientprotocol/codex-acp   # package.json + dist + LICENSE only

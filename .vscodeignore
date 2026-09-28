@@ -21,6 +21,8 @@ adapters/**
 node_modules/**
 !node_modules/ws/**
 !node_modules/jpeg-js/**
+!node_modules/qrcode-generator/package.json
+!node_modules/qrcode-generator/dist/qrcode.js
 # Adapter files only. `!…/codex-acp/**` would also pack its nested
 # node_modules (diff@9, open@11 — vsce: a later exclude cannot undo a negate).
 # @openai/codex's platform binaries hoist to node_modules/@openai and are kept
