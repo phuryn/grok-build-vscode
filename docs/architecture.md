@@ -266,6 +266,8 @@ When the panel opens (or you click **+** for a new session):
 4. Normalize backend updates at the host boundary and stream the established
    message, thought, tool, permission, model, and usage events into the chat.
 
+The composer keeps unsent text in webview-local, per-session drafts: host identity frames switch drafts, transcript replay preserves them, and New starts an empty draft that binds to the new session id. Drafts last for the lifetime of the webview.
+
 The composer unlocks as soon as the session is live. Its placeholder follows the
 session provider (**Ask Grok…** / **Ask GPT…** / **Ask Claude…** / **Ask Muse…**).
 While a user turn is waiting, the shared activity row uses provider-specific copy,
