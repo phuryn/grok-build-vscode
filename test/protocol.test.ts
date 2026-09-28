@@ -37,6 +37,7 @@ describe("host <-> webview message contract (src/protocol.ts is the source of tr
 
   it("advertises remote voice as a host protocol capability", () => {
     expect(HOST_CAPABILITIES).toEqual({
+      museNativeModes: true,
       installMuse: true,
       uploadFile: true,
       remoteVoice: true,

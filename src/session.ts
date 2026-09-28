@@ -129,6 +129,7 @@ export class Session {
 
   /** YOLO: auto-approve every permission request for this session. */
   autoApprove = false;
+  musePosture?: import("./mode-prefs").MusePosture;
 
   /** Explicit card grants only. Never serialized or inherited by a loaded session. */
   readonly allowedCommandPrograms = new Set<string>();

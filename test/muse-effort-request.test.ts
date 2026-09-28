@@ -4,6 +4,7 @@ import { MuseBackend } from "../src/muse-backend";
 const boundary = vi.hoisted(() => ({
   requests: new Map<string, any[]>(),
   setReasoningEffort: vi.fn(async () => ({})),
+  setMode: vi.fn(async () => ({ _meta: { modes: { currentModeId: "yolo" } } })),
   connect: undefined as undefined | ((connection: any) => void),
 }));
 vi.mock("node:stream", () => ({ Readable: { toWeb: vi.fn() }, Writable: { toWeb: vi.fn() } }));
@@ -24,7 +25,7 @@ vi.mock("@agentclientprotocol/sdk", () => ({
 }));
 vi.mock("../adapters/muse/session.mts", async importOriginal => ({
   ...await importOriginal<typeof import("../adapters/muse/session.mts")>(),
-  MuseSession: class { setReasoningEffort = boundary.setReasoningEffort; },
+  MuseSession: class { setReasoningEffort = boundary.setReasoningEffort; setMode = boundary.setMode; },
 }));
 
 beforeAll(async () => {
@@ -37,6 +38,14 @@ beforeAll(async () => {
 afterAll(() => vi.restoreAllMocks());
 
 describe("Muse effort ACP registration", () => {
+  it("registers the standard Agent/Auto accept mode command and preserves its effective mode", async () => {
+    const backend = new MuseBackend();
+    const call = backend.setMode("session", "yolo");
+    const [handle] = boundary.requests.get(call.method)!;
+    const response = await handle({ params: call.params });
+    expect(boundary.setMode).toHaveBeenCalledWith("session", "yolo");
+    expect(backend.configState(response, { modeId: "agent" }).modeId).toBe("yolo");
+  });
   it("registers the backend method and forwards its validated params to the session", async () => {
     const call = new MuseBackend().setReasoningEffort("session", "model", "ultra");
     const registration = boundary.requests.get(call.method);

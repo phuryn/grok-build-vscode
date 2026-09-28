@@ -26,6 +26,7 @@ const app = agent()
   .onRequest("session/new", ({ params }) => session.newSession(params.cwd, params.mcpServers))
   .onRequest("session/load", ({ params }) => session.loadSession(params.sessionId, params.cwd, params.mcpServers))
   .onRequest("session/list", ({ params }) => session.listSessions(params.cwd ?? undefined, params.cursor))
+  .onRequest("session/set_mode", ({ params }) => session.setMode(params.sessionId, params.modeId))
   .onRequest("session/set_model", (value: unknown) => {
     const p = value as Record<string, unknown>;
     if (!p || typeof p.sessionId !== "string" || typeof p.modelId !== "string") throw new Error("Invalid model selection");

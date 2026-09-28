@@ -29,6 +29,7 @@ import type { FileChip } from "./chips";
 import type { SttPreference, VoiceBackendState } from "./voice";
 import type { RepoListEntry, SessionListEntry } from "./sessions";
 import type { Dot } from "./session-pool";
+import type { MuseSettings } from "./mode-prefs";
 import type { RunProgressUpdate } from "./run-progress";
 import type { McpServerView } from "./mcp";
 import type { ConnectorView } from "./mcp-connectors";
@@ -79,6 +80,7 @@ export interface PlanHistoryItem {
 
 /** host -> webview */
 export const HOST_CAPABILITIES = {
+  museNativeModes: true,
   // A distinct message: old runInstallCmd hosts always install Grok.
   installMuse: true,
   uploadFile: true,
@@ -196,6 +198,7 @@ export type HostErrorCode =
 
 /** Host-kind affordances merged into `initialState.capabilities` at post time. */
 export type HostUiCapabilities = {
+  museNativeModes?: boolean;
   /** Desk-only fixed Muse installer. Absent/false hides the install button. */
   installMuse?: boolean;
   uploadFile: boolean;
@@ -404,6 +407,7 @@ export type HostMsg =
       /** VS Code language id for command View all, from the host shell dialect.
        *  Absent on older hosts — View all then omits language. */
       commandLanguage?: string;
+      museSettings?: MuseSettings;
       /** Which GUI is on the other end. A phone is looking at neither the
        *  extension nor the desktop app, so it cannot infer this, and its
        *  About page has to name what it is connected to. Optional and
@@ -971,6 +975,7 @@ export type HostMsg =
   // only: a remote keeps its own per-device preference, so this frame is
   // `host-local` outbound and never crosses the relay.
   | { type: "promptNav"; value: boolean }
+  | { type: "museSettings"; value: MuseSettings }
   | { type: "pinLiveWorkflows"; value: boolean }
   // Host-backed on desk; a remote keeps its own default (host-local outbound).
   | { type: "expandDiffCard"; value: boolean }
@@ -1252,6 +1257,8 @@ export type WebviewMsg =
   | { type: "setExpandCommandOutputs"; value: boolean }
   | { type: "setSteerByDefault"; value: boolean }
   | { type: "setPromptNav"; value: boolean }
+  | { type: "setMuseSetting"; key: "museShellSandbox" | "museTrustWorkspaces"; value: boolean }
+  | { type: "setMuseSetting"; key: "museSandboxNetwork"; value: MuseSettings["sandboxNetwork"] }
   | { type: "setPinLiveWorkflows"; value: boolean }
   | { type: "setExpandDiffCard"; value: boolean }
   /** Persist `grok.voiceSendPhrase`. Empty disables hands-free send. */
@@ -1546,6 +1553,7 @@ export type WebviewMsg =
 // error). The runtime arrays are just the keys, so they can never drift from the
 // union without failing the build.
 const HOST_MESSAGE_TYPE_MAP: Record<HostMsg["type"], true> = {
+  museSettings: true,
   cloudHostUpdateState: true, initialState: true, moveViewHint: true, welcomeTips: true, projectSetup: true, githubState: true, githubRepos: true, providerState: true, mcpServers: true, mcpConnectors: true, mcpConnectorAuthorization: true, routines: true, codexInstallProgress: true, planModeAvailability: true, showThinking: true, appPurpose: true, fontScale: true, grokUpdateStatus: true, updateAvailable: true, updateReady: true, telemetryEnabled: true, thumbsFeedback: true,
   initialized: true, cliUpdating: true, session: true, sessionName: true, composerDraftSession: true, modelChanged: true,
   modeChanged: true, openModePopover: true, voiceState: true, voiceConfigured: true,
@@ -1568,6 +1576,7 @@ const HOST_MESSAGE_TYPE_MAP: Record<HostMsg["type"], true> = {
 };
 
 const WEBVIEW_MESSAGE_TYPE_MAP: Record<WebviewMsg["type"], true> = {
+  setMuseSetting: true,
   ready: true, remotePreferences: true, send: true, newSession: true, cancel: true, pickModel: true,
   setMode: true, removeChip: true, toggleChip: true, openFile: true, showInFolder: true, openUrl: true,
   openText: true, openDiff: true, exportExpr: true, setEffort: true, openGlobalConfig: true, openProviderConfig: true,

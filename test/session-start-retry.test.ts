@@ -17,6 +17,8 @@ const startControl = {
   loadFailWith: "Internal error",
   exitDuringNewSessionRemaining: 0,
   efforts: [] as Array<string | undefined>,
+  museMode: undefined as string | undefined,
+  musePostures: [] as any[],
 };
 
 vi.mock("../src/acp", async (importOriginal) => {
@@ -24,7 +26,8 @@ vi.mock("../src/acp", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/acp")>();
   class FakeAcpClient extends EventEmitter {
     setHumanWaitActive = vi.fn();
-    provider: "grok" | "codex" | "claude";
+    provider: "grok" | "codex" | "claude" | "muse";
+    currentModeId?: string;
     usesClientPlanGate = false;
     sessionId: string | undefined;
     availableModels: { modelId: string; name: string }[] = [];
@@ -32,10 +35,11 @@ vi.mock("../src/acp", async (importOriginal) => {
     fsRead?: unknown;
     fsWrite?: unknown;
     terminal?: unknown;
-    constructor(opts: { log: (msg: string) => void; effort?: string; backend?: { provider: "grok" | "codex" | "claude" } }) {
+    constructor(opts: { log: (msg: string) => void; effort?: string; backend?: any }) {
       super();
       this.provider = opts.backend?.provider ?? "grok";
       startControl.efforts.push(opts.effort);
+      if (this.provider === "muse") startControl.musePostures.push(JSON.parse(opts.backend.spawn({ cliPath: "/fake/muse", cwd: "/repo", env: {} }).env.GROK_MUSE_POSTURE));
     }
     async start(): Promise<void> {
       startControl.starts += 1;
@@ -53,6 +57,10 @@ vi.mock("../src/acp", async (importOriginal) => {
         this.emit("exit", 0);
       }
       this.sessionId = "new-session";
+      if (this.provider === "muse") {
+        this.currentModeId = startControl.museMode ?? startControl.musePostures.at(-1).mode;
+        this.emit("modeChanged", this.currentModeId);
+      }
       this.emit("session", { sessionId: this.sessionId });
       return { sessionId: this.sessionId };
     }
@@ -62,6 +70,10 @@ vi.mock("../src/acp", async (importOriginal) => {
         throw new Error(startControl.loadFailWith);
       }
       this.sessionId = sessionId;
+      if (this.provider === "muse") {
+        this.currentModeId = startControl.museMode ?? "agent";
+        this.emit("modeChanged", this.currentModeId);
+      }
       this.emit("session", { sessionId });
       this.emit("sessionLoaded", { sessionId });
       return { sessionId };
@@ -69,7 +81,9 @@ vi.mock("../src/acp", async (importOriginal) => {
     async dispose(): Promise<void> {
       startControl.disposes += 1;
     }
-    async setMode(): Promise<void> {}
+    async setMode(mode: string): Promise<void> {
+      if (this.provider === "muse") { this.currentModeId = mode; this.emit("modeChanged", mode); }
+    }
     supportsInterject(): boolean { return this.provider === "grok"; }
     isCredentialError(): boolean {
       return /auth|unauthor|401|api[_\s-]?key|credential|sign.?in/i.test(startControl.failWith);
@@ -178,6 +192,45 @@ function onboardings(sidebar: any): HostMsg[] {
 }
 
 describe("startSession bounded spawn retry", () => {
+  it("starts remembered Muse full access, persists live switches, and follows replay on reopen", async () => {
+    const sidebar = makeSidebar("/repo");
+    const session = sidebar.focused;
+    session.provider = "muse";
+    sidebar.connectedProviders = () => ["muse"];
+    sidebar.usableProviders = () => ["muse"];
+    sidebar.providerConnectionState = { muse: true };
+    delete sidebar.updateSessionMeta; // exercise the serialized, durable store
+    const config: Record<string, unknown> = { defaultMode: "yolo", museSandboxNetwork: "restricted" };
+    sidebar.host.getConfiguration.mockReturnValue({
+      get: (key: string, fallback: unknown) => config[key] ?? fallback,
+      inspect: () => undefined,
+      update: vi.fn(async (key: string, value: unknown) => { config[key] = value; }),
+    });
+    const client = await sidebar.startSession(undefined, session);
+    expect(client).toBeDefined();
+    await sidebar.sessionMetaWrites;
+    const original = { mode: "yolo", shellSandbox: true, sandboxNetwork: "restricted", trustWorkspaces: false };
+    expect(startControl.musePostures.at(-1)).toEqual(original);
+    expect(sidebar.displayMode(session)).toBe("yolo");
+    expect(sidebar.state.get("grok.sessionMeta", {})["new-session"].musePosture).toEqual(original);
+
+    const starts = startControl.starts;
+    await sidebar.setMode("agent", session);
+    expect(startControl.starts).toBe(starts);
+    expect(sidebar.state.get("grok.sessionMeta", {})["new-session"].musePosture).toEqual({ ...original, mode: "agent" });
+    // Settings changed in another conversation do not alter this one's process.
+    config.museTrustWorkspaces = true;
+    config.museSandboxNetwork = "enabled";
+    startControl.museMode = "yolo"; // Muse replay is authority even when it differs.
+    await sidebar.startSession("new-session", session);
+    await sidebar.sessionMetaWrites;
+    expect(startControl.musePostures.at(-1)).toEqual({ ...original, mode: "agent" });
+    expect(sidebar.displayMode(session)).toBe("yolo");
+    expect(session.planModeAvailable).toBe(false);
+    expect(config.defaultMode).toBe("agent"); // replay never overwrites shared preference
+    await sidebar.startSession("new-session", session);
+    expect(startControl.musePostures.at(-1)).toEqual(original);
+  });
   it.each(["completed", "failed"])("the live tool update handler closes a question on %s", async (status) => {
     const sidebar = makeSidebar("/repo");
     const session = sidebar.focused;
@@ -266,6 +319,8 @@ describe("startSession bounded spawn retry", () => {
   });
 
   beforeEach(() => {
+    startControl.museMode = undefined;
+    startControl.musePostures = [];
     startControl.failuresRemaining = 0;
     startControl.failWith = "Internal error";
     startControl.starts = 0;

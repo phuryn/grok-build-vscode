@@ -27,7 +27,7 @@ function harness(remembered = "") {
   session.planModeAvailable = false;
   session.planModeVersionVerified = true;
   const answered: Array<{ id: number | string; optionId: string }> = [];
-  const setMode = vi.fn(async () => { throw new Error("Muse mode switching is unavailable"); });
+  const setMode = vi.fn(async (mode: string) => { session.client!.currentModeId = mode; });
   session.client = {
     sessionId: "s1",
     planActive: false,
@@ -81,13 +81,23 @@ function harness(remembered = "") {
 }
 
 describe("Muse mode switch", () => {
-  it("flips Agent and Auto accept without a backend command or an error", async () => {
+  it("writes Muse Settings to host config without modifying a live conversation", async () => {
+    const { sidebar, session, configUpdate, setMode } = harness();
+    for (const [key, value] of [["museShellSandbox", false], ["museSandboxNetwork", "restricted"], ["museTrustWorkspaces", true]]) {
+      await sidebar.onSettingsPanelMessage({ type: "setMuseSetting", key, value });
+      expect(configUpdate).toHaveBeenLastCalledWith(key, value, "global");
+    }
+    expect(session.autoApprove).toBe(false);
+    expect(setMode).not.toHaveBeenCalled();
+  });
+  it("switches Agent and Auto accept natively without restarting", async () => {
     const { session, sidebar, setMode, configUpdate, modeMessages } = harness();
 
     await sidebar.setMode("yolo", session);
     expect(session.autoApprove).toBe(true);
     expect(sidebar.displayMode(session)).toBe("yolo");
-    expect(setMode).not.toHaveBeenCalled();
+    expect(setMode).toHaveBeenLastCalledWith("yolo");
+    expect(session.client!.dispose).not.toHaveBeenCalled();
     expect(sidebar.host.showErrorMessage).not.toHaveBeenCalled();
     expect(configUpdate).toHaveBeenCalledWith("defaultMode", "yolo", "global");
     expect(modeMessages()).toEqual([
@@ -97,7 +107,7 @@ describe("Muse mode switch", () => {
     await sidebar.setMode("agent", session);
     expect(session.autoApprove).toBe(false);
     expect(sidebar.displayMode(session)).toBe("agent");
-    expect(setMode).not.toHaveBeenCalled();
+    expect(setMode).toHaveBeenLastCalledWith("agent");
     expect(sidebar.host.showErrorMessage).not.toHaveBeenCalled();
     expect(modeMessages().at(-1)).toEqual({
       type: "modeChanged", modeId: "agent", modes: ["agent", "yolo"],
@@ -120,8 +130,10 @@ describe("Muse mode switch", () => {
     expect(sidebar.host.showWarningMessage).toHaveBeenCalledWith("Muse Code does not offer Plan mode.");
   });
 
-  it("answers Auto accept with the once-only option and never a wider grant", () => {
+  it("falls back to once-only approvals only when Muse did not accept native mode", async () => {
     const { session, sidebar, answered } = harness();
+    vi.mocked(session.client!.setMode).mockRejectedValue(new Error("unsupported"));
+    await sidebar.setMode("yolo", session);
     const widestFirst = museOptions(persistent, sessionChoice, once, deny);
     const noOnce = museOptions(persistent, sessionChoice, deny);
     session.autoApprove = true;
@@ -159,6 +171,26 @@ describe("Muse mode switch", () => {
       expect.objectContaining({ id: 5 }),
       expect.objectContaining({ id: 7 }),
     ]));
+  });
+
+  it("leaves approvals raised in native full access to Muse, including pending cards", async () => {
+    const { session, sidebar, answered } = harness();
+    session.pendingPermissions.set(4, createPendingPermission({ title: "bash", toolKind: "execute", options: museOptions(once, deny) }));
+    await sidebar.setMode("yolo", session);
+    sidebar.handlePermissionRequest(session, session.client, {
+      id: 6, sessionId: "s1", toolCall: { toolCallId: "live", kind: "execute", title: "echo hi" }, options: museOptions(once, deny),
+    }, "/repo");
+    expect(answered).toEqual([]);
+    expect(session.pendingPermissions.size).toBe(2);
+  });
+
+  it("keeps native Auto accept visible when Muse refuses Agent", async () => {
+    const { session, sidebar, setMode } = harness();
+    await sidebar.setMode("yolo", session);
+    setMode.mockRejectedValueOnce(new Error("refused"));
+    await sidebar.setMode("agent", session);
+    expect(session.autoApprove).toBe(true);
+    expect(sidebar.host.showErrorMessage).toHaveBeenCalled();
   });
 
   it("still prefers allow_always for Grok", () => {

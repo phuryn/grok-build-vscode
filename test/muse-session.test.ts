@@ -37,8 +37,8 @@ function setup() {
   const exited = deferred<{ code: number; signal: null }>();
   const closed = deferred<void>();
   const admission = deferred<any>();
-  const command = vi.fn(async (method: string) => {
-    if (method === "session/start") return { session: { sessionId: "session", modelId: "default-model" } };
+  const command = vi.fn(async (method: string, params?: any) => {
+    if (method === "session/start") return { session: { sessionId: "session", modelId: "default-model", approvalMode: { mode: params.approvalMode, source: "startup" } } };
     if (method === "turn/start") return admission.promise;
     return {};
   });
@@ -64,6 +64,106 @@ async function ready() {
   const result = await s.session.newSession("/workspace", []);
   return { ...s, result };
 }
+
+describe("Muse native modes", () => {
+  it.each([
+    [{ mode: "agent" }, ["serve"], "promptUnmatched"],
+    [{ mode: "agent", shellSandbox: false }, ["serve", "--disable-sandbox"], "promptUnmatched"],
+    [{ mode: "agent", sandboxNetwork: "restricted", trustWorkspaces: true }, ["serve", "--sandbox-network", "restricted", "--trust-workspace"], "promptUnmatched"],
+    [{ mode: "agent", sandboxNetwork: "enabled" }, ["serve", "--sandbox-network", "enabled"], "promptUnmatched"],
+    [{ mode: "agent", sandboxNetwork: "proxy-only", trustWorkspaces: false }, ["serve"], "promptUnmatched"],
+    [{ mode: "yolo", shellSandbox: true, trustWorkspaces: false }, ["serve", "--disable-sandbox", "--trust-workspace"], "allowAll"],
+  ])("spawns %j and starts in %s", async (posture, args, approvalMode) => {
+    for (const platform of ["win32", "linux"] as const) {
+      const s = setup();
+      Object.defineProperty(process, "platform", { value: platform });
+      const executable = platform === "win32" ? "C:\\Muse Code\\muse.cmd" : "/fake/muse";
+      const backend = new MuseBackend(posture as any);
+      const spec = backend.spawn({ cliPath: executable, cwd: "/workspace", env: {} });
+      vi.stubEnv("MUSE_CODE_EXECUTABLE", executable);
+      vi.stubEnv("GROK_MUSE_POSTURE", spec.env.GROK_MUSE_POSTURE!);
+      await s.session.initialize();
+      expect(s.spawn.mock.calls[0][0].args).toEqual(platform === "win32" ? ["/d", "/c", executable, ...args] : args);
+      const result = await s.session.newSession("/workspace", []);
+      expect(s.command).toHaveBeenCalledWith("session/start", { workspaceRoot: "/workspace", approvalMode });
+      expect(result.modes?.currentModeId).toBe(posture.mode);
+    }
+  });
+
+  it("switches approval on the live MSP connection and carries the accepted mode through ACP", async () => {
+    const s = await ready();
+    const host = new AcpClient({ cliPath: "/unused", cwd: "/workspace", backend: new MuseBackend(), log: () => {} });
+    vi.spyOn(host as any, "request").mockImplementation(async (method: string, p: any) => {
+      if (method === "session/new") return s.result;
+      if (method === "session/set_mode") return s.session.setMode(p.sessionId, p.modeId);
+      throw new Error(method);
+    });
+    const changed = vi.fn();
+    host.on("modeChanged", changed);
+    await host.newSession();
+    expect(host.currentModeId).toBe("agent");
+    for (const [modeId, mode] of [["yolo", "allowAll"], ["agent", "promptUnmatched"]]) {
+      s.command.mockResolvedValueOnce({ status: "accepted", effectiveMode: { mode, source: "approvalReconfigure" } } as any);
+      await host.setMode(modeId);
+      expect(s.command).toHaveBeenLastCalledWith("session/setApprovalMode", { sessionId: "session", mode });
+      expect(host.currentModeId).toBe(modeId);
+      expect(changed).toHaveBeenLastCalledWith(modeId);
+    }
+    expect(s.spawn).toHaveBeenCalledOnce();
+  });
+
+  it.each(["allowAll", "promptUnmatched", "onRequest", "denyUnmatched"])("reopens with replayed %s driving the host mode", async mode => {
+    const s = setup();
+    await s.session.initialize();
+    s.command.mockResolvedValueOnce({ session: { sessionId: "session", workspaceRoot: "/workspace", modelId: "default-model",
+      approvalMode: { mode, source: "replay", lastCommandId: "stored" } }, history: { mode: "inline", items: [] } } as any);
+    const host = new AcpClient({ cliPath: "/unused", cwd: "/workspace", backend: new MuseBackend(), log: () => {} });
+    vi.spyOn(host as any, "request").mockImplementation(async (method: string, p: any) => {
+      expect(method).toBe("session/load");
+      return s.session.loadSession(p.sessionId, p.cwd, p.mcpServers);
+    });
+    const changed = vi.fn();
+    host.on("modeChanged", changed);
+    await host.loadSession("session");
+    expect(host.currentModeId).toBe(mode === "allowAll" ? "yolo" : "agent");
+    expect(changed).toHaveBeenLastCalledWith(host.currentModeId);
+    expect(s.command.mock.calls).toEqual([["session/resume", { sessionId: "session", history: "inline" }]]);
+  });
+
+  it("does not report a refused or missing effective mode as accepted", async () => {
+    const s = await ready();
+    for (const response of [{ status: "rejected" }, { status: "accepted" }, { status: "accepted", effectiveMode: { mode: "promptUnmatched" } }]) {
+      s.command.mockResolvedValueOnce(response as any);
+      await expect(s.session.setMode("session", "yolo")).rejects.toThrow("not accepted");
+    }
+    s.command.mockClear();
+    await expect(s.session.setMode("session", "plan")).rejects.toThrow("Plan");
+    await expect(s.session.setMode("foreign", "yolo")).rejects.toThrow("Unknown Muse session");
+    expect(s.command).not.toHaveBeenCalled();
+  });
+
+  it("publishes replayed full access before forwarding pending approvals", async () => {
+    const s = setup();
+    await s.session.initialize();
+    s.command.mockResolvedValueOnce({ session: { sessionId: "session", workspaceRoot: "/workspace", approvalMode: { mode: "allowAll", source: "replay" } },
+      history: { mode: "inline", items: [] }, pendingRequests: [{}] } as any);
+    s.connection.request.mockImplementation(async (method?: string) => method === "approval/listPending"
+      ? { approvals: [{ approvalId: "pending" }], userInputs: [] } as any : { models: [] });
+    const accept = vi.spyOn((s.session as any).approvals, "accept").mockImplementation(() => {
+      expect(s.client.notify).toHaveBeenCalledWith("session/update", { sessionId: "session", update: { sessionUpdate: "current_mode_update", currentModeId: "yolo" } });
+    });
+    await s.session.loadSession("session", "/workspace", []);
+    expect(accept).toHaveBeenCalledWith("approval/requested", { approvalId: "pending" });
+  });
+
+  it("projects live approval changes and ignores foreign sessions", async () => {
+    const s = await ready();
+    s.event("session/approvalModeChanged", { mode: "allowAll" });
+    s.event("session/approvalModeChanged", { mode: "promptUnmatched", sessionId: "foreign" });
+    await Promise.resolve();
+    expect(s.client.notify).toHaveBeenCalledWith("session/update", { sessionId: "session", update: { sessionUpdate: "current_mode_update", currentModeId: "yolo" } });
+  });
+});
 
 describe("Muse blank session history", () => {
   // session/list from the Run 3 binary/store, with paths, IDs and prompts scrubbed.

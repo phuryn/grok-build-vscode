@@ -534,6 +534,10 @@ export class AcpClient extends EventEmitter {
         this.opts.log(`[acp] Failed to set reasoning effort to ${requestedEffort}: ${(err as Error).message}.`);
       }
     }
+    if (this.provider === "muse" && res?.modes?.currentModeId) {
+      this.currentModeId = res.modes.currentModeId;
+      this.emit("modeChanged", this.currentModeId);
+    }
     this.emit("session", res);
 
     if (modelId && modelId !== this.currentModelId) {
@@ -590,6 +594,10 @@ export class AcpClient extends EventEmitter {
     // session override, not a stale global value.
     const loadedEffort = this.availableModels.find((m) => m.modelId === this.currentModelId)?.reasoningEffort;
     if (loadedEffort) this.currentReasoningEffort = loadedEffort;
+    if (this.provider === "muse" && res?.modes?.currentModeId) {
+      this.currentModeId = res.modes.currentModeId;
+      this.emit("modeChanged", this.currentModeId);
+    }
     this.emit("session", { sessionId, ...(res ?? {}) });
     this.emit("sessionLoaded", { sessionId });
     if (modelId && modelId !== this.currentModelId) {

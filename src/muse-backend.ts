@@ -1,5 +1,6 @@
 import * as path from "node:path";
 import type { AcpBackend, BackendConfigState, BackendSpawnOptions } from "./acp-backend";
+import type { MusePosture } from "./mode-prefs";
 
 /**
  * Muse 1.4.0 saves a new sign-in to the OS keychain on Windows and Linux too,
@@ -23,11 +24,14 @@ export class MuseBackend implements AcpBackend<"muse"> {
   readonly processName = "Muse ACP adapter";
   readonly usesClientPlanGate = false;
 
+  constructor(private readonly posture?: MusePosture) {}
+
   spawn(options: BackendSpawnOptions) {
     return {
       command: process.execPath,
       args: [path.join(__dirname, "muse-adapter", "main.mjs")],
-      env: { ...withMuseCredentialBackend(options.env), ELECTRON_RUN_AS_NODE: "1", MUSE_CODE_EXECUTABLE: options.cliPath },
+      env: { ...withMuseCredentialBackend(options.env), ELECTRON_RUN_AS_NODE: "1", MUSE_CODE_EXECUTABLE: options.cliPath,
+        GROK_MUSE_POSTURE: JSON.stringify(this.posture ?? {}) },
       shell: false,
     };
   }
@@ -49,13 +53,16 @@ export class MuseBackend implements AcpBackend<"muse"> {
   setReasoningEffort(sessionId: string, _modelId: string | undefined, level: string) {
     return { method: "session/set_config_option", params: { sessionId, configId: "reasoning_effort", value: level } };
   }
-  setMode(_sessionId: string, _modeId: string): never {
-    throw new Error("Muse mode switching is unavailable");
+  setMode(sessionId: string, modeId: string) {
+    if (modeId !== "agent" && modeId !== "yolo") throw new Error("Muse does not offer Plan mode");
+    return { method: "session/set_mode", params: { sessionId, modeId } };
   }
   steeringCapabilities() { return { supported: false, acceptsContent: false }; }
   interject() { return null; }
   steerDelivered() { return false; }
-  configState(_response: any, fallback: BackendConfigState) { return fallback; }
+  configState(response: any, fallback: BackendConfigState) {
+    return { ...fallback, modeId: response?.modes?.currentModeId ?? response?._meta?.modes?.currentModeId ?? fallback.modeId };
+  }
   modelSetSucceeded() { return true; }
   async listSessions(request: (method: string, params: any) => Promise<any>, cwd: string) {
     const sessions = [];

@@ -11,21 +11,21 @@ export function isInternalProvider(value: unknown): value is AcpProvider {
 }
 
 // Exhaustive: each new provider must explicitly opt into implemented actions.
-// `modeSwitching` means the CLI has a mode command. `autoAccept` means the host
-// may answer routine approvals. Muse has the second and not the first.
+// `modeSwitching` includes Plan. Approval-only switching must not enable Plan.
 const PROVIDER_ACTIONS: Record<AcpProvider, {
   deleteHistory: boolean;
   compact: boolean;
   adapterHistory: boolean;
   modeSwitching: boolean;
+  approvalModeSwitching: boolean;
   autoAccept: boolean;
   perCallContext: boolean;
   clientMcp: boolean;
 }> = {
-  grok: { deleteHistory: true, compact: true, adapterHistory: false, modeSwitching: true, autoAccept: true, perCallContext: false, clientMcp: true },
-  codex: { deleteHistory: true, compact: true, adapterHistory: true, modeSwitching: true, autoAccept: true, perCallContext: true, clientMcp: true },
-  claude: { deleteHistory: true, compact: true, adapterHistory: true, modeSwitching: true, autoAccept: true, perCallContext: true, clientMcp: true },
-  muse: { deleteHistory: false, compact: false, adapterHistory: true, modeSwitching: false, autoAccept: true, perCallContext: false, clientMcp: false },
+  grok: { deleteHistory: true, compact: true, adapterHistory: false, modeSwitching: true, approvalModeSwitching: false, autoAccept: true, perCallContext: false, clientMcp: true },
+  codex: { deleteHistory: true, compact: true, adapterHistory: true, modeSwitching: true, approvalModeSwitching: false, autoAccept: true, perCallContext: true, clientMcp: true },
+  claude: { deleteHistory: true, compact: true, adapterHistory: true, modeSwitching: true, approvalModeSwitching: false, autoAccept: true, perCallContext: true, clientMcp: true },
+  muse: { deleteHistory: false, compact: false, adapterHistory: true, modeSwitching: false, approvalModeSwitching: true, autoAccept: true, perCallContext: false, clientMcp: false },
 };
 
 /**
@@ -66,6 +66,10 @@ export function supportsModeSwitching(provider: AcpProvider): boolean {
 
 export function supportsAutoAccept(provider: AcpProvider): boolean {
   return actionsFor(provider).autoAccept;
+}
+
+export function supportsApprovalModeSwitching(provider: AcpProvider): boolean {
+  return actionsFor(provider).approvalModeSwitching === true;
 }
 
 export function usesPerCallContextOccupancy(provider: AcpProvider): boolean {

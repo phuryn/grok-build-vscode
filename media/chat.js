@@ -1380,6 +1380,10 @@
   function modeDescription(id) {
     const name = providerDisplayName(state.activeProvider);
     if (state.activeProvider === "muse") {
+      if (state.hostCaps && state.hostCaps.museNativeModes) {
+        if (id === "agent") return "Muse Code asks for approval; sandbox and trust follow this conversation's settings";
+        if (id === "yolo") return "Muse Code full access (YOLO). Sandbox and trust change on reopen or in a new conversation";
+      }
       if (id === "agent") return `Follows ${name}'s own approval rules`;
       if (id === "yolo") return `Answers every approval ${name} raises. This may look the same as Agent, because ${name} asks rarely by default`;
     }
@@ -3391,6 +3395,7 @@
       promptNav: !!state.promptNav,
       expandDiffCard: !!state.expandDiffCard,
       providers: state.providers || [],
+      museSettings: state.museSettings,
       providersChecking: !!state.providersChecking,
       githubState: state.githubState || undefined,
       cloudHostUpdate: state.cloudHostUpdate,
@@ -19174,6 +19179,7 @@
   ]);
 
   const SETTINGS_LIVE_MSGS = new Set([
+    "museSettings",
     "cloudHostUpdateState", "initialState", "showThinking", "appPurpose", "expandCommandOutputs",
     "steerByDefault", "promptNav", "expandDiffCard", "steerUnavailable", "soundNotifications", "processingSound",
     "readRepliesAloud", "summarizeRepliesAloud", "fontScale", "voiceConfigured",
@@ -19237,6 +19243,7 @@
         // suppressed on the way out, but initialState is mirrored wholesale.
         if (!IS_REMOTE) applyPinLiveWorkflows(msg.pinLiveWorkflows !== false);
         if (!IS_REMOTE && typeof msg.promptNav === "boolean") state.promptNav = msg.promptNav;
+        state.museSettings = msg.museSettings;
         if (!IS_REMOTE) {
           state.expandDiffCard = msg.expandDiffCard === true;
           applyExpandDiffCard();
@@ -19525,6 +19532,9 @@
         break;
       case "pinLiveWorkflows":
         if (!IS_REMOTE) applyPinLiveWorkflows(!!msg.value);
+        break;
+      case "museSettings":
+        state.museSettings = msg.value;
         break;
       case "promptNav":
         // Arrives after the host writes grok.promptNav, which is how a

@@ -32,6 +32,19 @@ function openModes(h: ReturnType<typeof bootWebview>) {
 }
 
 describe("Muse Agent / Auto accept", () => {
+  it.each([false, true])("shows native mode semantics and the replayed badge on remote=%s", remote => {
+    const h = bootWebview({ remote });
+    connect(h);
+    dispatch(h.window, { type: "initialState", capabilities: { museNativeModes: true } });
+    dispatch(h.window, { type: "session", sessionId: "m", provider: "muse", models: [] });
+    dispatch(h.window, { type: "modeChanged", modeId: "yolo", modes: ["agent", "yolo"] });
+    expect(h.doc.getElementById("mode-btn")!.title).toContain("Auto accept");
+    openModes(h);
+    expect(descsOf(h.doc)[0]).toContain("asks for approval");
+    expect(descsOf(h.doc)[1]).toContain("full access (YOLO)");
+    expect(descsOf(h.doc)[1]).toContain("on reopen or in a new conversation");
+    expect(labelsOf(h.doc)).toEqual(["Agent mode", "Auto accept"]);
+  });
   it("lists only Agent and Auto accept, and names Muse, when modes is present", () => {
     const h = bootWebview();
     connect(h);

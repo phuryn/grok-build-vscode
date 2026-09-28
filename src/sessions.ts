@@ -1,4 +1,5 @@
 import type { AcpProvider } from "./acp-backend";
+import type { MusePosture } from "./mode-prefs";
 import type { FileChip } from "./chips";
 import * as nodeFs from "node:fs";
 import { homedir } from "node:os";
@@ -48,6 +49,7 @@ export interface SessionMetaOverride {
   provider?: AcpProvider;
   /** Provider-reported cwd for stores that are not laid out under the Grok home. */
   providerCwd?: string;
+  musePosture?: MusePosture;
   /**
    * "This conversation was used just now", asserted by the host rather than
    * read off disk.

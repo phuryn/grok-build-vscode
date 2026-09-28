@@ -6,7 +6,7 @@ import { Approvals } from "./approvals.mjs";
 // this is the only route to the effort vocabulary. Type-only, so it costs
 // the packaging graph nothing; the disk-read assertion in
 // `test/muse-session.test.ts` is what catches the union changing under us.
-import type { ReasoningEffort } from "@muse-code/sdk/dist/src/msp.js";
+import type { ApprovalMode, ReasoningEffort } from "@muse-code/sdk/dist/src/msp.js";
 
 // MSP exposes a session-wide vocabulary, with no per-model capability list.
 export const REASONING_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"] as const satisfies readonly ReasoningEffort[];
@@ -67,6 +67,7 @@ export class MuseSession {
   private closing?: Promise<void>;
   private sessionId?: string;
   private reasoningEffort?: ReasoningEffort;
+  private approvalMode: ApprovalMode = "promptUnmatched";
   private creating = false;
   private replayBuffer?: { method: string; params: Record<string, any> }[];
   private pending?: PendingTurn;
@@ -107,9 +108,17 @@ export class MuseSession {
     // executable and `serve` stay separate argv entries. Omit /s: it strips
     // Node's quotes around a spaced executable path before cmd resolves it.
     const needsShell = museCliNeedsShell(executable);
+    const posture = JSON.parse(process.env.GROK_MUSE_POSTURE || "{}");
+    this.approvalMode = posture.mode === "yolo" ? "allowAll" : "promptUnmatched";
+    const args = ["serve"];
+    if (posture.mode === "yolo" || posture.shellSandbox === false) args.push("--disable-sandbox");
+    if (posture.sandboxNetwork === "restricted" || posture.sandboxNetwork === "enabled") {
+      args.push("--sandbox-network", posture.sandboxNetwork);
+    }
+    if (posture.mode === "yolo" || posture.trustWorkspaces === true) args.push("--trust-workspace");
     const handshake = this.handshake = this.spawn({
       command: needsShell ? process.env.COMSPEC || "cmd.exe" : executable,
-      args: needsShell ? ["/d", "/c", executable, "serve"] : ["serve"],
+      args: needsShell ? ["/d", "/c", executable, ...args] : args,
       cwd: process.cwd(), env: process.env,
       onStderr: chunk => process.stderr.write(chunk) });
     handshake.onNotification(notification => {
@@ -153,11 +162,11 @@ export class MuseSession {
     if (mcpServers.length) throw new Error("Muse adapter does not accept client MCP servers");
     this.creating = true;
     try {
-      const result = await this.connection().command("session/start", { workspaceRoot });
-      const session = result.session as { sessionId?: string; modelId?: string } | undefined;
+      const result = await this.connection().command("session/start", { workspaceRoot, approvalMode: this.approvalMode });
+      const session = result.session as { sessionId?: string; modelId?: string; approvalMode?: { mode: ApprovalMode } } | undefined;
       if (!session?.sessionId) throw new Error("Muse session/start returned no sessionId");
       this.sessionId = session.sessionId;
-      return { sessionId: session.sessionId, models: await this.models(session.modelId) };
+      return { sessionId: session.sessionId, models: await this.models(session.modelId), ...this.modes(session.approvalMode?.mode) };
     } finally { this.creating = false; }
   }
 
@@ -193,6 +202,33 @@ export class MuseSession {
     const result = await this.connection().command("session/setModel", { sessionId, model: { modelId } });
     if (result.status !== "accepted") throw new Error("Muse model selection was rejected");
     return {};
+  }
+
+  private modes(mode: unknown) {
+    if (!["allowAll", "promptUnmatched", "onRequest", "denyUnmatched"].includes(mode as string)) return {};
+    return { modes: { currentModeId: mode === "allowAll" ? "yolo" : "agent", availableModes: [
+      { id: "agent", name: "Agent" }, { id: "yolo", name: "Auto accept" },
+    ] } };
+  }
+
+  private publishMode(mode: unknown): Promise<void> {
+    const modes = this.modes(mode).modes;
+    if (!modes) return this.updates;
+    this.updates = this.updates.then(() => this.client.notify("session/update", {
+      sessionId: this.sessionId!, update: { sessionUpdate: "current_mode_update", currentModeId: modes.currentModeId },
+    }));
+    void this.updates.catch(error => this.fail(error));
+    return this.updates;
+  }
+
+  async setMode(sessionId: string, modeId: string) {
+    this.assertSession(sessionId);
+    if (modeId !== "agent" && modeId !== "yolo") throw new Error("Muse does not offer Plan mode");
+    const mode = modeId === "yolo" ? "allowAll" : "promptUnmatched";
+    const result = await this.connection().command("session/setApprovalMode", { sessionId, mode });
+    const effective = result.effectiveMode as { mode?: string } | undefined;
+    if (result.status !== "accepted" || effective?.mode !== mode) throw new Error("Muse approval mode was not accepted");
+    return { _meta: this.modes(effective.mode) };
   }
 
   async setReasoningEffort(sessionId: string, reasoningEffort: ReasoningEffort) {
@@ -232,6 +268,8 @@ export class MuseSession {
       const result = await this.resumeSession(sessionId);
       const resumed = result.session as any;
       if (resumed?.sessionId !== sessionId || resumed.workspaceRoot !== cwd) throw new Error("Muse resume workspace/session mismatch");
+      // Native mode must reach the host before Muse reissues pending approvals.
+      await this.publishMode(resumed.approvalMode?.mode);
       const history = result.history as any;
       this.reasoningEffort = history?.snapshot?.state?.reasoningEffort?.reasoningEffort;
       const seen = new Set<string>();
@@ -275,7 +313,7 @@ export class MuseSession {
         for (const approval of (pending.approvals as any[] ?? [])) this.approvals.accept("approval/requested", approval);
       }
       await this.updates;
-      return { _meta: { models: await this.models(resumed.modelId) } };
+      return { _meta: { models: await this.models(resumed.modelId) }, ...this.modes(resumed.approvalMode?.mode) };
     } catch (error) {
       this.sessionId = undefined;
       this.projection.clear();
@@ -381,6 +419,10 @@ export class MuseSession {
     }
     if (params.sessionId !== this.sessionId) return;
     if (this.replayBuffer) { this.replayBuffer.push({ method, params }); return; }
+    if (method === "session/approvalModeChanged") {
+      void this.publishMode(params.mode);
+      return;
+    }
     this.projection.accept(method, params);
     this.approvals.accept(method, params);
     if (method === "turn/completed" && typeof params.turnId === "string") this.approvals.forgetTurn(params.turnId);

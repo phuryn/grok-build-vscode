@@ -2,6 +2,7 @@ import { AcpClient } from "../src/acp";
 import { describe, expect, it } from "vitest";
 import * as path from "node:path";
 import { MuseBackend, withMuseCredentialBackend } from "../src/muse-backend";
+import { supportsApprovalModeSwitching } from "../src/acp-backend";
 import { locateMuseCli } from "../src/muse-cli-locator";
 import { ACP_PROVIDERS, INTERNAL_PROVIDERS, isAcpProvider, isInternalProvider, supportsAutoAccept, supportsSessionDeletion, supportsModeSwitching, usesPerCallContextOccupancy } from "../src/acp-backend";
 
@@ -12,7 +13,7 @@ describe("Muse backend boundary", () => {
     expect(backend.provider).toBe("muse");
     expect(spec.command).toBe(process.execPath);
     expect(spec.args[0]).toBe(path.resolve(__dirname, "../src/muse-adapter/main.mjs"));
-    expect(spec.env).toEqual({ ...withMuseCredentialBackend({ TEST: "kept" }), ELECTRON_RUN_AS_NODE: "1", MUSE_CODE_EXECUTABLE: "/bin/muse" });
+    expect(spec.env).toEqual({ ...withMuseCredentialBackend({ TEST: "kept" }), ELECTRON_RUN_AS_NODE: "1", MUSE_CODE_EXECUTABLE: "/bin/muse", GROK_MUSE_POSTURE: "{}" });
     expect(spec.shell).toBe(false);
     expect(ACP_PROVIDERS).toEqual(["grok", "codex", "claude"]);
     expect(isAcpProvider("muse")).toBe(false);
@@ -64,6 +65,7 @@ describe("Muse backend boundary", () => {
 
 
 it("keeps legacy wire ids frozen while internal capabilities distinguish Muse", () => {
+  for (const provider of INTERNAL_PROVIDERS) expect(supportsApprovalModeSwitching(provider)).toBe(provider === "muse");
   expect(ACP_PROVIDERS).toEqual(["grok", "codex", "claude"]);
   expect(INTERNAL_PROVIDERS).toEqual(["grok", "codex", "claude", "muse"]);
   expect(isAcpProvider("muse")).toBe(false);
@@ -72,7 +74,8 @@ it("keeps legacy wire ids frozen while internal capabilities distinguish Muse", 
   expect(supportsModeSwitching("muse")).toBe(false);
   expect(supportsAutoAccept("muse")).toBe(true);
   expect(usesPerCallContextOccupancy("muse")).toBe(false);
-  expect(() => new MuseBackend().setMode("s", "yolo")).toThrow("unavailable");
+  expect(new MuseBackend().setMode("s", "yolo")).toEqual({ method: "session/set_mode", params: { sessionId: "s", modeId: "yolo" } });
+  expect(() => new MuseBackend().setMode("s", "plan")).toThrow("Plan");
   expect(new MuseBackend().setReasoningEffort("s", undefined, "ultra")).toEqual({
     method: "session/set_config_option", params: { sessionId: "s", configId: "reasoning_effort", value: "ultra" },
   });

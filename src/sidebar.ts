@@ -101,7 +101,8 @@ import { summarizeForSpeech } from "./speech-summary";
 import type { PromptResultMeta, PromptUsage, SessionInfoContext } from "./acp-dispatch";
 import { MediaRef, adapterCompactSignal, adapterContextOccupancy, agentTimestampMsFromMeta, autoCompactStartedNote, childStreamFromRoute, commandOutputForToolCall, commandOutputFromLiveTerminal, contextUsedFromCompactNotification, enforceCompleteSessionCost, errorDetail, gateZeroTokenMeta, isAuthErrorText, isCredentialError, isIncompatibleAgentError, isResumeNotFound, isRateLimitError, isSubagentLifecycleUpdate, occupancyFromAdapterTurn, parseSessionInfoContext, permissionOutcomeFor, promptErrorText, rateLimitNoticeText, sessionInfoCacheFresh, sumUsage, summarizeBackgroundCommand, usageIsRealMeasurement, type UpdateRoute } from "./acp-dispatch";
 import { createMcpPrepareState, prepareMcpToolCall } from "./mcp-tool";
-import { EFFORT_PREFS_KEY, configWriteTarget, modeToRemember, rememberedEffort, sessionModes, startsInYolo, type EffortPrefs } from "./mode-prefs";
+import { EFFORT_PREFS_KEY, configWriteTarget, modeToRemember, rememberedEffort, sessionModes, startsInYolo, musePosture, usesClientAutoAccept, type MuseSettings, type EffortPrefs } from "./mode-prefs";
+import { supportsApprovalModeSwitching } from "./acp-backend";
 import { beginAuthRecovery, oauthShadowsXaiApiKey } from "./auth-recovery";
 import {
   WELCOME_TIPS_KEY,
@@ -1036,6 +1037,7 @@ export class GrokSidebar {
     "setExpandCommandOutputs",
     "setSteerByDefault",
     "setPromptNav",
+    "setMuseSetting",
     "setPinLiveWorkflows",
     "setExpandDiffCard",
     "setSoundNotifications",
@@ -1818,6 +1820,25 @@ export class GrokSidebar {
   private allAdapterCatalogs(): Iterable<readonly SessionListEntry[]> {
     return INTERNAL_PROVIDERS.filter(usesAdapterHistory)
       .flatMap(provider => [...(this.adapterHistory(provider)?.cache?.values() ?? [])]);
+  }
+
+  private museSettings(): MuseSettings {
+    const cfg = this.host.getConfiguration("grok");
+    const network = cfg.get<string>("museSandboxNetwork", "proxy-only");
+    return {
+      shellSandbox: cfg.get<boolean>("museShellSandbox", true),
+      sandboxNetwork: network === "restricted" || network === "enabled" ? network : "proxy-only",
+      trustWorkspaces: cfg.get<boolean>("museTrustWorkspaces", false),
+    };
+  }
+
+  private async rememberMusePosture(session: Session): Promise<void> {
+    const id = session.client?.sessionId ?? session.activeSessionId;
+    const posture = session.musePosture;
+    if (!id || session.provider !== "muse" || !posture) return;
+    await this.updateSessionMeta(current => ({
+      ...current, [id]: { ...current[id], musePosture: posture },
+    }));
   }
 
   private createProviderBackend(provider: AcpProvider): CodexBackend | ClaudeBackend | MuseBackend | undefined {
@@ -3032,6 +3053,11 @@ export class GrokSidebar {
           value: this.host.getConfiguration("grok").get<boolean>("expandDiffCard", false),
         });
       }
+      if (["museShellSandbox", "museSandboxNetwork", "museTrustWorkspaces"].some(key => e.affectsConfiguration(`grok.${key}`))) {
+        const message: HostMsg = { type: "museSettings", value: this.museSettings() };
+        this.post(message);
+        void this.settingsEditor?.webview.postMessage(message);
+      }
       if (e.affectsConfiguration("grok.promptNav")) {
         this.post({
           type: "promptNav",
@@ -3689,8 +3715,7 @@ Only continue if you trust this code.`,
     // setMode throws "no session" (and for Plan that error is surfaced to the user).
     // The mode button is disabled while busy; this backstops the toggle-mode command.
     if (!session.client || !session.client.sessionId || session.priming) return;
-    // No CLI mode command (Muse). Agent is that CLI's own default — send nothing.
-    // Auto accept is our flag only. Plan would promise a write block it does not have.
+    // Muse switches approval without enabling the Plan path.
     if (!supportsModeSwitching(session.provider)) {
       if (!supportsAutoAccept(session.provider)) return;
       if (modeId === "plan") {
@@ -3702,15 +3727,27 @@ Only continue if you trust this code.`,
         return;
       }
       const remember = modeToRemember(modeId);
-      if (remember) void this.rememberGrokConfig("defaultMode", remember);
-      if (modeId === "yolo") {
-        session.autoApprove = true;
-        this.setPlanActive(session, false);
-        this.autoApprovePendingPermissions(session);
-        return;
+      const client = session.client;
+      if (supportsApprovalModeSwitching(session.provider)) {
+        try {
+          await client.setMode(modeId);
+        } catch (error) {
+          if (session.client !== client) return;
+          if (modeId === "agent") {
+            this.reportRequester(requester, "error", `Couldn't switch mode: ${(error as Error).message}`);
+            return;
+          }
+          this.host.appendLine(`[muse] Native Auto accept unavailable; using one-time approvals: ${error}`);
+          this.reportRequester(requester, "warning", "Muse Code did not accept full access. Auto accept will answer its prompts once until you reopen the conversation.");
+        }
       }
-      session.autoApprove = false;
+      if (session.client !== client) return;
+      if (remember) void this.rememberGrokConfig("defaultMode", remember);
+      session.autoApprove = modeId === "yolo";
+      if (session.musePosture) session.musePosture = { ...session.musePosture, mode: modeId };
+      await this.rememberMusePosture(session);
       this.setPlanActive(session, false);
+      if (session.autoApprove) this.autoApprovePendingPermissions(session);
       return;
     }
     if (modeId === "plan" && !session.planModeAvailable) {
@@ -4281,7 +4318,7 @@ Only continue if you trust this code.`,
     // Auto accept is not a verdict on a plan-review card. Same rule as
     // autoApprovePendingPermissions, including after a failed mode RPC
     // that already cleared the Plan bit.
-    if (supportsAutoAccept(session.provider) && session.autoApprove && !planActive && !isPlanReviewPermission(req.toolCall?.kind)) {
+    if (supportsAutoAccept(session.provider) && usesClientAutoAccept(session.provider, client.currentModeId) && session.autoApprove && !planActive && !isPlanReviewPermission(req.toolCall?.kind)) {
       const opt = pickAutoAcceptOption(req.options, session.provider);
       if (opt) { client.respondPermission(req.id, opt.optionId); return; }
     }
@@ -4383,6 +4420,7 @@ Only continue if you trust this code.`,
   private autoApprovePendingPermissions(session: Session): void {
     if (!supportsAutoAccept(session.provider)) return;
     const client = session.client;
+    if (!usesClientAutoAccept(session.provider, client?.currentModeId)) return;
     if (!client || session.pendingPermissions.size === 0) return;
     let resolved = 0;
     // Snapshot first — persistPermissionAnswer mutates pendingPermissions.
@@ -10184,6 +10222,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     }
     const disposeMs = replacedClient ? clock.elapsed(disposeAt) : 0;
     clock.record("dispose", disposeMs);
+    if (session.provider === "muse" && resumeId) {
+      await this.sessionMetaWrites;
+      if (gen !== session.gen) return undefined;
+    }
     // A brand-new session starts in the remembered mode (#25) immediately, so the
     // toolbar shows the right one from the first paint — no Agent → Auto accept
     // flash while the session spins up and primes. Resumed sessions stay
@@ -10198,7 +10240,12 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // it so the button shows "Auto accept" instead of a misleading "Agent" (#31).
     // Applies to resumed sessions too (the config is global, not per-session).
     const configAutoApprove = session.provider === "grok" && this.configForcesAutoApprove(this.sessionCwd(session));
-    session.autoApprove = rememberedYolo || configAutoApprove;
+    session.musePosture = session.provider === "muse" ? musePosture(
+      rememberedYolo ? "yolo" : "agent", !!resumeId,
+      resumeId ? this.state.get<SessionMetaOverrides>(SESSION_META_KEY, {})[resumeId]?.musePosture : undefined,
+      this.museSettings(),
+    ) : undefined;
+    session.autoApprove = session.musePosture ? session.musePosture.mode === "yolo" : rememberedYolo || configAutoApprove;
     session.planActive = false;
     session.hasHistory = !!resumeId;
     session.suppressContent = false;
@@ -10341,7 +10388,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       mcpServers: (onDispose) => supportsClientMcpServers(session.provider) ? this.hostMcpServersFor(session, onDispose) : [],
       ...(session.provider === "grok"
         ? { grokVersion: grokHandshakeVersion, grokVersionVerified }
-        : { backend: this.createProviderBackend(session.provider) }),
+        : { backend: session.provider === "muse" ? new MuseBackend(session.musePosture) : this.createProviderBackend(session.provider) }),
     });
     session.client = client;
     this.syncHumanWait(session);
@@ -10399,6 +10446,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     });
     client.on("session", (res) => {
       if (gen !== session.gen) return;
+      const posture = session.musePosture;
       if (res?.sessionId) session.activeSessionId = res.sessionId;
       this.cacheProviderModels(session.provider, client.availableModels, client.currentModelId);
       if (res?.sessionId) {
@@ -10408,6 +10456,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
             ...(current[res.sessionId] ?? {}),
             provider: session.provider,
             providerCwd: cwd,
+            ...(posture ? { musePosture: posture } : {}),
           },
         }));
       }
@@ -10446,6 +10495,13 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     });
     client.on("modeChanged", (id) => {
       if (gen !== session.gen) return;
+      if (session.provider === "muse" && (id === "agent" || id === "yolo")) {
+        session.autoApprove = id === "yolo";
+        if (session.musePosture) session.musePosture = { ...session.musePosture, mode: id };
+        void this.rememberMusePosture(session);
+        this.setPlanActive(session, false);
+        return;
+      }
       if (id === "plan") {
         // Raise the safety gate synchronously for every Plan transition. During
         // session/load, current_mode_update events replay before AcpClient has a
@@ -12106,6 +12162,16 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         await this.host.getConfiguration("grok")
           .update("expandDiffCard", !!msg.value, "global");
         break;
+      case "setMuseSetting": {
+        if (origin === "remote") break;
+        const valid = msg.key === "museSandboxNetwork"
+          ? ["proxy-only", "restricted", "enabled"].includes(msg.value)
+          : (msg.key === "museShellSandbox" || msg.key === "museTrustWorkspaces") && typeof msg.value === "boolean";
+        if (!valid) break;
+        const cfg = this.host.getConfiguration("grok");
+        await cfg.update(msg.key, msg.value, configWriteTarget(cfg.inspect(msg.key)));
+        break;
+      }
       case "setPromptNav":
         await this.host.getConfiguration("grok")
           .update("promptNav", !!msg.value, "global");
@@ -17683,6 +17749,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       steerByDefault: cfg.get("steerByDefault", false),
       expandDiffCard: cfg.get("expandDiffCard", false),
       promptNav: cfg.get("promptNav", true),
+      museSettings: this.museSettings(),
       pinLiveWorkflows: cfg.get("pinLiveWorkflows", true),
       soundNotifications: cfg.get("soundNotifications", false),
       processingSound: cfg.get("processingSound", false),
@@ -21886,6 +21953,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         steerByDefault: cfg.get("steerByDefault", false),
         expandDiffCard: cfg.get("expandDiffCard", false),
         promptNav: cfg.get("promptNav", true),
+        museSettings: this.museSettings(),
         pinLiveWorkflows: cfg.get("pinLiveWorkflows", true),
         fontScale: this.chatFontScale(),
         soundNotifications: cfg.get("soundNotifications", false),
@@ -21987,6 +22055,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           surface.update({}, { remoteLinked: !!msg.linked, remoteViewerCount: msg.viewerCount || 0,
             remoteHandoffSupported: typeof msg.handoffReady === "boolean" });
         }
+        if (msg.type === "museSettings") surface.update({ museSettings: msg.value });
         if (msg.type === "voiceConfigured") {
           surface.update({ voiceConfigured: !!msg.value, voiceBackendState: msg.backendState,
             voiceSendPhrase: msg.sendPhrase, voiceKeyterms: msg.keyterms });

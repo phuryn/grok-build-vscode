@@ -1,9 +1,29 @@
 import { describe, it, expect, vi } from "vitest";
-import { modeToRemember, rememberedEffort, sessionModes, startsInYolo } from "../src/mode-prefs";
+import { modeToRemember, rememberedEffort, sessionModes, startsInYolo, musePosture, usesClientAutoAccept } from "../src/mode-prefs";
 import { GrokSidebar } from "../src/sidebar";
 import { Session } from "../src/session";
 
 describe("remembered mode preference (#25)", () => {
+  const defaults = { shellSandbox: true, sandboxNetwork: "proxy-only" as const, trustWorkspaces: false };
+  it("seeds new Muse sessions from the shared mode and Agent settings", () => {
+    expect(musePosture("yolo", false, undefined, defaults)).toEqual({ ...defaults, mode: "yolo" });
+    const configured = { ...defaults, shellSandbox: false, trustWorkspaces: true };
+    expect(musePosture("agent", false, undefined, configured)).toEqual({ ...configured, mode: "agent" });
+  });
+
+  it("reopens with the conversation's posture, unaffected by defaults changed elsewhere", () => {
+    const saved = { ...defaults, mode: "yolo" as const };
+    expect(musePosture("agent", true, saved, { ...defaults, trustWorkspaces: true })).toEqual(saved);
+    expect(musePosture("yolo", true, { ...saved, mode: "agent" }, defaults).mode).toBe("agent");
+    expect(musePosture("yolo", true, undefined, { ...defaults, trustWorkspaces: true })).toEqual({ ...defaults, mode: "agent" });
+  });
+
+  it("only native Muse full access suppresses the host's routine approval fallback", () => {
+    expect(usesClientAutoAccept("muse", "yolo")).toBe(false);
+    expect(usesClientAutoAccept("muse", "agent")).toBe(true);
+    expect(usesClientAutoAccept("muse", undefined)).toBe(true);
+    for (const provider of ["grok", "codex", "claude"]) expect(usesClientAutoAccept(provider, "yolo")).toBe(true);
+  });
   it("remembers a switch to Agent or Auto accept, but never Plan", () => {
     expect(modeToRemember("agent")).toBe("agent");
     expect(modeToRemember("yolo")).toBe("yolo");

@@ -243,6 +243,13 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
         return null;
       }
       break;
+    case "setMuseSetting":
+      if (raw.key === "museSandboxNetwork") {
+        if (!["proxy-only", "restricted", "enabled"].includes(raw.value as string)) return null;
+      } else if (raw.key === "museShellSandbox" || raw.key === "museTrustWorkspaces") {
+        if (!isBoolean(raw.value)) return null;
+      } else return null;
+      return { type, key: raw.key, value: raw.value } as WebviewMsg;
     case "setShowThinking":
     case "setSoundNotifications":
     case "setProcessingSound":

@@ -5,6 +5,28 @@ import type { ConfigTarget } from "./host";
 
 export type ModeId = "agent" | "plan" | "yolo";
 
+export interface MuseSettings {
+  shellSandbox: boolean;
+  sandboxNetwork: "proxy-only" | "restricted" | "enabled";
+  trustWorkspaces: boolean;
+}
+
+/** Agent settings stay fixed for a conversation; only its selected mode changes. */
+export interface MusePosture extends MuseSettings {
+  mode: "agent" | "yolo";
+}
+
+export function musePosture(defaultMode: string | undefined, isResume: boolean,
+  saved: MusePosture | undefined, settings: MuseSettings): MusePosture {
+  // Unknown/terminal-created histories start conservatively until Muse replays.
+  if (isResume) return saved ? { ...saved } : { mode: "agent", shellSandbox: true, sandboxNetwork: "proxy-only", trustWorkspaces: false };
+  return { ...settings, mode: startsInYolo(defaultMode, false) ? "yolo" : "agent" };
+}
+
+export function usesClientAutoAccept(provider: string, effectiveMode: string | undefined): boolean {
+  return provider !== "muse" || effectiveMode !== "yolo";
+}
+
 /**
  * The mode value to persist for a user's mode switch, or `null` to leave the
  * remembered preference unchanged. Plan is a transient per-task choice, so it is

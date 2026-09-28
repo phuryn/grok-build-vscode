@@ -2206,6 +2206,63 @@ function mountAt(category: string, opts: {
 }
 
 describe("Muse settings parity", () => {
+  const museDefaults = { shellSandbox: true, sandboxNetwork: "proxy-only", trustWorkspaces: false };
+  it.each([true, false])("posts all three Muse settings from a host-backed surface (desktop=%s)", isDesktop => {
+    const h = mountAt("providers", { env: { isDesktop }, snapshot: { providers: [{ id: "muse", connected: true }], museSettings: museDefaults } });
+    expect(h.root.querySelector('[data-id="museShellSandbox"] [role="switch"]')!.getAttribute("aria-checked")).toBe("true");
+    expect(h.root.querySelector('[data-id="museTrustWorkspaces"] [role="switch"]')!.getAttribute("aria-checked")).toBe("false");
+    expect(h.root.querySelector('[data-id="museTrustWorkspaces"]')!.textContent).toContain("repository's hooks");
+    (h.root.querySelector('[data-id="museShellSandbox"] [role="switch"]') as HTMLElement).click();
+    (h.root.querySelector('[data-id="museTrustWorkspaces"] [role="switch"]') as HTMLElement).click();
+    const network = h.root.querySelector('[data-id="museSandboxNetwork"] select') as HTMLSelectElement;
+    expect(network.value).toBe("proxy-only");
+    expect([...network.options].map(o => o.value)).toEqual(["proxy-only", "restricted", "enabled"]);
+    network.value = "restricted";
+    network.dispatchEvent(new h.window.Event("change") as unknown as Event);
+    for (const message of [
+      { type: "setMuseSetting", key: "museShellSandbox", value: false },
+      { type: "setMuseSetting", key: "museTrustWorkspaces", value: true },
+      { type: "setMuseSetting", key: "museSandboxNetwork", value: "restricted" },
+    ]) {
+      expect(h.posted).toContainEqual(message);
+      expect(parseWebviewMsg(message)).toEqual(message);
+    }
+    h.surface.update({ museSettings: { ...museDefaults, sandboxNetwork: "enabled" } });
+    expect((h.root.querySelector('[data-id="museSandboxNetwork"] select') as HTMLSelectElement).value).toBe("enabled");
+  });
+
+  it("hides settings on older hosts, without Muse, and on remotes", () => {
+    for (const opts of [
+      { snapshot: { providers: [{ id: "muse", connected: true }] } },
+      { snapshot: { providers: [{ id: "grok", connected: true }], museSettings: museDefaults } },
+      { env: { isRemote: true }, snapshot: { providers: [{ id: "muse", connected: true }], museSettings: museDefaults } },
+    ]) {
+      expect(mountAt("providers", opts).root.querySelector('[data-id="museShellSandbox"]')).toBeNull();
+    }
+    for (const [key, value] of [["defaultMode", "yolo"], ["museSandboxNetwork", "all"], ["museShellSandbox", "true"], ["museTrustWorkspaces", 1]]) {
+      expect(parseWebviewMsg({ type: "setMuseSetting", key, value })).toBeNull();
+    }
+  });
+
+  it("reflects Muse config updates in the actual standalone Settings boot script", () => {
+    const window = new Window({ url: "https://localhost/" });
+    window.document.body.innerHTML = '<div id="settings-root"></div>';
+    const posted: unknown[] = [];
+    (window as any).acquireVsCodeApi = () => ({ postMessage: (m: unknown) => posted.push(m) });
+    window.eval(readFileSync(new URL("../media/webview-helpers.js", import.meta.url), "utf8"));
+    window.eval(settingsSrc);
+    (window as any).__grokSettingsBoot = { snapshot: { providers: [{ id: "muse", connected: true }], museSettings: museDefaults },
+      env: { isRemote: false, providersKnown: true }, category: "providers" };
+    const hostSource = readFileSync(new URL("../src/sidebar.ts", import.meta.url), "utf8");
+    const start = hostSource.indexOf('      var vscode = acquireVsCodeApi();', hostSource.indexOf('private getSettingsHtml'));
+    const end = hostSource.indexOf('    })();', start);
+    window.eval('(function () {\n' + hostSource.slice(start, end) + '\n})();');
+    window.dispatchEvent(new window.MessageEvent("message", { data: { type: "museSettings", value: { ...museDefaults, trustWorkspaces: true } } }));
+    const toggle = window.document.querySelector('[data-id="museTrustWorkspaces"] [role="switch"]')!;
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
+    (toggle as any).click();
+    expect(posted).toContainEqual({ type: "setMuseSetting", key: "museTrustWorkspaces", value: false });
+  });
   const surfaces = [
     { name: "desktop", env: { isDesktop: true, isRemote: false } },
     { name: "VS Code settings tab", env: { isDesktop: false, isRemote: false } },

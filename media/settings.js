@@ -1049,6 +1049,29 @@
       message: (s) => ({ type: providerConnectedNow(s, "muse") ? "logout" : "runGrokLogin", provider: "muse" }),
     },
     {
+      id: "museShellSandbox", category: "providers", title: "Shell sandbox",
+      description: "For new Muse Code conversations in Agent mode.", kind: "toggle", hostLocal: true,
+      visible: (s) => !!s.museSettings && (s.providers || []).some(p => p.id === "muse"),
+      defaultValue: true, get: (s) => s.museSettings.shellSandbox,
+      message: (value) => ({ type: "setMuseSetting", key: "museShellSandbox", value }),
+    },
+    {
+      id: "museSandboxNetwork", category: "providers", title: "Sandbox network",
+      description: "For new Muse Code conversations in Agent mode.", kind: "select", hostLocal: true,
+      visible: (s) => !!s.museSettings && (s.providers || []).some(p => p.id === "muse"),
+      defaultValue: "proxy-only", get: (s) => s.museSettings.sandboxNetwork,
+      options: [{ value: "proxy-only", label: "Proxy only" }, { value: "restricted", label: "Restricted" }, { value: "enabled", label: "Enabled" }],
+      message: (value) => ({ type: "setMuseSetting", key: "museSandboxNetwork", value }),
+    },
+    {
+      id: "museTrustWorkspaces", category: "providers", title: "Trust workspaces",
+      description: "For new Muse Code conversations in Agent mode. A trusted workspace also runs the repository's hooks.",
+      kind: "toggle", hostLocal: true,
+      visible: (s) => !!s.museSettings && (s.providers || []).some(p => p.id === "muse"),
+      defaultValue: false, get: (s) => s.museSettings.trustWorkspaces,
+      message: (value) => ({ type: "setMuseSetting", key: "museTrustWorkspaces", value }),
+    },
+    {
       id: "githubConnection",
       category: "providers",
       icon: "github",
@@ -1629,6 +1652,13 @@
   function applyValue(row, value, snapshot) {
     const next = { ...snapshot };
     switch (row.id) {
+      case "museShellSandbox":
+      case "museSandboxNetwork":
+      case "museTrustWorkspaces": {
+        const key = { museShellSandbox: "shellSandbox", museSandboxNetwork: "sandboxNetwork", museTrustWorkspaces: "trustWorkspaces" }[row.id];
+        next.museSettings = { ...snapshot.museSettings, [key]: value };
+        break;
+      }
       case "appPurpose":
         next.appPurpose = value === "coding" ? "coding" : "knowledge";
         break;
@@ -3102,9 +3132,9 @@
         const option = document.createElement("option");
         option.value = opt.value;
         option.textContent = opt.label;
-        if (opt.value === value) option.selected = true;
         select.appendChild(option);
       }
+      select.value = value;
       control.appendChild(select);
     } else if (row.kind === "range") {
       const wrap = document.createElement("div");

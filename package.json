@@ -291,6 +291,22 @@
           "default": "",
           "description": "Path to the installed Muse Code CLI on macOS or Linux. Leave empty to discover muse on PATH."
         },
+        "grok.museShellSandbox": {
+          "type": "boolean",
+          "default": true,
+          "description": "Use Muse Code's shell sandbox for new conversations in Agent mode."
+        },
+        "grok.museSandboxNetwork": {
+          "type": "string",
+          "enum": ["proxy-only", "restricted", "enabled"],
+          "default": "proxy-only",
+          "description": "Muse Code sandbox network access for new conversations in Agent mode."
+        },
+        "grok.museTrustWorkspaces": {
+          "type": "boolean",
+          "default": false,
+          "description": "Trust workspaces for new Muse Code conversations in Agent mode. A trusted workspace also runs the repository's hooks."
+        },
         "grok.claudeCliPath": {
           "type": "string",
           "default": "",
