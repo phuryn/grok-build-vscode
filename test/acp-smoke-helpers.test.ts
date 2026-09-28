@@ -6,6 +6,7 @@ import { MuseBackend } from "../src/muse-backend";
 import { grokBackend } from "../src/grok-backend";
 import { parseRunProgressUpdate } from "../src/run-progress";
 import claudeWorkflow from "./fixtures/claude-async-workflow.json";
+import claudeBackground from "./fixtures/claude-background-subagent.json";
 import liveCatalogs from "./fixtures/smoke-live-catalogs.json";
 import grokCapture from "./fixtures/smoke-grok-capture.json";
 // @ts-expect-error Standalone release script intentionally has no declaration file.
@@ -95,6 +96,36 @@ function framesFor(backend: any, updates: any[], seedBackend: any = backend) {
       seedWorkflow: parseRunProgressUpdate(seed) });
   });
 }
+
+it("Claude smoke accepts settled background, but requires a result when the card claims done", () => {
+  const backend = new ClaudeBackend();
+  const frames = framesFor(backend, claudeBackground.launch.map(raw => ({ raw })));
+  expect(checkSubagents(frames, "parent", isSubagentToolCall)).toContain("1 in background");
+  const append = (raw: any) => frames.push(...framesFor(backend, [{ raw }]));
+  append({ sessionUpdate: "async_task_state_update", asyncTaskId: "unrelated", state: "completed", summary: "ok" });
+  append(claudeBackground.wake);
+  expect(checkSubagents(frames, "parent", isSubagentToolCall)).toContain("1 in background");
+  append({ sessionUpdate: "async_task_state_update", asyncTaskId: "agent-task", state: "completed" });
+  expect(() => checkSubagents(frames, "parent", isSubagentToolCall)).toThrow(/no non-empty/);
+  append({ sessionUpdate: "async_task_state_update", asyncTaskId: "agent-task", state: "completed", summary: "ok" });
+  expect(checkSubagents(frames, "parent", isSubagentToolCall)).toContain("completed with non-empty result");
+  // Catch regression even if a broken normalizer forwards the receipt again.
+  const receipt = claudeBackground.launch.at(-1)!;
+  append({ ...receipt, rawOutput: { output: receipt.content?.[0]?.content.text } });
+  frames.at(-1)!.update = { ...receipt, rawOutput: { output: receipt.content?.[0]?.content.text } };
+  expect(() => checkSubagents(frames, "parent", isSubagentToolCall)).toThrow(/receipt is not/);
+});
+
+it("Claude smoke rejects a running receipt and receipt text leaked into a reply", () => {
+  const frames = framesFor(new ClaudeBackend(), claudeBackground.launch.map(raw => ({ raw })));
+  frames.at(-1)!.update.status = "in_progress";
+  expect(() => checkSubagents(frames, "parent", isSubagentToolCall)).toThrow(/did not complete/);
+  frames.at(-1)!.update.status = "background";
+  frames.push({ sessionId: "parent", update: { sessionUpdate: "agent_message_chunk", content: {
+    type: "text", text: claudeBackground.launch.at(-1)!.content?.[0]?.content.text,
+  } } } as any);
+  expect(() => checkSubagents(frames, "parent", isSubagentToolCall)).toThrow(/receipt is not/);
+});
 
 describe("live smoke catalog selection", () => {
   it.each([

@@ -43,4 +43,19 @@ describe("desktop smoke cleanup", () => {
     expect(row.result).toBe("FAIL");
     expect(row.reason).toContain("close failed");
   });
+  it.each(["muse", "claude"])("%s distinguishes a slow Windows child from an app that did not exit", async provider => {
+    vi.useFakeTimers();
+    const proc = child();
+    const pending = closeDesktop({ close: () => new Promise(() => {
+      setTimeout(() => { proc.exitCode = 0; proc.emit("exit"); }, 250);
+    }) }, proc, { budgetMs: 120_000, provider, platform: "win32", now: () => Date.now() });
+    await vi.advanceTimersByTimeAsync(120_000);
+    const row = await pending;
+    expect(row).toMatchObject({ result: provider === "muse" ? "WARNING" : "FAIL", exitMs: 250, durationMs: 120_000 });
+    if (provider === "muse") {
+      expect(row.reason).toContain("Muse child process");
+      expect(row.reason).toContain("Electron app exited at 250ms");
+      expect(smokeOutcome([{ result: "PASS" }, row]).exitCode).toBe(0);
+    }
+  });
 });

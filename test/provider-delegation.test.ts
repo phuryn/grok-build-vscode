@@ -11,9 +11,87 @@ import { MuseBackend } from "../src/muse-backend";
 import { parseRunProgressUpdate } from "../src/run-progress";
 import { Projection } from "../adapters/muse/projection.mts";
 import { SessionFold } from "@muse-code/sdk";
+import claudeBackground from "./fixtures/claude-background-subagent.json";
 
 const fixtures = JSON.parse(readFileSync(new URL("fixtures/provider-delegation.json", import.meta.url), "utf8"));
 const backends = [grokBackend, new CodexBackend(), new ClaudeBackend(), new MuseBackend()];
+
+describe("Claude background subagent receipts and task correlation", () => {
+  it("settles the captured async launch in background with no model-facing receipt", () => {
+    const backend = new ClaudeBackend();
+    const updates = claudeBackground.launch.map(u => backend.normalizeUpdate(u, undefined).update);
+    for (const u of updates.slice(-2)) {
+      expect(u).toMatchObject({ status: "background", rawOutput: { output: "" }, content: [] });
+      expect(JSON.stringify(u)).not.toMatch(/Async agent|agent-task|output_file|toolResponse/);
+    }
+  });
+
+  // The 0.76.0 capture has no Agent task edges: its async runtime excludes
+  // local_agent. Exercise the AIR contract separately, not as captured data.
+  it.each(["completed", "failed", "stopped"])("finishes only the ID-matched card on %s, preserving usage", state => {
+    const backend = new ClaudeBackend();
+    for (const u of claudeBackground.launch) backend.normalizeUpdate(u, undefined);
+    const event = (u: any) => backend.normalizeUpdate({ asyncTaskId: "agent-task", ...u }, undefined);
+    expect(event({ sessionUpdate: "async_task_state_update", asyncTaskId: "unrelated", state }).update).toBeUndefined();
+    expect(event({ sessionUpdate: "async_task_spawned", taskType: "agent", name: "plumbing test" }).workflowUpdate).toBeUndefined();
+    const progress = event({ sessionUpdate: "async_task_progress", summary: "Working", usage: { durationMs: 1200, totalTokens: 42 } });
+    expect(progress.update).toMatchObject({ status: "in_progress", rawOutput: { output: "" } });
+    const finished = event({ sessionUpdate: "async_task_state_update", state, summary: "## Report\n\nok" });
+    expect(finished.update).toMatchObject({ toolCallId: "agent-tool", status: state === "stopped" ? "cancelled" : state,
+      rawOutput: { output: "## Report\n\nok" }, _meta: { subagentUsage: { durationMs: 1200, tokens: 42 } } });
+    expect(event({ sessionUpdate: "async_task_progress" }).update.status).toBe(finished.update.status);
+    expect(backend.normalizeUpdate(claudeBackground.launch.at(-1), undefined).update.status).toBe(finished.update.status);
+  });
+
+  it("treats the captured ID-less task wake-up as accounting, never as a card outcome", () => {
+    const backend = new ClaudeBackend();
+    for (const u of claudeBackground.launch) backend.normalizeUpdate(u, undefined);
+    const wake = backend.normalizeUpdate(claudeBackground.wake, undefined);
+    expect(wake.update).toEqual(claudeBackground.wake);
+    expect(wake.workflowUpdate).toBeUndefined();
+    expect(backend.normalizeUpdate(claudeBackground.launch.at(-1), undefined).update.status).toBe("background");
+  });
+
+  it("retains early task completion and accepts a stopped-edge correction with a late summary", () => {
+    const backend = new ClaudeBackend();
+    backend.normalizeUpdate({ sessionUpdate: "async_task_state_update", asyncTaskId: "agent-task", state: "stopped" }, undefined);
+    for (const u of claudeBackground.launch) backend.normalizeUpdate(u, undefined);
+    for (const summary of [undefined, "ok"]) {
+      expect(backend.normalizeUpdate({ sessionUpdate: "async_task_state_update", asyncTaskId: "agent-task", state: "completed", summary }, undefined).update)
+        .toMatchObject({ status: "completed", rawOutput: { output: summary || "" } });
+    }
+  });
+
+  it("replays the receipt and notification without inventing usage or accepting conflicting IDs", () => {
+    const backend = new ClaudeBackend();
+    for (const u of claudeBackground.launch.filter(u => !(u._meta.claudeCode as any).toolResponse)) backend.normalizeUpdate(u, undefined);
+    const wake = (ids: string, result = "<result>ok</result>") => backend.normalizeUpdate({ sessionUpdate: "user_message_chunk",
+      content: { type: "text", text: `<task-notification>${ids}<status>completed</status>${result}</task-notification>` } }, undefined);
+    expect(wake("<task-id>agent-task</task-id><tool-use-id>other-tool</tool-use-id>").update).toBeUndefined();
+    expect(backend.normalizeUpdate(claudeBackground.launch.at(-1), undefined).update.status).toBe("background");
+    const done = wake("<task-id>agent-task</task-id><tool-use-id>agent-tool</tool-use-id>");
+    expect(done).toMatchObject({ notice: "Background task completed.", update: { status: "completed", rawOutput: { output: "ok" } } });
+    expect(done.update._meta.subagentUsage).toEqual({ durationMs: undefined, tokens: undefined });
+  });
+
+  it("strips the captured tool error wrapper from both output channels", () => {
+    const backend = new ClaudeBackend();
+    const result = backend.normalizeUpdate(claudeBackground.failure.at(-1), undefined).update;
+    expect(result.rawOutput.output).toMatch(/^InputValidationError:/);
+    expect(JSON.stringify(result)).not.toContain("tool_use_error");
+  });
+
+  it("pins the installed adapter limitation: local_agent produces no AIR task events", async () => {
+    const require = createRequire(import.meta.url);
+    const manifest = require.resolve("@agentclientprotocol/claude-agent-acp/package.json");
+    const { AsyncTaskRuntime } = await import(new URL("dist/async-tasks.js", pathToFileURL(manifest)).href);
+    const frames: any[] = [];
+    const runtime = new AsyncTaskRuntime(true, "parent", async (frame: any) => { frames.push(frame); });
+    await runtime.taskStarted({ task_id: "agent-task", task_type: "local_agent", is_backgrounded: true });
+    await runtime.taskNotification({ task_id: "agent-task", status: "completed", summary: "ok" });
+    expect(frames).toEqual([]);
+  });
+});
 
 describe("provider delegation normalization boundaries", () => {
   it("projects the installed Muse SDK's real workflow fold, preserving opaque result references", () => {
@@ -119,7 +197,7 @@ describe("provider delegation normalization boundaries", () => {
     expect(progress.slice(1, 6).map(p => p.agents![0].state)).toEqual(["scheduled", "active", "active", "completed", "completed"]);
     expect(progress[3].agents![0].tokensUsed).toBe(16219);
     expect(progress.at(-1)).toMatchObject({ done: true, workflowContent: { pauseMessage: null,
-      resultSummary: 'Returned value:\n\n```json\n{\n  "status": "ok",\n  "a": "alpha",\n  "b": "beta"\n}\n```' } });
+      resultSummary: '````json\n{\n  "status": "ok",\n  "a": "alpha",\n  "b": "beta"\n}\n````' } });
     expect(progress.every(p => p.progress === undefined && p.displayName === undefined)).toBe(true);
   });
 

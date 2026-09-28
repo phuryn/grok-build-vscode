@@ -4948,7 +4948,6 @@ Only continue if you trust this code.`,
     totalUserBubbles?: number,
     session: Session = this.focused,
     requester?: RemoteRequester,
-    chips?: FileChip[],
   ): Promise<void> {
     if (!session.client || !session.activeSessionId) {
       return void this.reportRequester(requester, "warning", "Start a session before editing a message.");
@@ -4969,6 +4968,17 @@ Only continue if you trust this code.`,
       );
     }
     const { client, gen, activeSessionId, userMessageCount } = session;
+    // Capture before rewind truncates the buffer. Webview chips are display
+    // data, never authority to attach a path from the host filesystem.
+    let chips: FileChip[] | undefined;
+    let bubble = userMessageCount;
+    for (let i = session.buffer.length - 1; i >= 0; i--) {
+      const message = session.buffer[i];
+      // Replayed chunks have no host-built chips. Only index the live suffix.
+      if (message.type === "userMessageChunk") break;
+      if (message.type !== "userMessage" || message.steer) continue;
+      if (--bubble === userBubbleIndex) { chips = message.chips?.map(chip => ({ ...chip })); break; }
+    }
     try {
       const points = await client.listRewindPoints();
       if (points === "unsupported") {
@@ -11562,7 +11572,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         break;
       }
       case "editLastMessage":
-        await this.editLastMessage(msg.userBubbleIndex, msg.text, msg.totalUserBubbles, session, requester, msg.chips);
+        await this.editLastMessage(msg.userBubbleIndex, msg.text, msg.totalUserBubbles, session, requester);
         break;
       case "workflowControl":
         await this.controlWorkflow(msg.action, msg.displayName, session);

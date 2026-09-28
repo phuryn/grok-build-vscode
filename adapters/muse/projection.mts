@@ -23,9 +23,9 @@ function workflowUpdate(item: Record<string, any>): Record<string, any> | undefi
   if (typeof summary === "string") {
     try {
       // Muse's entire returned value is output, including arbitrary JSON.
-      // Present it as Markdown before the shared Grok summary filter, which
-      // intentionally omits JSON without a known human-facing field.
-      summary = `Returned value:\n\n\`\`\`json\n${JSON.stringify(JSON.parse(summary), null, 2)}\n\`\`\``;
+      // Four backticks mark our validated JSON; the shared renderer suppresses
+      // three-backtick CLI envelopes that may have been truncated.
+      summary = "````json\n" + JSON.stringify(JSON.parse(summary), null, 2).replace(/`/g, "\\u0060") + "\n````";
     } catch { /* Already prose or Markdown. */ }
   }
   const children = Array.isArray(item.children) ? item.children : [];

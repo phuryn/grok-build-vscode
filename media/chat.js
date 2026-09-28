@@ -13822,9 +13822,10 @@
 
   function refreshSubagentCard(el) {
     const done = el.classList.contains("subagent-done");
+    const background = el.classList.contains("subagent-background");
     el.querySelector(".subagent-status").textContent = el.classList.contains("subagent-failed") ? "failed"
-      : el.classList.contains("subagent-cancelled") ? "stopped" : done ? "done" : "running";
-    const ms = done ? el._subagentDurationMs : el._liveStartedAt != null ? Date.now() - el._liveStartedAt : el._subagentDurationMs;
+      : el.classList.contains("subagent-cancelled") ? "stopped" : done ? "done" : background ? "in background" : "running";
+    const ms = background ? undefined : done ? el._subagentDurationMs : el._liveStartedAt != null ? Date.now() - el._liveStartedAt : el._subagentDurationMs;
     const time = el.querySelector(".subagent-time");
     time.hidden = !Number.isFinite(ms);
     time.textContent = time.hidden ? "" : workflowElapsed(ms);
@@ -13834,12 +13835,13 @@
   }
 
   function observeSubagentLive(el) {
-    if (state.replaying || el.classList.contains("subagent-done") || el._liveStartedAt != null) return;
+    if (state.replaying || el.classList.contains("subagent-done") || el.classList.contains("subagent-background") || el._liveStartedAt != null) return;
     el._liveStartedAt = Date.now();
     if (!workflowAgeTimer) workflowAgeTimer = setInterval(refreshWorkflowAges, 1000);
   }
 
   function finishSubagentCard(el, info) {
+    el.classList.remove("subagent-background");
     if (!el.classList.contains("subagent-done")) {
       flushChildStream(el);
       if (el._liveStartedAt != null) el._subagentDurationMs = Date.now() - el._liveStartedAt;
@@ -14065,6 +14067,9 @@
     if (typeof usage?.durationMs === "number") el._subagentDurationMs = usage.durationMs;
     if (typeof usage?.tokens === "number") el._subagentTokens = usage.tokens;
     const status = String(call?.status || "").toLowerCase();
+    el.classList.toggle("subagent-background", status === "background");
+    // A launch receipt says nothing about elapsed work or its eventual outcome.
+    if (status === "background") el._liveStartedAt = null;
     const finished = status === "completed" || status === "failed" || status === "cancelled" ||
       (out && out.type === "SubagentCompleted");
     if (!finished) { observeSubagentLive(el); refreshSubagentCard(el); return; }
@@ -14083,6 +14088,11 @@
       if (ackId && !el.dataset.subagentId) el.dataset.subagentId = ackId[1];
       observeSubagentLive(el);
       return;
+    }
+    // A provider can correct a provisional stopped edge with its final outcome.
+    if (call?._meta?.subagentStatusAuthoritative === true) {
+      el.classList.toggle("subagent-failed", status === "failed");
+      el.classList.toggle("subagent-cancelled", status === "cancelled");
     }
     // Thread the failure/cancel through the tool-channel path too — not just the
     // lifecycle rail — since the tool-channel completion is the common ordering.

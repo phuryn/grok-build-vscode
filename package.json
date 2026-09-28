@@ -536,7 +536,6 @@
     "desktop-dev": "npm run compile && node scripts/run-desktop.cjs --relay-dev --open-devtools --remote-debugging-port=9333",
     "test:desktop": "npm run compile && vitest run --config vitest.desktop.config.ts",
     "e2e:composer": "node scripts/composer-layout-check.mjs",
-    "e2e:workflow-header": "node scripts/workflow-header-check.mjs",
     "e2e:screens": "npm run compile && node scripts/desk-screens-check.mjs",
     "e2e:open-timing": "npm run compile && node scripts/open-timing-check.mjs",
     "e2e:hc-colour": "node scripts/hc-colour-screens.mjs",

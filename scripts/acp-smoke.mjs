@@ -23,7 +23,7 @@ import * as path from "node:path";
 import { createInterface } from "node:readline";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
-import { smokeOutcome } from "./smoke-render-report.mjs";
+import { smokeOutcome, hasClaudeAgentReceipt } from "./smoke-render-report.mjs";
 
 const require = createRequire(import.meta.url);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -138,6 +138,7 @@ export function delegationAttempted(frames, kind) {
 
 /** Consume normalized parent cards and only the child stream belonging to that card. */
 export function checkSubagents(frames, sessionId, isSubagentToolCall) {
+  assert(!frames.some(f => hasClaudeAgentReceipt(f.update)), "Claude launch receipt is not a subagent result or reply");
   const calls = new Map();
   for (const frame of frames.filter(f => f.sessionId === sessionId)) {
     const u = frame.update;
@@ -153,16 +154,26 @@ export function checkSubagents(frames, sessionId, isSubagentToolCall) {
     assert(!delegationAttempted(frames, "subagent"), "delegation wire evidence produced no normalized subagent card");
     throw inconclusive("MODEL_DID_NOT_DELEGATE", "model did not delegate; no subagent launch observed (no retry)");
   }
+  let backgroundCount = 0;
   for (const call of calls.values()) {
-    assert.equal(call.status, "completed", `subagent ${call.toolCallId} did not complete successfully`);
     const output = typeof call.rawOutput === "string" ? call.rawOutput : call.rawOutput?.output;
-    const content = (call.content ?? []).some(b => nonempty(b.content?.text));
+    // A launch receipt proves only that the task started. It cannot satisfy
+    // the result check if a later completion edge has no summary.
+    const background = frames.some(f => f.sessionId === sessionId && f.raw?.toolCallId === call.toolCallId
+      && (f.raw?._meta?.claudeCode?.toolResponse?.isAsync === true || hasClaudeAgentReceipt(f.raw)));
+    if (background && call.status === "background") {
+      assert(!nonempty(output) && !(call.content ?? []).some(b => nonempty(b.content?.text)), "background subagent has an unexpected result");
+      backgroundCount++;
+      continue;
+    }
+    assert.equal(call.status, "completed", `subagent ${call.toolCallId} did not complete successfully`);
+    const content = !background && (call.content ?? []).some(b => nonempty(b.content?.text));
     const child = call.child_session_id;
     const childOutput = nonempty(child) && frames.some(f => f.sessionId === child
       && f.update?.sessionUpdate === "agent_message_chunk" && nonempty(f.update.content?.text));
     assert(nonempty(output) || content || childOutput, `subagent ${call.toolCallId} has no non-empty normalized result/child output`);
   }
-  return `${calls.size} normalized subagent card(s), completed with non-empty result`;
+  return `${calls.size} normalized subagent card(s): ${backgroundCount} in background (completion not reported), ${calls.size - backgroundCount} completed with non-empty result`;
 }
 
 /** All snapshots are parsed by the shipped parseRunProgressUpdate before this check. */

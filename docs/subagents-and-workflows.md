@@ -24,7 +24,7 @@ remotely, so all of them draw the same cards.
 
 ## What each CLI sends
 
-The behaviour below was measured on 2026-09-26 with these versions. Newer
+The behaviour below was measured on 2026-09-26–27 with these versions. Newer
 releases can change it; the probe under [How to verify](#how-to-verify)
 re-measures it.
 
@@ -57,16 +57,16 @@ subagent items, but none were sent.)
 
 | | Grok | Codex | Claude Code |
 |---|---|---|---|
-| **Starts with** | a `spawn_subagent` tool call (`Task` on Grok's Composer agent), in the foreground or the background | `subagent_spawned` on the parent session | an `Agent` tool call marked `_meta.claudeCode.subagent: true`; in the capture it held the turn until the child finished |
-| **Lifecycle** | `subagent_spawned` and `subagent_finished` on `_x.ai/session_notification` | `subagent_state_update` | the tool call's own updates, with `toolResponse` metadata at the end |
+| **Starts with** | a `spawn_subagent` tool call (`Task` on Grok's Composer agent), in the foreground or the background | `subagent_spawned` on the parent session | an `Agent` tool call marked `_meta.claudeCode.subagent: true`, foreground or background |
+| **Lifecycle** | `subagent_spawned` and `subagent_finished` on `_x.ai/session_notification` | `subagent_state_update`; disconnected children show stopped | foreground tool updates; a background receipt settles as “in background”; ID-correlated task events or notifications supply any later outcome |
 | **Child's own output, live** | yes, on the child's own `sessionId`: thinking, tool calls, prose | yes, on the child's own `sessionId` | no |
 | **Card name** | the task description | the agent's name (the adapter's task text is a placeholder, not the child's prompt) | the task description |
 | **Open while running** | Activity: the child's thinking, tool rows and prose | Activity | nothing yet, so no chevron |
-| **Result** | from `subagent_finished`, the tool's completion, or for a background run the `get_command_or_subagent_output` result | the child's last message | the hand-back text, with its envelope removed |
-| **Time** | reported (`duration_ms`) | not reported; the app measures it while it watches live | reported |
+| **Result** | from `subagent_finished`, the tool's completion, or for a background run the `get_command_or_subagent_output` result | the child's last message | cleaned foreground hand-back, or the background task's summary/result when supplied; never the launch receipt |
+| **Time** | reported (`duration_ms`) | not reported; the app measures it while it watches live | reported, or measured while observing live work; no clock for “in background” |
 | **Tokens** | `tokens_used`, at the finish only | not reported | reported, at the finish only |
 | **Controls** | none | none | none |
-| **After reopening** | the card, result and time rebuild from the replayed tool call and lifecycle; the child's activity is not replayed | everything comes back, including the child's activity; no time | the card, result, time and tokens (read from the hand-back's usage trailer); no activity |
+| **After reopening** | the card, result and time rebuild from the replayed tool call and lifecycle; the child's activity is not replayed | everything comes back, including the child's activity; no time | foreground hand-back restores result and usage; a background task notification restores only its reported outcome/result, with no invented usage or time |
 
 Notes:
 
@@ -81,6 +81,19 @@ Notes:
   adapter's, not ours.
 - Claude's child activity would need native subagent sessions, which the
   extension leaves off for the reason in the table above.
+- Claude adapter 0.76.0 excludes `local_agent` from its AIR task runtime even
+  with `asyncTasks` enabled. The September 27 background capture contains a
+  receipt and a parent reply, but no subagent task event. The receipt settles
+  the card as **in background**, with no clock, staleness warning, result or
+  empty chevron, on desk, phone and reopen. The answer arrives in Claude's
+  reply. The wake-up's `usage_update` has `_claude/origin.kind` equal to
+  `task-notification`, but no task ID; workflows use the same marker, so it
+  cannot identify a card or finish it. The host maps `async_task_*` events
+  when supplied and `<task-notification>` on replay by task/tool ID. An
+  observed outcome supplies done, failed or stopped, its result and any
+  reported duration/tokens. The smoke accepts a foreground hand-back or an
+  honest “in background” card; receipt text anywhere and done without a
+  result fail. The expected live desktop case on this adapter is “in background”.
 
 ### Workflows
 
@@ -139,8 +152,8 @@ Notes:
 
 Grok workflows, Claude's `Workflow` and Muse's `workflow` all end the prompt
 first and deliver their answer later, in a turn the client never started.
-Codex's `wait` and Claude's `Agent` (in the capture) hold the turn open
-instead.
+Codex's `wait` and Claude's foreground `Agent` hold the turn open instead.
+Claude's background `Agent` can also deliver a later follow-up.
 
 The host keeps routing session updates after a prompt has returned, so the
 late answer appears once, as an ordinary reply, with no busy indicator and no
@@ -162,7 +175,7 @@ so a phone mirrors exactly what the desk shows.
 
 | Card | Fed by | Provider mapping |
 |---|---|---|
-| Subagent card | a `toolCall` that `isSubagentToolCall` recognizes, then `toolCallUpdate`, `subagentUpdate` (lifecycle) and `childStream` (the child's output) | Grok is native. `normalizeCodexUpdate` turns Codex's `subagent_spawned` and `subagent_state_update` into a synthetic tool call `codex-subagent:<child id>`, tagged with the child's session, so the existing card and child routing apply. `normalizeClaudeUpdate` moves duration, tokens and the cleaned hand-back onto Claude's tool update. |
+| Subagent card | a `toolCall` that `isSubagentToolCall` recognizes, then `toolCallUpdate`, `subagentUpdate` (lifecycle) and `childStream` (the child's output) | Grok is native. `normalizeCodexUpdate` turns Codex's `subagent_spawned` and `subagent_state_update` into a synthetic tool call `codex-subagent:<child id>`, tagged with the child's session. `normalizeClaudeUpdate` cleans hand-backs/errors, hides async receipts and maps ID-correlated task outcomes and reported usage onto the original tool update. |
 | Workflow card | `runProgress`, whose payload is the `RunProgressUpdate` from `parseRunProgressUpdate` | Grok's `workflow_updated` is parsed directly. Claude's receipts and task events (`ClaudeWorkflows`) and Muse's snapshots are rewritten as Grok-shaped `workflow_updated` frames in `BackendUpdate.workflowUpdate` and go through the same parser. |
 
 The only provider-specific flags on a workflow are additive:
@@ -187,9 +200,10 @@ conversation stopped showing its history.
   The earlier workflow card said everything it knew, all the time: on a phone
   the same run was drawn three times and the pinned copy took half the
   screen. Nothing appears under a header until it is opened, and a card with
-  nothing inside yet (a running Claude subagent) has no chevron.
+  nothing inside yet (a Claude subagent in background) has no chevron.
 - **The same status words everywhere:** running, paused, done, failed,
-  stopped. Internal labels such as "final workflow update" and "No agents
+  stopped, in background. “In background” means a launch was reported but no
+  task outcome was observed. Internal labels such as "final workflow update" and "No agents
   reported" are gone.
 - **Tokens inside the card, and only when there is something to count.** The
   header says what the run is, whether it is running and for how long. A workflow
@@ -208,7 +222,8 @@ conversation stopped showing its history.
   there is one, and the app's own measurement only while it watches the run
   live; a reopened conversation shows the provider's time or none, never an
   invented one. A running workflow with no new frame for two minutes says "no
-  update for 2 min".
+  update for 2 min". A settled “in background” subagent has neither a clock
+  nor a staleness warning; it makes no claim that work is still running.
 - **At most three dots in a long workflow's header.** Eight dots crowded the
   header, most of all on a phone. Up to four steps, every dot shows. Past
   four, it shows three: the current step (else a failed one, else the first
@@ -333,8 +348,9 @@ shows every card closed and opened, with its header, steps, agents, result,
 copy control and token line; `render-report.json` has the untruncated text,
 and `desktop-wire.jsonl` the real messages. A model that declines to delegate
 is reported as INCONCLUSIVE, not as a pass. A person reads the render report
-before shipping: the scripts check that a card exists and finished, not that
-it reads well. See [TESTS.md](../TESTS.md) for every assertion and for
+before shipping: the scripts check that a card exists and finished, or that
+Claude's background launch settled honestly without claiming an outcome.
+A person still judges whether it reads well. See [TESTS.md](../TESTS.md) for every assertion and for
 `npm run smoke:render`, which reruns only the desktop part.
 
 **When a CLI changes,** rerun the capture probe and compare with

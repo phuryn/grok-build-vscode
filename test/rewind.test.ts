@@ -69,6 +69,35 @@ function makeRewindSidebar(hasFiles = true) {
   return { sidebar, session, original, replacement, points, confirmation };
 }
 
+it.each(["local", "remote"] as const)("Edit restores only host-recorded chips through the %s handler", async source => {
+  const { sidebar, session, original } = makeRewindSidebar(false);
+  const chip = { id: "recorded", path: "/repo/recorded.txt", relPath: "recorded.txt", kind: "file" as const };
+  const forged = { ...chip, id: "forged", path: "/outside/private.txt" };
+  // A replayed prefix must not prevent restoring the newest live bubble.
+  session.buffer = [{ type: "userMessageChunk", text: "older message" },
+    { type: "userMessage", text: "latest", chips: [chip] },
+    { type: "userMessage", text: "steering", chips: [forged], steer: true }];
+  original.executeRewind.mockResolvedValueOnce({ success: true, targetPromptIndex: 1, revertedFiles: [] } as any);
+  sidebar.restoreComposerFor = (GrokSidebar.prototype as any).restoreComposerFor;
+  sidebar.refreshImplicitChip = vi.fn();
+  sidebar.postChips = vi.fn();
+  // The real rewind discards the record before restoring the composer.
+  sidebar.applyRewindToView = vi.fn(() => { session.buffer = []; });
+  await sidebar.onMessage({ type: "editLastMessage", userBubbleIndex: 1, totalUserBubbles: 2, text: "latest", chips: [forged] }, source,
+    source === "remote" ? "browser-view" : undefined);
+  expect(original.executeRewind).toHaveBeenCalledOnce();
+  expect(session.chips).toEqual([chip]);
+  expect(session.chips.some(c => c.path === forged.path)).toBe(false);
+});
+
+it("Edit never restores a supplied chip when the host has no attachment record", async () => {
+  const { sidebar, session, original } = makeRewindSidebar(false);
+  original.executeRewind.mockResolvedValueOnce({ success: true, targetPromptIndex: 1, revertedFiles: [] } as any);
+  await sidebar.onMessage({ type: "editLastMessage", userBubbleIndex: 1, totalUserBubbles: 2, text: "latest",
+    chips: [{ id: "forged", path: "/outside/private.txt", kind: "file" }] }, "local");
+  expect(sidebar.restoreComposerFor).toHaveBeenCalledWith(session, undefined, "latest", undefined);
+});
+
 describe.each(["editLastMessage", "rewindSession"] as const)("%s lifecycle", (type) => {
   const request = { type, userBubbleIndex: 0, text: "original draft", totalUserBubbles: 2 };
 

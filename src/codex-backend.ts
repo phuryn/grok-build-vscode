@@ -155,7 +155,7 @@ export function normalizeCodexUpdate(update: any, meta?: any): BackendUpdate {
       sessionUpdate: "tool_call_update", toolCallId: `codex-subagent:${childId}`,
       status: update.state === "completed" ? "completed"
         : update.state === "failed" ? "failed"
-        : update.state === "cancelled" || update.state === "stopped" ? "cancelled" : "in_progress",
+        : ["cancelled", "stopped", "disconnected"].includes(update.state) ? "cancelled" : "in_progress",
     } };
   }
   if (update.sessionUpdate === "session_info_update") {

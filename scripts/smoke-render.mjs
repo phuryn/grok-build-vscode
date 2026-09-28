@@ -202,7 +202,7 @@ export async function runRenderSmoke(provider, evidenceParent, cliOverride, sele
           const current = await snapshot();
           if (!delegationAttempted(frames, name) && !current.cards.some(c => c.kind === name)) {
             Object.assign(scenario, { result: "INCONCLUSIVE", reason: "model did not delegate (no retry); inspect wire and reply" });
-          } else await waitPage(async () => { const s = await snapshot(); const cards = s.cards.filter(c => c.kind === name); return cards.length && cards.every(c => c.terminal); }, `${name} rendered terminal card`, workflowMs);
+          } else await waitPage(async () => { const s = await snapshot(); const cards = s.cards.filter(c => c.kind === name); return cards.length && cards.every(c => c.terminal || (provider === "claude" && c.kind === "subagent" && c.settled && c.header.status === "in background")); }, `${name} rendered settled card`, workflowMs);
         }
         // Flush actual renderer frame coalescing before reading the answer.
         await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
@@ -241,7 +241,7 @@ export async function runRenderSmoke(provider, evidenceParent, cliOverride, sele
   } finally {
     if (app) {
       try {
-        const cleanup = await closeDesktop(app, proc, { budgetMs: cleanupMs,
+        const cleanup = await closeDesktop(app, proc, { budgetMs: cleanupMs, provider,
           record: (direction, message) => fs.appendFileSync(path.join(output, "desktop-wire.jsonl"), JSON.stringify({ at: new Date().toISOString(), direction, message }) + "\n") });
         report.cleanup = cleanup;
         report.scenarios.push(cleanup);

@@ -501,6 +501,15 @@ replay otherwise has only the receipt and ID-correlated notification; the XML wa
 follow child states; opaque workflow result references have no supported
 resolver in the installed SDK. [Adapter audit](../../research/live-workflow-follow-up.md). [Captured shapes and normalization](../../research/subagent-workflow-shapes.md#client-mappings).
 
+Claude adapter 0.76.0's `AsyncTaskRuntime` explicitly ignores `local_agent`.
+The 2026-09-27 desktop capture has an asynchronous `Agent` receipt and a parent
+follow-up, but no task lifecycle for that agent ID. The client now hides the
+receipt, settles the card as “in background” with no clock or result, and accepts
+ID-correlated task events or replay notifications when available. The wake-up's
+ID-less `_claude/origin: task-notification` usage marker cannot finish a card.
+Upstream needs to expose background Agent
+outcomes with native subagent sessions disabled; enabling those loses replay.
+
 **Ask:** persist resolved interactions across `session/load`; make a background "completed" mean
 completed; stop duplicating structured output in text; do not push a child session's updates down the
 parent's connection; and document the `_x.ai/session_notification` lifecycle kinds, including the new

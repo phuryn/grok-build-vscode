@@ -11,20 +11,30 @@ import { OUTBOUND_DISPOSITION, OUTBOUND_PROJECT_AUTH, transformHostMsgForRemote 
 import { Projection } from "../adapters/muse/projection.mts";
 import { bootWebview, dispatch, type Harness } from "./webview-harness";
 import claudeAsyncWire from "./fixtures/claude-async-workflow.json";
+import claudeBackground from "./fixtures/claude-background-subagent.json";
 
 // Whitelisted fields from the 2026-09-26 captures. IDs and paths are neutral;
 // the fixtures never include the original machine metadata or skill catalog.
 const fixtures = JSON.parse(readFileSync(new URL("fixtures/provider-delegation.json", import.meta.url), "utf8"));
 const windows: Harness["window"][] = [];
 afterEach(() => { for (const window of windows.splice(0)) window.happyDOM.abort(); });
-function view() {
-  const h = bootWebview();
+function view(remote = false) {
+  let now = 100_000;
+  const ticks: (() => void)[] = [];
+  const h = bootWebview({ remote, beforeScripts(window) {
+    (window as any).Date = class extends window.Date { static now() { return now; } };
+    const interval = window.setInterval.bind(window);
+    window.setInterval = ((fn: () => void, ms: number) => {
+      if (ms === 1000) { ticks.push(fn); return 123; }
+      return interval(fn, ms);
+    }) as any;
+  } });
   windows.push(h.window);
-  return h;
+  return { ...h, tick(ms: number) { now += ms; for (const fn of ticks) fn(); } };
 }
 const backends = [grokBackend, new CodexBackend(), new ClaudeBackend(), new MuseBackend()];
 function setup(provider: string, parent = "parent") {
-  const desk = view(), phone = view();
+  const desk = view(), phone = view(true);
   let replaying = false;
   const buffer: any[] = [];
   const client = new AcpClient({ cliPath: "unused", cwd: "/example", log: () => {},
@@ -66,6 +76,124 @@ function setup(provider: string, parent = "parent") {
   };
 }
 const frame = (h: Harness) => new Promise<void>(resolve => h.window.requestAnimationFrame(() => resolve()));
+
+it.each(["completed", "failed", "stopped"])("Claude background %s reaches desk, phone and buffered reopen without its receipt", state => {
+  const s = setup("claude");
+  for (const u of claudeBackground.launch) s.accept(u);
+  for (const h of [s.desk, s.phone, s.reopen()]) {
+    expect(h.doc.querySelector(".subagent-status")?.textContent).toBe("in background");
+    expect(h.doc.querySelector(".subagent-result-body")).toBeNull();
+    expect(h.doc.querySelector("#messages")?.textContent).not.toMatch(/Async agent|agent-task|output_file/);
+  }
+  expect(s.desk.doc.querySelector(".subagent-time")?.textContent).toBe("");
+  s.accept({ sessionUpdate: "async_task_progress", asyncTaskId: "agent-task", usage: { durationMs: 2300, totalTokens: 42 } });
+  s.accept({ sessionUpdate: "async_task_state_update", asyncTaskId: "agent-task", state, summary: "## Result\n\nok" });
+  for (const h of [s.desk, s.phone, s.reopen()]) {
+    expect(h.doc.querySelector(".subagent-status")?.textContent).toBe(state === "completed" ? "done" : state);
+    expect(h.doc.querySelector(".subagent-result-body h2")?.textContent).toBe("Result");
+    expect(h.doc.querySelector(".subagent-time")?.textContent).toBe("0:02");
+    expect(h.doc.querySelector(".delegation-meta")?.textContent).toContain("42");
+  }
+});
+
+it.each(["completed", "failed", "stopped"])("Claude cold reopen uses only the task notification's %s outcome", state => {
+  const s = setup("claude");
+  s.emit({ type: "historyReplay", active: true });
+  for (const u of claudeBackground.launch.filter(u => !(u._meta.claudeCode as any).toolResponse)) s.accept(u);
+  s.accept({ sessionUpdate: "user_message_chunk", content: { type: "text", text:
+    `<task-notification><task-id>agent-task</task-id><tool-use-id>agent-tool</tool-use-id><status>${state}</status><result>ok</result></task-notification>` } });
+  s.emit({ type: "historyReplay", active: false });
+  for (const h of [s.desk, s.phone, s.reopen()]) {
+    expect(h.doc.querySelector(".subagent-status")?.textContent).toBe(state === "completed" ? "done" : state);
+    expect(h.doc.querySelector(".subagent-result-body")?.textContent).toBe("ok");
+    expect(h.doc.querySelector(".subagent-time")?.textContent).toBe("");
+    expect(h.doc.querySelector(".delegation-meta")?.textContent).toBe("");
+    expect(h.doc.querySelector("#messages")?.textContent).not.toMatch(/Async agent|task-notification|agent-task/);
+  }
+});
+
+it("Claude's captured failure renders its message without the tool error wrapper", () => {
+  const s = setup("claude");
+  for (const u of claudeBackground.failure) s.accept(u);
+  for (const h of [s.desk, s.phone, s.reopen()]) {
+    expect(h.doc.querySelector(".subagent-status")?.textContent).toBe("failed");
+    expect(h.doc.querySelector(".subagent-result-body")?.textContent).toContain("InputValidationError:");
+    expect(h.doc.querySelector("#messages")?.textContent).not.toContain("tool_use_error");
+  }
+});
+
+it("Claude corrects a provisional stop and retains the result across late receipts", () => {
+  const s = setup("claude");
+  for (const u of claudeBackground.launch) s.accept(u);
+  s.accept({ sessionUpdate: "async_task_state_update", asyncTaskId: "agent-task", state: "stopped" });
+  s.accept({ sessionUpdate: "async_task_state_update", asyncTaskId: "agent-task", state: "completed", summary: "ok" });
+  s.accept(claudeBackground.launch.at(-1));
+  for (const h of [s.desk, s.phone, s.reopen()]) {
+    expect(h.doc.querySelector(".subagent-status")?.textContent).toBe("done");
+    expect(h.doc.querySelector(".subagent-result-body")?.textContent).toBe("ok");
+  }
+});
+
+it("Claude cold reopen without a task outcome settles in background with no invented clock", () => {
+  const s = setup("claude");
+  s.emit({ type: "historyReplay", active: true });
+  for (const u of claudeBackground.launch.filter(u => !(u._meta.claudeCode as any).toolResponse)) s.accept(u);
+  s.emit({ type: "historyReplay", active: false });
+  for (const h of [s.desk, s.phone, s.reopen()]) {
+    h.tick(300_000);
+    expect(h.doc.querySelector(".subagent-status")?.textContent).toBe("in background");
+    expect(h.doc.querySelector(".subagent-time")?.textContent).toBe("");
+    expect(h.doc.querySelector(".subagent-result-body")).toBeNull();
+    expect(h.doc.querySelector(".subagent-row .delegation-chevron")).toBeNull();
+  }
+});
+
+it("Claude's ID-less wake-up and reply leave same-named background cards settled on desk, phone and reopen", async () => {
+  const s = setup("claude");
+  for (const id of ["agent", "other"]) for (const u of claudeBackground.launch) {
+    s.accept(JSON.parse(JSON.stringify(u).replaceAll("agent-tool", `${id}-tool`).replaceAll("agent-task", `${id}-task`)));
+  }
+  s.accept(claudeBackground.wake);
+  s.accept({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Agent returned: ok" } });
+  for (const h of [s.desk, s.phone, s.reopen()]) {
+    h.tick(300_000);
+    await frame(h);
+    const cards = [...h.doc.querySelectorAll(".subagent-card")];
+    expect(cards).toHaveLength(2);
+    for (const card of cards) {
+      expect(card.classList.contains("subagent-done")).toBe(false);
+      expect((card as any)._liveStartedAt == null).toBe(true);
+      expect(card.querySelector(".subagent-status")?.textContent).toBe("in background");
+      expect(card.querySelector(".subagent-time")?.textContent).toBe("");
+      expect(card.querySelector(".subagent-time")?.hasAttribute("hidden")).toBe(true);
+      expect(card.querySelector(".subagent-result-body, .delegation-chevron")).toBeNull();
+    }
+    expect(h.doc.querySelector("#messages")?.textContent).toContain("Agent returned: ok");
+    expect(h.doc.querySelector("#messages")?.textContent).not.toMatch(/Async agent|internal metadata|no update|task-notification/);
+  }
+  // An actual task ID finishes only its own card, without timing the unknown wait.
+  s.accept({ sessionUpdate: "async_task_state_update", asyncTaskId: "agent-task", state: "completed", summary: "ok" });
+  for (const h of [s.desk, s.phone, s.reopen()]) {
+    expect([...h.doc.querySelectorAll(".subagent-status")].map(el => el.textContent)).toEqual(["done", "in background"]);
+    expect([...h.doc.querySelectorAll(".subagent-time")].map(el => el.textContent)).toEqual(["", ""]);
+  }
+});
+
+it("Codex replay stops a disconnected child instead of leaving it running", async () => {
+  const s = setup("codex");
+  s.emit({ type: "historyReplay", active: true });
+  (s.client as any).request = async () => {
+    s.accept({ sessionUpdate: "subagent_spawned", subagentSessionId: "unfinished", name: "Check" });
+    s.accept({ sessionUpdate: "subagent_state_update", subagentSessionId: "unfinished", state: "disconnected" });
+    return {};
+  };
+  await s.client.loadSession("parent");
+  s.emit({ type: "historyReplay", active: false });
+  for (const h of [s.desk, s.phone, s.reopen()]) {
+    expect(h.doc.querySelector(".subagent-status")?.textContent).toBe("stopped");
+    expect(h.doc.querySelector(".subagent-time")?.textContent).toBe("");
+  }
+});
 
 it("shows every Claude script phase from launch on desk and phone, with sanitized titles", () => {
   const s = setup("claude");
@@ -193,6 +321,7 @@ describe("provider delegation through the existing presentation wire", () => {
       expect([...h.doc.querySelectorAll(".workflow-report-dots .workflow-dot")].map(dot => (dot as HTMLElement).dataset.state)).toEqual(["done", "done"]);
       expect(h.doc.querySelector(".workflow-output-body")?.textContent).toMatch(/alpha[\s\S]*beta/);
       expect(h.doc.querySelector(".workflow-output-body code")?.textContent).toContain('"status": "ok"');
+      expect(h.doc.querySelector(".workflow-output-body")?.textContent).not.toContain("Returned value:");
       expect(h.doc.querySelector(".workflow-pin")).toBeNull();
       expect(h.doc.querySelectorAll(".run-progress-btn")).toHaveLength(0);
     }

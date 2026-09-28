@@ -181,6 +181,8 @@ export function smokeOutcome(rows, failed = false) {
   return { status: rows.some(r => r.result === "NOT RUN") ? "PARTIAL" : "PASS", exitCode: 0 };
 }
 
+export const hasClaudeAgentReceipt = value => /Async agent launched successfully\.|This tool result is internal metadata/.test(JSON.stringify(value) ?? "");
+
 function grokWorkflowResultRequired(raw) {
   // The supported format contract in media/chat.js workflowOutputText. Keep
   // this independent of renderer execution: a renderer regression that drops
@@ -204,13 +206,14 @@ export function cardResultEvidence(cards, events, { provider } = {}) {
   const text = value => typeof value === "string" ? value : Array.isArray(value)
     ? value.map(v => text(v?.content ?? v?.text)).join("\n") : "";
   const results = new Set(), workflows = new Map(), subagents = new Map(), children = new Map();
-  const renderableWorkflows = new Set();
+  const renderableWorkflows = new Set(), backgroundAgents = new Set();
   const updates = events.filter(e => ["receive", "acp-receive"].includes(e.direction))
     .map(e => e.message?.params?.update).filter(Boolean);
   // Link Claude's task and tool IDs to its rendered run ID, including late receipts.
   for (const u of updates) {
     const receipt = u._meta?.claudeCode?.toolResponse;
     if (receipt?.runId) for (const id of [receipt.taskId, u.toolCallId]) if (id) workflows.set(id, receipt.runId);
+    if (provider === "claude" && u.toolCallId && (receipt?.isAsync === true || receipt?.status === "async_launched" || hasClaudeAgentReceipt(u))) backgroundAgents.add(u.toolCallId);
   }
   for (const u of updates) {
     const w = u._meta?.["muse/workflow"] ?? u;
@@ -227,7 +230,7 @@ export function cardResultEvidence(cards, events, { provider } = {}) {
     if (u.toolCallId && (u.rawOutput !== undefined || ["completed", "failed", "cancelled"].includes(u.status))) {
       const out = u.rawOutput;
       const output = text(out?.output ?? out?.text ?? out) || text(u.content);
-      if (nonempty(output) && !/^subagent started in background\b/i.test(output.trim())) results.add(`tool:${u.toolCallId}`);
+      if (nonempty(output) && !hasClaudeAgentReceipt(output) && !/^subagent started in background\b/i.test(output.trim())) results.add(`tool:${u.toolCallId}`);
     }
     if (u.subagent_id && nonempty(u.output)) results.add(`child:${u.subagent_id}`);
   }
@@ -247,7 +250,7 @@ export function cardResultEvidence(cards, events, { provider } = {}) {
       if (subagents.has(call.toolCallId) && (call.rawOutput !== undefined || ["completed", "failed", "cancelled"].includes(call.status))) {
         const out = call.rawOutput;
         const output = text(out?.output ?? out?.text ?? out) || text(call.content);
-        if (nonempty(output) && !/^subagent started in background\b/i.test(output.trim())) subagents.set(call.toolCallId, true);
+        if (nonempty(output) && !hasClaudeAgentReceipt(output) && !/^subagent started in background\b/i.test(output.trim())) subagents.set(call.toolCallId, true);
       }
     }
     if (m?.type === "childStream" && m.event === "messageChunk" && nonempty(m.text)) {
@@ -260,9 +263,10 @@ export function cardResultEvidence(cards, events, { provider } = {}) {
     const reported = card.kind === "workflow" ? results.has(`workflow:${card.id}`)
       : !!entry?.[1] || results.has(`tool:${entry?.[0]}`) || results.has(`child:${card.childSessionId ?? children.get(entry?.[0])}`);
     const deferred = reported && provider === "grok" && card.kind === "workflow" && !renderableWorkflows.has(`workflow:${card.id}`);
-    return { id: card.id ?? entry?.[0] ?? null, kind: card.kind, reported, required: reported && !deferred,
+    const background = card.kind === "subagent" && backgroundAgents.has(entry?.[0]);
+    return { id: card.id ?? entry?.[0] ?? null, kind: card.kind, reported, required: reported && !deferred, background,
       reason: deferred ? "provider reported a result outside the current workflow card format (media/chat.js workflowOutputText); known structured-result backlog, not a smoke failure"
-        : reported ? "result reported by the provider" : "no result reported by the provider" };
+        : reported ? "result reported by the provider" : background ? "started in background; completion not reported by the adapter" : "no result reported by the provider" };
   });
 }
 
@@ -293,6 +297,7 @@ export function readRenderedChat(doc = document) {
       childSessionId: el.getAttribute("data-child-session-id"),
       kind: el.classList.contains("subagent-card") ? "subagent" : "workflow",
       terminal: el.classList.contains("subagent-done") || el.classList.contains("run-progress-done"),
+      settled: el.classList.contains("subagent-done") || el.classList.contains("run-progress-done") || el.classList.contains("subagent-background"),
       header: { text: text(header), iconKind: field(header, ".delegation-kind"), iconPresent: !!header?.querySelector(".delegation-icon svg"),
         name: field(header, ".delegation-name"), status: field(header, ".delegation-status"), time: field(header, ".delegation-time"),
         dots: [...(header?.querySelectorAll(".workflow-dot, .blink-dots") ?? [])].map(dot => ({ text: text(dot), title: dot.getAttribute("title"), state: dot.getAttribute("data-state") || dot.className })),
@@ -304,20 +309,28 @@ export function readRenderedChat(doc = document) {
     };
   });
   const replies = [...doc.querySelectorAll("#messages .msg.agent .body")].map(text).filter(Boolean);
-  return { cards, replies, finalReply: replies.at(-1) ?? "",
+  return { cards, replies, finalReply: replies.at(-1) ?? "", transcript: text(doc.querySelector("#messages")),
     errors: [...doc.querySelectorAll("#messages .msg.error, #messages .error-banner, #messages .tool-error")].map(text).filter(Boolean) };
 }
 
 export function assertRenderedScenario(scenario) {
   assert.equal(scenario.pageErrors.length, 0, `renderer threw: ${scenario.pageErrors.join("; ")}`);
+  assert(!hasClaudeAgentReceipt([scenario.closed, scenario.opened]), "Claude launch receipt rendered in the transcript");
   if (scenario.result === "N/A" || scenario.result === "INCONCLUSIVE") return;
   if (["subagent", "workflow"].includes(scenario.name)) {
     const cards = scenario.opened.cards.filter(c => c.kind === scenario.name);
     assert(cards.length, `no rendered ${scenario.name} card`);
-    assert(cards.every(c => c.terminal), "rendered delegation card remains nonterminal");
     for (const card of cards) {
       const evidence = scenario.resultEvidence?.[scenario.opened.cards.indexOf(card)];
       assert(evidence, "missing provider result evidence for rendered card");
+      if (card.kind === "subagent" && card.settled && card.header?.status === "in background" && evidence.background) {
+        assert(!evidence.reported, "background card did not show the reported result");
+        assert(!card.terminal && !card.result.trim() && !card.header.time, "background card claims an outcome or elapsed time");
+        assert(!card.header.chevron || card.activity || card.meta, "empty background card has a chevron");
+        continue;
+      }
+      assert(card.terminal, "rendered delegation card remains nonterminal");
+      if (card.kind === "subagent" && card.header?.status === "done") assert(card.result.trim(), "rendered subagent claims done with no non-empty result");
       if (evidence.required ?? evidence.reported) assert(card.result.trim(), "rendered delegation card has no non-empty result reported by the provider");
     }
   } else assert(scenario.opened.finalReply.trim(), "no rendered assistant reply");
@@ -341,6 +354,7 @@ export function renderReportMarkdown(report) {
   const short = value => value.length > 700 ? `${value.slice(0, 700)}… [full text in JSON]` : value;
   if (report.boundaries.unhandled.length) lines.push("# UNHANDLED", ...report.boundaries.unhandled.map(r => `- ${r.status || "UNKNOWN"} ${r.boundary}: ${r.kind} (${r.count})${r.reason ? ` — ${r.reason}` : ""}`), "");
   lines.push(`# ${report.provider}: render smoke`, `Route: ${report.route}`, "");
+  if (report.provider === "claude") lines.push("Expected live subagent case with claude-agent-acp 0.76.0: settled ‘in background’, without a clock or result; the answer arrives in Claude's reply. Foreground hand-backs and ID-matched task outcomes are also accepted.", "");
   if (report.pageErrors?.length) lines.push("## Renderer errors", ...report.pageErrors.map(e => `PAGE ERROR: ${e}`), "");
   for (const s of report.scenarios) {
     lines.push(`## ${s.name}: ${s.result}`, s.reason || "", ...s.pageErrors.map(e => `PAGE ERROR: ${e}`));

@@ -407,10 +407,42 @@ announcements. Only those IDs route to child streams before the RPC resolves;
 other replay updates remain parent updates even when their wire ID differs
 from the requested load ID. The set is cleared on success and failure without
 prematurely claiming a successfully loaded session.
-Muse projects structured JSON summaries as a labelled Markdown code block so
+Muse projects structured JSON summaries as an unlabelled Markdown code block so
 the entire returned value survives the shared Grok human-field output filter.
 `controlsAvailable: false` is additive on the existing progress payload, and
 the control handle is also omitted so older renderers cannot send commands.
+
+### September 27 background Agent follow-up
+
+The run `.verification/acp-smoke/2026-09-27T21-23-46-905Z-EKUF6Q/` contains
+both foreground and background Claude Agent calls. The desktop Agent sends
+`toolResponse: { isAsync: true, status: "async_launched", agentId, outputFile }`,
+then a completed tool update with an internal launch receipt in both
+`rawOutput[]` and `content[]`. No `async_task_*` event carries that agent ID.
+The parent subsequently says the agent returned `ok`; that prose cannot be
+used to identify or complete a child. All task events in that wire belong to
+the separate workflow. The non-render smoke's Agent completes in the foreground.
+
+The installed 0.76.0 adapter confirms the boundary: `AsyncTaskRuntime` ignores
+`local_agent` and messages with `subagent_type`. `normalizeClaudeUpdate` now
+removes the receipt from both output channels and settles the card as
+“in background”, without a live clock, staleness warning or result. The
+`usage_update` wake-up carries `_claude/origin.kind: "task-notification"` but
+no task ID; it is accounting only and cannot finish a card.
+Its per-backend correlation accepts AIR `asyncTaskId`/`toolCallId`, terminal
+`state`/`summary`, and progress `usage.durationMs`/`usage.totalTokens` when
+provided. Cold replay uses `<task-id>`, `<tool-use-id>`, `<status>` and the
+reported `<result>` or `<summary>`; it invents no usage. Conflicting IDs never
+finish another card. The tests distinguish captured receipts/errors from
+contract-shaped task events; they also pin the installed adapter's omission.
+The smoke accepts a foreground hand-back or a settled “in background” card,
+the expected desktop case with this adapter. It rejects receipt text anywhere
+and a card claiming done without a result. ID-matched completion is still
+accepted when an adapter version or replay supplies it.
+
+Muse's projected desktop wire contains numbered rows and no source child
+labels. SDK 1.3.0 declares an optional `WorkflowChild.label`, but the earlier
+raw workflow capture has none either; the roster naming is unchanged.
 
 ### Background turns (item 5)
 

@@ -7,6 +7,8 @@ import { resolve } from "node:path";
 import { bootWebview, click, dispatch } from "./webview-harness";
 import { parseRunProgressUpdate } from "../src/run-progress";
 import claude from "./fixtures/claude-async-workflow.json";
+import claudeBackground from "./fixtures/claude-background-subagent.json";
+import { ClaudeBackend } from "../src/claude-backend";
 import codexMetadata from "./fixtures/smoke-codex-metadata.json";
 import { normalizeCodexPromptResult, normalizeCodexUpdate } from "../src/codex-backend";
 // @ts-expect-error The standalone smoke helper has no declarations.
@@ -211,6 +213,31 @@ describe("real chat.js render report extraction", () => {
 
 
 describe("live smoke regressions", () => {
+  it("accepts Claude's settled background card, but rejects a ticking card, receipt or empty done result", () => {
+    const h = bootWebview(); windows.push(h.window);
+    const backend = new ClaudeBackend(), events: any[] = [];
+    for (const raw of claudeBackground.launch) {
+      const call = backend.normalizeUpdate(raw, undefined).update;
+      const message = { type: call.sessionUpdate === "tool_call" ? "toolCall" : "toolCallUpdate", call };
+      events.push({ direction: "receive", message: { params: { update: raw } } }, { direction: "host-to-webview", message });
+      dispatch(h.window, message);
+    }
+    const closed = readRenderedChat(h.doc), opened = readRenderedChat(h.doc);
+    const resultEvidence = cardResultEvidence(opened.cards, events, { provider: "claude" });
+    expect(resultEvidence[0]).toMatchObject({ background: true, reported: false, required: false });
+    expect(opened.cards[0]).toMatchObject({ terminal: false, settled: true, result: "", header: { status: "in background", time: "", chevron: false } });
+    const scenario = { name: "subagent", result: "PASS", pageErrors: [], closed, opened, resultEvidence };
+    expect(() => assertRenderedScenario(scenario)).not.toThrow();
+    const report = renderReportMarkdown({ provider: "claude", route: "test", boundaries: { unhandled: [], ignored: [] }, scenarios: [scenario] });
+    expect(report).toContain("Expected live subagent case");
+    expect(report).toContain("completion not reported by the adapter");
+    const changed = (patch: any) => ({ ...scenario, opened: { ...opened, cards: [{ ...opened.cards[0], ...patch }] } });
+    expect(() => assertRenderedScenario(changed({ header: { ...opened.cards[0].header, time: "5:00" } }))).toThrow(/elapsed time/);
+    expect(() => assertRenderedScenario(changed({ header: { ...opened.cards[0].header, status: "running" } }))).toThrow(/nonterminal/);
+    expect(() => assertRenderedScenario(changed({ terminal: true, header: { ...opened.cards[0].header, status: "done" } }))).toThrow(/no non-empty result/);
+    expect(() => assertRenderedScenario({ ...scenario, opened: { ...opened, transcript: "Async agent launched successfully. Internal receipt" } })).toThrow(/receipt rendered/);
+    expect(() => assertRenderedScenario({ ...scenario, resultEvidence: [{ ...resultEvidence[0], reported: true }] })).toThrow(/did not show/);
+  });
   it("classifies every captured Grok flat metadata field and notification with a host reference", () => {
     const known = knownBoundaries(root, "grok");
     const events = [
