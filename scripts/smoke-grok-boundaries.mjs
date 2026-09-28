@@ -59,6 +59,7 @@ rows("ignored", "ACP update", "retry_state", "ACCEPTED pre-existing gap (backlog
 rows("ignored", "ACP method", "_x.ai/session/setup", "ACCEPTED pre-existing gap (backlog: Grok 1.0.41 kinds): session/new startup phases (auth, resolve_workspace, …) as notifications; could drive a startup progress line.");
 rows("ignored", "ACP update", "hook_run_started", "ACCEPTED pre-existing gap (backlog: Grok 1.0.41 kinds): a pre/post tool hook started; the tool row itself is unaffected.");
 rows("ignored", "ACP update", "last_turn_summary", "ACCEPTED pre-existing gap (backlog: Grok 1.0.41 kinds): an end-of-turn summary notification; nothing shows it.");
+rows("ignored", "ACP update", "background_tasks", "ACCEPTED pre-existing gap (backlog: Grok 1.0.41 kinds): a snapshot list of the session's background tasks; the per-task task_backgrounded / task_completed events already drive the cards.");
 meta("ignored", "bareName qualifiedName pluginName workflowPath workflowSource feedbackTraceOffer x.ai/memoryMode", "ACCEPTED pre-existing gap (backlog: Grok 1.0.41 kinds): extra labels on tool, workflow and session events; the fields the renderer reads are unchanged.");
 rows("handled", "ACP update", "workflow_updated", "src/run-progress.ts parseRunProgressUpdate / src/sidebar.ts xaiNotification: workflow phase/status/result snapshots drive cards.");
 rows("handled", "ACP update", "subagent_spawned subagent_finished turn_completed", "src/sidebar.ts subagentLifecycle/xaiNotification / media/chat.js: child lifecycle and replayed turn completion.");

@@ -170,8 +170,8 @@ standalone dot structure.
 The desk’s top-bar **Remote control** button always appears (Remote, History,
 New, More); remotes remove it. Unknown `remoteStatus` shows “Checking…” rather
 than assuming unlinked. The popover offers `remoteSignIn` / the existing explainer
-before linking, then the conversation QR, Copy link, Open in browser and Your
-account. A link started there reopens it on completion. Unlink remains a confirmed
+before linking, then the conversation QR, Copy link and Open in browser (Your
+account stays in Settings → Remote control). A link started there reopens it on completion. Unlink remains a confirmed
 desktop Settings action or the existing VS Code command.
 
 `RemoteUplink` accepts additive `{ t: "self", deviceId }` and retains the public id
@@ -193,8 +193,9 @@ falls back to the hinted portal. Fragment coordinates never enter HTTP requests.
 Request ids prevent stale replies repainting a newer popover.
 Handoffs without an explicit row id follow the composer's navigation target:
 resume waits for its matching identity, and New waits for its correlated
-`composerDraftSession` binding. The top bar and conversation header show
-“Getting your code ready…” during that wait, with link actions disabled.
+`composerDraftSession` binding. The popover shows “Generating QR code…” in the code's
+place during that wait, with Open in browser and Copy link disabled (its title
+reads “Linked. Getting your code ready…” only right after a link started there).
 An open popover clears its previous code and requests another when focus changes;
 explicit rail and Projects row targets stay fixed.
 

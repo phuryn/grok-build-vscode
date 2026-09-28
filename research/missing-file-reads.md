@@ -17,8 +17,9 @@ on all surfaces. `markToolFailed` and `applyToolFailure` own the presentation;
 
 - **Muse:** owner-supplied missing-read message: `No such file or directory
   (os error 2); requested relative path …`. `adapters/muse/projection.mts`
-  sends failed `read_file` as a read, with `failureReason` in both
-  `rawOutput.message` and ACP text content.
+  sends a failed `read_file` as `kind: "other"` with `title: "read_file"` and
+  `failureReason` on `rawOutput.message` (a failed update carries no ACP text
+  content); the row treats that title as a read.
 - **Grok:** `test/webview-helpers.test.ts` and the image-read captures in
   `docs/internal/ACP-feedback.md` establish the `rawOutput.FileReadError`
   variant. The latter also records that a delegated `fs/read_text_file`
