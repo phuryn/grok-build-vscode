@@ -4166,7 +4166,6 @@ textarea#input {
   outline-offset: -2px;
 }
 .toolbar-btn.plan-active { color: var(--vscode-charts-blue, #569cd6); }
-.toolbar-btn.yolo-active { color: var(--vscode-charts-orange, #d7ba7d); }
 .btn-label {
   flex-shrink: 1;
   min-width: 0;

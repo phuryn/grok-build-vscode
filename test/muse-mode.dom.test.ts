@@ -71,6 +71,24 @@ describe("Muse Agent / Auto accept", () => {
     }
   });
 
+  it("gives every Muse mode its own icon, so the button alone shows which is on", () => {
+    const h = bootWebview({ remote: true });
+    connect(h);
+    dispatch(h.window, { type: "session", sessionId: "m", provider: "muse", models: [] });
+    const buttonIcons = MUSE_MODES.map(modeId => {
+      dispatch(h.window, { type: "modeChanged", modeId, modes: MUSE_MODES });
+      return h.doc.querySelector("#mode-btn svg")!.outerHTML;
+    });
+    expect(new Set(buttonIcons).size).toBe(MUSE_MODES.length);
+    openModes(h);
+    const menuIcons = [...h.doc.querySelectorAll("#mode-popover .mode-item-icon")].map(el => el.innerHTML);
+    expect(menuIcons).toEqual(buttonIcons);
+  });
+
+  it("paints the Auto accept button in the same colour as every other mode", () => {
+    expect(CHAT_CSS).not.toMatch(/\.yolo-active\s*\{[^}]*color/);
+  });
+
   it.each([{ vscode: true }, {}, { remote: true }])("keeps On request visible but disabled with the host reason on %j", surface => {
     const h = bootWebview(surface);
     connect(h);
