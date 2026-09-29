@@ -6868,8 +6868,11 @@
     if (composerSessionId === sessionId) return;
     // Keystrokes during a load belong to the conversation being opened, even
     // when its identity arrives after the transcript. They are kept, merged after
-    // any saved draft, and never replaced.
-    const keepTyped = completingLoad && composerLoadDraft?.edited;
+    // any saved draft, and never replaced. Only a load that began on an empty
+    // composer counts: text already there belongs to the conversation being
+    // left, and a host-driven switch (another repo) must not carry it along.
+    const keepTyped = completingLoad && composerLoadDraft?.edited
+      && !composerLoadDraft.text && !composerLoadDraft.chips.length;
     if (composerSessionId !== null) {
       const previous = keepTyped ? composerLoadDraft : { text: input.value, chips: composerRestoredChips };
       if (previous.text || previous.chips.length) composerDrafts.set(composerSessionId, {
@@ -9256,7 +9259,10 @@
     if (!ver) return;
     // Arrival is the capability. Keep actionable onboarding/errors and the
     // remote shell's pre-host Connecting state; the strip owns session startup.
-    ver.hidden = state.startupStatusSeen && /^(Starting|Connecting|Loading conversation|Updating Grok Build CLI|Connected(?: · v.*)?)$/.test(text);
+    // An on-demand CLI update sets no startup stage, so its line stays unless
+    // the strip is showing one right now.
+    ver.hidden = state.startupStatusSeen && (/^(Starting|Connecting|Loading conversation|Connected(?: · v.*)?)$/.test(text)
+      || text === "Updating Grok Build CLI" && !!state.startupStatus);
     ver.classList.toggle("welcome-status-busy", !!busy);
     ver.dataset.status = busy ? text : "";
     if (!busy) {

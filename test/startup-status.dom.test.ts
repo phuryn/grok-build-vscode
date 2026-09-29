@@ -87,6 +87,16 @@ describe("session startup composer strip", () => {
     expect(welcome.hidden).toBe(false);
     expect(welcome.textContent).toBe("Connected");
   });
+  it("keeps an on-demand CLI update visible, since it sets no startup stage", () => {
+    const h = boot(true);
+    const welcome = h.doc.getElementById("welcome-version")!;
+    status(h, null);
+    dispatch(h.window, { type: "clearMessages" });
+    dispatch(h.window, { type: "cliUpdating" });
+    expect(strip(h)?.hidden ?? true).toBe(true);
+    expect(welcome.hidden).toBe(false);
+    expect(welcome.textContent).toBe("Updating Grok Build CLI");
+  });
   it("retires only duplicate welcome status after the first startup frame, including a null frame", () => {
     const h = boot(true);
     const style = h.doc.createElement("style");

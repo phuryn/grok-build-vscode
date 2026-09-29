@@ -67,12 +67,17 @@ describe.each(["desktop", "vscode", "remote"])("composer session drafts (%s)", (
     expect(input.value).toBe("keep me");
   });
 
-  it.each(["", "older stored draft"])("keeps typing through the host's replay and late identity (stored: %s)", stored => {
+  it.each([
+    ["", ""], ["older stored draft", ""], ["", "A's draft"], ["older stored draft", "A's draft"],
+  ])("keeps typing through the host's replay and late identity (stored: %j, left: %j)", (stored, left) => {
     const { window, input, focus } = setup();
     focus("b");
     input.value = stored;
     focus("a");
-    input.value = "A's draft";
+    input.value = left;
+    // Into an empty composer the keystrokes are B's; after A's text they extend
+    // A's draft (a host-driven switch, e.g. another repo, must not carry it).
+    const typed = left ? `${left} and more` : "typed while B loads";
     const session = new Session();
     session.activeSessionId = "b";
     session.buffer = [{ type: "messageChunk", text: "Previous answer" }];
@@ -89,7 +94,7 @@ describe.each(["desktop", "vscode", "remote"])("composer session drafts (%s)", (
         frames.push(msg.type === "historyReplay" ? `${msg.type}:${msg.active}` : msg.type);
         dispatch(window, msg);
         if (msg.type === "historyReplay" && msg.active) {
-          input.value = "typed while B loads";
+          input.value = typed;
           input.dispatchEvent(new (window as any).Event("input", { bubbles: true }));
         }
       },
@@ -101,9 +106,9 @@ describe.each(["desktop", "vscode", "remote"])("composer session drafts (%s)", (
       "feedbackAvailability", "chips", "queuedSends", "sessions", "sessionName",
     ]);
     // Merged, never replaced: B's saved draft first, then what was typed.
-    expect(input.value).toBe(stored ? `${stored}\n\ntyped while B loads` : "typed while B loads");
+    expect(input.value).toBe(left ? stored : [stored, typed].filter(Boolean).join("\n\n"));
     focus("a");
-    expect(input.value).toBe("A's draft");
+    expect(input.value).toBe(left ? typed : "");
   });
 
   it("also switches on host session lists before the name frame arrives", () => {
