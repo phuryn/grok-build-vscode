@@ -238,6 +238,21 @@ describe("live Grok titles and startup signals", () => {
     sidebar.detachClient(session);
     expect(session.startup).toBeUndefined();
   });
+  it("stamps every live startup frame with a rising, clock-seeded seq", () => {
+    const sidebar = makeSidebar("/repo");
+    const frames: any[] = [];
+    const emit = sidebar.emit.bind(sidebar);
+    sidebar.emit = (session: Session, message: HostMsg) => { if (message.type === "startupStatus") frames.push(message); emit(session, message); };
+    const before = Date.now();
+    sidebar.setStartupStage(sidebar.focused, "starting");
+    sidebar.setStartupStage(sidebar.focused, "opening");
+    sidebar.setStartupStage(sidebar.focused, null);
+    const seqs = frames.map((frame) => frame.seq);
+    expect(seqs).toHaveLength(3);
+    expect(seqs[0]).toBeGreaterThanOrEqual(before);
+    expect(seqs[1]).toBeGreaterThan(seqs[0]);
+    expect(seqs[2]).toBeGreaterThan(seqs[1]);
+  });
   it("maps setup notifications only while Grok is opening", async () => {
     const sidebar = makeSidebar("/repo");
     const client = await sidebar.startSession("resume-1", sidebar.focused);

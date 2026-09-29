@@ -852,6 +852,7 @@
     sessionProviderCursor: null,
     startupStatus: null,
     startupStatusSeen: false,
+    startupSeq: 0,
     replaying: false,
     replayDepth: 0,
     // Open-path window (#102): hold the replay stream and render only the last
@@ -9257,8 +9258,10 @@
     if (identityRestoring()) return;
     const ver = $("welcome-version");
     if (!ver) return;
-    // Arrival is the capability. Keep actionable onboarding/errors and the
-    // remote shell's pre-host Connecting state; the strip owns session startup.
+    // Arrival is the capability: until a startupStatus frame arrives (and on an
+    // old host that never sends one) these lines show as before, including the
+    // remote shell's pre-host Connecting; after it, the strip owns startup.
+    // Actionable onboarding and errors always stay.
     // An on-demand CLI update sets no startup stage, so its line stays unless
     // the strip is showing one right now.
     ver.hidden = state.startupStatusSeen && (/^(Starting|Connecting|Loading conversation|Connected(?: · v.*)?)$/.test(text)
@@ -20228,6 +20231,13 @@
       }
       case "startupStatus": {
         state.startupStatusSeen = true;
+        // A frame older than one already handled must not re-arm a cleared
+        // strip (seen live: an "opening" delivered after its clear). Frames
+        // without `seq` (snapshots, older hosts) always apply.
+        if (Number.isFinite(msg.seq)) {
+          if (msg.seq <= state.startupSeq) break;
+          state.startupSeq = msg.seq;
+        }
         const stages = ["updating", "starting", "opening", "loading"];
         if (stages.includes(msg.stage)) beginComposerLoad();
         state.startupStatus = stages.includes(msg.stage) ? {

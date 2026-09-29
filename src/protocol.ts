@@ -634,7 +634,9 @@ export type HostMsg =
   | { type: "updateReady"; version: string }
   | { type: "initialized"; info: { cliPath: string; cwd: string; version: string | null; provider?: AcpProvider; steeringSupported?: boolean; init: { protocolVersion?: unknown } } }
   | { type: "cliUpdating" }
-  | { type: "startupStatus"; provider: AcpProvider; stage: "updating" | "starting" | "opening" | "loading" | null; elapsedMs: number; detail?: string; messageCount?: number }
+  | { type: "startupStatus"; provider: AcpProvider; stage: "updating" | "starting" | "opening" | "loading" | null; elapsedMs: number; detail?: string; messageCount?: number;
+      /** Rising per host (clock-seeded). A client drops a frame older than one it handled; snapshots omit it. */
+      seq?: number }
   // `worktree` gates the gear's Apply/Remove worktree items to worktree sessions.
   | { type: "session"; sessionId: string; models: ModelInfo[]; currentModelId: string | undefined; worktree?: boolean; provider?: AcpProvider }
   // The focused conversation's display name, using the same precedence as a

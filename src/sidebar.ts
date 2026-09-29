@@ -18809,7 +18809,17 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       stage, startedAt: session.startup?.startedAt ?? Date.now(), detail,
       ...(typeof messageCount === "number" && messageCount >= 0 ? { messageCount } : {}),
     } : undefined;
-    this.emit(session, startupStatusMessage(session));
+    this.emit(session, this.startupFrame(session));
+  }
+
+  /** The renderer drops a startup frame older than one it already handled: a
+   *  stale "opening" landing after the clear would otherwise hold the strip and
+   *  a disabled Send until the next start. Clock-seeded, so it keeps rising
+   *  across a host restart that a phone's page outlives. */
+  private startupSeq = 0;
+  private startupFrame(session: Session): Extract<HostMsg, { type: "startupStatus" }> {
+    this.startupSeq = Math.max((this.startupSeq || 0) + 1, Date.now());
+    return { ...startupStatusMessage(session), seq: this.startupSeq };
   }
 
   /**

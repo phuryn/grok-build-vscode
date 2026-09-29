@@ -95,6 +95,20 @@ describe("session startup composer strip", () => {
     expect(welcome.hidden).toBe(false);
     expect(welcome.textContent).toBe("Connected");
   });
+  it("ignores a startup frame older than one already handled", () => {
+    const h = boot();
+    status(h, "opening", { seq: 10 });
+    status(h, null, { seq: 12 });
+    // The live bug: an older "opening" delivered after its clear.
+    status(h, "opening", { seq: 11, elapsedMs: 1629 });
+    expect(strip(h).hidden).toBe(true);
+    expect(send(h).title).not.toContain("starting");
+    // A newer start still shows, and frames without seq (snapshots) always apply.
+    status(h, "starting", { seq: 13 });
+    expect(strip(h).hidden).toBe(false);
+    status(h, null);
+    expect(strip(h).hidden).toBe(true);
+  });
   it("keeps an on-demand CLI update visible, since it sets no startup stage", () => {
     const h = boot(true);
     const welcome = h.doc.getElementById("welcome-version")!;
