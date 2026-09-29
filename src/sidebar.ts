@@ -9769,6 +9769,9 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         const client = this.detachClient(session);
         this.setStatus(session, "idle");
         this.emit(session, { type: "setBusy", value: true, locked: true });
+        // The locked busy reads as a start; this conversation is waiting on
+        // the update, which can take minutes, so say that instead.
+        this.setStartupStage(session, "updating");
         return client?.disposeForUpdate();
       });
       // Await ACTUAL exit, as in disposePool. Signalling a kill alone leaves

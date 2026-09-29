@@ -17652,10 +17652,11 @@
     const link = hostWait.snapshot();
     strip.hidden = !!(link && (!link.reachable || !link.restored));
     const seconds = Math.floor(Math.max(0, Date.now() - startup.startedAt) / 1000);
-    const slow = seconds >= 20;
+    // A CLI update routinely takes minutes; only a stalled start is "slow".
+    const slow = seconds >= 20 && startup.stage !== "updating";
     const provider = { grok: "Grok", codex: "Codex", claude: "Claude", muse: "Muse" }[startup.provider] || "Grok";
     const count = Number.isInteger(startup.messageCount) && startup.messageCount >= 0 ? startup.messageCount + " " : "";
-    const label = { updating: "Updating the Grok CLI", starting: "Starting " + provider,
+    const label = { updating: "Updating the " + provider + " CLI", starting: "Starting " + provider,
       opening: "Opening the conversation", loading: "Loading " + count + "messages" }[startup.stage];
     strip.classList.toggle("startup-slow", slow);
     strip.querySelector(".startup-stage").textContent = label;
@@ -17708,7 +17709,7 @@
     } else if (state.startupStatus) {
       sendBtn.innerHTML = ICON.spinner;
       const name = { grok: "Grok", codex: "Codex", claude: "Claude", muse: "Muse" }[state.startupStatus.provider] || "Grok";
-      sendBtn.title = name + " is still starting";
+      sendBtn.title = name + (state.startupStatus.stage === "updating" ? " is updating" : " is still starting");
       sendBtn.classList.add("initializing");
       sendBtn.disabled = true;
     } else if (!state.busy) {

@@ -50,6 +50,14 @@ describe("session startup composer strip", () => {
     expect(strip(h).querySelector(".startup-stage")?.textContent).toBe(label);
     if (stage === "opening") expect(strip(h).querySelector(".startup-detail")?.textContent).toContain("reading the project");
   });
+  it.each(["codex", "claude"])("names a %s CLI update and never calls it slow", (provider) => {
+    const h = boot(); status(h, "updating", { provider, elapsedMs: 90000 });
+    const name = provider[0].toUpperCase() + provider.slice(1);
+    expect(strip(h).querySelector(".startup-stage")?.textContent).toBe(`Updating the ${name} CLI`);
+    expect(strip(h).classList.contains("startup-slow")).toBe(false);
+    expect(strip(h).textContent).not.toContain("taking longer than usual");
+    expect(send(h).title).toBe(name + " is updating");
+  });
   it("reveals seconds at 3s and amber/output at 20s across stage changes", () => {
     const h = boot(false, true); status(h, "starting");
     const seconds = () => strip(h).querySelector(".startup-seconds")?.textContent;

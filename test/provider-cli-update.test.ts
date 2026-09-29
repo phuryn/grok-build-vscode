@@ -114,6 +114,8 @@ describe.each(["codex", "claude"] as const)("%s explicit CLI update", (provider)
     const updating = host.updateProviderCliOnDemand(provider);
     await vi.waitFor(() => expect(local.client).toBeUndefined());
     expect(exec.mock.calls.map((c) => c[1])).toEqual([["--version"]]);
+    // The waiting conversation says it is updating, not stuck starting.
+    expect(host.emit).toHaveBeenCalledWith(local, expect.objectContaining({ type: "startupStatus", stage: "updating" }));
     exits[0].resolve(); exits[1].resolve();
     await Promise.resolve();
     expect(exec.mock.calls.map((c) => c[1])).toEqual([["--version"]]);
