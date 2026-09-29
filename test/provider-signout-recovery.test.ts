@@ -273,10 +273,9 @@ describe("reopening a conversation whose draft was parked", () => {
     };
 
     const restored = await reopen(makeResumableSidebar(memento), "codex-live-1");
-    expect(restored).toContainEqual({ type: "restoreComposer", text: "half-typed idea" });
+    expect(restored).toContainEqual({ type: "restoreComposer", text: "half-typed idea", sessionId: "codex-live-1", draft: true });
 
-    // `restoreComposer` appends, so a draft left in meta would stack another
-    // copy on every reopen.
+    // A draft is handed back only once, even if the renderer kept newer typing.
     const again = await reopen(makeResumableSidebar(memento), "codex-live-1");
     expect(again.some((message) => message.type === "restoreComposer")).toBe(false);
     expect((memento["grok.sessionMeta"] as any)["codex-live-1"].queuedDraft).toBeUndefined();
@@ -329,7 +328,7 @@ describe("reopening a conversation whose draft was parked", () => {
 
     expect(sidebar.host.revealChatView).toHaveBeenCalledOnce();
     expect(seen.filter((message) => message.type === "restoreComposer")).toEqual([
-      { type: "restoreComposer", text: "rail draft" },
+      { type: "restoreComposer", text: "rail draft", sessionId: "codex-rail-1", draft: true },
     ]);
     expect((memento["grok.sessionMeta"] as any)["codex-rail-1"].queuedDraft).toBeUndefined();
   }, 20_000);

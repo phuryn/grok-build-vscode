@@ -146,7 +146,7 @@ it.each(["local", "remote"] as const)("parks Edit text and files together when t
   // A second focus request before META's async write settles must not append twice.
   sidebar.restorePersistedDraft(session, source === "remote" ? { clientId: "browser-view" } : "local");
   await sidebar.sessionMetaWrites;
-  const message = { type: "restoreComposer", text: "latest", sessionId: session.activeSessionId, chips: [chip] };
+  const message = { type: "restoreComposer", text: "latest", sessionId: session.activeSessionId, chips: [chip], draft: true };
   if (source === "remote") {
     expect(sidebar.sendRemoteClient).toHaveBeenCalledWith("browser-view", message);
     expect(sidebar.sendRemoteClient.mock.calls.filter(([, msg]) => msg.type === "restoreComposer")).toHaveLength(1);

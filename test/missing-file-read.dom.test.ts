@@ -18,9 +18,26 @@ const shapes = [
   { provider: "codex", start: { kind: "read", title: "Read file 'test2.md'", locations: [{ path: "test2.md" }] },
     failure: (message: string) => ({ rawOutput: { formatted_output: message, exit_code: 1 } }),
     message: "cat: test2.md: No such file or directory" },
+  // Grok's NotFound variant is captured in webview-helpers.test.ts. Codex's
+  // parsed listFiles action is kind:read with a title (no locations). Muse
+  // projects list_dir as kind:other. Claude has no native directory tool: its
+  // named filesystem MCP tools use kind:other and error text content; Bash and
+  // Glob keep their own execute/search kinds and are deliberately excluded.
+  { provider: "grok list", path: ".grok", start: { title: "list_dir", rawInput: { target_directory: "/home/sprite/AFK Pilot/fde-template/.grok" } },
+    failure: (message: string) => ({ rawOutput: { type: "ListDir", NotFound: message } }),
+    message: "Error: /home/sprite/AFK Pilot/fde-template/.grok does not exist. Note: your current working directory is /home/sprite/AFK Pilot/fde-template" },
+  { provider: "codex list", path: ".grok", start: { kind: "read", title: "List files in '.grok'" },
+    failure: (message: string) => ({ rawOutput: { formatted_output: message, exit_code: 2 } }),
+    message: "ls: cannot access '.grok': No such file or directory" },
+  { provider: "muse list", path: ".grok", start: { kind: "other", title: "list_dir", rawInput: { path: ".grok" } },
+    failure: (message: string) => ({ rawOutput: { error: "tool_execution_failed", message } }),
+    message: "No such file or directory (os error 2)" },
+  { provider: "claude filesystem list", path: ".grok", start: { kind: "other", title: "mcp__filesystem__list_directory", rawInput: { path: ".grok" } },
+    failure: (message: string) => ({ content: textContent(message) }),
+    message: "ENOENT: no such file or directory, scandir '.grok'" },
 ];
 
-describe.each(shapes)("missing file read: $provider", shape => {
+describe.each(shapes)("missing path read/list: $provider", shape => {
   it.each(["live", "replay", "late"].flatMap(ordering =>
     [{}, { vscode: true }, { remote: true }].map(surface => ({ ordering, surface }))))(
     "is neutral, labelled, and expandable on $ordering, $surface", ({ ordering, surface }) => {
@@ -36,7 +53,7 @@ describe.each(shapes)("missing file read: $provider", shape => {
       }
       dispatch(h.window, { type: "messageChunk", text: "Created test2.md" } as any);
       const row = h.doc.querySelector(".tool-flat")!;
-      expect(row.querySelector(".tool-label")?.textContent).toBe("test2.md — doesn't exist yet");
+      expect(row.querySelector(".tool-label")?.textContent).toBe(`${shape.path || "test2.md"} — doesn't exist yet`);
       expect(h.doc.querySelector(".tool-failed, .has-error, .cmd-out-marker.error, .tool-error")).toBeNull();
       const detail = row.querySelector(".tool-item-details") as HTMLElement;
       expect(detail.hidden).toBe(true);
@@ -57,18 +74,35 @@ describe.each(shapes)("missing file read: $provider", shape => {
   });
 });
 
-it("projects Muse's missing-file failure into a neutral row inside a mixed tool group", () => {
+it.each(["read_file", "list_dir"])("projects Muse's missing-path %s failure into a neutral row inside a mixed tool group", tool => {
   const h = bootWebview();
   try {
     const p = new Projection(call => dispatch(h.window, {
       type: call.sessionUpdate === "tool_call" ? "toolCall" : "toolCallUpdate", call,
     } as any), () => {});
-    p.acceptHistory({ itemId: "read", kind: "toolCall", tool: "read_file", revision: 1,
+    p.acceptHistory({ itemId: "read", kind: "toolCall", tool, revision: 1,
       args: JSON.stringify({ path: "test2.md" }), status: "failed", failureReason: shapes[0].message });
     dispatch(h.window, { type: "toolCall", call: { toolCallId: "write", kind: "edit", title: "Created test2.md" } } as any);
     dispatch(h.window, { type: "messageChunk", text: "Created" } as any);
     expect(h.doc.querySelector(".tool-item-label")?.textContent).toBe("test2.md — doesn't exist yet");
     expect(h.doc.querySelector(".tool-failed, .has-error")).toBeNull();
+  } finally { h.window.happyDOM.abort(); }
+});
+
+it.each([
+  { title: "glob", kind: "read" }, { title: "grep", kind: "read" },
+  { title: "Find `.grok` `*`", kind: "search" },
+  { title: "ls .grok", kind: "execute", rawInput: { command: "ls .grok" } },
+  { title: "List tasks", kind: "think" },
+  { title: "list_tasks", kind: "read" },
+])("keeps non-directory tools out of the missing-path rule: $title", call => {
+  const h = bootWebview();
+  try {
+    for (const [i, message] of ["No matches found", "No such file or directory", "Directory .grok does not exist"].entries()) {
+      dispatch(h.window, { type: "toolCall", call: { ...call, toolCallId: String(i), status: "failed", content: textContent(message) } });
+    }
+    expect(h.doc.querySelectorAll(".tool-failed")).toHaveLength(3);
+    expect(h.doc.querySelector(".tool-missing-message")).toBeNull();
   } finally { h.window.happyDOM.abort(); }
 });
 

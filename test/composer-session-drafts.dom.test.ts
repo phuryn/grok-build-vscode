@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { bootWebview, click, dispatch } from "./webview-harness";
+import { GrokSidebar } from "../src/sidebar";
+import { Session } from "../src/session";
 
 describe.each(["desktop", "vscode", "remote"])("composer session drafts (%s)", (surface) => {
-  function setup(draftReplies = true) {
+  function setup(draftReplies = true, initialSession = true) {
     const h = bootWebview({
       remote: surface === "remote",
       beforeScripts: (window) => {
@@ -19,7 +21,7 @@ describe.each(["desktop", "vscode", "remote"])("composer session drafts (%s)", (
     });
     const rows = ["a", "b"].map(id => ({ id, displayName: id, cwd: "/repo", numMessages: 2, updatedAt: 1 }));
     dispatch(h.window, { type: "repos", entries: [{ cwd: "/repo", label: "repo", available: true }], selectedCwd: "/repo", activeCwd: "/repo" });
-    dispatch(h.window, { type: "sessions", entries: rows, activeId: "a" });
+    dispatch(h.window, { type: "sessions", entries: rows, activeId: initialSession ? "a" : null });
     const resume = (id: string, history = false) => {
       if (history) {
         click(h.window, h.doc.getElementById("history-btn")!);
@@ -65,6 +67,45 @@ describe.each(["desktop", "vscode", "remote"])("composer session drafts (%s)", (
     expect(input.value).toBe("keep me");
   });
 
+  it.each(["", "older stored draft"])("keeps typing through the host's replay and late identity (stored: %s)", stored => {
+    const { window, input, focus } = setup();
+    focus("b");
+    input.value = stored;
+    focus("a");
+    input.value = "A's draft";
+    const session = new Session();
+    session.activeSessionId = "b";
+    session.buffer = [{ type: "messageChunk", text: "Previous answer" }];
+    const frames: string[] = [];
+    const sidebar = Object.assign(Object.create(GrokSidebar.prototype), {
+      remoteClients: { cwd: () => "/repo", setActive: () => {} },
+      touch: () => {}, markRead: () => {}, refreshWorkflowCompletions: () => {},
+      sessionIdentityFrame: () => ({ type: "session", sessionId: "b", provider: "grok", models: [] }),
+      displayMode: () => "agent", remoteActiveSessionId: () => "b",
+      buildSessionsList: () => ({ type: "sessions", entries: [], activeId: "b" }),
+      postSessionName: () => { frames.push("sessionName"); focus("b"); },
+      restorePersistedDraft: () => {},
+      sendRemoteClient: (_id: string, msg: any) => {
+        frames.push(msg.type === "historyReplay" ? `${msg.type}:${msg.active}` : msg.type);
+        dispatch(window, msg);
+        if (msg.type === "historyReplay" && msg.active) {
+          input.value = "typed while B loads";
+          input.dispatchEvent(new (window as any).Event("input", { bubbles: true }));
+        }
+      },
+    });
+    sidebar.focusRemoteSession("phone", session, false);
+    expect(frames).toEqual([
+      "clearMessages", "session", "historyReplay:true", "historyBatch", "historyReplay:false",
+      "startupStatus", "subscriptionUsage", "modeChanged", "planModeAvailability",
+      "feedbackAvailability", "chips", "queuedSends", "sessions", "sessionName",
+    ]);
+    // Merged, never replaced: B's saved draft first, then what was typed.
+    expect(input.value).toBe(stored ? `${stored}\n\ntyped while B loads` : "typed while B loads");
+    focus("a");
+    expect(input.value).toBe("A's draft");
+  });
+
   it("also switches on host session lists before the name frame arrives", () => {
     const { window, input, focus } = setup();
     focus("a");
@@ -85,11 +126,15 @@ describe.each(["desktop", "vscode", "remote"])("composer session drafts (%s)", (
     const draftId = newSession();
     expect(input.value).toBe("");
     input.value = "new draft";
+    input.dispatchEvent(new (window as any).Event("input", { bubbles: true }));
     dispatch(window, { type: "clearMessages" });
+    dispatch(window, { type: "startupStatus", provider: "grok", stage: "starting", elapsedMs: 0 });
     focus("a"); // A delayed identity for the session being left.
     expect(input.value).toBe("new draft");
     focus("new");
     bind(draftId, "new");
+    dispatch(window, { type: "startupStatus", provider: "grok", stage: null, elapsedMs: 0 });
+    dispatch(window, { type: "setBusy", value: false });
     expect(input.value).toBe("new draft");
     focus("a");
     expect(input.value).toBe("old draft");
@@ -238,5 +283,39 @@ describe.each(["desktop", "vscode", "remote"])("composer session drafts (%s)", (
     expect(input.value).toBe("first prompt");
     focus("b");
     expect(input.value).toBe("");
+  });
+
+  it.each(["history", "reconnect", "reload"])("keeps the latest text through %s, including a late persisted draft", load => {
+    const { window, input, focus, resume } = setup(true, load !== "reload");
+    if (load === "history") resume("b", true);
+    else if (load === "reconnect") focus("b");
+    // getRemoteSnapshot: initialState, clear, bracketed history, UI snapshot,
+    // sessions, sessionName. A cold start later unlocks and restores its draft.
+    dispatch(window, { type: "initialState", capabilities: { composerDraftSession: true } });
+    dispatch(window, { type: "clearMessages" });
+    dispatch(window, { type: "historyReplay", active: true });
+    input.value = "my newest keystrokes";
+    input.dispatchEvent(new (window as any).Event("input", { bubbles: true }));
+    dispatch(window, { type: "messageChunk", text: "Previous answer" });
+    dispatch(window, { type: "historyReplay", active: false });
+    dispatch(window, { type: "startupStatus", provider: "grok", stage: null, elapsedMs: 0 });
+    dispatch(window, { type: "sessions", entries: [], activeId: "b" });
+    focus("b");
+    dispatch(window, { type: "setBusy", value: false });
+    // Nothing typed is replaced; a parked draft is merged beside it, once.
+    dispatch(window, { type: "restoreComposer", sessionId: "b", text: "", draft: true });
+    expect(input.value).toBe("my newest keystrokes");
+    for (let i = 0; i < 2; i++) {
+      dispatch(window, { type: "restoreComposer", sessionId: "b", text: "older persisted text", draft: true });
+      expect(input.value).toBe("my newest keystrokes\n\nolder persisted text");
+    }
+    expect(input.disabled).toBe(false);
+  });
+
+  it("restores an automatic draft into an untouched empty composer", () => {
+    const { window, input, focus } = setup();
+    focus("a");
+    dispatch(window, { type: "restoreComposer", sessionId: "a", text: "parked draft", draft: true });
+    expect(input.value).toBe("parked draft");
   });
 });

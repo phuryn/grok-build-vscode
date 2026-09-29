@@ -1836,6 +1836,7 @@ body.thinking-hidden .msg.thinking.find-reveal { display: block; }
   justify-content: center;
   gap: 6px;
 }
+#welcome-version[hidden] { display: none; }
 #welcome-version.welcome-status-busy svg {
   flex: none;
   animation: send-spinner-rotate 0.9s linear infinite;
@@ -2678,10 +2679,11 @@ body.thinking-hidden .msg.thinking { display: none; }
 
 /* Workflow / Goal / Deep-research progress. */
 .run-progress-card {
+  --run-progress-padding: 10px;
   --run-progress-fill: var(--vscode-textBlockQuote-background, rgba(55, 148, 255, 0.08));
   font-size: var(--vscode-font-size);
   color: var(--vscode-descriptionForeground);
-  padding: 5px 10px;
+  padding: 5px var(--run-progress-padding);
   margin: 4px var(--pad);
   border-left: 2px solid var(--vscode-charts-blue, #3794ff);
   background: var(--run-progress-fill);
@@ -2787,7 +2789,7 @@ body.thinking-hidden .msg.thinking { display: none; }
    density; a card sitting on top of the composer gets room to breathe. */
 .workflow-pin-run {
   margin: 0 0 6px;
-  padding: 5px 10px;
+  padding: 5px var(--run-progress-padding);
   overflow: clip;
   /* Composite the card tint over its surface once; the sticky header inherits
      this opaque fill so scrolling text cannot show through or darken it. */
@@ -2815,10 +2817,10 @@ body.thinking-hidden .msg.thinking { display: none; }
   display: grid;
   grid-auto-flow: column;
   grid-auto-columns: minmax(0, 1fr);
-  padding: 10px 2px 8px;
-  margin: 8px 0 4px;
+  padding: 12px;
+  margin: 8px calc(-1 * var(--run-progress-padding)) 4px;
   list-style: none;
-  border-radius: 6px;
+  border-top: 1px solid var(--vscode-editorWidget-border);
   background: color-mix(in srgb, var(--vscode-foreground) 5%, transparent);
 }
 .workflow-phase, .workflow-step-more { position: relative; min-width: 0; }
@@ -2849,9 +2851,10 @@ body.thinking-hidden .msg.thinking { display: none; }
   background: none;
   color: var(--vscode-descriptionForeground);
   font: inherit;
-  cursor: pointer;
+  cursor: default;
 }
-.workflow-step:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; border-radius: 4px; }
+button.workflow-step { cursor: pointer; }
+button.workflow-step:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; border-radius: 4px; }
 .workflow-step .workflow-step-ring { width: 14px; height: 14px; border-width: 2px; }
 .workflow-step .workflow-step-ring[data-state="active"] {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--vscode-charts-blue, #3794ff) 28%, transparent);
@@ -2878,14 +2881,8 @@ body.thinking-hidden .msg.thinking { display: none; }
 .workflow-phase[data-state="failed"] .workflow-step { color: var(--vscode-errorForeground); font-weight: 700; }
 .workflow-phase[data-state="cancelled"] .workflow-phase-label,
 .workflow-phase[data-state="stopped"] .workflow-phase-label { text-decoration: line-through; }
-/* Agents under their step. A heading per step; a finished one folds to its
-   count, time and tokens; a step not started is a heading and nothing more. */
+/* Agents under their step; a finished one folds to its count, time and tokens. */
 .workflow-roster > .workflow-group { border-top: 1px solid var(--vscode-editorWidget-border, #555); }
-.workflow-roster > .workflow-group-next {
-  border-top: 1px solid var(--vscode-editorWidget-border, #555);
-  padding: 6px 0 2px; font-size: 12px; color: var(--vscode-descriptionForeground);
-  overflow-wrap: anywhere;
-}
 .workflow-group-head {
   display: flex;
   align-items: center;
@@ -2939,8 +2936,8 @@ body.thinking-hidden .msg.thinking { display: none; }
   position: sticky;
   top: 0;
   z-index: 1;
-  margin: 0 -10px;
-  padding: 0 10px;
+  margin: 0 calc(-1 * var(--run-progress-padding));
+  padding: 0 var(--run-progress-padding);
   background: inherit;
 }
 .workflow-heading > .workflow-pin-toggle { display: flex; width: 100%; margin: 0; padding: 0; }

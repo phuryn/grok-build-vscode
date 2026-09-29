@@ -5,6 +5,7 @@ import { Session, sessionUiSnapshot } from "../src/session";
 import { RemoteClientState } from "../src/remote-client-state";
 import { OUTBOUND_DISPOSITION, OUTBOUND_PROJECT_AUTH, mayDeliverRemoteHostMsg } from "../src/remote-policy";
 import { parseWebviewMsg } from "../src/desktop/webview-msg-validate";
+import { readFileSync } from "node:fs";
 
 const opened: Harness[] = [];
 function boot(remote = false, showOutput?: boolean) {
@@ -74,10 +75,57 @@ describe("session startup composer strip", () => {
   });
   it("leaves an older host unchanged", () => {
     const h = boot();
+    const welcome = h.doc.getElementById("welcome-version")!;
     dispatch(h.window, { type: "cliUpdating" });
+    expect(welcome.hidden).toBe(false);
+    expect(welcome.textContent).toBe("Updating Grok Build CLI");
     dispatch(h.window, { type: "initialized", info: { provider: "grok" } });
     vi.advanceTimersByTime(30000);
     expect(strip(h)).toBeNull(); expect(send(h).title).toBe("Initializing\u2026");
+    expect(welcome.textContent).toBe("Starting");
+    dispatch(h.window, { type: "setBusy", value: false });
+    expect(welcome.hidden).toBe(false);
+    expect(welcome.textContent).toBe("Connected");
+  });
+  it("retires only duplicate welcome status after the first startup frame, including a null frame", () => {
+    const h = boot(true);
+    const style = h.doc.createElement("style");
+    style.textContent = readFileSync(new URL("../media/chat.css", import.meta.url), "utf8");
+    h.doc.head.appendChild(style);
+    const welcome = h.doc.getElementById("welcome-version")!;
+    // The relay shell can paint this before receiving any host frame.
+    welcome.textContent = "Connecting";
+    expect(welcome.hidden).toBe(false);
+    status(h, null);
+    expect(welcome.hidden).toBe(true);
+    status(h, "updating");
+    dispatch(h.window, { type: "cliUpdating" });
+    expect(welcome.hidden).toBe(true);
+    expect(h.window.getComputedStyle(welcome as any).display).toBe("none");
+    expect(strip(h).textContent).toContain("Updating the Grok CLI");
+    status(h, "opening");
+    dispatch(h.window, { type: "initialized", info: { provider: "grok", version: "1.2.3" } });
+    expect(welcome.hidden).toBe(true);
+    status(h, "loading");
+    dispatch(h.window, { type: "historyReplay", active: true });
+    expect(welcome.hidden).toBe(true);
+    dispatch(h.window, { type: "historyReplay", active: false });
+    status(h, null);
+    dispatch(h.window, { type: "setBusy", value: false });
+    expect(welcome.hidden).toBe(true);
+    dispatch(h.window, { type: "clearMessages" });
+    expect(welcome.hidden).toBe(true);
+    dispatch(h.window, { type: "onboarding", state: "no-project" });
+    expect(welcome.hidden).toBe(false);
+    expect(welcome.textContent).toBe("No project folder");
+    dispatch(h.window, { type: "error", text: "Unable to start the agent" });
+    expect(h.doc.getElementById("messages")!.textContent).toContain("Unable to start the agent");
+  });
+  it.each(["missing-cli", "auth-required"])("keeps actionable %s onboarding after startup frames", mode => {
+    const h = boot(); status(h, "starting"); status(h, null);
+    dispatch(h.window, { type: "onboarding", state: mode });
+    expect(h.doc.getElementById("welcome-version")!.hidden).toBe(false);
+    expect(h.doc.getElementById("welcome-onboarding")!.textContent).not.toBe("");
   });
   it("hides during machine wake and clears on a conversation switch", () => {
     const h = boot(true); status(h, "loading", { messageCount: 42 });

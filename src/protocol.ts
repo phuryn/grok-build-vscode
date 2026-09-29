@@ -1004,8 +1004,9 @@ export type HostMsg =
    *  (`post`, never buffered). Host-local — remotes open find from their own ⋯. */
   | { type: "findInSession" }
   /** Put text back in the composer (Edit-and-resend, #56). Posted after the
-   *  rewind + reload so it survives the clearMessages/replay that follows. */
-  | { type: "restoreComposer"; text: string; chips?: FileChip[]; sessionId?: string }
+   *  rewind + reload so it survives the clearMessages/replay that follows.
+   *  `draft` marks an automatic restore: existing composer text takes priority. */
+  | { type: "restoreComposer"; text: string; chips?: FileChip[]; sessionId?: string; draft?: boolean }
   /** Drop everything after the Nth visible user message (rewind/edit, P2-9).
    *  Replaces the old clearMessages + full reload, which blanked the panel to
    *  the welcome logo and re-rendered the whole conversation. */

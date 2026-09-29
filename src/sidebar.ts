@@ -5164,10 +5164,11 @@ Only continue if you trust this code.`,
     requester: RemoteRequester | undefined,
     text: string,
     chips?: FileChip[],
+    draft = false,
   ): void {
     if (!text && (!chips || !chips.length)) return;
     
-    const message: HostMsg = { type: "restoreComposer", text, sessionId: session.activeSessionId || undefined, ...(chips ? { chips } : {}) };
+    const message: HostMsg = { type: "restoreComposer", text, sessionId: session.activeSessionId || undefined, ...(chips ? { chips } : {}), ...(draft ? { draft: true } : {}) };
     const retainChips = () => {
       if (chips) session.restoredChips = restoreQueuedChips(session.restoredChips, [{ text, chips }]);
     };
@@ -8302,8 +8303,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         const clientId = this.remoteClients.clientsForActiveValue(session)[0];
         const requester = recipient === "local" ? undefined : recipient ??
           (session === this.focused && this.view ? undefined : clientId ? { clientId } : undefined);
-        this.restoreComposerFor(session, requester, draft, meta.queuedDraftChips);
-      } else this.emit(session, { type: "restoreComposer", text: draft });
+        this.restoreComposerFor(session, requester, draft, meta.queuedDraftChips, true);
+      } else this.emit(session, { type: "restoreComposer", text: draft, sessionId: id, draft: true });
       const { queuedDraft: _restored, queuedDraftChips: _chips, ...rest } = meta;
       return { ...current, [id]: rest };
     });

@@ -248,7 +248,10 @@ describe("one live workflow surface", () => {
     expect(h.window.getComputedStyle(steps[1].querySelector(".workflow-phase-label") as any).fontWeight).toBe("700");
     expect(steps[1].getAttribute("aria-current")).toBe("step");
     const rings = steps.map(step => step.querySelector(".workflow-step")!);
-    expect(rings.every(ring => ring.tagName === "BUTTON" && ring.getAttribute("aria-label") === ring.getAttribute("title"))).toBe(true);
+    expect(rings.map(ring => ring.tagName)).toEqual(["BUTTON", "BUTTON", "SPAN", "BUTTON", "BUTTON", "BUTTON", "BUTTON"]);
+    expect(rings.every(ring => ring.getAttribute("aria-label") === ring.getAttribute("title"))).toBe(true);
+    expect(h.window.getComputedStyle(rings[2] as any).cursor).toBe("default");
+    expect(h.window.getComputedStyle(rings[0] as any).cursor).toBe("pointer");
     expect(pin(h).querySelector(".delegation-section-label")).toBeNull();
     expect([...pin(h).querySelectorAll(".workflow-agent-toggle")].map(row => row.firstElementChild?.getAttribute("data-state"))).toEqual(states);
     expect(pin(h).querySelector("strong.workflow-agent-name")).toBeNull();
@@ -662,20 +665,44 @@ describe("the process on top, agents under their step", () => {
     click(h.window, slots(h)[0].querySelector(".workflow-step")!);
     expect(open(group(h, "A"))).toBe(true);
     expect(scrolled.at(-1)).toBe("A");
-    // A step not started has no group; its ring (and the "+1" fold) brings the "Up next" line into view.
+    // A step without a group and a fold containing only such steps are inert.
     const f = slots(h).find(s => s.textContent === "F")!;
-    click(h.window, f.querySelector(".workflow-step")!);
-    expect(scrolled.at(-1)).toBe("Up next: F · G");
-    click(h.window, slots(h).at(-1)!.querySelector(".workflow-step")!);
-    expect(scrolled.at(-1)).toBe("Up next: F · G");
+    for (const item of [f, slots(h).at(-1)!]) {
+      const ring = item.querySelector<HTMLElement>(".workflow-step")!;
+      expect(ring.tagName).toBe("SPAN");
+      expect(ring.tabIndex).toBe(-1);
+      click(h.window, ring);
+    }
+    expect(scrolled).toEqual(["Plan", "A"]);
+    expect(pin(h).querySelector(".workflow-group-next")).toBeNull();
+  });
+
+  it("opens the first available group in a mixed fold and enables a ring when agents arrive", () => {
+    const h = boot();
+    const scrolled: string[] = [];
+    (h.window as any).HTMLElement.prototype.scrollIntoView = function () {
+      scrolled.push(this.querySelector(".workflow-group-title")?.textContent);
+    };
+    const titles = ["A", "B", "C", "D", "E", "F", "G"];
+    const phases = titles.map(title => ({ title, state: title === "E" ? "active" : "pending" }));
+    send(h, { phases, current_phase: "E", agents: [{ agent_id: "b", label: "worker", phase: "B", state: "running" }] });
+    expand(h);
+    click(h.window, slots(h)[0].querySelector(".workflow-step")!);
+    expect(scrolled).toEqual(["B"]); // A has no group; B does.
+    expect(slots(h).find(s => s.textContent === "F")!.querySelector(".workflow-step")!.tagName).toBe("SPAN");
+    send(h, { phases, current_phase: "E", agents: [{ agent_id: "f", label: "worker", phase: "F", state: "running" }] });
+    const ring = slots(h).find(s => s.textContent === "F")!.querySelector(".workflow-step")!;
+    expect(ring.tagName).toBe("BUTTON");
+    click(h.window, ring);
+    expect(scrolled).toEqual(["B", "F"]);
   });
 
   it("groups agents under their step, strips the step from their labels, and folds a finished step", () => {
     const h = boot();
     send(h, { agents }); expand(h);
-    // Steps not started and with no agents share one "Up next" line rather than a group each.
+    // Steps not started and with no agents appear only in the stepper.
     expect(groups(h).map(g => g.querySelector(".workflow-group-title")!.textContent)).toEqual(["Plan", "Research"]);
-    expect(h.doc.querySelector(".workflow-roster .workflow-group-next")!.textContent).toBe("Up next: Verify · Report");
+    expect(h.doc.querySelector(".workflow-group-next")).toBeNull();
     expect(names(group(h, "Research"))).toEqual(["web", "docs"]);
     expect(names(group(h, "Plan"))).toEqual(["outline"]);
     expect(open(group(h, "Research"))).toBe(true);
@@ -688,6 +715,15 @@ describe("the process on top, agents under their step", () => {
     expect(open(group(h, "Research"))).toBe(false);
     send(h, { agents });
     expect(open(group(h, "Research"))).toBe(false);
+  });
+
+  it("adds no roster height for a run whose steps have not started", () => {
+    const h = boot();
+    send(h, { phases: base.phases.map(p => ({ ...p, state: "pending" })), current_phase: undefined, agents: [] });
+    expand(h);
+    expect(groups(h)).toHaveLength(0);
+    expect(pin(h).querySelector(".workflow-group-next, button.workflow-step")).toBeNull();
+    expect(hidden(pin(h).querySelector(".workflow-agents"))).toBe(true);
   });
 
   it("says how long a finished step took when this view saw it start and finish", () => {
@@ -712,8 +748,7 @@ describe("the process on top, agents under their step", () => {
     expand(h);
     expect(groups(h).map(g => g.querySelector(".workflow-group-title")!.textContent))
       .toEqual(["Plan", "Research", "Other"]);
-    // The steps with no agents yet are still named, on one line.
-    expect(h.doc.querySelector(".workflow-roster .workflow-group-next")!.textContent).toBe("Up next: Verify · Report · Research");
+    expect(h.doc.querySelector(".workflow-group-next")).toBeNull();
     const other = groups(h).at(-1)!;
     expect(names(other)).toEqual(["Mystery / stray", "loose", "Research / dup"]);
     expect([other.dataset.state, open(other), meta(other)]).toEqual(["active", true, "3 agents"]);
@@ -783,16 +818,14 @@ describe("reported capabilities", () => {
     expect(pin(h).querySelector(".workflow-spend")!.textContent).toBe("1,234 agents");
     expect(hidden(pin(h).querySelector(".run-progress-detail"))).toBe(true);
   });
-  // The stepper folds a long run; the full, ordered list of steps is the step
-  // groups below it, and each ring keeps its whole name on its tooltip.
+  // Fold tooltips and ring titles keep the names without extra roster rows.
   it("keeps long phase names complete and ordered in the expanded card", () => {
     const h = boot();
     const phases = Array.from({ length: 12 }, (_, i) => ({ title: `Extended research phase ${i} with a long title`, state: i === 7 ? "active" : "pending" }));
     send(h, { phases, current_phase: phases[7].title, agents: [] }); expand(h);
-    // The running step is a group; every step with no agents that has not started is named, in order, on one line.
+    // Only the running step gets a group, keeping the phone pin compact.
     expect([...pin(h).querySelectorAll(".workflow-group-title")].map((p) => p.textContent)).toEqual([phases[7].title]);
-    expect(pin(h).querySelector(".workflow-group-next")!.textContent)
-      .toBe(`Up next: ${phases.filter((_, i) => i !== 7).map((p) => p.title).join(" · ")}`);
+    expect(pin(h).querySelector(".workflow-group-next")).toBeNull();
     expect([...pin(h).querySelectorAll(".workflow-phase")].map((p) => p.querySelector(".workflow-step")!.getAttribute("title")))
       .toEqual(phases.map((p, i) => `${p.title}: ${i === 7 ? "current" : "pending"}`));
     expect(pin(h).querySelectorAll(".workflow-phase")[7].getAttribute("aria-current")).toBe("step");

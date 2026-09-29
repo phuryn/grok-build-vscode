@@ -851,6 +851,7 @@
     // append/legacy contract.
     sessionProviderCursor: null,
     startupStatus: null,
+    startupStatusSeen: false,
     replaying: false,
     replayDepth: 0,
     // Open-path window (#102): hold the replay stream and render only the last
@@ -6848,6 +6849,11 @@
   let composerExpectedSessionId = null;
   const pendingComposerDrafts = new Set();
   let composerRestoredChips = [];
+  let composerLoadDraft = null;
+
+  function beginComposerLoad() {
+    if (!composerLoadDraft) composerLoadDraft = { text: input.value, chips: composerRestoredChips, edited: false };
+  }
 
   function setComposerRestoredChips(chips) {
     if (!composerRestoredChips.length && !chips.length) return;
@@ -6858,15 +6864,24 @@
     updateSendButton();
   }
 
-  function switchComposerDraft(sessionId) {
+  function switchComposerDraft(sessionId, completingLoad = false) {
     if (composerSessionId === sessionId) return;
+    // Keystrokes during a load belong to the conversation being opened, even
+    // when its identity arrives after the transcript. They are kept, merged after
+    // any saved draft, and never replaced.
+    const keepTyped = completingLoad && composerLoadDraft?.edited;
     if (composerSessionId !== null) {
-      if (input.value || composerRestoredChips.length) composerDrafts.set(composerSessionId, {
-        text: input.value, chips: composerRestoredChips,
+      const previous = keepTyped ? composerLoadDraft : { text: input.value, chips: composerRestoredChips };
+      if (previous.text || previous.chips.length) composerDrafts.set(composerSessionId, {
+        text: previous.text, chips: previous.chips,
       });
       else composerDrafts.delete(composerSessionId);
     }
-    if (composerSessionId !== null || pendingComposerDrafts.has(sessionId)) {
+    if (keepTyped) {
+      const draft = composerDrafts.get(sessionId);
+      if (draft?.text && !input.value.includes(draft.text)) input.value = [draft.text, input.value].filter(Boolean).join("\n\n");
+      if (draft?.chips?.length) setComposerRestoredChips([...new Map([...draft.chips, ...composerRestoredChips].map((chip) => [chip.id, chip])).values()]);
+    } else if (composerSessionId !== null || pendingComposerDrafts.has(sessionId)) {
       const draft = composerDrafts.get(sessionId);
       input.value = draft?.text || "";
       setComposerRestoredChips(draft?.chips || []);
@@ -6878,6 +6893,7 @@
   }
 
   function confirmComposerSession(sessionId) {
+    if (!sessionId) return; // A loading host can temporarily have no active id.
     // Identity echoes can arrive after another gesture. Only the correlated
     // New reply may bind its draft; ordinary frames cannot guess which New.
     if (pendingComposerDrafts.has(composerSessionId)) {
@@ -6891,18 +6907,21 @@
       return;
     }
     if (composerExpectedSessionId && sessionId !== composerExpectedSessionId) return;
-    switchComposerDraft(sessionId);
+    switchComposerDraft(sessionId, true);
+    composerLoadDraft = null;
     composerExpectedSessionId = null;
     syncFocusedRemoteHandoff();
   }
 
   function bindComposerDraft(draftId, sessionId) {
     if (!sessionId || !pendingComposerDrafts.delete(draftId)) return;
-    if (composerSessionId === draftId) composerSessionId = sessionId;
-    else if (composerDrafts.has(draftId)) {
+    if (composerSessionId === draftId) {
+      composerSessionId = sessionId;
+      composerLoadDraft = null;
+    } else if (composerDrafts.has(draftId)) {
       const draft = composerDrafts.get(draftId);
       if (composerSessionId === sessionId) {
-        input.value = [draft.text, input.value].filter(Boolean).join("\n\n");
+        if (!input.value.includes(draft.text)) input.value = [draft.text, input.value].filter(Boolean).join("\n\n");
         setComposerRestoredChips([...draft.chips, ...composerRestoredChips]);
         renderInputHighlight();
       } else composerDrafts.set(sessionId, draft);
@@ -6924,6 +6943,7 @@
    * model.
    */
   function startRailTransition(fields) {
+    composerLoadDraft = null;
     if (state.sessionSuperseded) clearSessionSuperseded();
     clearRailTransitionTimer();
     const token = ++railTransitionSeq;
@@ -7007,6 +7027,7 @@
    */
   function abortRailTransition() {
     if (!state.railTransition) return;
+    composerLoadDraft = null;
     clearRailTransitionTimer();
     state.railTransition = null;
     // The composer moved at the click. Put it back on the conversation the
@@ -9233,6 +9254,9 @@
     if (identityRestoring()) return;
     const ver = $("welcome-version");
     if (!ver) return;
+    // Arrival is the capability. Keep actionable onboarding/errors and the
+    // remote shell's pre-host Connecting state; the strip owns session startup.
+    ver.hidden = state.startupStatusSeen && /^(Starting|Connecting|Loading conversation|Updating Grok Build CLI|Connected(?: · v.*)?)$/.test(text);
     ver.classList.toggle("welcome-status-busy", !!busy);
     ver.dataset.status = busy ? text : "";
     if (!busy) {
@@ -9291,15 +9315,13 @@
   }
 
   function setConversationLoading(active) {
+    if (active) beginComposerLoad();
     // Either branch stamps the empty-state line. A painted conversation must
     // not pick up Connected / Loading conversation, including when those
     // messages arrive before clearMessages has marked the nodes.
     if (welcomeHoldActive()) return;
     if (active) {
-      // Deliberately the only indicator. A second banner above the transcript
-      // used to double it up, and the transcript arrives as one batch anyway \u2014
-      // so the wait that's worth announcing happens while the welcome is still
-      // on screen, and the banner only ever duplicated this line.
+      // Older hosts keep this fallback until a startupStatus frame arrives.
       setWelcomeStatus("Loading conversation", true);
       return;
     }
@@ -10259,6 +10281,7 @@
   }
 
   function resetForNewSession() {
+    beginComposerLoad();
     state.startupStatus = null;
     renderStartupStatus();
     clearSessionSuperseded();
@@ -11929,6 +11952,8 @@
   function pathFromToolTitle(call) {
     const title = String(call && call.title || "").trim();
     if (!title) return "";
+    const listed = title.match(/^List files in '(.+)'$/);
+    if (listed) return listed[1];
     const tick = title.match(/`([^`]+)`/);
     if (tick && tick[1]) return tick[1].trim();
     const stripped = title.replace(/^(edit|write|read|view|delete|create|update)\s+/i, "").trim();
@@ -11952,13 +11977,21 @@
     const kind = toolKind(call);
     return /^(read_file|file_read|view_file|view)$/.test(name) || kind === "read";
   }
-  function isMissingFileRead(call, message) {
-    if (!isReadTool(call) || /^(list|glob|grep|search)/i.test(toolName(call))) return false;
+  function isDirectoryListTool(call) {
+    const name = toolName(call);
+    return /(?:^|__)(?:list_dir|list_directory|list_files|read_directory|readdir)$/i.test(name)
+      || toolKind(call) === "read" && /^List (?:files|directory)(?:\s|$)/i.test(name);
+  }
+  function isMissingPathRead(call, message) {
+    if (!call || /^(glob|grep|search)/i.test(toolName(call))) return false;
+    if (/^list/i.test(toolName(call)) && !isDirectoryListTool(call)) return false;
+    if (!isReadTool(call) && !isDirectoryListTool(call)) return false;
     // Match failure text only, never a successful file's contents. Leave mixed
     // missing/permission/I/O failures red. Provider evidence: research/missing-file-reads.md.
     return typeof message === "string"
       && !/permission denied|access (?:is )?denied|operation not permitted|\b(?:EACCES|EPERM|EIO)\b|(?:input\/output|I\/O) error/i.test(message)
-      && /\bENOENT\b|\bNo such file or directory\b|\bFile does not exist\b/i.test(message);
+      && (/\bENOENT\b|\bNo such file or directory\b|\bFile does not exist\b/i.test(message)
+        || isDirectoryListTool(call) && /\bdoes not exist\b/i.test(message));
   }
   function asLineNum(v) {
     return typeof v === "number" && Number.isFinite(v) ? v : null;
@@ -12185,7 +12218,7 @@
     const filePath = toolFilePath(call);
     const command = r.command || r.cmd;
     const failure = state.toolFailuresById.get(call.toolCallId) || toolFailureText(call);
-    if (isMissingFileRead(call, failure)) return `${filePath ? prettyPath(filePath) : "File"} — doesn't exist yet`;
+    if (isMissingPathRead(call, failure)) return `${filePath ? prettyPath(filePath) : isDirectoryListTool(call) ? "Directory" : "File"} — doesn't exist yet`;
     const pattern = r.glob_pattern || r.pattern || r.query || r.regex || r.search;
     const url = r.url || r.uri;
     // Collapsed rows read as a scannable summary, not a wall of shell — the
@@ -13421,7 +13454,7 @@
   // (grok's "image reference not readable: …" etc.) shows beneath it. Idempotent.
   function applyToolFailure(rowEl, message) {
     if (!rowEl || rowEl.classList.contains("tool-failed")) return;
-    if (isMissingFileRead(rowEl._call, message)) {
+    if (isMissingPathRead(rowEl._call, message)) {
       applyToolLabel(rowEl.querySelector(".tool-item-label, .tool-label"), rowEl._call);
       if (rowEl.querySelector(".tool-missing-message")) return;
       let details = rowEl.querySelector(".tool-item-details");
@@ -14645,13 +14678,14 @@
       const item = document.createElement("li");
       item.className = "workflow-step-more";
       item.dataset.state = state;
-      const button = workflowText(item, "workflow-step", "", "button");
-      button.type = "button";
+      const target = folded.find((step) => step.hasGroup);
+      const button = workflowText(item, "workflow-step", "", target ? "button" : "span");
+      if (target) button.type = "button";
       button.title = `${folded.length} more ${folded.length === 1 ? "step" : "steps"}: ${folded.map((s) => s.phase.title).join(", ")}`;
       button.setAttribute("aria-label", button.title);
       workflowMarker(button, state).classList.add("workflow-step-ring");
       workflowText(button, "workflow-phase-label", `+${folded.length}${done ? " done" : ""}`, "span");
-      button.onclick = () => openWorkflowStep(button, record, folded[0].key);
+      if (target) button.onclick = () => openWorkflowStep(button, record, target.key);
       return item;
     };
     if (start > 0) strip.insertBefore(fold(0, start), items[0]);
@@ -14670,13 +14704,7 @@
   function openWorkflowStep(button, record, key) {
     const body = button.closest(".workflow-expanded");
     const group = body && [...body.querySelectorAll(".workflow-group")].find((g) => g._groupKey === key);
-    if (!group) {
-      // A step that has not started and has no agents lives on the "Up next"
-      // line; bring that into view, which is where its name is.
-      const next = body && body.querySelector(".workflow-group-next");
-      if (next && typeof next.scrollIntoView === "function") next.scrollIntoView({ block: "nearest" });
-      return;
-    }
+    if (!group) return;
     if (group._hasRows) {
       record.groupOpen.set(key, true);
       applyWorkflowGroupOpen(group, record);
@@ -14739,13 +14767,8 @@
       groups.push(other);
     }
     const existing = new Map([...roster.children].filter((g) => g._groupKey).map((g) => [g._groupKey, g]));
-    // Steps that have not started and have no agents share ONE muted line
-    // ("Up next: Verify · Report") instead of a row each: a row per step
-    // repeated the track and made a pinned card on a phone tall enough to crowd
-    // out the transcript, while the line still names every step the stepper
-    // folds away on a long run.
+    // Unstarted steps without agents appear only in the stepper.
     const waiting = (group) => !group.rows.length && /^(pending|queued|scheduled)$/.test(group.state);
-    const upNext = groups.filter(waiting).map((group) => group.title);
     const items = groups.filter((group) => !waiting(group)).map((group) => {
       let item = existing.get(group.key);
       if (!item) {
@@ -14783,16 +14806,6 @@
       applyWorkflowGroupOpen(item, record);
       return item;
     });
-    if (upNext.length) {
-      let next = existing.get("__next");
-      if (!next) {
-        next = document.createElement("li");
-        next.className = "workflow-group-next";
-        next._groupKey = "__next";
-      }
-      next.textContent = `Up next: ${upNext.join(" · ")}`;
-      items.push(next);
-    }
     return items;
   }
 
@@ -14825,6 +14838,8 @@
     strip.setAttribute("aria-label", "Reported workflow phases");
     dots.setAttribute("aria-label", "Reported workflow steps");
     const steps = workflowPhaseStates(u);
+    const stepOf = (u.agents || []).map((agent) => hasPhases ? workflowAgentStepIndex(agent, steps) : -1);
+    steps.forEach((step, i) => { step.hasGroup = stepOf.includes(i) || !/^(pending|queued|scheduled)$/.test(step.state); });
     const describe = (step) => `${step.phase.title}: ${step.current ? "current" : step.state === "unknown" ? "state unavailable" : step.state}`;
     for (const step of steps) {
       const dot = workflowText(dots, "workflow-dot workflow-state-marker", "", "span");
@@ -14836,7 +14851,7 @@
     }
     // Rebuilt only when what it draws changed, so a focused ring survives the
     // frames a live run sends every few seconds.
-    const stripKey = JSON.stringify(steps.map((s) => [s.key, s.phase.title, s.state, s.current]));
+    const stripKey = JSON.stringify(steps.map((s) => [s.key, s.phase.title, s.state, s.current, s.hasGroup]));
     if (strip.dataset.stepsKey !== stripKey) {
       strip.dataset.stepsKey = stripKey;
       strip.replaceChildren();
@@ -14845,13 +14860,13 @@
         item.dataset.state = step.state;
         if (step.phase.id) item.dataset.phaseId = step.phase.id;
         if (step.current) item.setAttribute("aria-current", "step");
-        const button = workflowText(item, "workflow-step", "", "button");
-        button.type = "button";
+        const button = workflowText(item, "workflow-step", "", step.hasGroup ? "button" : "span");
+        if (step.hasGroup) button.type = "button";
         button.title = describe(step);
         button.setAttribute("aria-label", button.title);
         workflowMarker(button, step.state).classList.add("workflow-step-ring");
         workflowText(button, "workflow-phase-label", step.phase.title, "span");
-        button.onclick = () => openWorkflowStep(button, record, step.key);
+        if (step.hasGroup) button.onclick = () => openWorkflowStep(button, record, step.key);
       }
       windowWorkflowSteps(strip, steps, record);
     }
@@ -14901,11 +14916,7 @@
     // paused and resumable, so that agent is paused, not stopped.
     const runPaused = !u.done && /paus/i.test(u.phase || "");
     const shownState = (agent) => runPaused && /^(cancelled|canceled)$/.test(agent.state || "") ? "paused" : agent.state;
-    // A stepped run lists every step, so it shows even before any agent does.
-    roster.hidden = !u.agents?.length && !hasPhases;
-    el.querySelector(".workflow-agents").hidden = roster.hidden;
     const existing = new Map([...roster.querySelectorAll(".workflow-agent")].filter((row) => row._agentKey).map((row) => [row._agentKey, row]));
-    const stepOf = (u.agents || []).map((agent) => hasPhases ? workflowAgentStepIndex(agent, steps) : -1);
     const rows = (u.agents || []).map((agent, i, agents) => {
       const key = workflowAgentKey(agent, agents);
       const row = existing.get(key) || document.createElement("li");
@@ -14954,6 +14965,8 @@
     });
     // A run that declares no steps (Muse) keeps the flat list of agents.
     const listed = hasPhases ? renderWorkflowGroups(roster, record, steps, rows, stepOf) : rows;
+    roster.hidden = !listed.length;
+    el.querySelector(".workflow-agents").hidden = roster.hidden;
     for (const child of [...roster.children]) if (!listed.includes(child)) child.remove();
     listed.forEach((item, i) => { if (roster.children[i] !== item) roster.insertBefore(item, roster.children[i] || null); });
 
@@ -20145,7 +20158,7 @@
           const chips = new Map((draft?.chips || []).map((chip) => [chip.id, chip]));
           for (const chip of msg.chips || []) chips.set(chip.id, chip);
           composerDrafts.set(msg.sessionId, {
-            text: [draft?.text, msg.text].filter(Boolean).join("\n\n"), chips: [...chips.values()],
+            text: msg.draft && draft?.text?.includes(msg.text) ? draft.text : [draft?.text, msg.text].filter(Boolean).join("\n\n"), chips: [...chips.values()],
           });
           break;
         }
@@ -20154,7 +20167,9 @@
         // typed is the user's, and silently destroying it would be the same
         // class of bug as the one Edit exists to fix.
         const existing = input.value.trim();
-        input.value = existing ? existing + "\n\n" + (msg.text || "") : (msg.text || "");
+        // A parked draft (`draft`) is skipped only when the composer already
+        // holds it; anything else typed during the load is kept beside it.
+        if (!msg.draft || !input.value.includes(msg.text || "")) input.value = existing ? existing + "\n\n" + (msg.text || "") : (msg.text || "");
         if (msg.chips) {
           const merged = new Map(composerRestoredChips.map((chip) => [chip.id, chip]));
           for (const chip of msg.chips) merged.set(chip.id, chip);
@@ -20205,11 +20220,15 @@
         break;
       }
       case "startupStatus": {
+        state.startupStatusSeen = true;
         const stages = ["updating", "starting", "opening", "loading"];
+        if (stages.includes(msg.stage)) beginComposerLoad();
         state.startupStatus = stages.includes(msg.stage) ? {
           ...msg, startedAt: Date.now() - (Number.isFinite(msg.elapsedMs) ? Math.max(0, msg.elapsedMs) : 0),
         } : null;
         renderStartupStatus();
+        const welcomeStatus = $("welcome-version");
+        if (welcomeStatus) setWelcomeStatus(welcomeStatus.dataset.status || welcomeStatus.textContent, welcomeStatus.classList.contains("welcome-status-busy"));
         updateSendButton();
         break;
       }
@@ -22894,6 +22913,7 @@
   });
   input.addEventListener("pointerdown", () => { composerPreferredColumn = null; });
   input.addEventListener("input", () => {
+    if (composerLoadDraft) composerLoadDraft.edited = true;
     composerPreferredColumn = null;
     updateSlash();
     updateMention();

@@ -140,19 +140,18 @@ describe("header dots for long workflows", () => {
       .toEqual(["…", "done", "done", "done"]);
   });
 
-  // The stepper folds like the header dots; the full list of steps is the
-  // step groups under it.
+  // The stepper keeps every step without adding empty roster groups.
   it("keeps the full list of steps inside the card", () => {
     const h = view();
     const card = workflow(h, "grok", "running", { phases: steps(["done", "active", ...Array(6).fill("pending")]) });
     expect(card.querySelectorAll(".workflow-phases > .workflow-phase")).toHaveLength(8);
     expect([...card.querySelectorAll(".workflow-phases > li")].filter(li => !(li as HTMLElement).hidden)
       .map(li => li.textContent)).toEqual(["Step 1", "Step 2", "Step 3", "+5"]);
-    // Every step stays named in the card: groups for the started ones, one line for the rest.
+    // Only started steps and agents need roster groups.
     expect([...card.querySelectorAll(".workflow-group-title")].map(el => el.textContent))
       .toEqual(["Step 1", "Step 2", "Other"]);
-    expect(card.querySelector(".workflow-group-next")!.textContent)
-      .toBe(`Up next: ${Array.from({ length: 6 }, (_, i) => `Step ${i + 3}`).join(" · ")}`);
+    expect(card.querySelector(".workflow-group-next")).toBeNull();
+    expect(card.querySelectorAll(".workflow-phases button.workflow-step")).toHaveLength(2);
   });
 });
 
