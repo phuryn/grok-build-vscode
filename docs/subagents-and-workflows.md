@@ -288,13 +288,17 @@ conversation stopped showing its history.
   Drawn as a row, the steps read as the first item of the agent list rather
   than a picture of the run. A long run folds like the header dots: the step
   in progress and one either side, the rest in a "+N done" ring before them
-  and a "+N" ring after, so at most five slots share a phone's width. Each
-  ring is a button that opens its step's group and brings it into view; the
-  closed header keeps its small dots.
+  and a "+N" ring after, so at most five slots share a phone's width. A ring
+  whose step has a group below is a button that opens it and brings it into
+  view; a step not started with no agents has no group, so its ring is only a
+  marker. The closed header keeps its small dots.
 - **Agents grouped under their step.** Below the stepper each step is a
-  heading with its marker and agent count. A finished step folds to one line
-  with its count, time and tokens; the step in progress is open; a step not
-  started says so and has no rows. A row shows only what its label adds to
+  heading with its marker and agent count. A step that finished successfully
+  folds to one line with its count, state, time and tokens (each when known);
+  a failed, stopped or cancelled step with agents stays open, as does the step
+  in progress; a step not
+  started with no agents appears only on the stepper, so a long run does not
+  fill a phone with empty headings. A row shows only what its label adds to
   the step above it (`verifier-1`, not "Verify / verifier-1"), because a label
   alone does not always say which step it ran in. An agent whose phase names
   no single declared step goes in a last "Other" group, never a guessed one.

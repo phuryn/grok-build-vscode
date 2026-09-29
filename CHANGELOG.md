@@ -1,5 +1,24 @@
 # Changelog
 
+## 4.14.1 — 2026-09-29
+
+**See what a starting conversation is waiting for, and read a workflow as a process.**
+
+### Added
+
+- **Startup status above the composer.** While a conversation starts, a line above the composer says what it is waiting for: updating the CLI, starting the agent, opening the conversation, or loading its messages. Past 20 seconds it says the start is taking longer than usual and, in VS Code, offers Show output; a CLI update, which can take minutes, only counts its seconds. Send stays disabled until the conversation is ready, and its tooltip says why. The welcome panel no longer repeats the same status.
+- **Workflow steps as a process.** An open workflow card draws its steps as rings on a track across the full width of the card, with each agent grouped under its step. Tap a step's ring to open its agents; a step that has not started and has no agents is only a marker. A long run folds to five slots so it fits a phone.
+
+### Changed
+
+- **Grok's own conversation names appear as soon as Grok sets them**, in the rail and the header, without waiting for a reload.
+- **Listing a folder that does not exist yet is a grey row**, like a read of a missing file. Other failures stay red.
+- **On phones**, the composer's menus keep a gap from the screen edge, a long message's Show more chip shows without hover, and the file tabs' overflow chip shows how many tabs it holds, so it no longer looks like the file's own menu.
+
+### Fixed
+
+- **Text typed while a conversation loads** is no longer wiped when the load finishes. Typed into an empty composer, it is kept, after any draft that conversation already had; text that was already in the box stays with the conversation you left.
+
 ## 4.14.0 — 2026-09-28
 
 **Hand the conversation to your phone in one scan, and Muse Code in its own modes.**
