@@ -410,3 +410,65 @@ describe("a link inside a heading stays a link", () => {
     expect(literal).not.toContain("<a ");
   });
 });
+
+describe("blockquotes", () => {
+  it("renders a quote line as a blockquote and drops the marker", () => {
+    const html = render("> The best way to predict the future is to invent it.\n");
+    expect(html).toBe("<blockquote>The best way to predict the future is to invent it.</blockquote>");
+  });
+
+  it("ends the quote when the next line is ordinary text", () => {
+    const html = render("before\n\n> quoted\n\nafter\n");
+    expect(html).toContain("<blockquote>quoted</blockquote>");
+    expect(html.indexOf("before")).toBeLessThan(html.indexOf("<blockquote>"));
+    expect(html.indexOf("after")).toBeGreaterThan(html.indexOf("</blockquote>"));
+  });
+
+  it("joins consecutive quote lines and breaks on an empty marker line", () => {
+    const html = render("> one\n> two\n>\n> three\n");
+    expect(html).toBe("<blockquote>one<br>two<br><br>three</blockquote>");
+  });
+
+  it("nests a second level and keeps the outer lines", () => {
+    const html = render("> outer\n>\n> > inner\n>\n> back\n");
+    expect(html.match(/<blockquote>/g)).toHaveLength(2);
+    expect(html).toContain("<blockquote>inner</blockquote>");
+    expect(html).toContain("outer");
+    expect(html).toContain("back");
+    expect(html).not.toContain("&gt;");
+  });
+
+  it("keeps inline markdown, lists, headings, and tables inside a quote", () => {
+    expect(render("> **bold** and `code`\n")).toBe(
+      "<blockquote><strong>bold</strong> and <code>code</code></blockquote>",
+    );
+    expect(render("> - a\n> - b\n")).toBe("<blockquote><ul><li>a</li><li>b</li></ul></blockquote>");
+    expect(render("> ## Title\n")).toBe("<blockquote><h2>Title</h2></blockquote>");
+    const table = render("> | a | b |\n> | --- | --- |\n> | 1 | 2 |\n");
+    expect(table.startsWith("<blockquote>")).toBe(true);
+    expect(table).toContain("<table>");
+    expect(table).toContain("<th>a</th>");
+    expect(table).toContain("<td>1</td>");
+    expect(table).not.toContain("&gt;");
+  });
+
+  it("does not treat a greater-than mid-line, or one inside a fence, as a quote", () => {
+    const mid = render("a > b\n");
+    expect(mid).not.toContain("<blockquote>");
+    expect(mid).toContain("a &gt; b");
+    const fenced = render("```\n> not a quote\n```\n");
+    expect(fenced).not.toContain("<blockquote>");
+    expect(fenced).toContain("&gt; not a quote");
+  });
+
+  it("renders a quote from a CRLF message the same as LF", () => {
+    expect(render("> one\r\n> two\r\n")).toBe(render("> one\n> two\n"));
+  });
+
+  it("paints the quote with the theme's quote bar", () => {
+    const body = ruleBody(".msg .body blockquote");
+    expect(body).toContain("textBlockQuote-border");
+    expect(body).toContain("textBlockQuote-background");
+    expect(body).toContain("border-inline-start");
+  });
+});

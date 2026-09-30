@@ -2109,54 +2109,20 @@
         .replace(/https?:\/\/[^\s<\x00]+/g, (raw) => linkifyUrl(raw))));
     }
 
-    // GFM tables: header row | separator row (|---|---|) | data rows
+    // GFM tables: header row | separator row (|---|---|) | data rows.
+    // Pulled out inside renderBlocks, not once for the whole document, so a
+    // table under a quote is still a table after the `>` markers are peeled.
     const tables = [];
-    {
-      const isTableRow = (l) => /^\s*\|.+\|\s*$/.test(l);
-      const isSep = (l) => /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?\s*$/.test(l);
-      const splitRow = (l) =>
-        l.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(c => c.trim());
-      const srcLines = s.split('\n');
-      const kept = [];
-      let i = 0;
-      while (i < srcLines.length) {
-        if (i + 1 < srcLines.length && isTableRow(srcLines[i]) && isSep(srcLines[i + 1])) {
-          const headers = splitRow(srcLines[i]);
-          const sepCells = splitRow(srcLines[i + 1]);
-          if (headers.length === sepCells.length) {
-            const aligns = sepCells.map(c => {
-              const L = c.startsWith(':'), R = c.endsWith(':');
-              return L && R ? 'center' : R ? 'right' : L ? 'left' : '';
-            });
-            const rows = [];
-            let j = i + 2;
-            while (j < srcLines.length && isTableRow(srcLines[j])) {
-              const cells = splitRow(srcLines[j]);
-              while (cells.length < headers.length) cells.push('');
-              rows.push(cells.slice(0, headers.length));
-              j++;
-            }
-            const styleFor = (k) => aligns[k] ? ` style="text-align:${aligns[k]}"` : '';
-            let html = '<div class="md-table-wrap"><table><thead><tr>';
-            headers.forEach((h, k) => { html += `<th${styleFor(k)}>${inline(h)}</th>`; });
-            html += '</tr></thead><tbody>';
-            for (const row of rows) {
-              html += '<tr>';
-              row.forEach((c, k) => { html += `<td${styleFor(k)}>${inline(c)}</td>`; });
-              html += '</tr>';
-            }
-            html += '</tbody></table></div>';
-            const idx = tables.length;
-            tables.push(html);
-            kept.push(`\x00T${idx}\x00`);
-            i = j;
-            continue;
-          }
-        }
-        kept.push(srcLines[i]);
-        i++;
-      }
-      s = kept.join('\n');
+
+    // A quote marker is 0–3 spaces, `>`, and one optional space or tab. The
+    // marker is syntax. A nested quote is the same marker one level down, so
+    // the peeled body goes back through this pass. Cap the depth so a run of
+    // `>` cannot recurse without bound.
+    const QUOTE_LINE = /^( {0,3})>([ \t]?)(.*)$/;
+    const QUOTE_MAX_DEPTH = 12;
+    function peelQuote(line) {
+      const m = QUOTE_LINE.exec(line);
+      return m ? m[3] : null;
     }
 
     // Expand inline numbered lists: "1. A 2. B 3. C" on one line → separate lines
@@ -2170,132 +2136,224 @@
       return sequential ? parts.map(p => indent + p) : [line];
     }
 
-    const rawLines = s.split('\n');
-    const lines = [];
-    for (const ln of rawLines) lines.push(...expandInline(ln));
-
-    let out = '';
-    // stack: { tag:'ul'|'ol', indent:number, liOpen:boolean }[]
-    let stack = [];
-    let pendingBreak = false;
-    let lastWasBlock = false;
-    let lastPara = false;
-
-    function closeLiAt(i) {
-      if (stack[i].liOpen) { out += '</li>'; stack[i].liOpen = false; }
-    }
-    function closeFrom(depth) {
-      for (let i = stack.length - 1; i >= depth; i--) {
-        closeLiAt(i);
-        out += `</${stack[i].tag}>`;
-      }
-      stack = stack.slice(0, depth);
-    }
-
-    for (const line of lines) {
-      if (!line.trim()) {
-        if (stack.length === 0 && !lastWasBlock) pendingBreak = true;
-        lastPara = false;
-        continue;
-      }
-      lastWasBlock = false;
-
-      const tm = line.trim().match(/^\x00T(\d+)\x00$/);
-      if (tm) {
-        closeFrom(0);
-        out += `\x00T${tm[1]}\x00`;
-        lastWasBlock = true;
-        lastPara = false;
-        pendingBreak = false;
-        continue;
-      }
-
-      // Display math alone on a line → emit as its own block (no paragraph wrap).
-      const dm = line.trim().match(/^\x00D(\d+)\x00$/);
-      if (dm) {
-        closeFrom(0);
-        out += `\x00D${dm[1]}\x00`;
-        lastWasBlock = true;
-        lastPara = false;
-        pendingBreak = false;
-        continue;
-      }
-
-      // Fenced code block alone on a line → emit as its own block. Without this it
-      // falls through to the paragraph path and gets wrapped in <br><br> before and
-      // after; on top of the .code-block div's own 8px margin that reads as TWO
-      // blank lines around a code block (the model only sent one). Mirrors the
-      // table/math branches above so spacing is just the div's margin.
-      const bm = line.trim().match(/^\x00B(\d+)\x00$/);
-      if (bm) {
-        closeFrom(0);
-        out += `\x00B${bm[1]}\x00`;
-        lastWasBlock = true;
-        lastPara = false;
-        pendingBreak = false;
-        continue;
-      }
-
-      const pr = pullRequestFromLine(line);
-      if (pr) {
-        closeFrom(0);
-        out += pullRequestChipHtml(pr);
-        lastWasBlock = true;
-        lastPara = false;
-        pendingBreak = false;
-        continue;
-      }
-
-      const hm = line.match(/^(#{1,4}) (.+)$/);
-      if (hm) {
-        closeFrom(0);
-        out += `<h${hm[1].length}>${inline(hm[2])}</h${hm[1].length}>`;
-        lastWasBlock = true;
-        lastPara = false;
-        pendingBreak = false;
-        continue;
-      }
-
-      const lm = line.match(/^( *)([-*]|\d+\.) (.+)$/);
-      if (lm) {
-        const indent = lm[1].length;
-        const isOl = /\d/.test(lm[2][0]);
-        const tag = isOl ? 'ol' : 'ul';
-        const content = lm[3];
-
-        while (stack.length > 0 && stack[stack.length - 1].indent > indent) {
-          closeLiAt(stack.length - 1);
-          out += `</${stack[stack.length - 1].tag}>`;
-          stack.pop();
-        }
-
-        if (stack.length === 0 || stack[stack.length - 1].indent < indent) {
-          out += `<${tag}>`;
-          stack.push({ tag, indent, liOpen: false });
-        } else {
-          closeLiAt(stack.length - 1);
-          if (stack[stack.length - 1].tag !== tag) {
-            out += `</${stack[stack.length - 1].tag}><${tag}>`;
-            stack[stack.length - 1].tag = tag;
+    function renderBlocks(src, depth) {
+      let body = src;
+      {
+        const isTableRow = (l) => /^\s*\|.+\|\s*$/.test(l);
+        const isSep = (l) => /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?\s*$/.test(l);
+        const splitRow = (l) =>
+          l.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(c => c.trim());
+        const srcLines = body.split('\n');
+        const kept = [];
+        let ti = 0;
+        while (ti < srcLines.length) {
+          if (ti + 1 < srcLines.length && isTableRow(srcLines[ti]) && isSep(srcLines[ti + 1])) {
+            const headers = splitRow(srcLines[ti]);
+            const sepCells = splitRow(srcLines[ti + 1]);
+            if (headers.length === sepCells.length) {
+              const aligns = sepCells.map(c => {
+                const L = c.startsWith(':'), R = c.endsWith(':');
+                return L && R ? 'center' : R ? 'right' : L ? 'left' : '';
+              });
+              const rows = [];
+              let j = ti + 2;
+              while (j < srcLines.length && isTableRow(srcLines[j])) {
+                const cells = splitRow(srcLines[j]);
+                while (cells.length < headers.length) cells.push('');
+                rows.push(cells.slice(0, headers.length));
+                j++;
+              }
+              const styleFor = (k) => aligns[k] ? ` style="text-align:${aligns[k]}"` : '';
+              let html = '<div class="md-table-wrap"><table><thead><tr>';
+              headers.forEach((h, k) => { html += `<th${styleFor(k)}>${inline(h)}</th>`; });
+              html += '</tr></thead><tbody>';
+              for (const row of rows) {
+                html += '<tr>';
+                row.forEach((c, k) => { html += `<td${styleFor(k)}>${inline(c)}</td>`; });
+                html += '</tr>';
+              }
+              html += '</tbody></table></div>';
+              const idx = tables.length;
+              tables.push(html);
+              kept.push(`\x00T${idx}\x00`);
+              ti = j;
+              continue;
+            }
           }
+          kept.push(srcLines[ti]);
+          ti++;
+        }
+        body = kept.join('\n');
+      }
+
+      const lines = [];
+      for (const ln of body.split('\n')) lines.push(...expandInline(ln));
+
+      let out = '';
+      // stack: { tag:'ul'|'ol', indent:number, liOpen:boolean }[]
+      let stack = [];
+      let pendingBreak = false;
+      let lastWasBlock = false;
+      let lastPara = false;
+
+      function closeLiAt(i) {
+        if (stack[i].liOpen) { out += '</li>'; stack[i].liOpen = false; }
+      }
+      function closeFrom(from) {
+        for (let i = stack.length - 1; i >= from; i--) {
+          closeLiAt(i);
+          out += `</${stack[i].tag}>`;
+        }
+        stack = stack.slice(0, from);
+      }
+
+      let i = 0;
+      while (i < lines.length) {
+        const line = lines[i];
+        if (!line.trim()) {
+          if (stack.length === 0 && !lastWasBlock) pendingBreak = true;
+          lastPara = false;
+          i++;
+          continue;
+        }
+        lastWasBlock = false;
+
+        // Consecutive `>` lines are one quote. A blank line stays inside when
+        // another quote line follows it (a paragraph break); a blank line at
+        // the end belongs to whatever comes after. The marker is not text.
+        if (depth < QUOTE_MAX_DEPTH && peelQuote(line) !== null) {
+          const inner = [];
+          while (i < lines.length) {
+            const peeled = peelQuote(lines[i]);
+            if (peeled !== null) {
+              inner.push(peeled);
+              i++;
+              continue;
+            }
+            if (!lines[i].trim()) {
+              let k = i;
+              while (k < lines.length && !lines[k].trim()) k++;
+              if (k < lines.length && peelQuote(lines[k]) !== null) {
+                while (i < k) { inner.push(""); i++; }
+                continue;
+              }
+            }
+            break;
+          }
+          closeFrom(0);
+          out += `<blockquote>${renderBlocks(inner.join("\n"), depth + 1)}</blockquote>`;
+          lastWasBlock = true;
+          lastPara = false;
+          pendingBreak = false;
+          continue;
         }
 
-        out += `<li>${inline(content)}`;
-        stack[stack.length - 1].liOpen = true;
-        lastPara = false;
-        pendingBreak = false;
-        continue;
+        const tm = line.trim().match(/^\x00T(\d+)\x00$/);
+        if (tm) {
+          closeFrom(0);
+          out += `\x00T${tm[1]}\x00`;
+          lastWasBlock = true;
+          lastPara = false;
+          pendingBreak = false;
+          i++;
+          continue;
+        }
+
+        // Display math alone on a line → emit as its own block (no paragraph wrap).
+        const dm = line.trim().match(/^\x00D(\d+)\x00$/);
+        if (dm) {
+          closeFrom(0);
+          out += `\x00D${dm[1]}\x00`;
+          lastWasBlock = true;
+          lastPara = false;
+          pendingBreak = false;
+          i++;
+          continue;
+        }
+
+        // Fenced code block alone on a line → emit as its own block. Without this it
+        // falls through to the paragraph path and gets wrapped in <br><br> before and
+        // after; on top of the .code-block div's own 8px margin that reads as TWO
+        // blank lines around a code block (the model only sent one). Mirrors the
+        // table/math branches above so spacing is just the div's margin.
+        const bm = line.trim().match(/^\x00B(\d+)\x00$/);
+        if (bm) {
+          closeFrom(0);
+          out += `\x00B${bm[1]}\x00`;
+          lastWasBlock = true;
+          lastPara = false;
+          pendingBreak = false;
+          i++;
+          continue;
+        }
+
+        const pr = pullRequestFromLine(line);
+        if (pr) {
+          closeFrom(0);
+          out += pullRequestChipHtml(pr);
+          lastWasBlock = true;
+          lastPara = false;
+          pendingBreak = false;
+          i++;
+          continue;
+        }
+
+        const hm = line.match(/^(#{1,4}) (.+)$/);
+        if (hm) {
+          closeFrom(0);
+          out += `<h${hm[1].length}>${inline(hm[2])}</h${hm[1].length}>`;
+          lastWasBlock = true;
+          lastPara = false;
+          pendingBreak = false;
+          i++;
+          continue;
+        }
+
+        const lm = line.match(/^( *)([-*]|\d+\.) (.+)$/);
+        if (lm) {
+          const indent = lm[1].length;
+          const isOl = /\d/.test(lm[2][0]);
+          const tag = isOl ? 'ol' : 'ul';
+          const content = lm[3];
+
+          while (stack.length > 0 && stack[stack.length - 1].indent > indent) {
+            closeLiAt(stack.length - 1);
+            out += `</${stack[stack.length - 1].tag}>`;
+            stack.pop();
+          }
+
+          if (stack.length === 0 || stack[stack.length - 1].indent < indent) {
+            out += `<${tag}>`;
+            stack.push({ tag, indent, liOpen: false });
+          } else {
+            closeLiAt(stack.length - 1);
+            if (stack[stack.length - 1].tag !== tag) {
+              out += `</${stack[stack.length - 1].tag}><${tag}>`;
+              stack[stack.length - 1].tag = tag;
+            }
+          }
+
+          out += `<li>${inline(content)}`;
+          stack[stack.length - 1].liOpen = true;
+          lastPara = false;
+          pendingBreak = false;
+          i++;
+          continue;
+        }
+
+        closeFrom(0);
+        if (pendingBreak) { out += '<br><br>'; pendingBreak = false; }
+        else if (lastPara) out += '<br>';
+        out += inline(line);
+        lastPara = true;
+        i++;
       }
 
       closeFrom(0);
-      if (pendingBreak) { out += '<br><br>'; pendingBreak = false; }
-      else if (lastPara) out += '<br>';
-      out += inline(line);
-      lastPara = true;
+      return out;
     }
 
-    closeFrom(0);
-    return out
+    return renderBlocks(s, 0)
       .replace(/\x00B(\d+)\x00/g, (_, i) => codeBlocks[+i])
       .replace(/\x00T(\d+)\x00/g, (_, i) => tables[+i])
       .replace(/\x00D(\d+)\x00/g, (_, i) => mathHtml[+i])
@@ -2311,7 +2369,7 @@
   // containers in chat.css. Code deliberately never gets dir=auto: chat.css
   // pins pre/code LTR. Runs after every innerHTML = renderMarkdown(...).
   function applyAutoDir(root) {
-    for (const el of root.querySelectorAll("ul, ol, li, h1, h2, h3, h4, td, th")) {
+    for (const el of root.querySelectorAll("blockquote, ul, ol, li, h1, h2, h3, h4, td, th")) {
       el.setAttribute("dir", "auto");
     }
   }

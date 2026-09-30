@@ -3727,6 +3727,33 @@ body.hide-turn-diff-summary .turn-diff-summary { display: none; }
 .workflow-output-body li, .msg.agent .body li, .desk-ft-md li, .files-browse-md li { margin: 3px 0; }
 .workflow-output-body li > ul, .msg.agent .body li > ul, .desk-ft-md li > ul, .files-browse-md li > ul { margin: 3px 0; list-style-type: circle; }
 .workflow-output-body li > ul ul, .msg.agent .body li > ul ul, .desk-ft-md li > ul ul, .files-browse-md li > ul ul { list-style-type: square; }
+/* A quote is an inset, same tokens the editor uses for one: a bar on the
+   start side and the theme's quote wash. The marker itself is gone; the bar
+   is what says "this was quoted". Nested quotes repeat the bar. */
+.workflow-output-body blockquote,
+.msg .body blockquote,
+.card .plan-body blockquote,
+.thinking-body blockquote,
+.subagent-result blockquote,
+.desk-ft-md blockquote,
+.files-browse-md blockquote {
+  margin: 8px 0;
+  padding: 2px 0 2px 12px;
+  border-inline-start: 3px solid var(--vscode-textBlockQuote-border, var(--vscode-textLink-foreground));
+  background: var(--vscode-textBlockQuote-background, transparent);
+}
+@media (forced-colors: active) {
+  .workflow-output-body blockquote,
+  .msg .body blockquote,
+  .card .plan-body blockquote,
+  .thinking-body blockquote,
+  .subagent-result blockquote,
+  .desk-ft-md blockquote,
+  .files-browse-md blockquote {
+    border-inline-start-color: CanvasText;
+    background: transparent;
+  }
+}
 /* The wrapper owns the block surface (Codex-style): radius on the div,
    overflow clipped so full-width diff-line tints follow the rounded corners.
    Every fenced block renderMarkdown emits is wrapped in .code-block, in agent,
