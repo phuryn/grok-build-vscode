@@ -1040,6 +1040,7 @@ export class GrokSidebar {
     "setExpandCommandOutputs",
     "setSteerByDefault",
     "setPromptNav",
+    "setProjectsWorkspaceOnly",
     "setMuseSetting",
     "setPinLiveWorkflows",
     "setExpandDiffCard",
@@ -3125,6 +3126,15 @@ export class GrokSidebar {
         for (const session of [this.focused, ...this.pool]) {
           this.refreshFeedbackAvailability(session);
         }
+      }
+      if (e.affectsConfiguration("grok.projects.workspaceOnly")) {
+        const message: HostMsg = {
+          type: "projectsWorkspaceOnly",
+          value: this.projectsPanelWorkspaceOnly(),
+        };
+        this.post(message);
+        void this.settingsEditor?.webview.postMessage(message);
+        this.postRepoCatalog();
       }
     });
     const authWatcher = this.host.createFileSystemWatcher(
@@ -6680,6 +6690,16 @@ Only continue if you trust this code.`,
     return cwdIsAuthorized(cwd, this.authorizedSessionCwds(), pathsEqual);
   }
 
+  /**
+   * VS Code projects panel only, and only while this window has a folder.
+   * Desktop already lists the folders it has open, and must not consult a
+   * setting that would mean something different on that rail.
+   */
+  private projectsPanelWorkspaceOnly(): boolean {
+    if (this.host.canSwitchWorkspaceFolder) return false;
+    return this.host.getConfiguration("grok").get<boolean>("projects.workspaceOnly", false) === true;
+  }
+
   private postRepoCatalog(): void {
     this.normalizeArchiveChoices();
     // Both local and remote attached clients see the host's catalog: curated
@@ -6721,6 +6741,7 @@ Only continue if you trust this code.`,
     // folder the user chose, and may equal the active session cwd once a switch
     // settles.
     const localSelected = this.selectedRepoCwd || this.workspaceRoot() || "";
+    const openFolders = this.projectsPanelWorkspaceOnly() ? this.openWorkspaceFolders() : [];
     this.postLocal({
       type: "repos",
       entries: localEntries,
@@ -6736,6 +6757,12 @@ Only continue if you trust this code.`,
       // instead of it — the rail needs both to say "you are working here, your
       // window is there".
       workspaceCwd: this.workspaceRoot() || "",
+      // The entries above stay the full catalog. The rail decides what to
+      // paint. Omitted on desktop, and omitted when this window has no folder,
+      // so an empty window keeps the list it can actually choose from.
+      ...(openFolders.length
+        ? { workspaceFolders: openFolders, workspaceOnly: true as const }
+        : {}),
     });
     for (const clientId of this.remoteClients.clients()) {
       this.sendRemoteClient(clientId, this.buildRemoteReposMsg(clientId, localEntries));
@@ -12213,6 +12240,18 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         await this.host.getConfiguration("grok")
           .update("promptNav", !!msg.value, "global");
         break;
+      case "setProjectsWorkspaceOnly": {
+        // Window scope: a workspace value stays a workspace value. An unset
+        // key lands in user settings, which is the answer for every window
+        // that has not chosen its own.
+        const cfg = this.host.getConfiguration("grok");
+        await cfg.update(
+          "projects.workspaceOnly",
+          !!msg.value,
+          configWriteTarget(cfg.inspect("projects.workspaceOnly")),
+        );
+        break;
+      }
       case "setPinLiveWorkflows":
         await this.host.getConfiguration("grok")
           .update("pinLiveWorkflows", !!msg.value, "global");
@@ -17794,6 +17833,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       steerByDefault: cfg.get("steerByDefault", false),
       expandDiffCard: cfg.get("expandDiffCard", false),
       promptNav: cfg.get("promptNav", true),
+      projectsWorkspaceOnly: cfg.get("projects.workspaceOnly", false),
       museSettings: this.museSettings(),
       pinLiveWorkflows: cfg.get("pinLiveWorkflows", true),
       soundNotifications: cfg.get("soundNotifications", false),
@@ -22070,6 +22110,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         steerByDefault: cfg.get("steerByDefault", false),
         expandDiffCard: cfg.get("expandDiffCard", false),
         promptNav: cfg.get("promptNav", true),
+        projectsWorkspaceOnly: cfg.get("projects.workspaceOnly", false),
         museSettings: this.museSettings(),
         pinLiveWorkflows: cfg.get("pinLiveWorkflows", true),
         fontScale: this.chatFontScale(),
@@ -22218,6 +22259,9 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           // Same reason as chat.js: a quota-refused save never reaches the host,
           // so the relay's bounce is the only answer the page will get.
           surface.update({ routineError: msg.text || "", routineErrorId: "" });
+        }
+        if (msg.type === "projectsWorkspaceOnly") {
+          surface.update({ projectsWorkspaceOnly: msg.value === true });
         }
         if (msg.type === "settingsCategory" && msg.category) surface.setCategory(msg.category);
       });

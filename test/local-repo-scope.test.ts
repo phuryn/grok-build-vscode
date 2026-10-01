@@ -85,6 +85,47 @@ describe("local repo scope", () => {
     expect(methodBody("private postRepoCatalog()")).toMatch(/canAddProject: this\.canAddProjectFolder\(\)/);
     expect(methodBody("private buildRemoteReposMsg(")).not.toMatch(/canAddProject/);
   });
+
+  it("does not read the projects-panel setting on a host that owns its folders", () => {
+    // Desktop already lists open folders. Reading the VS Code setting there
+    // would attach a second, different filter to a rail that does not use it.
+    const body = methodBody("private projectsPanelWorkspaceOnly()");
+    const guard = body.indexOf("if (this.host.canSwitchWorkspaceFolder) return false;");
+    const read = body.indexOf('getConfiguration("grok")');
+    expect(guard).toBeGreaterThan(-1);
+    expect(read).toBeGreaterThan(guard);
+  });
+
+  it("limits the local repos frame without shrinking the catalog", () => {
+    // The entries are the trust list. Filtering them would close every other
+    // project for the phone. The rail is what declines to paint some rows,
+    // and only when this window actually has a folder open.
+    const body = methodBody("private postRepoCatalog()");
+    expect(body).toMatch(/entries: localEntries,/);
+    expect(body).not.toMatch(/localEntries\.filter/);
+    expect(body).toMatch(
+      /const openFolders = this\.projectsPanelWorkspaceOnly\(\) \? this\.openWorkspaceFolders\(\) : \[\];/,
+    );
+    expect(body).toMatch(
+      /\.\.\.\(openFolders\.length\s*\?\s*\{ workspaceFolders: openFolders, workspaceOnly: true as const \}/,
+    );
+    expect(methodBody("private buildRemoteReposMsg(")).not.toMatch(/workspaceOnly/);
+  });
+
+  it("writes the projects-panel setting where it is already set, and republishes the rail", () => {
+    const at = sidebar.indexOf('case "setProjectsWorkspaceOnly":');
+    expect(at).toBeGreaterThan(-1);
+    const arm = sidebar.slice(at, sidebar.indexOf("break;", at));
+    expect(arm).toMatch(/configWriteTarget\(cfg\.inspect\("projects\.workspaceOnly"\)\)/);
+    expect(arm).not.toMatch(/"global"/);
+
+    const watch = sidebar.indexOf('e.affectsConfiguration("grok.projects.workspaceOnly")');
+    expect(watch).toBeGreaterThan(-1);
+    const watcher = sidebar.slice(watch, sidebar.indexOf("this.postRepoCatalog();", watch) + "this.postRepoCatalog();".length);
+    expect(watcher).toMatch(/type: "projectsWorkspaceOnly"/);
+    expect(watcher).toMatch(/this\.post\(message\)/);
+    expect(watcher).toMatch(/this\.settingsEditor\?\.webview\.postMessage\(message\)/);
+  });
 });
 
 describe("a file belongs to a conversation, not to the window", () => {

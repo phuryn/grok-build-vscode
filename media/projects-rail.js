@@ -70,6 +70,13 @@
      * conversation, not by pinning a project.
      */
     workspaceCwd: "",
+    /**
+     * Every folder this window has open, and whether to paint only those.
+     * Both arrive on `repos`. Absent means the whole catalog: an older host,
+     * the desktop app, and a window with no folder open.
+     */
+    workspaceFolders: [],
+    workspaceOnly: false,
     activeCwd: "",
     activeSessionId: null,
     /** Sessions for the SELECTED project (from `sessions`) — which is the open
@@ -428,12 +435,58 @@
     return String(text || "").toLowerCase().includes(q);
   }
 
+  /**
+   * The panel is limited to folders this window has open. An empty list is
+   * not a limit: a window with no folder keeps the full catalog, because this
+   * rail cannot open one.
+   */
+  function windowLimitsProjects() {
+    return state.workspaceOnly === true && state.workspaceFolders.length > 0;
+  }
+
+  function cwdIsOpenHere(cwd) {
+    return state.workspaceFolders.some((folder) => sameCwd(folder, cwd));
+  }
+
+  /** Sessions in Recent and Pinned follow the same limit as project rows. */
+  function repoInWindow(cwd) {
+    if (!windowLimitsProjects()) return true;
+    return cwdIsOpenHere(cwd);
+  }
+
+  /** Rows the panel may paint. `state.repos` stays the full catalog. */
+  function visibleRepos() {
+    if (!windowLimitsProjects()) return state.repos;
+    const out = [];
+    for (const folder of state.workspaceFolders) {
+      const hit = state.repos.find((r) => sameCwd(r.cwd, folder));
+      if (hit && out.indexOf(hit) === -1) out.push(hit);
+    }
+    return out;
+  }
+
+  /** Add / create / clone all record a project without opening it here. */
+  function offerAddProject() {
+    return state.canAddProject && !windowLimitsProjects();
+  }
+
+  function showYourIde(cwd) {
+    if (windowLimitsProjects()) return cwdIsOpenHere(cwd);
+    return sameCwd(cwd, state.workspaceCwd);
+  }
+
   function partitionRepos() {
     // No fallback needed when the open folder has no Grok history yet: the host
     // passes it to discoverRepos as a trusted cwd, which adds a catalog row for
     // it (updatedAt 0). The current project is therefore always present here.
-    const current = state.repos.find((r) => sameCwd(r.cwd, state.workspaceCwd));
-    const other = state.repos
+    const source = visibleRepos();
+    const current = source.find((r) => sameCwd(r.cwd, state.workspaceCwd));
+    // Open folders stay in the window's own order. The alphabetical sort is
+    // for the catalog you are browsing, not for two roots you already opened.
+    if (windowLimitsProjects()) {
+      return { current, other: source.filter((r) => r !== current) };
+    }
+    const other = source
       .filter((r) => !sameCwd(r.cwd, state.workspaceCwd))
       .slice()
       .sort((a, b) => {
@@ -831,6 +884,7 @@
 
   function requestPreviews() {
     for (const r of state.repos) {
+      if (windowLimitsProjects() && !cwdIsOpenHere(r.cwd)) continue;
       if (sameCwd(r.cwd, state.currentCwd)) continue;
       if (!r.available) continue;
       const key = cwdKey(r.cwd);
@@ -963,7 +1017,7 @@
     // group rather than an empty one.
     if (state.pinnedKnown) {
       const pinned = uniqueSessionRows(pinnedRows()).filter(
-        (s) => matchesFilter(s.displayName) || matchesFilter(repoLabelFor(s.cwd)),
+        (s) => repoInWindow(s.cwd) && (matchesFilter(s.displayName) || matchesFilter(repoLabelFor(s.cwd))),
       );
       if (pinned.length) {
         root.appendChild(staticGroupHead("Pinned"));
@@ -983,7 +1037,7 @@
     // PER GROUP only (owner, 2026-08-13): a cross-group claim made a session
     // vanish from under its project while Recent held it.
     const recentAll = recentRows().filter(
-      (s) => matchesFilter(s.displayName) || matchesFilter(repoLabelFor(s.cwd)),
+      (s) => repoInWindow(s.cwd) && (matchesFilter(s.displayName) || matchesFilter(repoLabelFor(s.cwd))),
     );
     if (recentAll.length) {
       const forcedOpen = !!q;
@@ -1040,14 +1094,14 @@
         openTitle: "Hide projects",
         closedTitle: "Show projects",
         searchTitle: "Open while your search matches a project",
-        action: state.canAddProject ? addProjectButton : undefined,
+        action: offerAddProject() ? addProjectButton : undefined,
       }));
       if (open) {
         const list = document.createElement("div");
         list.className = "rail-list rail-projects";
         for (const repo of projectRepos) {
           list.appendChild(renderRepo(repo, {
-            isCurrent: !!current && sameCwd(repo.cwd, current.cwd),
+            isCurrent: showYourIde(repo.cwd),
             inArchive: false,
           }));
         }
@@ -1063,7 +1117,7 @@
         // with one project or none the rail is mostly empty space, and the only
         // way to add another is a 28px glyph in a header. Same control, said
         // where there is room to say it.
-        if (state.canAddProject && !q) root.appendChild(addProjectWideButton());
+        if (offerAddProject() && !q) root.appendChild(addProjectWideButton());
       }
       shown = true;
     }
@@ -1099,7 +1153,7 @@
       // An empty rail that only says "No projects yet" is a dead end on the one
       // screen where the user has nothing else to click — and with no group
       // heads rendered, the "+" above has nowhere to be.
-      if (!q && state.canAddProject) note.appendChild(addProjectWideButton());
+      if (!q && offerAddProject()) note.appendChild(addProjectWideButton());
       root.appendChild(note);
     }
 
@@ -1407,6 +1461,10 @@
     // being archived FOR you by the age rule; it must not veto your own click.
     if (sameCwd(repo.cwd, state.workspaceCwd)) return false;
     if (sameCwd(repo.cwd, state.currentCwd)) return false;
+    // A second root in the same window is open too. The age rule must not
+    // file it away. A stored click already returned above, so this does not
+    // undo Archive.
+    if (cwdIsOpenHere(repo.cwd)) return false;
     if (!known) return !!repo.archived;
     if (floorKeys.has(cwdKey(repo.cwd))) return false;
     return at > 0 ? now - at > RAIL_ARCHIVE_AFTER_MS : true;
@@ -1949,6 +2007,12 @@
         // Older host: no separate workspace root, so fall back to the selection
         // and behave as before rather than losing the marker entirely.
         state.workspaceCwd = msg.workspaceCwd || msg.selectedCwd || "";
+        state.workspaceFolders = Array.isArray(msg.workspaceFolders)
+          ? msg.workspaceFolders.filter((c) => typeof c === "string" && c)
+          : [];
+        // An empty list must not blank the rail. The host omits the flag in
+        // that case; treat a stray `true` the same way.
+        state.workspaceOnly = msg.workspaceOnly === true && state.workspaceFolders.length > 0;
         state.canAddProject = msg.canAddProject === true;
         state.canCreateProject = msg.canCreateProject === true;
         state.canCloneProject = msg.canCloneProject === true;

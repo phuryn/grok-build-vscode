@@ -471,6 +471,12 @@
           "default": true,
           "markdownDescription": "Send anonymous, privacy-first usage telemetry. A single `session_start` event per session carries an anonymous install id (a random GUID, no account/identity) plus a low-cardinality settings snapshot (including mode/model/effort, host kind, UI preferences, whether voice input is available, and which providers are connected; full list in [docs/privacy.md](https://github.com/PawelHuryn/grok-vscode/blob/main/docs/privacy.md)) — **never** any message content, code, file paths, or free-text settings. Also requires VS Code's global `telemetry.telemetryLevel` to be enabled and this to be the official build; turning either setting off stops all sending."
         },
+        "grok.projects.workspaceOnly": {
+          "type": "boolean",
+          "default": false,
+          "scope": "window",
+          "markdownDescription": "In the VS Code projects panel, list only the folders this window has open. Recent conversations and pins from other projects are hidden with them. Archive stays shared across windows. The desktop app already lists only its open folders and ignores this setting."
+        },
         "grok.chatFontScale": {
           "type": "number",
           "default": 100,

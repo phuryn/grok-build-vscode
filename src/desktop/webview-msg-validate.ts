@@ -260,6 +260,7 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
     case "setExpandCommandOutputs":
     case "setSteerByDefault":
     case "setPromptNav":
+    case "setProjectsWorkspaceOnly":
     case "setPinLiveWorkflows":
     case "setExpandDiffCard":
     case "setTelemetryEnabled":
