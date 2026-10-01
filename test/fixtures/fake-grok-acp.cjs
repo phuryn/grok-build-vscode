@@ -87,6 +87,22 @@ function storedSessionDir(cwd, sessionId) {
   return path.join(grokHome(), "sessions", encodeURIComponent(cwd), sessionId);
 }
 
+let activeContextWindow = 256000;
+let activeContextUsed = Number(process.env.FAKE_CONTEXT_USED) || 16017;
+let contextStatePath;
+
+function openContextState(sessionId, cwd, resume) {
+  if (!process.env.FAKE_CONTEXT_WINDOWS) return;
+  contextStatePath = path.join(storedSessionDir(cwd, sessionId), "context-window.json");
+  activeContextWindow = 256000;
+  activeContextUsed = Number(process.env.FAKE_CONTEXT_USED) || 16017;
+  if (resume && fs.existsSync(contextStatePath)) {
+    const saved = JSON.parse(fs.readFileSync(contextStatePath, "utf8"));
+    activeContextWindow = saved.window;
+    activeContextUsed = saved.used;
+  }
+}
+
 function sessionHandle(sessionId) {
   return {
     sessionId,
@@ -99,6 +115,7 @@ function sessionHandle(sessionId) {
         modelId: "fake-model",
         name: "Fake",
         _meta: {
+          ...(process.env.FAKE_CONTEXT_WINDOWS ? { contextWindows: [256000, 500000], totalContextTokens: activeContextWindow } : {}),
           supportsReasoningEffort: true,
           reasoningEffort: process.env.FAKE_CONFIG_EFFORT || "high",
           reasoningEfforts: [{ value: "high" }, { value: "medium" }, { value: "low" }],
@@ -218,6 +235,7 @@ rl.on("line", async (line) => {
       // Stalling only this reply separates them. Pair it with the main-process
       // heartbeat in scripts/open-timing-check.mjs: if the delay lands in `new`
       // and the heartbeat stays smooth, the wait is not the freeze.
+      openContextState(sid, params.cwd, false);
       const delayMs = Number(process.env.FAKE_NEW_SESSION_DELAY_MS || 0);
       if (delayMs > 0) {
         setTimeout(() => respondOk(id, sessionHandle(sid)), delayMs);
@@ -233,10 +251,23 @@ rl.on("line", async (line) => {
       // on-disk session. Later notifications use this same id — a pid-derived
       // constant would be a different conversation after a host restart.
       const sid = sessions.onLoad(params?.sessionId);
+      openContextState(sid, params.cwd, true);
       replayStoredSession(sid, params?.cwd);
       return respondOk(id, sessionHandle(sid));
     }
     case "session/set_model": {
+      if (process.env.FAKE_CONTEXT_WINDOWS && params._meta?.contextWindow) {
+        const size = params._meta.contextWindow;
+        if (process.env.FAKE_CONTEXT_ERROR || ![256000, 500000].includes(size)) return send({ jsonrpc: "2.0", id, error: { code: -32602, message: "context window rejected" } });
+        if (!process.env.FAKE_CONTEXT_UNCONFIRMED) activeContextWindow = size;
+        if (!process.env.FAKE_CONTEXT_UNCONFIRMED && size < activeContextUsed) {
+          notify("_x.ai/session_notification", { sessionId: sessions.id, update: { sessionUpdate: "auto_compact_started" } });
+          activeContextUsed = 10000;
+          notify("_x.ai/session_notification", { sessionId: sessions.id, update: { sessionUpdate: "auto_compact_completed", tokens_after: activeContextUsed } });
+        }
+        fs.mkdirSync(path.dirname(contextStatePath), { recursive: true });
+        fs.writeFileSync(contextStatePath, JSON.stringify({ window: activeContextWindow, used: activeContextUsed }));
+      }
       // Echo the received _meta so a test can assert the client sent
       // reasoningEffort on a live effort switch.
       process.stderr.write(`SET_MODEL: ${JSON.stringify({ modelId: params.modelId, _meta: params._meta })}\n`);
@@ -258,8 +289,8 @@ rl.on("line", async (line) => {
       return respondOk(id, {
         sessionId: sessions.id,
         context: {
-          used: 16017,
-          total: 512000,
+          used: process.env.FAKE_CONTEXT_WINDOWS ? activeContextUsed : 16017,
+          total: process.env.FAKE_CONTEXT_WINDOWS ? activeContextWindow : 512000,
           systemPromptTokens: 1039,
           toolDefinitionsTokens: 812,
           messageTokens: 12166,

@@ -1,3 +1,4 @@
+import { contextWindowSizes, type ContextWindowSelection } from "./context-selection";
 import { supportsSessionDeletion } from "./acp-backend";
 import { ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { createInterface, Interface } from "node:readline";
@@ -125,6 +126,7 @@ export interface ModelInfo {
   name: string;
   description?: string;
   totalContextTokens?: number;
+  contextWindowSizes?: number[];
   supportsReasoningEffort?: boolean;
   /** The model's ACTIVE reasoning effort as advertised in `_meta.reasoningEffort`
    *  — the session override (from `SessionHandle.reasoning_effort`), not merely
@@ -319,6 +321,98 @@ export class AcpClient extends EventEmitter {
   lastMeta?: PromptResultMeta;
   private lastContextUsed?: number;
   private lastContextWindow?: number;
+  private contextGeneration = 0;
+  private selectedContextWindow?: number;
+  private contextWindowChanging = false;
+  private contextSelectionStale = false;
+
+  get contextWindowSelection(): ContextWindowSelection {
+    const model = this.availableModels.find(m => m.modelId === this.currentModelId);
+    const sizes = model?.contextWindowSizes ?? [];
+    const version = this.opts.grokVersionVerified && parseGrokVersion(this.opts.grokVersion ?? "");
+    const nativeRpc = !!version && compareVersionTuple(version, [1, 0, 46]) >= 0;
+    const advertised = this.availableCommands.some(c => c.name === "context-window");
+    const available = this.provider === "grok" && !!this.sessionId && sizes.length > 1 && (nativeRpc || advertised);
+    return { sessionId: this.sessionId ?? "", modelId: this.currentModelId, generation: this.contextGeneration,
+      sizes, defaultSize: sizes[0], selectedSize: this.selectedContextWindow, available,
+      changing: this.contextWindowChanging, stale: this.contextSelectionStale,
+      reason: available ? undefined : "This CLI session does not expose native context-window selection." };
+  }
+
+  private publishContextWindowSelection(): void {
+    this.emit("contextWindowSelection", this.contextWindowSelection);
+  }
+
+  async setContextWindow(size: number, expected: Pick<ContextWindowSelection, "sessionId" | "modelId" | "generation">): Promise<void> {
+    const current = this.contextWindowSelection;
+    if (expected.sessionId !== current.sessionId || expected.modelId !== current.modelId || expected.generation !== current.generation)
+      throw new Error("The context selection belongs to an older session or model. Please choose again.");
+    if (!current.available || !current.sizes.includes(size)) throw new Error(current.reason ?? "This model does not offer that context size.");
+    if (this.contextWindowChanging || [...this.pending.values()].some(p => p.isPrompt || p.method === "session/set_model" || p.method === "session/set_config_option" || p.method === "session/new" || p.method === "session/load")) throw new Error("Wait for the current turn or context change to finish.");
+    const previousUsed = this.lastContextUsed;
+    const previousWindow = this.lastContextWindow;
+    const previousSize = this.selectedContextWindow;
+    const previousModelWindow = this.availableModels.find(m => m.modelId === current.modelId)?.totalContextTokens;
+    this.contextWindowChanging = true;
+    this.contextGeneration++;
+    this.publishContextWindowSelection();
+    const generation = this.contextGeneration;
+    try {
+      if (this.availableCommands.some(c => c.name === "context-window")) {
+        await this.request("session/prompt", { sessionId: current.sessionId, prompt: [{ type: "text", text: `/context-window ${size}` }] });
+      } else {
+        // Native Windows CLI 1.0.46: measured set_model override + session/info confirmation.
+        const result = await this.request("session/set_model", { sessionId: current.sessionId, modelId: current.modelId,
+          _meta: { contextWindow: size, ...(this.currentReasoningEffort ? { reasoningEffort: this.currentReasoningEffort } : {}) } });
+        if (!this.backend.modelSetSucceeded(result)) throw new Error("The CLI rejected the context-window change.");
+      }
+      const raw = await this.request("_x.ai/session/info", { sessionId: current.sessionId });
+      const info = parseSessionInfoRpcResult(raw);
+      if (generation !== this.contextGeneration || current.sessionId !== this.sessionId || current.modelId !== this.currentModelId)
+        throw new Error("The session changed before the context-window update was confirmed.");
+      if (!info || info.window !== size) throw new Error("The CLI did not confirm the requested context window. Refresh the session before trying again.");
+      this.selectedContextWindow = size;
+      this.contextSelectionStale = false;
+      this.lastContextUsed = info.used;
+      this.lastContextWindow = size;
+      const model = this.availableModels.find(m => m.modelId === current.modelId);
+      if (model) model.totalContextTokens = size;
+      this.emit("contextUsage", info.used, size);
+    } catch (error) {
+      if (generation === this.contextGeneration) {
+        this.selectedContextWindow = previousSize;
+        this.contextSelectionStale = true;
+        const model = this.availableModels.find(m => m.modelId === current.modelId);
+        if (model) model.totalContextTokens = previousModelWindow;
+        this.lastContextWindow = previousWindow;
+        this.lastContextUsed = previousUsed;
+        this.emit("contextUsage", previousUsed, previousWindow);
+      }
+      throw error;
+    } finally {
+      this.contextWindowChanging = false;
+      this.publishContextWindowSelection();
+    }
+  }
+
+  private resetContextSelection(): void {
+    if (this.provider !== "grok") return;
+    this.contextSelectionStale = false;
+    this.contextGeneration++;
+    this.selectedContextWindow = undefined;
+    this.lastContextUsed = undefined;
+    this.lastContextWindow = undefined;
+  }
+
+  private async refreshContextSelection(): Promise<void> {
+    if (this.provider !== "grok") return;
+    if (this.contextWindowSelection.sizes.length > 1) {
+      try { await this.getSessionInfo(); }
+      catch (error) { this.opts.log(`[context-window] ${(error as Error).message}`); }
+    }
+    this.publishContextWindowSelection();
+  }
+
   /**
    * Remembered -32601 for `_x.ai/git/worktree/list`.
    *
@@ -481,17 +575,20 @@ export class AcpClient extends EventEmitter {
   }
 
   async newSession(modelId?: string): Promise<{ sessionId: string }> {
+    if (this.contextWindowChanging) throw new Error("Wait for the context-window change to finish.");
     const raw = await this.request("session/new", {
       cwd: this.opts.cwd,
       mcpServers: await this.mcpServersForSession(),
     });
     const res = this.backend.normalizeSessionResponse(raw);
     this.sessionId = res.sessionId;
+    this.resetContextSelection();
     this.availableModels = (res.models?.availableModels ?? []).map((m: any) => ({
       modelId: m.modelId,
       name: m.name,
       description: m.description,
       totalContextTokens: m._meta?.totalContextTokens,
+      contextWindowSizes: this.provider === "grok" ? contextWindowSizes(m._meta?.contextWindows, m._meta?.totalContextTokens) : undefined,
       supportsReasoningEffort: m._meta?.supportsReasoningEffort === true,
       reasoningEffort: typeof m._meta?.reasoningEffort === "string" ? m._meta.reasoningEffort : undefined,
       reasoningEfforts: Array.isArray(m._meta?.reasoningEfforts)
@@ -558,10 +655,12 @@ export class AcpClient extends EventEmitter {
         this.opts.log(`[acp] Failed to set reasoning effort to ${this.opts.effort}: ${(err as Error).message}.`);
       }
     }
+    await this.refreshContextSelection();
     return { sessionId: res.sessionId };
   }
 
   async loadSession(sessionId: string, modelId?: string): Promise<{ sessionId: string }> {
+    if (this.contextWindowChanging) throw new Error("Wait for the context-window change to finish.");
     const mcpServers = await this.mcpServersForSession();
     // Replay precedes the response and may use a different parent wire ID.
     // Only an explicit spawn identifies a child until the load completes.
@@ -574,12 +673,14 @@ export class AcpClient extends EventEmitter {
     }
     const res = this.backend.normalizeSessionResponse(raw);
     this.sessionId = sessionId;
+    this.resetContextSelection();
     if (res?.models?.availableModels) {
       this.availableModels = res.models.availableModels.map((m: any) => ({
         modelId: m.modelId,
         name: m.name,
         description: m.description,
         totalContextTokens: m._meta?.totalContextTokens,
+      contextWindowSizes: this.provider === "grok" ? contextWindowSizes(m._meta?.contextWindows, m._meta?.totalContextTokens) : undefined,
         supportsReasoningEffort: m._meta?.supportsReasoningEffort === true,
         reasoningEffort: typeof m._meta?.reasoningEffort === "string" ? m._meta.reasoningEffort : undefined,
       reasoningEfforts: Array.isArray(m._meta?.reasoningEfforts)
@@ -607,10 +708,12 @@ export class AcpClient extends EventEmitter {
         this.opts.log(`[acp] Failed to set model to ${modelId}: ${(err as Error).message}. Keeping ${this.currentModelId}.`);
       }
     }
+    await this.refreshContextSelection();
     return { sessionId };
   }
 
   async setModel(modelId: string): Promise<void> {
+    if (this.contextWindowChanging) throw new Error("Wait for the context-window change to finish.");
     if (!this.sessionId) throw new Error("no session");
     // Carry the live effort override through a compatible switch — a bare
     // set_model lets the server resolve the new model's default effort, silently
@@ -649,7 +752,9 @@ export class AcpClient extends EventEmitter {
         const current = this.availableModels.find((entry) => entry.modelId === this.currentModelId);
         if (current) current.reasoningEffort = this.currentReasoningEffort;
       }
+      this.resetContextSelection();
       this.emit("modelChanged", this.currentModelId);
+      await this.refreshContextSelection();
     }
   }
 
@@ -677,6 +782,7 @@ export class AcpClient extends EventEmitter {
    *  response, so an optimistic post-response write would clobber the true value
    *  on a build that resolved the effort differently. */
   async setReasoningEffort(level: string): Promise<boolean> {
+    if (this.contextWindowChanging) throw new Error("Wait for the context-window change to finish.");
     if (!this.sessionId) throw new Error("no session");
     if (!level) return false; // "" = unset → cannot be expressed as an override
     const call = this.backend.setReasoningEffort(this.sessionId, this.currentModelId, level);
@@ -699,6 +805,7 @@ export class AcpClient extends EventEmitter {
   }
 
   async setMode(modeId: string): Promise<void> {
+    if (this.contextWindowChanging) throw new Error("Wait for the context-window change to finish.");
     if (!this.sessionId) throw new Error("no session");
     const call = this.backend.setMode(this.sessionId, modeId);
     const res = await this.request(call.method, call.params, () => {
@@ -727,6 +834,10 @@ export class AcpClient extends EventEmitter {
   }
 
   async prompt(textOrBlocks: string | PromptContentBlock[]): Promise<PromptResultMeta> {
+    if (this.contextWindowChanging) throw new Error("Wait for the context-window change to finish.");
+    const firstText = typeof textOrBlocks === "string" ? textOrBlocks : textOrBlocks[0]?.type === "text" ? textOrBlocks[0].text : "";
+    if (/^\/context-window(?:\s|$)/i.test(firstText) && !this.availableCommands.some(c => c.name === "context-window"))
+      throw new Error("Use the native context-window selection; this CLI does not advertise the slash command over ACP.");
     if (!this.sessionId) throw new Error("no session");
     const prompt: PromptContentBlock[] =
       typeof textOrBlocks === "string"
@@ -991,12 +1102,26 @@ export class AcpClient extends EventEmitter {
    * prompt scrape.
    */
   async getSessionInfo(): Promise<SessionInfoContext | "unsupported"> {
+    if (this.contextWindowChanging) throw new Error("Context-window change in progress; retry the session-info refresh.");
     if (!this.sessionId) throw new Error("no session");
     if (this.provider !== "grok") return "unsupported";
     try {
-      const r = await this.request("_x.ai/session/info", { sessionId: this.sessionId });
+      const generation = this.contextGeneration;
+      const sessionId = this.sessionId;
+      const r = await this.request("_x.ai/session/info", { sessionId });
       const parsed = parseSessionInfoRpcResult(r);
       if (!parsed) throw new Error("session/info returned no usable context");
+      if (generation !== this.contextGeneration || sessionId !== this.sessionId) throw new Error("Session context changed during refresh; retry session-info.");
+      if (this.contextWindowSelection.sizes.length > 1) {
+        this.selectedContextWindow = parsed.window;
+        this.contextSelectionStale = false;
+        this.lastContextWindow = parsed.window;
+        this.lastContextUsed = parsed.used;
+        const model = this.availableModels.find(m => m.modelId === this.currentModelId);
+        if (model) model.totalContextTokens = parsed.window;
+        this.emit("contextUsage", parsed.used, parsed.window);
+        this.publishContextWindowSelection();
+      }
       return parsed;
     } catch (e: any) {
       if (isMethodNotFoundError(e)) {
@@ -1369,6 +1494,8 @@ export class AcpClient extends EventEmitter {
     const foreign = this.loadingChildSessionIds
       ? typeof sessionId === "string" && this.loadingChildSessionIds.has(sessionId)
       : isForeignSessionUpdate(sessionId, this.sessionId);
+    const updateGeneration = meta?.generation ?? u?._meta?.generation;
+    if (this.provider === "grok" && typeof updateGeneration === "number" && updateGeneration !== this.contextGeneration) return;
     const normalized = this.backend.normalizeUpdate(u, meta);
     if (!foreign) {
       if (normalized.workflowUpdate) this.emit("subagentLifecycle", normalized.workflowUpdate, meta);
@@ -1449,6 +1576,7 @@ export class AcpClient extends EventEmitter {
       // autocomplete and the dispatch gate at the single ingestion point (#31).
       this.availableCommands = filterAdvertisedCommands(r.commands);
       this.emit("commandsUpdate", this.availableCommands);
+      this.publishContextWindowSelection();
       return;
     }
     if (r.event === "taskBackgrounded") { this.emit("taskBackgrounded", r.payload); return; }

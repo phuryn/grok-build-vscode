@@ -1,3 +1,4 @@
+import { parseContextWindowSize, type ContextWindowSelection } from "./context-selection";
 import { remoteHandoffUrl, remoteHandoffQr, type HandoffSession } from "./remote-handoff";
 import type { RemoteHandoffSource } from "./protocol";
 import { CloudHostUpdate, cloudHostIsIdle, cloudHostBootSupportsUpdate, cloudLiveWorkflowRuns, installedCloudHostVersion, parseCloudHostUpdateAttempt, removeCloudHostUpdateStamps, CLOUD_UPDATE_REFUSAL } from "./cloud-host-update";
@@ -10529,6 +10530,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       if (params?.method !== "session/new" && params?.method !== "session/load") return;
       this.setStartupStage(session, "opening", grokSetupDetail(params?.phase));
     });
+    client.on("contextWindowSelection", (selection: ContextWindowSelection) => {
+      if (gen !== session.gen || session.provider !== "grok") return;
+      this.emit(session, { type: "contextWindowSelection", selection });
+    });
     client.on("modelChanged", (id) => {
       if (gen !== session.gen) return;
       this.emit(session, { type: "modelChanged", modelId: id });
@@ -11364,6 +11369,16 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     return session;
   }
 
+  private async changeContextWindow(session: Session, size: number, expected: Pick<ContextWindowSelection, "sessionId" | "modelId" | "generation"> | undefined = session.client?.contextWindowSelection): Promise<void> {
+    if (!session.client || !expected) return;
+    if (session.priming || turnIsInFlight(session) || this.pickerChange) {
+      this.emit(session, { type: "error", text: "Wait for the current turn or session setup to finish before changing the context window." });
+      return;
+    }
+    try { await session.client.setContextWindow(size, expected); }
+    catch (error) { this.emit(session, { type: "error", text: `Failed to change context window: ${(error as Error).message}` }); }
+  }
+
   private async onMessage(msg: WebviewMsg, origin: MsgOrigin, clientId?: string): Promise<void> {
     if (this.cloudHostUpdate && !this.cloudHostUpdate.admitting) {
       const refusal: HostMsg = { type: "error", text: CLOUD_UPDATE_REFUSAL };
@@ -11505,7 +11520,21 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         else this.postLocal(response);
         break;
       }
+      case "setContextWindow":
+        await this.changeContextWindow(session, msg.size, msg);
+        break;
       case "send":
+        if (/^\/context-window(?:\s|$)/i.test(msg.text.trim())) {
+          const argument = msg.text.trim().replace(/^\/context-window/i, "").trim();
+          if (!argument) {
+            if (session.client) this.emit(session, { type: "contextWindowSelection", selection: session.client.contextWindowSelection, openPicker: true });
+          } else {
+            const size = parseContextWindowSize(argument);
+            if (size === undefined) this.emit(session, { type: "error", text: "Use /context-window 500k or a whole token count offered by the model." });
+            else await this.changeContextWindow(session, size);
+          }
+          break;
+        }
         let queuedSendCommit: { text: string; items: QueuedSendEntry[] } | undefined;
         if (origin === "remote" && msg.queuedSendId) {
           if (session.completedQueuedSendIds.includes(msg.queuedSendId)) {
@@ -11944,6 +11973,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         }
         break;
       case "setModel": {
+        if (session.provider === "grok" && (session.priming || turnIsInFlight(session) || session.client?.contextWindowSelection?.changing)) break;
         const provider = isInternalProvider(msg.provider)
           ? msg.provider
           : this.providerForRequestedModel(msg.modelId, session.provider);
@@ -11972,6 +12002,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           if (typeof effort === "string" && session.activeSessionId === before) {
             await this.applyEffort(effort, session, origin, clientId, requester);
           }
+          if (session.provider === "grok" && session.client?.contextWindowSelection && session.client.currentModelId === msg.modelId)
+            this.emit(session, { type: "contextWindowSelection", selection: session.client.contextWindowSelection, openPicker: true });
         })());
         break;
       }

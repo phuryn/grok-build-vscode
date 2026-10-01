@@ -306,6 +306,11 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
     case "questionCancel":
       if (!isStringOrNumber(raw.requestId)) return null;
       break;
+    case "setContextWindow":
+      if (!isString(raw.sessionId) || !raw.sessionId || !isString(raw.modelId) || !raw.modelId) return null;
+      if (!isNumber(raw.generation) || !Number.isSafeInteger(raw.generation) || raw.generation < 0) return null;
+      if (!isNumber(raw.size) || !Number.isSafeInteger(raw.size) || raw.size <= 0) return null;
+      break;
     case "setModel":
       if (!isString(raw.modelId)) return null;
       if (!opt(raw.provider, isInternalProvider)) return null;

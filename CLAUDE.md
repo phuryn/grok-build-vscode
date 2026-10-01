@@ -27,6 +27,8 @@ State the rule, name the function / constant / config-key an agent would grep fo
 
 **Muse reopening and prompt admission.** `MuseSession.resumeSession` retries writer-lease conflicts on the same connection and surfaces an ACP busy error if contention persists. `prompt` sends `turn/start` with `ifBusy: "queue"`: a prompt Muse queues behind its own turn (a workflow's result delivery) is admitted and awaited, and Stop reclaims it with `turn/unqueue`. Retry parameters and lease semantics: [research/muse-adapter.md](research/muse-adapter.md).
 
+Grok session context-window choices use `AcpClient.contextWindowSelection` and the identity-checked `setContextWindow` control. The model picker, context popup and host-routed `/context-window` follow confirmed native state. See [native context-window selection](research/context-window-selection.md).
+
 ## Where the detail lives
 
 This file is rules and orientation. Reference material that used to live here

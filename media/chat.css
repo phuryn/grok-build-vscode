@@ -6873,3 +6873,8 @@ body.host-wait-visible .gfp-panel.gfp-overlay { bottom: var(--host-wait-height, 
 .remote-handoff-qr-pending .host-wait-spinner { width: 20px; height: 20px; }
 .remote-handoff-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .remote-handoff-popover > .confirm-btn { margin: 4px 6px 0 0; }
+
+/* Native context choices share the popover rows and retain a keyboard focus cue. */
+.context-window-choice[aria-disabled="true"] { color: var(--vscode-disabledForeground, var(--vscode-descriptionForeground)); opacity: .6; cursor: default; }
+.context-window-choice[aria-disabled="true"]:hover { background: transparent; }
+.context-window-choice:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
