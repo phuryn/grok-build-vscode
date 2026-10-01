@@ -2207,6 +2207,14 @@
         stack = stack.slice(0, from);
       }
 
+      const thematicBreak = /^ {0,3}(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})$/;
+      const setextUnderline = /^ {0,3}(=+|-+)[ \t]*$/;
+      function paragraphLine(line) {
+        return line.trim() && !thematicBreak.test(line) &&
+          !/^(?: {0,3}(?:#{1,6}(?:[ \t]|$)|>|(?:[-*+]|\d+[.)])(?:[ \t]|$))| {4}|\t)/.test(line) &&
+          !/^\x00[BTD]\d+\x00$/.test(line.trim()) && !pullRequestFromLine(line);
+      }
+
       let i = 0;
       while (i < lines.length) {
         const line = lines[i];
@@ -2298,10 +2306,21 @@
           continue;
         }
 
-        const hm = line.match(/^(#{1,4}) (.+)$/);
+        const hm = line.match(/^(#{1,6}) (.+)$/);
         if (hm) {
           closeFrom(0);
           out += `<h${hm[1].length}>${inline(hm[2])}</h${hm[1].length}>`;
+          lastWasBlock = true;
+          lastPara = false;
+          pendingBreak = false;
+          i++;
+          continue;
+        }
+
+        // A spaced break must win over the list rule (e.g. `* * *`).
+        if (thematicBreak.test(line)) {
+          closeFrom(0);
+          out += '<hr>';
           lastWasBlock = true;
           lastPara = false;
           pendingBreak = false;
@@ -2341,6 +2360,32 @@
           continue;
         }
 
+        // Look ahead only within a paragraph. An underline belongs to its
+        // title, including a multiline title, rather than becoming a divider.
+        if (stack.length === 0 && paragraphLine(line)) {
+          let j = i + 1;
+          while (j < lines.length && !setextUnderline.test(lines[j]) && paragraphLine(lines[j])) j++;
+          const sm = j < lines.length && lines[j].match(setextUnderline);
+          if (sm) {
+            const level = sm[1][0] === '=' ? 1 : 2;
+            out += `<h${level}>${inline(lines.slice(i, j).map(l => l.trim()).join(' '))}</h${level}>`;
+            lastWasBlock = true;
+            lastPara = false;
+            pendingBreak = false;
+            i = j + 1;
+            continue;
+          }
+          // Consume the inspected paragraph once; rescanning its suffix on
+          // every line would make long streamed replies quadratic.
+          for (; i < j; i++) {
+            if (pendingBreak) { out += '<br><br>'; pendingBreak = false; }
+            else if (lastPara) out += '<br>';
+            out += inline(lines[i]);
+            lastPara = true;
+          }
+          continue;
+        }
+
         closeFrom(0);
         if (pendingBreak) { out += '<br><br>'; pendingBreak = false; }
         else if (lastPara) out += '<br>';
@@ -2369,7 +2414,7 @@
   // containers in chat.css. Code deliberately never gets dir=auto: chat.css
   // pins pre/code LTR. Runs after every innerHTML = renderMarkdown(...).
   function applyAutoDir(root) {
-    for (const el of root.querySelectorAll("blockquote, ul, ol, li, h1, h2, h3, h4, td, th")) {
+    for (const el of root.querySelectorAll("blockquote, ul, ol, li, h1, h2, h3, h4, h5, h6, td, th")) {
       el.setAttribute("dir", "auto");
     }
   }

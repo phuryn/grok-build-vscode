@@ -472,3 +472,82 @@ describe("blockquotes", () => {
     expect(body).toContain("border-inline-start");
   });
 });
+
+describe("thematic breaks and setext headings (#198)", () => {
+  it.each(["---", "----", "***", "___", "- - -", "* * *", "_ _ _", "   -\t-\t-  "])(
+    "renders %s as a standalone divider", marker => {
+      expect(render(marker + "\n")).toBe("<hr>");
+    },
+  );
+
+  it("resets paragraph spacing and closes an open list before a divider", () => {
+    expect(render("First\n\n---\n\nSecond\n")).toBe("First<hr>Second");
+    expect(render("- one\n- two\n---\nAfter\n")).toBe("<ul><li>one</li><li>two</li></ul><hr>After");
+  });
+
+  it("keeps non-dividers, inline code, fenced YAML, and tables intact", () => {
+    expect(render("- * -\n")).not.toContain("<hr>");
+    expect(render("two -- dashes\n")).toBe("two -- dashes");
+    expect(render("`---`\n")).toContain("<code>---</code>");
+    const fence = render("```yaml\n---\nkey: value\n---\n```\n");
+    expect(fence).toContain("<code>---\nkey: value\n---</code>");
+    expect(fence).not.toContain("<hr>");
+    const table = render("| A | B |\n| --- | --- |\n| 1 | 2 |\n");
+    expect(table).toContain("<table>");
+    expect(table).not.toContain("<hr>");
+  });
+
+  it.each([["---", 2], ["===", 1], ["-", 2], ["=", 1]] as const)(
+    "uses %s as a setext underline when it directly follows text", (underline, level) => {
+      expect(render(`Title\n${underline}\nBody\n`)).toBe(`<h${level}>Title</h${level}>Body`);
+    },
+  );
+
+  it("includes the whole multiline title and preserves inline formatting and escaping", () => {
+    expect(render("My **section**\n<Title>\n---\nBody\n"))
+      .toBe("<h2>My <strong>section</strong> &lt;Title&gt;</h2>Body");
+  });
+
+  it("does not look across a blank line or consume a different block as heading text", () => {
+    expect(render("Title\n\n---\n")).toBe("Title<hr>");
+    expect(render("Intro\n# Heading\n---\n")).toBe("Intro<h1>Heading</h1><hr>");
+    expect(render("Intro\n- item\n---\n")).toBe("Intro<ul><li>item</li></ul><hr>");
+    expect(render("Intro\n\n> quote\n---\n")).toBe("Intro<blockquote>quote</blockquote><hr>");
+  });
+
+  it("renders dividers and setext headings inside Wayne's nested blockquotes", () => {
+    const html = render("> Title\n> ---\n>\n> First\n>\n> * * *\n>\n> > Inner\n> > ===\n");
+    expect(html).toBe("<blockquote><h2>Title</h2>First<hr><blockquote><h1>Inner</h1></blockquote></blockquote>");
+  });
+
+  it("renders CRLF headings and dividers identically to LF", () => {
+    const source = "Title\n---\n\n***\n\nAfter\n";
+    expect(render(source.replace(/\n/g, "\r\n"))).toBe(render(source));
+  });
+
+  it("styles dividers on each markdown surface with theme colors", () => {
+    for (const selector of [".workflow-output-body hr", ".msg .body hr", ".card .plan-body hr", ".thinking-body hr", ".subagent-result hr", ".desk-ft-md hr", ".files-browse-md hr"]) {
+      expect(ruleBody(selector)).toContain("textSeparator-foreground");
+    }
+  });
+});
+
+describe("all six ATX heading levels (#198)", () => {
+  it.each([1, 2, 3, 4, 5, 6])("renders level %i, including inside a quote", level => {
+    const source = "#".repeat(level) + " **Title**";
+    const heading = `<h${level}><strong>Title</strong></h${level}>`;
+    expect(render(source)).toBe(heading);
+    expect(render("> " + source)).toBe(`<blockquote>${heading}</blockquote>`);
+  });
+
+  it("leaves seven hashes as text", () => {
+    expect(render("####### Title")).toBe("####### Title");
+  });
+
+  it.each([5, 6])("styles level %i consistently with the existing smaller headings", level => {
+    for (const surface of [".workflow-output-body", ".msg.agent .body", ".desk-ft-md", ".files-browse-md", ".card .plan-body"]) {
+      expect(ruleBody(`${surface} h${level}`)).toContain("font-weight: 600");
+      expect(ruleBody(`${surface} h${level}`)).toContain("margin:");
+    }
+  });
+});

@@ -27,6 +27,15 @@ const ARABIC_MD = [
 ].join("\n");
 
 describe("RTL content (real chat.js in a DOM)", () => {
+  it("sets dir=auto on h5/h6 and nested quotes in streamed replies", () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, { type: "messageChunk", text: "##### عنوان\n\n> ###### عنوان داخلي\n>\n> > اقتباس" });
+    dispatch(window, { type: "promptComplete" });
+    const blocks = doc.querySelectorAll(".msg.agent .body h5, .msg.agent .body h6, .msg.agent .body blockquote");
+    expect(blocks.length).toBe(4);
+    for (const el of blocks) expect(el.getAttribute("dir")).toBe("auto");
+  });
+
   it("agent markdown: every block element gets dir=auto, code gets none", () => {
     const { window, doc } = bootWebview();
     dispatch(window, { type: "messageChunk", text: ARABIC_MD });
