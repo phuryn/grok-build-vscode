@@ -993,6 +993,9 @@
     // so someone who went and turned this off keeps it off; only a device that
     // never had an opinion picks up the new default.
     promptNav: IS_REMOTE ? storedBool(PROMPT_NAV_KEY, true) : false,
+    // grok.projects.workspaceOnly. Off until the host says otherwise. A remote
+    // has no VS Code projects panel, so it never takes the desk's value.
+    projectsWorkspaceOnly: false,
     pinLiveWorkflows: IS_REMOTE ? storedBool(PIN_LIVE_WORKFLOWS_KEY, true) : true,
     // Independent of tool expansion; a remote owns its per-device default.
     expandDiffCard: IS_REMOTE ? storedBool(EXPAND_DIFF_CARD_KEY, false) : false,
@@ -3423,6 +3426,7 @@
       traySupported: !!state.traySupported,
       desktopTray: state.desktopTray !== false,
       promptNav: !!state.promptNav,
+      projectsWorkspaceOnly: !!state.projectsWorkspaceOnly,
       expandDiffCard: !!state.expandDiffCard,
       providers: state.providers || [],
       museSettings: state.museSettings,
@@ -3489,6 +3493,9 @@
         if (!state.promptNav) setPromptNavPin(null);
         updateScrollBtn();
         return;
+      case "projectsWorkspaceOnly":
+        state.projectsWorkspaceOnly = !!value;
+        break;
       case "readRepliesAloud":
         if (IS_REMOTE) {
           setRemoteTtsEnabled(!!value);
@@ -19589,7 +19596,7 @@
   const SETTINGS_LIVE_MSGS = new Set([
     "museSettings",
     "cloudHostUpdateState", "initialState", "showThinking", "appPurpose", "expandCommandOutputs",
-    "steerByDefault", "promptNav", "expandDiffCard", "steerUnavailable", "soundNotifications", "processingSound",
+    "steerByDefault", "promptNav", "projectsWorkspaceOnly", "expandDiffCard", "steerUnavailable", "soundNotifications", "processingSound",
     "readRepliesAloud", "summarizeRepliesAloud", "fontScale", "voiceConfigured",
     "providerState", "githubState", "mcpServers", "mcpConnectors", "remoteStatus", "telemetryEnabled", "thumbsFeedback", "grokUpdateStatus", "initialized",
   ]);
@@ -19652,6 +19659,7 @@
         // suppressed on the way out, but initialState is mirrored wholesale.
         if (!IS_REMOTE) applyPinLiveWorkflows(msg.pinLiveWorkflows !== false);
         if (!IS_REMOTE && typeof msg.promptNav === "boolean") state.promptNav = msg.promptNav;
+        if (!IS_REMOTE && typeof msg.projectsWorkspaceOnly === "boolean") state.projectsWorkspaceOnly = msg.projectsWorkspaceOnly;
         state.museSettings = msg.museSettings;
         if (!IS_REMOTE) {
           state.expandDiffCard = msg.expandDiffCard === true;
@@ -19954,6 +19962,9 @@
         state.promptNav = !!msg.value;
         if (!state.promptNav) setPromptNavPin(null);
         updateScrollBtn();
+        break;
+      case "projectsWorkspaceOnly":
+        if (!IS_REMOTE) state.projectsWorkspaceOnly = !!msg.value;
         break;
       case "soundNotifications":
         // Live toggle (grok.soundNotifications). Only affects future turn-end/

@@ -1213,6 +1213,18 @@
       local: "openDeviceManager",
     },
     {
+      id: "projectsWorkspaceOnly",
+      category: "advanced",
+      title: "This window's projects only",
+      description: "The projects panel lists only the folders this window has open. Recent conversations and pins from other projects stay out of it. Archive is still shared.",
+      kind: "toggle",
+      defaultValue: false,
+      hostLocal: true,
+      visible: (s, env) => !!(env && !env.isDesktop),
+      get: (s) => !!(s && s.projectsWorkspaceOnly),
+      message: (value) => ({ type: "setProjectsWorkspaceOnly", value }),
+    },
+    {
       id: "openProjectConfig",
       category: "advanced",
       title: "Open project config",
@@ -1680,6 +1692,9 @@
       case "promptNav":
         next.promptNav = !!value;
         break;
+      case "projectsWorkspaceOnly":
+        next.projectsWorkspaceOnly = !!value;
+        break;
       case "readRepliesAloud":
         next.readRepliesAloud = !!value;
         if (!next.readRepliesAloud) next.summarizeRepliesAloud = false;
@@ -1751,6 +1766,7 @@
       desktopTray: true,
       expandDiffCard: false,
       promptNav: true,
+      projectsWorkspaceOnly: false,
       providers: [],
       // Host-owned, never latched locally: an older host that ignores
       // refreshProviders leaves this false and the button stays idle rather

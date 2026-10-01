@@ -279,6 +279,69 @@ describe("VS Code projects rail section parity", () => {
     expect(dangerHover![1]).not.toMatch(/button-hoverBackground/);
   });
 
+  function projectLabels(doc: Document): string[] {
+    return [...doc.querySelectorAll(".rail-projects .rail-repo-label")].map((el) => el.textContent || "");
+  }
+
+  function loadWindow(h: ReturnType<typeof bootRail>, extra: Record<string, unknown>) {
+    h.api.onMessage({
+      type: "repos",
+      entries: repos,
+      selectedCwd: "/work/zeta",
+      activeCwd: "/work/zeta",
+      workspaceCwd: "/work/zeta",
+      canAddProject: true,
+      canCreateProject: true,
+      canCloneProject: true,
+      ...extra,
+    });
+  }
+
+  const groupsOpen = { railShape: { groupCollapsed: { recent: false, projects: false, archived: false } } };
+
+  it("paints only the folders this window has open", () => {
+    const h = bootRail(groupsOpen);
+    loadWindow(h, { workspaceOnly: true, workspaceFolders: ["/work/zeta"] });
+    loadSessions(h);
+    h.api.onMessage({
+      type: "pinnedSessions",
+      entries: [{ ...session("pin", "/work/alpha", 200), pinnedAt: 1 }],
+      dots: {},
+    });
+
+    expect(projectLabels(h.doc)).toEqual(["zeta"]);
+    expect(h.doc.querySelector('.rail-repo[data-cwd="/work/alpha"]')).toBeNull();
+    expect(h.doc.querySelector('.rail-repo[data-cwd="/work/old"]')).toBeNull();
+    expect(h.doc.querySelector(".rail-pinned")).toBeNull();
+    expect(h.doc.body.textContent).not.toContain("chat a");
+    expect(h.doc.body.textContent).not.toContain("chat pin");
+    expect(h.doc.querySelector(".rail-add-project")).toBeNull();
+    expect(h.doc.querySelector(".rail-add-project-wide")).toBeNull();
+    expect(h.posted.filter((p) => p.type === "listRepoSessions").map((p) => p.cwd)).toEqual([]);
+  });
+
+  it("badges every open folder and still hides the rest", () => {
+    const h = bootRail(groupsOpen);
+    loadWindow(h, { workspaceOnly: true, workspaceFolders: ["/work/zeta", "/work/alpha"] });
+    loadSessions(h);
+
+    expect(projectLabels(h.doc)).toEqual(["zeta", "alpha"]);
+    expect(
+      [...h.doc.querySelectorAll(".rail-projects .rail-current-tag")].map((el) => el.textContent),
+    ).toEqual(["Your IDE", "Your IDE"]);
+    expect(h.doc.querySelector('.rail-repo[data-cwd="/work/old"]')).toBeNull();
+    expect(h.posted.filter((p) => p.type === "listRepoSessions").map((p) => p.cwd)).toEqual(["/work/alpha"]);
+  });
+
+  it("keeps the full catalog when the window has no folder", () => {
+    const h = bootRail();
+    loadWindow(h, { workspaceOnly: true, workspaceFolders: [] });
+
+    expect(projectLabels(h.doc)).toEqual(["zeta", "alpha"]);
+    expect(h.doc.querySelector(".rail-add-project")).not.toBeNull();
+    expect(h.doc.querySelector(".rail-add-project-wide")).not.toBeNull();
+  });
+
   it("matches desktop row rhythm and uses an opaque layered action scrim", () => {
     expect(railCss).toMatch(/--rail-row-font-size:\s*13px/);
     expect(railCss).toMatch(/--rail-row-min-height:\s*24px/);

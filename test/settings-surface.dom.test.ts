@@ -694,9 +694,41 @@ describe("settings overlay (chat.js)", () => {
       "showThinking", "expandCommandOutputs", "expandDiffCard", "steerByDefault",
       "soundNotifications", "processingSound",
       "readRepliesAloud", "summarizeRepliesAloud",
+      "projectsWorkspaceOnly",
       "openProjectConfig", "showLogs",
       "openVsCodeSettings", "moveView",
     ]));
+    const desk = api.visibleRows(snapshot, api.defaultEnv({ isDesktop: true })).map((row: { id: string }) => row.id);
+    const remote = api.visibleRows(snapshot, api.defaultEnv({ isRemote: true })).map((row: { id: string }) => row.id);
+    expect(desk).not.toContain("projectsWorkspaceOnly");
+    expect(remote).not.toContain("projectsWorkspaceOnly");
+  });
+
+  it("toggles this window's projects from Advanced", () => {
+    const h = bootWebview();
+    seedChat(h);
+    openSettings(h);
+    clickSettingsNav(h, "Advanced");
+    const overlay = h.doc.getElementById("settings-overlay")!;
+    const sw = overlay.querySelector('[data-id="projectsWorkspaceOnly"] .settings-switch') as HTMLElement;
+    expect(sw).toBeTruthy();
+    h.posted.length = 0;
+    click(h.window, sw);
+    expect(h.posted).toContainEqual({ type: "setProjectsWorkspaceOnly", value: true });
+  });
+
+  it("moves the Advanced switch when the host reports the projects-panel setting", () => {
+    const h = bootWebview();
+    seedChat(h);
+    openSettings(h);
+    clickSettingsNav(h, "Advanced");
+    const switchOf = () =>
+      h.doc.querySelector("#settings-overlay [data-id=\"projectsWorkspaceOnly\"] .settings-switch") as HTMLElement;
+    expect(switchOf().getAttribute("aria-checked")).toBe("false");
+    dispatch(h.window, { type: "projectsWorkspaceOnly", value: true });
+    expect(switchOf().getAttribute("aria-checked")).toBe("true");
+    dispatch(h.window, { type: "projectsWorkspaceOnly", value: false });
+    expect(switchOf().getAttribute("aria-checked")).toBe("false");
   });
 
   it("carries the routines frame through chat.js into the Routines page", () => {
