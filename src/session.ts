@@ -692,6 +692,7 @@ export function sessionUiSnapshot(
   if (session.client?.currentModelId) {
     messages.push({ type: "modelChanged", modelId: session.client.currentModelId });
   }
+  if (session.client?.provider === "grok") messages.push({ type: "contextWindowSelection", selection: session.client.contextWindowSelection });
   messages.push(sessionModeMessage(session, modeId));
   messages.push({
     type: "planModeAvailability",

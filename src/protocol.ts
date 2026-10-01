@@ -1,3 +1,4 @@
+import type { ContextWindowSelection } from "./context-selection";
 export type RemoteHandoffSource = "topbar" | "rail" | "projects" | "settings" | "palette";
 
 import type { AcpProvider } from "./acp-backend";
@@ -650,6 +651,7 @@ export type HostMsg =
   // Optional and additive: a client that never sees it keeps its old fallback.
   | { type: "sessionName"; sessionId: string; name: string; cwd: string; repoCwd?: string }
   | { type: "composerDraftSession"; draftId: string; sessionId: string }
+  | { type: "contextWindowSelection"; selection: ContextWindowSelection; openPicker?: boolean }
   | { type: "modelChanged"; modelId: string }
   // `modes` is the set this session offers. Absent on an older host: the page
   // keeps its previous rule (Muse's button hidden, Codex without Plan).
@@ -1108,6 +1110,7 @@ export type HostMsg =
 
 /** webview -> host */
 export type WebviewMsg =
+  | { type: "setContextWindow"; sessionId: string; modelId: string; generation: number; size: number }
   | { type: "cloudHostUpdate" }
   | { type: "ready"; tabToken?: string }
   // Browser-owned remote preferences reported for session_start telemetry.
@@ -1570,7 +1573,7 @@ export type WebviewMsg =
 const HOST_MESSAGE_TYPE_MAP: Record<HostMsg["type"], true> = {
   museSettings: true,
   cloudHostUpdateState: true, initialState: true, moveViewHint: true, welcomeTips: true, projectSetup: true, githubState: true, githubRepos: true, providerState: true, mcpServers: true, mcpConnectors: true, mcpConnectorAuthorization: true, routines: true, codexInstallProgress: true, planModeAvailability: true, showThinking: true, appPurpose: true, fontScale: true, grokUpdateStatus: true, updateAvailable: true, updateReady: true, telemetryEnabled: true, thumbsFeedback: true,
-  initialized: true, cliUpdating: true, startupStatus: true, session: true, sessionName: true, composerDraftSession: true, modelChanged: true,
+  contextWindowSelection: true, initialized: true, cliUpdating: true, startupStatus: true, session: true, sessionName: true, composerDraftSession: true, modelChanged: true,
   modeChanged: true, openModePopover: true, voiceState: true, voiceConfigured: true,
   voicePartial: true, voiceSubmit: true, voiceTranscript: true, voiceError: true,
   chips: true, commandsUpdate: true, mentionResults: true, projectDirListing: true, projectFileContent: true, projectFileWriteResult: true, gitStatusResult: true, gitFileDiffResult: true, turnFileDiffResult: true, turnDiffBaseline: true, gitRunResult: true, userMessage: true, agentStart: true,
@@ -1592,7 +1595,7 @@ const HOST_MESSAGE_TYPE_MAP: Record<HostMsg["type"], true> = {
 
 const WEBVIEW_MESSAGE_TYPE_MAP: Record<WebviewMsg["type"], true> = {
   setMuseSetting: true,
-  ready: true, remotePreferences: true, send: true, newSession: true, cancel: true, pickModel: true,
+  setContextWindow: true, ready: true, remotePreferences: true, send: true, newSession: true, cancel: true, pickModel: true,
   setMode: true, removeChip: true, toggleChip: true, openFile: true, showInFolder: true, openUrl: true,
   openText: true, openDiff: true, exportExpr: true, setEffort: true, openGlobalConfig: true, openProviderConfig: true,
   addProjectFolder: true, removeProjectFolder: true, createProject: true, cloneProject: true, setupGithubCli: true, listGithubRepos: true, githubSignOut: true, githubLoginWithToken: true,

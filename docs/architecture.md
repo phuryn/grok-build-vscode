@@ -1,5 +1,8 @@
 # Architecture
 
+Grok session context-window choices use `AcpClient.contextWindowSelection` and the identity-checked `setContextWindow` control. The model picker, context popup and host-routed `/context-window` follow confirmed native state. See [native context-window selection](../research/context-window-selection.md).
+
+
 How the Grok Build VS Code and desktop clients are put together, and the places
 they deliberately stop being "thin." For day-to-day usage see the
 [README](../README.md); for the test layers see [TESTS.md](../TESTS.md).
