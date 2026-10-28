@@ -993,11 +993,11 @@ function buildEntry(
 ): SessionListEntry {
   const id = (raw?.info?.id as string) ?? dirName;
   // The project this row is listed under, never the folder summary.json records
-  // (#224). The CLI can spell the same folder differently there (drive-letter
-  // case, a symlinked parent), and where the conversation is stored is what
-  // places it in a project. The remote gate checks every row's cwd against the
-  // project, so one row carrying the other spelling withheld the whole list and
-  // left the project on "Loading…" for good. Resuming finds the spelling the CLI
+  // (#224). The CLI can spell the same folder differently there, and where the
+  // conversation is stored is what places it in a project. The remote gate
+  // checks every row's cwd against the project, so one row whose spelling the
+  // gate does not fold (it folds only case and separators, and only on Windows)
+  // withheld the whole list and left the project on "Loading…" for good. Resuming finds the spelling the CLI
   // stored it under separately (findSessionCatalogCwd).
   const sessCwd = cwd;
   const rawSummary = typeof raw?.session_summary === "string" ? raw.session_summary : "";
