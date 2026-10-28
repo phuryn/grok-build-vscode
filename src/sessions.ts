@@ -992,12 +992,13 @@ function buildEntry(
   activityAt?: number,
 ): SessionListEntry {
   const id = (raw?.info?.id as string) ?? dirName;
-  // The folder this row was READ from, never the one summary.json records
+  // The project this row is listed under, never the folder summary.json records
   // (#224). The CLI can spell the same folder differently there (drive-letter
   // case, a symlinked parent), and where the conversation is stored is what
   // places it in a project. The remote gate checks every row's cwd against the
   // project, so one row carrying the other spelling withheld the whole list and
-  // left the project on "Loading…" for good.
+  // left the project on "Loading…" for good. Resuming finds the spelling the CLI
+  // stored it under separately (findSessionCatalogCwd).
   const sessCwd = cwd;
   const rawSummary = typeof raw?.session_summary === "string" ? raw.session_summary : "";
   const fromDisk = typeof activityAt === "number" && activityAt > 0
@@ -1107,6 +1108,21 @@ export function orderedResumeCwdCandidates(opts: {
 }
 
 /**
+ * The cwd the CLI keyed `sessionDir`'s catalog leaf by. `session/load` finds a
+ * conversation only under that exact spelling, so one reached through an alias
+ * leaf (`C:/…` beside `C:\…`) has to resume with the alias's spelling, not the
+ * project's. A leaf that is not plainly the same folder as `cwd` keeps `cwd`:
+ * the result becomes a process cwd and an auth root.
+ */
+function catalogLeafSpelling(sessionDir: string, cwd: string, platform: NodeJS.Platform): string {
+  let leaf: string;
+  try { leaf = decodeURIComponent(path.basename(path.dirname(sessionDir))); } catch { return cwd; }
+  return leaf === leaf.trim() && normalizeRepoPath(leaf, platform) === normalizeRepoPath(cwd, platform)
+    ? leaf
+    : cwd;
+}
+
+/**
  * Resolve the process cwd for a resume by finding which **catalog** directory
  * actually holds `id` on disk. Returns undefined when no candidate contains
  * the session — callers must not fall back to a renderer-supplied path.
@@ -1131,7 +1147,7 @@ export function findSessionCatalogCwd(deps: {
     const dir = sessionDirFor(grokHome, cwd, id, { fs, platform });
     if (!dir) continue;
     try {
-      if (fs.existsSync(path.join(dir, "summary.json"))) return cwd;
+      if (fs.existsSync(path.join(dir, "summary.json"))) return catalogLeafSpelling(dir, cwd, platform);
     } catch {
       /* try next candidate */
     }

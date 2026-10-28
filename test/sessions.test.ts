@@ -594,14 +594,25 @@ describe("session catalog case-aliases", () => {
     expect(entries.map((e) => e.displayName).sort()).toEqual(["from lower c:", "from upper C:"]);
   });
 
-  it("finds a session stored under the other casing when resuming", () => {
+  it("resumes a session stored under the other casing with that casing", () => {
     const fs = splitIndexFs();
     // Workspace is uppercase; session only exists under lowercase catalog.
+    // `session/load` finds it only under the spelling the CLI keyed that leaf by;
+    // the workspace's spelling names the other leaf, where it is not.
     expect(
       findSessionCatalogCwd({
         fs,
         grokHome: home,
         id: "sess-lower-1",
+        candidates: [upperCwd],
+        platform: "win32",
+      }),
+    ).toBe(lowerCwd);
+    expect(
+      findSessionCatalogCwd({
+        fs,
+        grokHome: home,
+        id: "sess-upper-1",
         candidates: [upperCwd],
         platform: "win32",
       }),
@@ -1187,8 +1198,8 @@ describe("readSessionEntries", () => {
 
   // #224: the CLI can record another spelling of the folder it stored the
   // conversation under. The remote gate drops a whole list when one row's cwd
-  // is outside the project, so the row must carry where it was found.
-  it("places a row in the folder it was read from, not the cwd summary.json records", () => {
+  // is outside the project, so the row carries the project it is listed under.
+  it("places a row in the project it is listed under, not the cwd summary.json records", () => {
     const fs = buildFs({
       [dir]: { isDir: true },
       [dirFor("a")]: { isDir: true },
