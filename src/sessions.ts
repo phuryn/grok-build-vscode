@@ -992,7 +992,13 @@ function buildEntry(
   activityAt?: number,
 ): SessionListEntry {
   const id = (raw?.info?.id as string) ?? dirName;
-  const sessCwd = (raw?.info?.cwd as string) ?? cwd;
+  // The folder this row was READ from, never the one summary.json records
+  // (#224). The CLI can spell the same folder differently there (drive-letter
+  // case, a symlinked parent), and where the conversation is stored is what
+  // places it in a project. The remote gate checks every row's cwd against the
+  // project, so one row carrying the other spelling withheld the whole list and
+  // left the project on "Loading…" for good.
+  const sessCwd = cwd;
   const rawSummary = typeof raw?.session_summary === "string" ? raw.session_summary : "";
   const fromDisk = typeof activityAt === "number" && activityAt > 0
     ? activityAt

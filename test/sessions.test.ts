@@ -1185,6 +1185,27 @@ describe("readSessionEntries", () => {
     expect(out[0].displayName).toBe("Renamed");
   });
 
+  // #224: the CLI can record another spelling of the folder it stored the
+  // conversation under. The remote gate drops a whole list when one row's cwd
+  // is outside the project, so the row must carry where it was found.
+  it("places a row in the folder it was read from, not the cwd summary.json records", () => {
+    const fs = buildFs({
+      [dir]: { isDir: true },
+      [dirFor("a")]: { isDir: true },
+      [path.join(dirFor("a"), "summary.json")]: {
+        isDir: false,
+        content: JSON.stringify({
+          info: { id: "a", cwd: "/real/disk/proj" },
+          session_summary: "started through a symlink",
+          updated_at: "2026-01-01T00:00:00Z",
+          num_messages: 4,
+        }),
+      },
+    });
+    const out = readSessionEntries({ fs, grokHome, cwd, ids: ["a"], overrides: {} });
+    expect(out.map((e) => e.cwd)).toEqual([cwd]);
+  });
+
   // The projects rail reads pin state off the entry. `pinnedAt` sat declared but
   // unread for a long time; this is the assertion against it drifting back.
   it("surfaces the pin from the override, and leaves unpinned rows bare", () => {
