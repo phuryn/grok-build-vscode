@@ -1077,14 +1077,14 @@
     {
       id: "museShellSandbox", category: "providers", group: "museSettings", title: "Shell sandbox",
       description: "For new Muse Code conversations in Prompt unmatched. On request always uses the sandbox; Allow all disables it. On request is unavailable in a running process without the sandbox.", kind: "toggle", hostLocal: true,
-      visible: (s) => !!s.museSettings && (s.providers || []).some(p => p.id === "muse"),
+      visible: (s) => !s.museSandboxUnavailable && !!s.museSettings && (s.providers || []).some(p => p.id === "muse"),
       defaultValue: true, get: (s) => s.museSettings.shellSandbox,
       message: (value) => ({ type: "setMuseSetting", key: "museShellSandbox", value }),
     },
     {
       id: "museSandboxNetwork", category: "providers", group: "museSettings", title: "Sandbox network",
       description: "Sandbox network access for new Muse Code conversations in Prompt unmatched or On request.", kind: "select", hostLocal: true,
-      visible: (s) => !!s.museSettings && (s.providers || []).some(p => p.id === "muse"),
+      visible: (s) => !s.museSandboxUnavailable && !!s.museSettings && (s.providers || []).some(p => p.id === "muse"),
       defaultValue: "proxy-only", get: (s) => s.museSettings.sandboxNetwork,
       options: [{ value: "proxy-only", label: "Proxy only" }, { value: "restricted", label: "Restricted" }, { value: "enabled", label: "Enabled" }],
       message: (value) => ({ type: "setMuseSetting", key: "museSandboxNetwork", value }),

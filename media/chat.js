@@ -1518,7 +1518,8 @@
   promptPrevBtn.disabled = true;
   promptPrevBtn.innerHTML = ICON.chevronUp;
   scrollBottomBtn.before(promptPrevBtn);
-  updateModeBtn("agent");
+  // Wait for the host's resolved mode instead of painting an assumed Agent default.
+  modeBtn.hidden = true;
 
   // ---------- markdown ----------
 
@@ -3585,6 +3586,7 @@
       expandDiffCard: !!state.expandDiffCard,
       providers: state.providers || [],
       museSettings: state.museSettings,
+      museSandboxUnavailable: state.museSandboxUnavailable,
       providersChecking: !!state.providersChecking,
       githubState: state.githubState || undefined,
       cloudHostUpdate: state.cloudHostUpdate,
@@ -5280,6 +5282,8 @@
     }
     state.activeProvider = provider;
     updateModeBtn(state.currentModeId);
+    // The preview has no host-owned mode yet. Its first modeChanged paints it.
+    if (provider !== modelBaseline.provider) modeBtn.hidden = true;
     syncProviderVoice();
     modelPending = { modelId: m.modelId, provider, declared: m.provider };
     // A model carries its own ladder, so a level previewed against the PREVIOUS
@@ -20481,6 +20485,7 @@ ${fullText}`
         if (!IS_REMOTE) applyPinLiveWorkflows(msg.pinLiveWorkflows !== false);
         if (!IS_REMOTE && typeof msg.promptNav === "boolean") state.promptNav = msg.promptNav;
         state.museSettings = msg.museSettings;
+        state.museSandboxUnavailable = msg.museSandboxUnavailable;
         if (!IS_REMOTE) {
           state.expandDiffCard = msg.expandDiffCard === true;
           applyExpandDiffCard();

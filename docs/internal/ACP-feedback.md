@@ -861,3 +861,15 @@ account or spending many delegated turns: the 429 `retry_after_secs` gap in §5 
 cross-product settings merge in §9 (0.2.99–0.2.101), the 403 classification in §10 (0.2.101), and
 restore/subagent normalization in §11 (0.2.112 / 0.2.101). Those four are the only claims here not
 confirmed on the current build, and they are labelled in place.
+
+### Muse serve sandbox on Windows
+
+Muse 1.4.10 and 1.4.14 on Windows 11 report `windows_elevated setup_required`
+and `sandbox.prepare platform="none" backend="unavailable"` in serve mode,
+even when `muse sandbox windows check` reports ready (measured on a Windows 11 machine, 2026-10-28).
+The host passes `sandboxUnavailable: "windows"` through `GROK_MUSE_POSTURE`,
+sharing the cloud path that disables sandbox/network flags and omits On request.
+Existing Windows On request histories are durably changed to Prompt unmatched
+before approvals or turns; cloud histories still receive a pre-attach refusal.
+See [Muse modes](../../research/muse-modes.md#windows-rule-muse-serve-cannot-enforce-its-sandbox)
+for the full measurement and removal condition.

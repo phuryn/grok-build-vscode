@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **New installs start with fewer approval prompts.** Grok and Antigravity start in Auto accept, Muse in Allow all. Claude stays in Auto and Codex in Agent (auto-review). Existing installs keep their defaults; remembered choices and resumed conversations are preserved.
+
+### Fixed
+
+- **Muse can run commands on Windows.** Muse's shell sandbox is disabled there because it fails in serve mode. On request is hidden; existing On request conversations reopen in Prompt unmatched with an explanation. Sandbox settings are hidden on Windows, while workspace trust stays configurable.
+
 ## 4.15.4 — 2026-10-28
 
 **Copy from the chat again, Muse's Allow all reaches its subagents, and tool rows say which file.**

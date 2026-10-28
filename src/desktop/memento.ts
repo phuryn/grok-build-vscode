@@ -29,6 +29,7 @@ function writeJsonMap(filePath: string, data: Record<string, unknown>): void {
 export function createFileMemento(filePath: string): MementoLike {
   let cache = readJsonMap(filePath);
   return {
+    keys: () => Object.keys(cache),
     get<T>(key: string, defaultValue?: T): T | undefined {
       if (Object.prototype.hasOwnProperty.call(cache, key)) {
         return cache[key] as T;

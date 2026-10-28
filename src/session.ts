@@ -3,7 +3,8 @@ import type { HostMsg } from "./protocol";
 import type { FileChip } from "./chips";
 import { permissionOptionsForPlan } from "./plan-gate";
 import type { AcpProvider } from "./acp-backend";
-import { MUSE_ON_REQUEST_UNAVAILABLE, sessionModes } from "./mode-prefs";
+import { MUSE_ON_REQUEST_UNAVAILABLE, museSandboxUnavailable, sessionModes } from "./mode-prefs";
+import { isCloudEnvironment } from "./remote-frames";
 import type { SubscriptionUsageBinding } from "./subscription-usage";
 import type { TelemetrySessionOrigin } from "./telemetry";
 import {
@@ -138,7 +139,7 @@ export class Session {
   musePosture?: import("./mode-prefs").MusePosture;
   /** Launch fact, never changed by a live approval-mode switch. */
   museShellSandbox?: boolean;
-  museCloud = false;
+  museSandboxUnavailable = museSandboxUnavailable(isCloudEnvironment());
 
   /** Explicit card grants only. Never serialized or inherited by a loaded session. */
   readonly allowedCommandPrograms = new Set<string>();
@@ -681,8 +682,8 @@ export function finishQueuedSendCommit(
 
 /** The same choices and restrictions feed live UI updates and reconnects. */
 export function sessionModeMessage(session: Session, modeId: string): Extract<HostMsg, { type: "modeChanged" }> {
-  return { type: "modeChanged", modeId, modes: sessionModes(session.provider, session.museCloud),
-    ...(session.provider === "muse" && !session.museCloud && session.museShellSandbox !== true
+  return { type: "modeChanged", modeId, modes: sessionModes(session.provider, !!session.museSandboxUnavailable),
+    ...(session.provider === "muse" && !session.museSandboxUnavailable && session.museShellSandbox !== true
       ? { disabledModes: { onRequest: MUSE_ON_REQUEST_UNAVAILABLE } } : {}),
   };
 }

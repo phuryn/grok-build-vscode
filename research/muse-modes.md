@@ -9,8 +9,8 @@ has no better per-mode descriptions. Terminal permission profiles are outside
 serve's selectable dictionary. Muse has no Plan.
 
 The SDK dictionary is retained below, but Deny unmatched is temporarily not
-offered. Desktop offers Allow all, Prompt unmatched and On request; cloud
-offers Allow all and Prompt unmatched.
+offered. macOS/Linux desktops offer Allow all, Prompt unmatched and On request; Windows
+and cloud offer Allow all and Prompt unmatched.
 
 | Wire id | Muse approvalMode | Label | Description |
 |---|---|---|---|
@@ -61,6 +61,9 @@ unless the owner selects another mode; there is no migration to reverse.
 
 ## Desktop process and persistence decisions
 
+The sandbox rules below apply to macOS/Linux desktops; Windows uses the host
+restriction described below.
+
 - Allow all starts serve with --disable-sandbox --trust-workspace.
 - Prompt unmatched uses the conversation's shell sandbox,
   sandbox network and workspace trust preferences.
@@ -80,7 +83,10 @@ unless the owner selects another mode; there is no migration to reverse.
   under grok.defaultMuseMode, independently of grok.defaultMode. This lets
   a new Muse conversation start in On request without leaking it into
   another provider's defaults. Until Muse has its own preference, the shared
-  default remains the fallback. Choosing agent/yolo still writes those values
+  default remains the fallback. On a new AFK Pilot install with no remembered
+  choice, Muse starts in Allow all; existing installs retain Prompt unmatched.
+  `decideDefaultModeCohort` records that distinction once in client-state before
+  any first-run writes; `resolvedDefaultMode` resolves the shared fallback. Choosing agent/yolo still writes those values
   to grok.defaultMode; onRequest never does. A stored denyUnmatched defaults to agent.
 - Reopening uses the conversation's saved posture rather than either default.
   The badge and saved posture follow the effective native mode after any
@@ -108,7 +114,7 @@ permission profiles and trust files are unchanged.
 ## Cloud rule: the VM is the sandbox
 
 The host decides cloud-ness using isCloudEnvironment(). Conversation and
-catalog MuseBackend instances pass that launch fact in GROK_MUSE_POSTURE;
+catalog MuseBackend instances pass `sandboxUnavailable: "cloud"` in GROK_MUSE_POSTURE;
 it is never inferred by the renderer or saved in the conversation's posture.
 The isolated cloud VM supplies the boundary. Every cloud Muse process uses
 --disable-sandbox and omits --sandbox-network. Prompt unmatched keeps its
@@ -117,9 +123,9 @@ Allow all forces it; the other modes use the saved preference.
 
 The cloud host advertises only Allow all and Prompt unmatched,
 with no disabled On request row. Direct requests for On request are also
-refused. Session.museCloud and sessionModeMessage carry the same restriction
-through live messages and reconnect snapshots. Desktop mode advertisement,
-launch rules and sandbox guards are unchanged.
+refused. Session.museSandboxUnavailable and sessionModeMessage carry the same restriction
+through live messages and reconnect snapshots. macOS/Linux desktop mode advertisement,
+launch rules and sandbox guards retain their configured behavior.
 
 Existing On request conversations are **refused**, rather than silently
 changing their durable mode. The adapter reads session/read before attaching
@@ -137,6 +143,40 @@ a remote. A cloud machine is only ever seen from a remote, so no cloud-specific
 visibility rule is needed: the rows cannot appear there. On cloud the launch
 rule above decides sandbox and network, whatever the stored settings say.
 
+## Windows rule: Muse serve cannot enforce its sandbox
+
+Owner-supplied measurements on Windows 11, Muse **1.4.10 and 1.4.14**:
+every sandboxed shell command in `muse serve` fails with
+`environment failure: sandbox enforcement unavailable: windows_elevated setup_required: windows elevated sandbox setup has not run`.
+The trace reports `sandbox.prepare platform="none" backend="unavailable" outcome="enforcement_unavailable"`,
+although `muse sandbox windows check` reports `status=ready`. This is a Muse
+serve-mode failure; Prompt unmatched with the default sandbox and On request
+cannot execute commands in that environment.
+
+`museSandboxUnavailable(isCloud, platform)` returns `"cloud"`, `"windows"` or
+undefined. That single host launch fact feeds `Session.museSandboxUnavailable`,
+`sessionModeMessage`, and conversation/catalog `MuseBackend` instances. Both
+restricted hosts launch with `--disable-sandbox` and without `--sandbox-network`,
+offer only Allow all and Prompt unmatched, and seed a remembered On request
+default as Prompt unmatched. Direct On request requests receive a host-specific
+reason. Allow all forces workspace trust; Prompt unmatched uses the saved setting.
+The host hides Shell sandbox and Sandbox network in both Windows Settings
+surfaces; Trust workspaces remains. The host restriction is never stored in the conversation's posture.
+
+Windows histories must remain accessible. After attaching, the adapter's existing
+`publishMode` repair path changes replayed On request to `promptUnmatched` and
+checks acceptance before forwarding pending approvals or admitting a prompt.
+Buffered and live mode notifications use the same repair and admission barrier.
+The host receives the effective `agent` mode and saves it for that resume id;
+a notice explains the conversion once. Subsequent opens replay the repaired mode.
+A refused repair fails closed. Cloud retains its pre-attach `session/read` refusal,
+since those histories can still be opened on a supported desktop.
+
+There is no Muse version gate. Once upstream serve-mode sandbox enforcement is
+verified on Windows, remove the `platform === "win32"` condition in
+`museSandboxUnavailable`; converted histories remain Prompt unmatched until the
+user changes them.
+
 ## Receiver and compatibility audit
 
 This extends the existing mode plumbing; it is not a second picker or policy
@@ -146,8 +186,8 @@ system. New values on setMode/modeChanged are **not inherently additive**.
   current modeId remains a string to tolerate a future host. Optional
   disabledModes carries per-process reasons.
 - chat.js offers only the ids advertised in modes. Muse names activate when
-  the native menu starts with yolo, agent: three choices on desktop and
-  two on cloud. This existing order distinguishes the native menu from old
+  the native menu starts with yolo, agent: three choices on macOS/Linux desktops and
+  two on Windows/cloud. This existing order distinguishes the native menu from old
   hosts advertising agent/yolo, which retain Agent mode / Auto accept and their existing descriptions,
   including the museNativeModes capability's earlier wording. No modes frame
   retains the old hidden Muse button. Unknown current ids show Unknown mode;

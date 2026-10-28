@@ -1,6 +1,6 @@
 import * as path from "node:path";
 import type { AcpBackend, BackendConfigState, BackendSpawnOptions } from "./acp-backend";
-import type { MusePosture } from "./mode-prefs";
+import type { MusePosture, MuseSandboxUnavailable } from "./mode-prefs";
 import { isMuseModeId } from "./mode-prefs";
 
 /**
@@ -25,14 +25,15 @@ export class MuseBackend implements AcpBackend<"muse"> {
   readonly processName = "Muse ACP adapter";
   readonly usesClientPlanGate = false;
 
-  constructor(private readonly posture?: MusePosture, private readonly cloud = false) {}
+  constructor(private readonly posture?: MusePosture, private readonly sandboxUnavailable?: MuseSandboxUnavailable) {}
 
   spawn(options: BackendSpawnOptions) {
     return {
       command: process.execPath,
       args: [path.join(__dirname, "muse-adapter", "main.mjs")],
       env: { ...withMuseCredentialBackend(options.env), ELECTRON_RUN_AS_NODE: "1", MUSE_CODE_EXECUTABLE: options.cliPath,
-        GROK_MUSE_POSTURE: JSON.stringify({ ...this.posture, cloud: this.cloud || undefined, ...(this.cloud ? { shellSandbox: false } : {}) }) },
+        GROK_MUSE_POSTURE: JSON.stringify({ ...this.posture, sandboxUnavailable: this.sandboxUnavailable,
+          ...(this.sandboxUnavailable ? { shellSandbox: false } : {}) }) },
       shell: false,
     };
   }
@@ -40,6 +41,9 @@ export class MuseBackend implements AcpBackend<"muse"> {
   normalizeSessionResponse(response: any) { return { ...response, models: response.models ?? response._meta?.models }; }
   normalizePromptResult(result: any) { return result; }
   normalizeUpdate(update: any, meta: any) {
+    if (update?._meta?.["muse/modeNotice"]) {
+      return { update, meta, notice: update._meta["muse/modeNotice"] };
+    }
     if (update?.sessionUpdate === "session_info_update" && update._meta?.["muse/workflow"]) {
       return { workflowUpdate: update._meta["muse/workflow"] };
     }

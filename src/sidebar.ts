@@ -1,3 +1,4 @@
+import { decideDefaultModeCohort } from "./default-mode-cohort";
 import { parseContextWindowSize, type ContextWindowSelection } from "./context-selection";
 import { remoteHandoffUrl, remoteHandoffQr, type HandoffSession } from "./remote-handoff";
 import type { RemoteHandoffSource } from "./protocol";
@@ -118,7 +119,7 @@ import { summarizeForSpeech } from "./speech-summary";
 import type { PromptResultMeta, PromptUsage, SessionInfoContext } from "./acp-dispatch";
 import { MediaRef, adapterCompactSignal, adapterContextOccupancy, agentTimestampMsFromMeta, autoCompactStartedNote, childStreamFromRoute, commandOutputForToolCall, commandOutputFromLiveTerminal, contextUsedFromCompactNotification, enforceCompleteSessionCost, errorDetail, gateZeroTokenMeta, isAuthErrorText, isCredentialError, isIncompatibleAgentError, isResumeNotFound, isRateLimitError, isSubagentLifecycleUpdate, occupancyFromAdapterTurn, parseSessionInfoContext, permissionOutcomeFor, promptErrorText, rateLimitNoticeText, sessionInfoCacheFresh, sumUsage, summarizeBackgroundCommand, usageIsRealMeasurement, type UpdateRoute } from "./acp-dispatch";
 import { createMcpPrepareState, prepareMcpToolCall } from "./mcp-tool";
-import { EFFORT_PREFS_KEY, MUSE_MODE_PREF_KEY, MUSE_ON_REQUEST_UNAVAILABLE, MUSE_CLOUD_ON_REQUEST_UNAVAILABLE, configWriteTarget, isMuseModeId, modeToRemember, rememberedEffort, sessionModes, startsInNativeAuto, startsInYolo, musePosture, museShellSandboxEnabled, usesClientAutoAccept, type ModeId, type MuseSettings, type EffortPrefs } from "./mode-prefs";
+import { EFFORT_PREFS_KEY, MUSE_MODE_PREF_KEY, MUSE_ON_REQUEST_UNAVAILABLE, museSandboxUnavailable, museOnRequestUnavailable, resolvedDefaultMode, configWriteTarget, isMuseModeId, modeToRemember, rememberedEffort, sessionModes, startsInNativeAuto, startsInYolo, musePosture, museShellSandboxEnabled, usesClientAutoAccept, type ModeId, type MuseSettings, type EffortPrefs } from "./mode-prefs";
 import { supportsApprovalModeSwitching } from "./acp-backend";
 import { beginAuthRecovery, oauthShadowsXaiApiKey } from "./auth-recovery";
 import {
@@ -1288,6 +1289,8 @@ export class GrokSidebar {
   private readonly routinesInFlight = new Set<string>();
   private routineError?: { id?: string; message: string };
 
+  private readonly defaultModeCohort: import("./default-mode-cohort").DefaultModeCohort;
+
   constructor(
     private context: HostContext,
     /** Effectful host surface — VS Code supplies createVsCodeHost; a desktop app injects its own. */
@@ -1295,6 +1298,10 @@ export class GrokSidebar {
   ) {
     // Before anything can read it: the loss case is an empty read followed by a
     // write, so this must not be deferred to an async init.
+    this.defaultModeCohort = decideDefaultModeCohort(
+      context.globalState, path.join(resolveGrokHome(process.env), "client-state"), fs,
+      () => this.host.getConfiguration("grok").inspect("defaultMode"),
+    );
     this.state = new PersistedState(
       context.globalState,
       path.join(resolveGrokHome(process.env), "client-state"),
@@ -1935,7 +1942,7 @@ export class GrokSidebar {
   private createProviderBackend(provider: AcpProvider): CodexBackend | ClaudeBackend | MuseBackend | AgyBackend | undefined {
     if (provider === "codex") return new CodexBackend();
     if (provider === "claude") return new ClaudeBackend();
-    if (provider === "muse") return new MuseBackend(undefined, isCloudEnvironment());
+    if (provider === "muse") return new MuseBackend(undefined, museSandboxUnavailable(isCloudEnvironment()));
     if (provider === "agy") return new AgyBackend();
     return undefined;
   }
@@ -3848,11 +3855,22 @@ See design doc for the full state machine diagram.`;
     this.post({ type: "modeChanged", modeId: "plan", modes: sessionModes(this.focused.provider) });
   }
 
-  /**
-   * Muse reports its native approval mode. Other providers combine their CLI
-   * state with the host's Plan and auto-approval flags.
-   */
+  private defaultModeForProvider(provider: string): string {
+    const shared = this.host.getConfiguration("grok").get<string>("defaultMode", "");
+    const remembered = provider === "muse" ? this.state.get<string>(MUSE_MODE_PREF_KEY) ?? shared : shared;
+    return resolvedDefaultMode(provider, remembered, this.defaultModeCohort);
+  }
+
+  private newSessionMode(provider: string): string {
+    const mode = this.defaultModeForProvider(provider);
+    if (provider === "muse") return musePosture(mode, false, undefined, this.museSettings(), !!museSandboxUnavailable(isCloudEnvironment())).mode;
+    return startsInYolo(mode, false) ? "yolo" : startsInNativeAuto(provider, mode, false) ? "auto" : "agent";
+  }
+
+  /** Muse reports its mode; other providers combine CLI state with host flags. */
   private displayMode(session: Session = this.focused): string {
+    if (!session.client && !session.priming && !session.activeSessionId && !session.hasHistory
+      && !session.planActive && !session.autoApprove && !session.nativeAuto) return this.newSessionMode(session.provider);
     if (session.provider === "muse") return session.client?.currentModeId ?? session.musePosture?.mode ?? "agent";
     if (session.planActive) return "plan";
     if (session.autoApprove) return "yolo";
@@ -4064,12 +4082,12 @@ Only continue if you trust this code.`,
     // setMode throws "no session" (and for Plan that error is surfaced to the user).
     // The mode button is disabled while busy; this backstops the toggle-mode command.
     if (!session.client || !session.client.sessionId || session.priming) return;
-    if (session.provider === "muse" && session.museCloud && modeId === "onRequest") {
-      this.reportRequester(requester, "warning", MUSE_CLOUD_ON_REQUEST_UNAVAILABLE);
+    if (session.provider === "muse" && session.museSandboxUnavailable && modeId === "onRequest") {
+      this.reportRequester(requester, "warning", museOnRequestUnavailable(session.museSandboxUnavailable));
       return;
     }
     // Backstop the picker for stale clients and direct/remote commands.
-    if (!sessionModes(session.provider, session.museCloud).includes(modeId) && modeId !== "plan") return;
+    if (!sessionModes(session.provider, !!session.museSandboxUnavailable).includes(modeId) && modeId !== "plan") return;
     // Muse switches approval without enabling the Plan path.
     if (!supportsModeSwitching(session.provider)) {
       if (!supportsAutoAccept(session.provider) || modeId === "auto") return;
@@ -4251,7 +4269,7 @@ Only continue if you trust this code.`,
     if (verdict === "approved") {
       // Restore the mode chosen before Plan (#64) before native implementation
       // can raise a permission request in this same turn.
-      session.autoApprove = this.host.getConfiguration("grok").get<string>("defaultMode", "") === "yolo";
+      session.autoApprove = this.defaultModeForProvider(session.provider) === "yolo";
       this.setPlanActive(session, false);
     } else if (verdict === "rejected") {
       session.autoApprove = false;
@@ -11136,7 +11154,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // flash while the session spins up and primes. Resumed sessions stay
     // verdict-driven (plan-restore decides), so they don't pre-apply it.
     const rememberedYolo = supportsAutoAccept(session.provider) && startsInYolo(
-      this.host.getConfiguration("grok").get<string>("defaultMode", ""),
+      this.defaultModeForProvider(session.provider),
       !!resumeId,
     );
     // grok's own `permission_mode = "always-approve"` (config.toml, set via
@@ -11150,19 +11168,19 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // first paint so the badge does not flash Agent; the agent may still refuse.
     const nativeAutoStart = !rememberedYolo && startsInNativeAuto(
       session.provider,
-      this.host.getConfiguration("grok").get<string>("defaultMode", ""),
+      this.defaultModeForProvider(session.provider),
       !!resumeId,
     );
     session.nativeAuto = nativeAutoStart;
     session.nativeAutoFellBack = false;
-    session.museCloud = session.provider === "muse" && isCloudEnvironment();
+    session.museSandboxUnavailable = session.provider === "muse" ? museSandboxUnavailable(isCloudEnvironment()) : undefined;
     session.musePosture = session.provider === "muse" ? musePosture(
-      this.state.get<string>(MUSE_MODE_PREF_KEY) ?? (rememberedYolo ? "yolo" : "agent"), !!resumeId,
+      this.defaultModeForProvider("muse"), !!resumeId,
       resumeId ? this.state.get<SessionMetaOverrides>(SESSION_META_KEY, {})[resumeId]?.musePosture : undefined,
       this.museSettings(),
-      session.museCloud,
+      !!session.museSandboxUnavailable,
     ) : undefined;
-    session.museShellSandbox = session.musePosture ? museShellSandboxEnabled(session.musePosture, session.museCloud) : undefined;
+    session.museShellSandbox = session.musePosture ? museShellSandboxEnabled(session.musePosture, !!session.museSandboxUnavailable) : undefined;
     session.autoApprove = session.musePosture ? session.musePosture.mode === "yolo" : rememberedYolo || configAutoApprove;
     session.planActive = false;
     session.hasHistory = !!resumeId;
@@ -11323,7 +11341,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       ...(relay ? { startupAuth: agyGatewayAuth(relay.baseUrl) } : agyCredential ? { startupAuth: agyGoogleAuth() } : {}),
       ...(session.provider === "grok"
         ? { grokVersion: grokHandshakeVersion, grokVersionVerified }
-        : { backend: session.provider === "muse" ? new MuseBackend(session.musePosture, session.museCloud)
+        : { backend: session.provider === "muse" ? new MuseBackend(session.musePosture, session.museSandboxUnavailable)
           : session.provider === "agy" ? new AgyBackend({ keyMode: !!relay }) : this.createProviderBackend(session.provider) }),
     });
     if (relay) client.once("exit", () => relay.release());
@@ -18948,6 +18966,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       expandDiffCard: cfg.get("expandDiffCard", false),
       promptNav: cfg.get("promptNav", true),
       museSettings: this.museSettings(),
+      museSandboxUnavailable: !!museSandboxUnavailable(isCloudEnvironment()),
       pinLiveWorkflows: cfg.get("pinLiveWorkflows", true),
       soundNotifications: cfg.get("soundNotifications", false),
       processingSound: cfg.get("processingSound", false),
@@ -23318,6 +23337,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         expandDiffCard: cfg.get("expandDiffCard", false),
         promptNav: cfg.get("promptNav", true),
         museSettings: this.museSettings(),
+        museSandboxUnavailable: !!museSandboxUnavailable(isCloudEnvironment()),
         pinLiveWorkflows: cfg.get("pinLiveWorkflows", true),
         fontScale: this.chatFontScale(),
         soundNotifications: cfg.get("soundNotifications", false),

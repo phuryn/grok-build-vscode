@@ -10,6 +10,7 @@ import { MuseBackend } from "../src/muse-backend";
 import { MspError } from "@muse-code/sdk";
 import { RequestError } from "@agentclientprotocol/sdk";
 import { adapterListEntry } from "../src/provider-ui";
+import { museSandboxUnavailable } from "../src/mode-prefs";
 import museListing from "./fixtures/muse-session-list.json";
 
 // The session tests inject a fake SDK connection; no vendor executable is used.
@@ -66,11 +67,92 @@ async function ready() {
 }
 
 describe("Muse native modes", () => {
+  it.each(["agent", "yolo", "onRequest", "denyUnmatched"])("starts Windows %s without sandbox/network flags and keeps workspace trust", async mode => {
+    Object.defineProperty(process, "platform", { value: "win32" });
+    for (const trustWorkspaces of [false, true]) {
+      const s = setup();
+      const spec = new MuseBackend({ mode, shellSandbox: true, sandboxNetwork: "enabled", trustWorkspaces } as any,
+        museSandboxUnavailable(false)).spawn({ cliPath: "/fake/muse", cwd: "/workspace", env: {} });
+      vi.stubEnv("GROK_MUSE_POSTURE", spec.env.GROK_MUSE_POSTURE!);
+      await s.session.initialize();
+      expect(s.spawn.mock.calls[0][0].args).toEqual(["serve", "--disable-sandbox",
+        ...(mode === "yolo" || trustWorkspaces ? ["--trust-workspace"] : [])]);
+      const result = await s.session.newSession("/workspace", []);
+      expect(result.modes?.currentModeId).toBe(mode === "yolo" ? "yolo" : "agent");
+      expect(result.modes?.availableModes.map(m => m.id)).toEqual(["yolo", "agent"]);
+      await expect(s.session.setMode("session", "onRequest")).rejects.toThrow("unavailable on Windows");
+    }
+  });
+
+  it.each(["resumed", "buffered", "live"])("repairs Windows On request (%s) before approvals or a turn, and explains once", async source => {
+    const s = setup();
+    vi.stubEnv("GROK_MUSE_POSTURE", JSON.stringify({ mode: "onRequest", sandboxUnavailable: "windows" }));
+    await s.session.initialize();
+    const repair = deferred<any>();
+    s.command.mockImplementation(async (method: string) => {
+      if (method === "session/resume") {
+        if (source === "buffered") s.event("session/approvalModeChanged", { mode: "onRequest" });
+        return { session: { sessionId: "session", workspaceRoot: "/workspace", approvalMode: { mode: source === "resumed" ? "onRequest" : "promptUnmatched" } },
+          history: { mode: "inline", items: [] } } as any;
+      }
+      if (method === "session/setApprovalMode") return repair.promise;
+      if (method === "turn/start") return { status: "accepted", disposition: "started", turnId: "t" };
+      return {};
+    });
+    const loading = s.session.loadSession("session", "/workspace", []);
+    if (source === "live") {
+      await loading;
+      s.event("session/approvalModeChanged", { mode: "onRequest" });
+    }
+    await vi.waitFor(() => expect(s.command).toHaveBeenCalledWith("session/setApprovalMode", { sessionId: "session", mode: "promptUnmatched" }));
+    // A native mode notification can arrive before setApprovalMode's reply.
+    // It must not release the admission barrier before acceptance is checked.
+    if (source === "live") s.event("session/approvalModeChanged", { mode: "promptUnmatched" });
+    const prompting = s.session.prompt("session", [{ type: "text", text: "go" }]);
+    expect(s.command.mock.calls.some(([method]) => method === "turn/start")).toBe(false);
+    repair.resolve({ status: "accepted", effectiveMode: { mode: "promptUnmatched" } });
+    const result = await loading;
+    expect(result.modes?.currentModeId).toBe("agent");
+    await vi.waitFor(() => expect(s.command.mock.calls.some(([method]) => method === "turn/start")).toBe(true));
+    s.event("turn/completed", { turnId: "t", terminal: "completed" });
+    await prompting;
+    const notices = () => s.client.notify.mock.calls.filter(([, p]: any) => p?.update?._meta?.["muse/modeNotice"]);
+    expect(notices()).toHaveLength(1);
+    const update = (notices()[0][1] as any).update;
+    expect(new MuseBackend().normalizeUpdate(update, {}).notice).toContain("reopened in Prompt unmatched");
+    s.event("session/approvalModeChanged", { mode: "onRequest" });
+    await (s.session as any).updates;
+    expect(notices()).toHaveLength(1);
+    expect(s.fatal).not.toHaveBeenCalled();
+  });
+
+  it("fails a rejected Windows repair before any pending approvals or turn", async () => {
+    const s = setup();
+    vi.stubEnv("GROK_MUSE_POSTURE", JSON.stringify({ sandboxUnavailable: "windows" }));
+    await s.session.initialize();
+    s.command.mockResolvedValueOnce({ session: { sessionId: "session", workspaceRoot: "/workspace", approvalMode: { mode: "onRequest" } },
+      history: { mode: "inline", items: [] }, pendingRequests: [{}] } as any);
+    s.command.mockResolvedValueOnce({ status: "rejected" } as any);
+    await expect(s.session.loadSession("session", "/workspace", [])).rejects.toThrow("not accepted");
+    expect(s.client.request).not.toHaveBeenCalled();
+    expect(s.command.mock.calls.some(([method]) => method === "turn/start")).toBe(false);
+  });
+
+  it("still refuses a cloud On request notification even if another mode follows immediately", async () => {
+    vi.stubEnv("GROK_MUSE_POSTURE", JSON.stringify({ sandboxUnavailable: "cloud" }));
+    const s = await ready();
+    s.event("session/approvalModeChanged", { mode: "onRequest" });
+    s.event("session/approvalModeChanged", { mode: "promptUnmatched" });
+    await vi.waitFor(() => expect(s.fatal).toHaveBeenCalledWith(expect.objectContaining({
+      message: expect.stringContaining("unavailable on cloud machines"),
+    })));
+    expect(s.command.mock.calls.some(([method]) => method === "session/setApprovalMode")).toBe(false);
+  });
   it.each([["agent", "promptUnmatched"], ["yolo", "allowAll"], ["denyUnmatched", "promptUnmatched"]])("starts cloud %s without the Muse sandbox, preserving approvals and trust", async (mode, approvalMode) => {
     const s = setup();
     const posture = { mode, shellSandbox: true, sandboxNetwork: "restricted", trustWorkspaces: false } as any;
-    const spec = new MuseBackend(posture, true).spawn({ cliPath: "/fake/muse", cwd: "/workspace", env: {} });
-    expect(JSON.parse(spec.env.GROK_MUSE_POSTURE!)).toMatchObject({ mode, shellSandbox: false, cloud: true });
+    const spec = new MuseBackend(posture, "cloud").spawn({ cliPath: "/fake/muse", cwd: "/workspace", env: {} });
+    expect(JSON.parse(spec.env.GROK_MUSE_POSTURE!)).toMatchObject({ mode, shellSandbox: false, sandboxUnavailable: "cloud" });
     vi.stubEnv("GROK_MUSE_POSTURE", spec.env.GROK_MUSE_POSTURE!);
     await s.session.initialize();
     expect(s.spawn.mock.calls[0][0].args).toEqual(["serve", "--disable-sandbox", ...(mode === "yolo" ? ["--trust-workspace"] : [])]);
@@ -86,7 +168,7 @@ describe("Muse native modes", () => {
 
   it("uses Prompt unmatched and no Muse sandbox for a new cloud session seeded from On request", async () => {
     const s = setup();
-    const spec = new MuseBackend({ mode: "onRequest", shellSandbox: true, sandboxNetwork: "proxy-only", trustWorkspaces: false }, true)
+    const spec = new MuseBackend({ mode: "onRequest", shellSandbox: true, sandboxNetwork: "proxy-only", trustWorkspaces: false }, "cloud")
       .spawn({ cliPath: "/fake/muse", cwd: "/workspace", env: {} });
     expect(JSON.parse(spec.env.GROK_MUSE_POSTURE!).shellSandbox).toBe(false);
     vi.stubEnv("GROK_MUSE_POSTURE", spec.env.GROK_MUSE_POSTURE!);
@@ -99,7 +181,7 @@ describe("Muse native modes", () => {
 
   it.each(["agent", "onRequest"])("refuses a cloud history stored as On request without attaching or admitting a turn (saved=%s)", async mode => {
     const s = setup();
-    vi.stubEnv("GROK_MUSE_POSTURE", JSON.stringify({ mode, cloud: true }));
+    vi.stubEnv("GROK_MUSE_POSTURE", JSON.stringify({ mode, sandboxUnavailable: "cloud" }));
     await s.session.initialize();
     s.connection.request.mockResolvedValueOnce({ session: { approvalMode: { mode: "onRequest" } } } as any);
     await expect(s.session.loadSession("session", "/workspace", [])).rejects.toThrow("unavailable on cloud machines");
@@ -111,7 +193,7 @@ describe("Muse native modes", () => {
 
   it("can resume on cloud after a desktop changes a saved On request history to Prompt unmatched", async () => {
     const s = setup();
-    vi.stubEnv("GROK_MUSE_POSTURE", JSON.stringify({ mode: "onRequest", cloud: true }));
+    vi.stubEnv("GROK_MUSE_POSTURE", JSON.stringify({ mode: "onRequest", sandboxUnavailable: "cloud" }));
     await s.session.initialize();
     s.connection.request.mockResolvedValueOnce({ session: { approvalMode: { mode: "promptUnmatched" } } } as any);
     s.command.mockResolvedValueOnce({ session: { sessionId: "session", workspaceRoot: "/workspace", approvalMode: { mode: "promptUnmatched" } },
@@ -123,7 +205,7 @@ describe("Muse native modes", () => {
 
   it("also refuses On request when the cloud replay differs from the preflight read", async () => {
     const s = setup();
-    vi.stubEnv("GROK_MUSE_POSTURE", JSON.stringify({ mode: "agent", cloud: true }));
+    vi.stubEnv("GROK_MUSE_POSTURE", JSON.stringify({ mode: "agent", sandboxUnavailable: "cloud" }));
     await s.session.initialize();
     s.connection.request.mockResolvedValueOnce({ session: { approvalMode: { mode: "promptUnmatched" } } } as any);
     s.command.mockResolvedValueOnce({ session: { sessionId: "session", workspaceRoot: "/workspace", approvalMode: { mode: "onRequest" } },

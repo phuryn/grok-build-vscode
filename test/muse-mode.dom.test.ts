@@ -34,6 +34,14 @@ function openModes(h: ReturnType<typeof bootWebview>) {
 }
 
 describe("Muse Agent / Auto accept", () => {
+  it("waits for the host's first mode instead of painting Agent on a fresh install", () => {
+    const h = bootWebview();
+    const button = h.doc.getElementById("mode-btn") as HTMLButtonElement;
+    expect(button.hidden).toBe(true);
+    dispatch(h.window, { type: "modeChanged", modeId: "yolo", modes: ["agent", "plan", "yolo"] });
+    expect(button.hidden).toBe(false);
+    expect(button.textContent).toContain("Auto accept");
+  });
   it.each([{ vscode: true }, {}, { remote: true }])("uses Muse labels for the cloud host's two advertised choices on %j", surface => {
     const h = bootWebview(surface);
     connect(h);

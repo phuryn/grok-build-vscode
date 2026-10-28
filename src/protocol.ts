@@ -418,6 +418,7 @@ export type HostMsg =
        *  Absent on older hosts — View all then omits language. */
       commandLanguage?: string;
       museSettings?: MuseSettings;
+      museSandboxUnavailable?: boolean;
       /** Which GUI is on the other end. A phone is looking at neither the
        *  extension nor the desktop app, so it cannot infer this, and its
        *  About page has to name what it is connected to. Optional and

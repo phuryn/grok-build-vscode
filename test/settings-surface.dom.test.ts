@@ -2207,6 +2207,25 @@ function mountAt(category: string, opts: {
 
 describe("Muse settings parity", () => {
   const museDefaults = { shellSandbox: true, sandboxNetwork: "proxy-only", trustWorkspaces: false };
+  it("carries the host's Windows restriction through the chat Settings snapshot", () => {
+    const h = bootWebview();
+    seedChat(h);
+    dispatch(h.window, { type: "providerState", providers: [{ id: "muse", connected: true }] });
+    dispatch(h.window, { type: "initialState", museSettings: museDefaults, museSandboxUnavailable: true });
+    openSettings(h);
+    clickSettingsNav(h, "Providers");
+    const overlay = h.doc.getElementById("settings-overlay")!;
+    expect(overlay.querySelector('[data-id="museShellSandbox"]')).toBeNull();
+    expect(overlay.querySelector('[data-id="museSandboxNetwork"]')).toBeNull();
+    expect(overlay.querySelector('[data-id="museTrustWorkspaces"]')).not.toBeNull();
+  });
+  it.each([true, false])("hides Windows sandbox controls but keeps trust (desktop=%s)", isDesktop => {
+    const h = mountAt("providers", { env: { isDesktop }, snapshot: { providers: [{ id: "muse", connected: true }],
+      museSettings: museDefaults, museSandboxUnavailable: true } });
+    expect(h.root.querySelector('[data-id="museShellSandbox"]')).toBeNull();
+    expect(h.root.querySelector('[data-id="museSandboxNetwork"]')).toBeNull();
+    expect(h.root.querySelector('[data-id="museTrustWorkspaces"]')).not.toBeNull();
+  });
   it.each([true, false])("posts all three Muse settings from a host-backed surface (desktop=%s)", isDesktop => {
     const h = mountAt("providers", { env: { isDesktop }, snapshot: { providers: [{ id: "muse", connected: true }], museSettings: museDefaults } });
     expect(h.root.querySelector('[data-id="museShellSandbox"] [role="switch"]')!.getAttribute("aria-checked")).toBe("true");

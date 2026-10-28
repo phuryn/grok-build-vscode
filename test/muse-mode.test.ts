@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { permissionOptions } from "../adapters/muse/approvals.mts";
 import { GrokSidebar } from "../src/sidebar";
 import { createPendingPermission, Session, sessionUiSnapshot } from "../src/session";
@@ -12,6 +12,10 @@ import {
   OUTBOUND_PROJECT_AUTH,
   transformHostMsgForRemote,
 } from "../src/remote-policy";
+
+const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+beforeEach(() => Object.defineProperty(process, "platform", { value: "linux" }));
+afterEach(() => Object.defineProperty(process, "platform", platformDescriptor));
 
 const once = { choiceId: "minted_once", label: "Allow", scope: "once", decision: "approved" };
 const sessionChoice = { choiceId: "minted_session", label: "Allow this session", scope: "session", decision: "approvedForSession" };
@@ -85,6 +89,18 @@ function harness(remembered = "") {
 }
 
 describe("Muse mode switch", () => {
+  it("refuses Windows On request with a Windows reason and preserves remembered choices", async () => {
+    const { sidebar, session, setMode, configUpdate } = harness();
+    session.museSandboxUnavailable = "windows";
+    session.museShellSandbox = false;
+    await sidebar.setMode("onRequest", session);
+    expect(setMode).not.toHaveBeenCalled();
+    expect(configUpdate).not.toHaveBeenCalled();
+    expect(sidebar.state.update).not.toHaveBeenCalled();
+    expect(sidebar.host.showWarningMessage).toHaveBeenCalledWith(expect.stringContaining("unavailable on Windows"));
+    expect(sessionUiSnapshot(session, "agent").find(message => message.type === "modeChanged"))
+      .toEqual({ type: "modeChanged", modeId: "agent", modes: ["yolo", "agent"] });
+  });
   it("ignores a stale Deny unmatched pick without changing the conversation or default", async () => {
     const { sidebar, session, setMode, configUpdate } = harness();
     session.client!.currentModeId = "agent";
@@ -96,7 +112,7 @@ describe("Muse mode switch", () => {
   });
   it("refuses a direct cloud On request pick without recording it or contacting Muse", async () => {
     const { sidebar, session, setMode, configUpdate } = harness();
-    session.museCloud = true;
+    session.museSandboxUnavailable = "cloud";
     session.museShellSandbox = false;
     await sidebar.setMode("onRequest", session);
     expect(setMode).not.toHaveBeenCalled();
@@ -313,7 +329,7 @@ describe("remembered Auto accept on session start", () => {
 describe("modeChanged.modes on the relay", () => {
   it("omits On request and its disabled row from cloud reconnect snapshots", () => {
     const { session } = harness();
-    session.museCloud = true;
+    session.museSandboxUnavailable = "cloud";
     session.museShellSandbox = false;
     const message = sessionUiSnapshot(session, "agent").find(msg => msg.type === "modeChanged");
     expect(message).toEqual({ type: "modeChanged", modeId: "agent", modes: ["yolo", "agent"] });

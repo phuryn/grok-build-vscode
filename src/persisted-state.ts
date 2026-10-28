@@ -53,6 +53,7 @@ export interface StateFs {
 /** Structurally `vscode.Memento`, declared here so this module stays free of
  *  the `vscode` import — it is one of the pieces a non-VS-Code host reuses. */
 export interface MementoLike {
+  keys?(): readonly string[];
   get<T>(key: string): T | undefined;
   get<T>(key: string, defaultValue: T): T;
   update(key: string, value: unknown): PromiseLike<void>;
@@ -62,6 +63,7 @@ export interface MementoLike {
  *  this map (update nags, one-shot UI dismissals) is VS Code-local by nature
  *  and keeps living in `globalState`. */
 export const DISK_KEYS: Readonly<Record<string, string>> = {
+  "grok.defaultModeCohort": "default-mode-cohort.json",
   "grok.sessionMeta": "session-meta.json",
   "grok.repoPins": "repo-pins.json",
   "grok.repoArchives": "repo-archives.json",
@@ -129,6 +131,7 @@ export class PersistedState {
   }
 
   private validValue(key: string, value: unknown): boolean {
+    if (key === "grok.defaultModeCohort") return value === "new" || value === "existing";
     // Scalar string keys (install id + app purpose). Everything else is a
     // record-of-records map (session meta, pins, archives).
     if (key === "grok.installId" || key === "grok.appPurpose") {

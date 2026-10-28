@@ -105,7 +105,9 @@ export class MuseSession {
   private reasoningEffort?: ReasoningEffort;
   private approvalMode: ApprovalMode = "promptUnmatched";
   private shellSandbox = true;
-  private cloud = false;
+  private sandboxUnavailable?: "cloud" | "windows";
+  private explainedWindowsModeRepair = false;
+  private pendingModeRepairs = 0;
   private creating = false;
   private replayBuffer?: { method: string; params: Record<string, any> }[];
   private pending?: PendingTurn;
@@ -148,17 +150,18 @@ export class MuseSession {
     // Node's quotes around a spaced executable path before cmd resolves it.
     const needsShell = museCliNeedsShell(executable);
     const posture = JSON.parse(process.env.GROK_MUSE_POSTURE || "{}");
-    this.cloud = posture.cloud === true;
+    this.sandboxUnavailable = posture.sandboxUnavailable === "cloud" || posture.sandboxUnavailable === "windows"
+      ? posture.sandboxUnavailable : undefined;
     this.approvalMode = approvalModeFor(posture.mode) ?? "promptUnmatched";
     if (this.approvalMode === "denyUnmatched") this.approvalMode = "promptUnmatched";
-    // The process is not attached yet. A saved On request history is checked
-    // by session/read before resume; a new cloud session uses the safe default.
-    if (this.cloud && this.approvalMode === "onRequest") this.approvalMode = "promptUnmatched";
-    this.shellSandbox = !this.cloud && (posture.mode === "onRequest" || (posture.mode !== "yolo" && posture.shellSandbox !== false));
+    // Cloud checks saved On request before attaching; Windows repairs it on
+    // replay. Both hosts seed new conversations with the safe default.
+    if (this.sandboxUnavailable && this.approvalMode === "onRequest") this.approvalMode = "promptUnmatched";
+    this.shellSandbox = !this.sandboxUnavailable && (posture.mode === "onRequest" || (posture.mode !== "yolo" && posture.shellSandbox !== false));
     this.assertSandbox(this.approvalMode);
     const args = ["serve"];
     if (!this.shellSandbox) args.push("--disable-sandbox");
-    if (!this.cloud && (posture.sandboxNetwork === "restricted" || posture.sandboxNetwork === "enabled")) {
+    if (!this.sandboxUnavailable && (posture.sandboxNetwork === "restricted" || posture.sandboxNetwork === "enabled")) {
       args.push("--sandbox-network", posture.sandboxNetwork);
     }
     if (posture.mode === "yolo" || posture.trustWorkspaces === true) args.push("--trust-workspace");
@@ -256,29 +259,42 @@ export class MuseSession {
     const currentModeId = Object.keys(APPROVAL_MODES).find(id => approvalModeFor(id) === mode);
     if (!currentModeId) return {};
     return { modes: { currentModeId, availableModes: Object.entries(MODE_NAMES)
-      .filter(([id]) => id !== "denyUnmatched" && (!this.cloud || id !== "onRequest")).map(([id, name]) => ({ id, name })) } };
+      .filter(([id]) => id !== "denyUnmatched" && (!this.sandboxUnavailable || id !== "onRequest")).map(([id, name]) => ({ id, name })) } };
   }
 
   private assertSandbox(mode: unknown): void {
-    if (mode === "onRequest" && this.cloud) {
-      throw new RequestError(-32602, "Muse On request is unavailable on cloud machines. Open this conversation on a desktop to change its mode, or start a new cloud conversation in Prompt unmatched.");
+    if (mode === "onRequest" && this.sandboxUnavailable) {
+      throw new RequestError(-32602, this.sandboxUnavailable === "cloud"
+        ? "Muse On request is unavailable on cloud machines. Open this conversation on a desktop to change its mode, or start a new cloud conversation in Prompt unmatched."
+        : "Muse On request is unavailable on Windows because Muse's shell sandbox cannot run there. Use Prompt unmatched or Allow all.");
     }
     if (mode === "onRequest" && !this.shellSandbox) {
       throw new Error("Muse On request requires the shell sandbox. Reopen with a sandboxed process before continuing.");
     }
   }
 
+  private needsModeRepair(mode: unknown): boolean {
+    return mode === "denyUnmatched" || (mode === "onRequest" && this.sandboxUnavailable === "windows");
+  }
+
   private publishMode(mode: unknown): Promise<void> {
     const modes = this.modes(mode).modes;
     if (!modes) return this.updates;
     this.approvalMode = mode as ApprovalMode;
+    const repair = this.needsModeRepair(mode);
+    if (repair) this.pendingModeRepairs++;
     this.updates = this.updates.then(async () => {
       // Repair the durable mode before publishing or admitting a resumed turn.
       // Deny unmatched blocks Muse's own reminder agent (research/muse-modes.md).
-      if (mode === "denyUnmatched") await this.setMode(this.sessionId!, "agent");
-      else this.approvalMode = mode as ApprovalMode;
+      if (repair) {
+        await this.setMode(this.sessionId!, "agent");
+        this.pendingModeRepairs--;
+      } else this.approvalMode = mode as ApprovalMode;
+      const explain = repair && mode === "onRequest" && !this.explainedWindowsModeRepair;
+      if (explain) this.explainedWindowsModeRepair = true;
       await this.client.notify("session/update", {
-        sessionId: this.sessionId!, update: { sessionUpdate: "current_mode_update", currentModeId: mode === "denyUnmatched" ? "agent" : modes.currentModeId },
+        sessionId: this.sessionId!, update: { sessionUpdate: "current_mode_update", currentModeId: repair ? "agent" : modes.currentModeId,
+          ...(explain ? { _meta: { "muse/modeNotice": "This conversation was reopened in Prompt unmatched because Muse's shell sandbox is unavailable on Windows. Muse will ask for approval when no rule matches." } } : {}) },
       });
     });
     void this.updates.catch(error => this.fail(error));
@@ -332,7 +348,7 @@ export class MuseSession {
     this.sessionId = sessionId;
     this.replayBuffer = [];
     try {
-      if (this.cloud) {
+      if (this.sandboxUnavailable === "cloud") {
         // Read the durable mode without attaching: a refused On request history
         // must not acquire a writer or resume its work in an unsandboxed VM.
         const stored = await this.connection().request("session/read", { sessionId });
@@ -403,7 +419,7 @@ export class MuseSession {
 
   async prompt(sessionId: string, prompt: ContentBlock[]): Promise<PromptResponse> {
     this.assertSession(sessionId);
-    if (this.approvalMode === "denyUnmatched") await this.updates;
+    if (this.pendingModeRepairs || this.needsModeRepair(this.approvalMode)) await this.updates;
     this.assertSandbox(this.approvalMode);
     if (this.pending) throw new Error("Muse session already has an active prompt");
     const input = museTurnInput(prompt);
@@ -501,7 +517,13 @@ export class MuseSession {
     if (params.sessionId !== this.sessionId) return;
     if (this.replayBuffer) { this.replayBuffer.push({ method, params }); return; }
     if (method === "session/approvalModeChanged") {
-      void this.publishMode(params.mode).then(() => this.assertSandbox(params.mode)).catch(error => this.fail(error));
+      void this.publishMode(params.mode).then(() => this.assertSandbox(
+        this.needsModeRepair(params.mode) ? "promptUnmatched" : params.mode,
+      )).catch(error => this.fail(error));
+      return;
+    }
+    if (this.pendingModeRepairs || this.needsModeRepair(this.approvalMode)) {
+      void this.updates.then(() => this.notification(method, params)).catch(error => this.fail(error));
       return;
     }
     this.assertSandbox(this.approvalMode);

@@ -10,6 +10,10 @@ import type { HostMsg } from "../src/protocol";
 import { CLOUD_ENVIRONMENT_ENV } from "../src/remote-frames";
 import { bootWebview, click, dispatch } from "./webview-harness";
 
+const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+beforeEach(() => Object.defineProperty(process, "platform", { value: "linux" }));
+afterEach(() => Object.defineProperty(process, "platform", platformDescriptor));
+
 const startControl = {
   failuresRemaining: 0,
   failWith: "Internal error",
@@ -223,6 +227,79 @@ function onboardings(sidebar: any): HostMsg[] {
 }
 
 describe("startSession bounded spawn retry", () => {
+  it.each(["agent", "onRequest", "yolo"])("a new cohort keeps Muse's remembered %s above the shared preference", async mode => {
+    const sidebar = makeSidebar("/repo");
+    sidebar.defaultModeCohort = "new";
+    const session = sidebar.focused;
+    session.provider = "muse";
+    sidebar.connectedProviders = () => ["muse"];
+    sidebar.usableProviders = () => ["muse"];
+    sidebar.providerConnectionState = { muse: true };
+    sidebar.host.getConfiguration = () => ({ get: (key: string, fallback: unknown) => key === "defaultMode" ? "yolo" : fallback });
+    await sidebar.state.update("grok.defaultMuseMode", mode);
+    await sidebar.startSession(undefined, session);
+    expect(startControl.musePostures.at(-1).mode).toBe(mode);
+  });
+  it.each(["grok", "codex", "claude", "muse"] as const)("paints and starts fresh-cohort %s with the resolved default", async provider => {
+    const sidebar = makeSidebar("/repo");
+    sidebar.defaultModeCohort = "new";
+    const session = sidebar.focused;
+    session.provider = provider;
+    sidebar.connectedProviders = () => [provider];
+    sidebar.usableProviders = () => [provider];
+    sidebar.providerConnectionState = { [provider]: true };
+    const expected = provider === "claude" ? "auto" : provider === "codex" ? "agent" : "yolo";
+    expect(sidebar.displayMode(session)).toBe(expected);
+    await sidebar.startSession(undefined, session);
+    expect(sidebar.posted.find((message: HostMsg) => message.type === "modeChanged")).toMatchObject({ modeId: expected });
+    expect(sidebar.displayMode(session)).toBe(expected);
+    expect(sidebar.host.getConfiguration().update).not.toHaveBeenCalled();
+  });
+
+  it.each(["agent", "yolo", "onRequest", "denyUnmatched"])("applies the Windows launch rule to remembered %s and catalog processes", async mode => {
+    Object.defineProperty(process, "platform", { value: "win32" });
+    const sidebar = makeSidebar("/repo");
+    const session = sidebar.focused;
+    session.provider = "muse";
+    sidebar.connectedProviders = () => ["muse"];
+    sidebar.usableProviders = () => ["muse"];
+    sidebar.providerConnectionState = { muse: true };
+    await sidebar.state.update("grok.defaultMuseMode", mode);
+    await sidebar.startSession(undefined, session);
+    expect(startControl.musePostures.at(-1)).toMatchObject({
+      mode: mode === "yolo" ? "yolo" : "agent", sandboxUnavailable: "windows", shellSandbox: false,
+    });
+    expect(session.museShellSandbox).toBe(false);
+    expect(sidebar.posted.filter((message: HostMsg) => message.type === "modeChanged").every((message: any) =>
+      !message.modes.includes("onRequest") && !message.disabledModes)).toBe(true);
+    const catalog = sidebar.createProviderBackend("muse").spawn({ cliPath: "/fake/muse", cwd: "/repo", env: {} });
+    expect(JSON.parse(catalog.env.GROK_MUSE_POSTURE)).toMatchObject({ sandboxUnavailable: "windows", shellSandbox: false });
+    expect(sidebar.state.get("grok.defaultMuseMode")).toBe(mode);
+  });
+
+  it("saves the Windows adapter's repaired mode for an existing On request history", async () => {
+    Object.defineProperty(process, "platform", { value: "win32" });
+    const sidebar = makeSidebar("/repo");
+    const session = sidebar.focused;
+    session.provider = "muse";
+    sidebar.connectedProviders = () => ["muse"];
+    sidebar.usableProviders = () => ["muse"];
+    sidebar.providerConnectionState = { muse: true };
+    delete sidebar.updateSessionMeta;
+    await sidebar.state.update("grok.sessionMeta", { history: { musePosture: {
+      mode: "onRequest", shellSandbox: true, sandboxNetwork: "restricted", trustWorkspaces: false,
+    } } });
+    startControl.museMode = "agent";
+    await sidebar.startSession("history", session);
+    await sidebar.sessionMetaWrites;
+    expect(startControl.musePostures.at(-1)).toMatchObject({ mode: "onRequest", sandboxUnavailable: "windows", shellSandbox: false });
+    expect(sidebar.displayMode(session)).toBe("agent");
+    expect(sidebar.state.get("grok.sessionMeta").history.musePosture).toEqual({
+      mode: "agent", shellSandbox: true, sandboxNetwork: "restricted", trustWorkspaces: false,
+    });
+    expect(startErrors(sidebar)).toEqual([]);
+  });
+
   const switchCatalogs = {
     muse: [
       { modelId: "muse-spark-1.3", name: "muse-spark-1.3" },
@@ -366,19 +443,19 @@ describe("startSession bounded spawn retry", () => {
     await sidebar.startSession(undefined, session);
     await sidebar.sessionMetaWrites;
     const effective = mode === "onRequest" || mode === "denyUnmatched" ? "agent" : mode;
-    expect(startControl.musePostures.at(-1)).toMatchObject({ mode: effective, cloud: true, shellSandbox: false });
-    expect(session.museCloud).toBe(true);
+    expect(startControl.musePostures.at(-1)).toMatchObject({ mode: effective, sandboxUnavailable: "cloud", shellSandbox: false });
+    expect(session.museSandboxUnavailable).toBe("cloud");
     expect(session.museShellSandbox).toBe(false);
     expect(sidebar.displayMode(session)).toBe(effective);
     const saved = sidebar.state.get("grok.sessionMeta", {})["new-session"].musePosture;
     expect(saved).toMatchObject({ mode: effective, shellSandbox: true });
-    expect(saved).not.toHaveProperty("cloud");
+    expect(saved).not.toHaveProperty("sandboxUnavailable");
     expect(sidebar.state.get("grok.defaultMuseMode")).toBe(mode);
     expect(sidebar.posted.filter((message: HostMsg) => message.type === "modeChanged").every((message: any) =>
       !message.modes.includes("onRequest") && !message.disabledModes)).toBe(true);
     // Shared catalog connections use the same host launch rule.
     const catalog = sidebar.createProviderBackend("muse").spawn({ cliPath: "/fake/muse", cwd: "/repo", env: {} });
-    expect(JSON.parse(catalog.env.GROK_MUSE_POSTURE)).toMatchObject({ cloud: true, shellSandbox: false });
+    expect(JSON.parse(catalog.env.GROK_MUSE_POSTURE)).toMatchObject({ sandboxUnavailable: "cloud", shellSandbox: false });
   });
   it("saves a replayed On request before a sandbox mismatch aborts resume", async () => {
     const sidebar = makeSidebar("/repo");

@@ -380,13 +380,13 @@
             "yolo"
           ],
           "enumDescriptions": [
-            "The agent's own default: Auto mode where the agent has one (Claude Code), Agent mode elsewhere",
-            "Agent mode",
+            "New installs: Auto accept for Grok/Antigravity, Allow all for Muse. Existing installs keep Agent. Claude uses Auto and Codex uses Agent on all installs.",
+            "Agent mode (Prompt unmatched for Muse)",
             "Auto mode where the agent has one (Claude Code decides what is safe and asks about the rest); Agent mode elsewhere",
             "Auto accept — auto-approve every permission request"
           ],
           "default": "",
-          "description": "Mode for new sessions. Updated automatically to remember your last switch between Agent, Auto and Auto accept (Plan is never remembered). Empty = Auto mode where the agent has one (Claude Code), Agent mode elsewhere. If Claude Code's Auto mode is not available for the model, the conversation stays in Agent mode."
+          "description": "Mode for new sessions. Updated automatically to remember your last switch between Agent, Auto and Auto accept (Plan is never remembered). Empty keeps existing installs in Agent, and starts new installs in Auto accept for Grok/Antigravity or Allow all for Muse. Claude uses Auto and Codex uses Agent on all installs. Muse's separately remembered choice wins. If Claude Code's Auto mode is not available for the model, the conversation stays in Agent mode."
         },
         "grok.includeActiveFileByDefault": {
           "type": "boolean",

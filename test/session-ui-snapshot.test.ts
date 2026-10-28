@@ -1,6 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { INTERNAL_PROVIDERS } from "../src/acp-backend";
 import { Session, sessionUiSnapshot } from "../src/session";
+
+const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+beforeEach(() => Object.defineProperty(process, "platform", { value: "linux" }));
+afterEach(() => Object.defineProperty(process, "platform", platformDescriptor));
 
 const OFFERED_MODES = {
   grok: ["agent", "plan", "yolo"],
@@ -11,6 +15,14 @@ const OFFERED_MODES = {
 };
 
 describe("sessionUiSnapshot", () => {
+  it("omits On request on Windows even before the Muse process starts", () => {
+    Object.defineProperty(process, "platform", { value: "win32" });
+    const session = new Session();
+    session.provider = "muse";
+    expect(sessionUiSnapshot(session, "yolo")).toContainEqual({
+      type: "modeChanged", modeId: "yolo", modes: ["yolo", "agent"],
+    });
+  });
   it.each(INTERNAL_PROVIDERS)("advertises %s modes on every modeChanged", (provider) => {
     const session = new Session();
     session.provider = provider;

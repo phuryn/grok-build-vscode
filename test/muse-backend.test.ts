@@ -83,7 +83,7 @@ it("keeps legacy wire ids frozen while internal capabilities distinguish Muse", 
 });
 
 it("takes cloud-ness only from the host, never from a saved posture", () => {
-  const posture = { mode: "agent", shellSandbox: true, sandboxNetwork: "proxy-only", trustWorkspaces: false, cloud: true } as const;
+  const posture = { mode: "agent", shellSandbox: true, sandboxNetwork: "proxy-only", trustWorkspaces: false, sandboxUnavailable: "cloud" } as const;
   const spec = new MuseBackend(posture).spawn({ cliPath: "/fake/muse", cwd: "/workspace", env: {} });
   expect(JSON.parse(spec.env.GROK_MUSE_POSTURE!)).toEqual({ mode: "agent", shellSandbox: true, sandboxNetwork: "proxy-only", trustWorkspaces: false });
 });

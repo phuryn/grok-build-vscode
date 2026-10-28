@@ -2,12 +2,29 @@
 // kept out of sidebar.ts so they can be tested without vscode/spawn.
 
 import type { ConfigTarget } from "./host";
+import type { DefaultModeCohort } from "./default-mode-cohort";
 
 export type MuseModeId = "agent" | "yolo" | "onRequest" | "denyUnmatched";
 /** `auto` is a provider's own Auto mode, offered only where one exists. */
 export type ModeId = MuseModeId | "plan" | "auto";
 export const MUSE_MODE_PREF_KEY = "grok.defaultMuseMode";
 export const MUSE_CLOUD_ON_REQUEST_UNAVAILABLE = "Muse On request is unavailable on cloud machines. Open this conversation on a desktop to change its mode, or start a new cloud conversation in Prompt unmatched.";
+export const MUSE_WINDOWS_ON_REQUEST_UNAVAILABLE = "Muse On request is unavailable on Windows because Muse's shell sandbox cannot run there. Use Prompt unmatched or Allow all.";
+export type MuseSandboxUnavailable = "cloud" | "windows" | undefined;
+export function museSandboxUnavailable(isCloud: boolean, platform: NodeJS.Platform = process.platform): MuseSandboxUnavailable {
+  return isCloud ? "cloud" : platform === "win32" ? "windows" : undefined;
+}
+export function museOnRequestUnavailable(reason: Exclude<MuseSandboxUnavailable, undefined>): string {
+  return reason === "cloud" ? MUSE_CLOUD_ON_REQUEST_UNAVAILABLE : MUSE_WINDOWS_ON_REQUEST_UNAVAILABLE;
+}
+
+/** A remembered choice wins; only fresh Grok, Antigravity and Muse defaults change. */
+export function resolvedDefaultMode(provider: string, remembered: string | undefined,
+  cohort: DefaultModeCohort = "existing"): string {
+  if (remembered) return remembered;
+  if (provider === "claude") return "auto";
+  return cohort === "new" && ["grok", "agy", "muse"].includes(provider) ? "yolo" : "agent";
+}
 export const MUSE_ON_REQUEST_UNAVAILABLE = "On request requires the shell sandbox. Switch to Prompt unmatched, enable Shell sandbox in Settings → Providers → Muse Code, then start a new conversation.";
 
 export function isMuseModeId(value: unknown): value is MuseModeId {
@@ -49,15 +66,15 @@ export interface MusePosture extends MuseSettings {
   mode: MuseModeId;
 }
 
-export function museShellSandboxEnabled(posture: MusePosture, isCloud = false): boolean {
-  return !isCloud && (posture.mode === "onRequest" || (posture.mode !== "yolo" && posture.shellSandbox));
+export function museShellSandboxEnabled(posture: MusePosture, sandboxUnavailable = false): boolean {
+  return !sandboxUnavailable && (posture.mode === "onRequest" || (posture.mode !== "yolo" && posture.shellSandbox));
 }
 
 export function musePosture(defaultMode: string | undefined, isResume: boolean,
-  saved: MusePosture | undefined, settings: MuseSettings, isCloud = false): MusePosture {
+  saved: MusePosture | undefined, settings: MuseSettings, sandboxUnavailable = false): MusePosture {
   // Unknown/terminal-created histories start conservatively until Muse replays.
   if (isResume) return saved ? { ...saved, mode: saved.mode === "denyUnmatched" ? "agent" : saved.mode } : { mode: "agent", shellSandbox: true, sandboxNetwork: "proxy-only", trustWorkspaces: false };
-  return { ...settings, mode: isMuseModeId(defaultMode) && defaultMode !== "denyUnmatched" && !(isCloud && defaultMode === "onRequest") ? defaultMode : "agent" };
+  return { ...settings, mode: isMuseModeId(defaultMode) && defaultMode !== "denyUnmatched" && !(sandboxUnavailable && defaultMode === "onRequest") ? defaultMode : "agent" };
 }
 
 export function usesClientAutoAccept(provider: string): boolean {
@@ -84,9 +101,9 @@ export function startsInYolo(defaultMode: string | undefined, isResume: boolean)
 }
 
 /** Modes this session's picker offers. Codex's plan review is outside this menu; Muse and Antigravity have no Plan. */
-export function sessionModes(provider: string, isCloud = false): ModeId[] {
+export function sessionModes(provider: string, sandboxUnavailable = false): ModeId[] {
   // Deny unmatched stalls Muse's end-of-turn reminder agent; see research/muse-modes.md.
-  if (provider === "muse") return isCloud ? ["yolo", "agent"] : ["yolo", "agent", "onRequest"];
+  if (provider === "muse") return sandboxUnavailable ? ["yolo", "agent"] : ["yolo", "agent", "onRequest"];
   if (hasNativeAutoMode(provider)) return ["agent", "auto", "plan", "yolo"];
   return provider === "codex" || provider === "agy"
     ? ["agent", "yolo"]

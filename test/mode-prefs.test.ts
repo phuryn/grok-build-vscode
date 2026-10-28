@@ -1,10 +1,51 @@
 import { describe, it, expect, vi } from "vitest";
-import { hasNativeAutoMode, isModeId, modeToRemember, rememberedEffort, sessionModes, startsInNativeAuto, startsInYolo, musePosture, museShellSandboxEnabled, usesClientAutoAccept } from "../src/mode-prefs";
+import { hasNativeAutoMode, isModeId, modeToRemember, rememberedEffort, sessionModes, startsInNativeAuto, startsInYolo, musePosture, museShellSandboxEnabled, usesClientAutoAccept, resolvedDefaultMode, museSandboxUnavailable } from "../src/mode-prefs";
 import { GrokSidebar } from "../src/sidebar";
 import { Session } from "../src/session";
 
 describe("remembered mode preference (#25)", () => {
   const defaults = { shellSandbox: true, sandboxNetwork: "proxy-only" as const, trustWorkspaces: false };
+  for (const cohort of ["new", "existing"] as const) {
+    for (const provider of ["grok", "codex", "claude", "muse", "agy"]) {
+      it.each([undefined, "", "agent", "yolo", "auto"])(`${cohort} ${provider} resolves remembered %s for new sessions and resumes`, remembered => {
+        const mode = resolvedDefaultMode(provider, remembered, cohort);
+        const expected = remembered || (provider === "claude" ? "auto"
+          : cohort === "new" && ["grok", "muse", "agy"].includes(provider) ? "yolo" : "agent");
+        expect(mode).toBe(expected);
+        for (const resume of [false, true]) {
+          expect(startsInYolo(mode, resume)).toBe(!resume && expected === "yolo");
+          expect(startsInNativeAuto(provider, mode, resume)).toBe(!resume && provider === "claude" && expected === "auto");
+          if (provider === "muse") {
+            const saved = { ...defaults, mode: "onRequest" as const };
+            expect(musePosture(mode, resume, saved, defaults).mode).toBe(resume ? "onRequest" : expected === "yolo" ? "yolo" : "agent");
+          }
+        }
+      });
+    }
+  }
+
+  it.each(["win32", "linux", "darwin"] as const)("resolves Muse's host restriction on %s", platform => {
+    expect(museSandboxUnavailable(false, platform)).toBe(platform === "win32" ? "windows" : undefined);
+    expect(museSandboxUnavailable(true, platform)).toBe("cloud");
+  });
+
+  it.each(["new", "existing"] as const)("approving a Grok plan restores the %s cohort's resolved mode before the verdict", cohort => {
+    const sidebar = Object.create(GrokSidebar.prototype) as any;
+    const session = new Session();
+    session.planActive = true;
+    session.pendingExitPlans.set(1, { planText: "Implement it" } as any);
+    session.client = { respondExitPlan: vi.fn(() => {
+      expect(session.planActive).toBe(false);
+      expect(session.autoApprove).toBe(cohort === "new");
+      return true;
+    }) } as any;
+    sidebar.defaultModeCohort = cohort;
+    sidebar.host = { getConfiguration: () => ({ get: () => "" }) };
+    sidebar.setPlanActive = (_session: Session, active: boolean) => { session.planActive = active; };
+    for (const method of ["emit", "syncHumanWait", "persistPlanVerdict", "noteAnswered", "autoApprovePendingPermissions"]) sidebar[method] = vi.fn();
+    sidebar.handleExitPlan(1, "approved", undefined, session);
+    expect(session.client!.respondExitPlan).toHaveBeenCalledWith(1, "approved");
+  });
   it.each([false, true])("replaces saved and default Deny unmatched with Prompt unmatched (cloud=%s)", cloud => {
     expect(musePosture("denyUnmatched", false, undefined, defaults, cloud)).toEqual({ ...defaults, mode: "agent" });
     const saved = { ...defaults, mode: "denyUnmatched" as const, trustWorkspaces: true };

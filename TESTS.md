@@ -557,3 +557,20 @@ The Playwright scripts provide geometry that happy-dom cannot: `scripts/changes-
 `test/confirm-stacking.test.ts` reads the CSS rather than the DOM, because the defect it pins is a relationship BETWEEN stylesheets that no page-level suite can see. A confirmation must outrank every layer that can open one: it asserts `.confirm-overlay` holds the strictly highest `z-index` across all four `media/*.css` files, and that no class composed onto it in `chat.js` re-declares one — equal specificity would let a private override drag the dialog back under the phone's full-screen panel, which is how the wizard's old 200 was written. The bug shipped three times before this: the panel's menus under the full-screen panel, the connect wizard behind Settings, and Discard in the Changes view rendering invisibly beneath the panel that asked the question. The relay carries the matching half for its own chrome, since `/chat` layers this webview inside a page this repo cannot see.
 
 The Changes DOM suite names the owner scenarios **GitHub disconnected, GitHub remote**, **Project without GitHub**, and **Origin conflict**. It verifies local commits without GitHub, a spent message after a successful commit with failed push, preserved drafts when committing fails, optional notice actions, and the branch pull link's capability/remote/branch gates. Real chat mounts verify that pull suggestions append to existing composer text with focus and never send or run git, that overlays close while docks stay open, and that GitHub actions open the Providers settings category through the overlay or IDE editor route. The Changes screenshot harness includes the rejected notice with its action at 320px and desk, and a long branch name that yields width to the persistent pull link.
+
+## New-install mode defaults and Windows Muse
+
+`test/default-mode-cohort.test.ts` checks each client-state/globalState signal,
+explicit empty user settings, ignored CLI history, exclusive-create races,
+read/write failures, activation ordering, and a decision that never flips as
+later first-run signals appear. `test/mode-prefs.test.ts` covers cohort ? provider
+? remembered choice ? resume and executes Grok plan approval with the resolved
+pre-Plan default. `test/session-start-retry.test.ts` checks first mode frames,
+Muse's own preference, Windows conversation/catalog launches and saved repaired
+resume posture. `test/muse-session.test.ts` checks Windows launch flags, trust,
+omitted modes, refused direct On request, durable repair on resume/buffered/live
+notifications, the once-only explanation and failed repair admission. Platform
+choices are mocked. `test/muse-mode.test.ts` checks host refusal and reconnect
+menus; `test/settings-surface.dom.test.ts` checks hidden sandbox/network rows and
+retained trust in both host Settings surfaces. Existing cloud refusal and
+macOS/Linux sandbox tests run alongside these, without real provider CLIs.
