@@ -39,19 +39,21 @@ count as a second AppImage.
 On Debian and Ubuntu, install the package with
 `sudo apt install ./Grok-Build-Desktop-<version>-linux-amd64.deb` (or double-click
 it). The package name is `grok-build-desktop`. It installs the binary under
-`/opt`, links `/usr/bin/grok-build-desktop`, and registers
+`/opt/grok-build-desktop`, links `/usr/bin/grok-build-desktop`, and registers
 `grok-build-desktop.desktop` in the application menu. Remove it with
 `sudo apt remove grok-build-desktop`. A newer package upgrades in place.
 
 **Use the `.deb` on Ubuntu 24.04 and later.** Ubuntu restricts unprivileged
 user namespaces through AppArmor. Chromium's fallback helper cannot acquire
 root ownership inside a user's AppImage mount, so that format aborts at launch
-(#213). The Debian post-install script sets `/opt/Grok Build Desktop/chrome-sandbox`
+(#213). The Debian post-install script sets `/opt/grok-build-desktop/chrome-sandbox`
 to `root:root`, mode `4755`, on every install and upgrade. Failure fails the
 installation. Chromium can then use its setuid sandbox fallback; the package
 does not disable the sandbox or change the system's user-namespace policy.
 No AppArmor profile is added. Removing the package removes the helper and its
 alternatives registration as well as the menu entry and icon.
+The install directory has no spaces because Chromium splits the setuid-helper
+wrapper path on spaces when launching its zygote.
 
 The AppImage remains the single-file download for systems permitting user
 namespaces. It needs FUSE (`libfuse2` on Debian, `libfuse2t64` on Ubuntu 24.04+).
@@ -90,7 +92,13 @@ excludes all desktop sources via `.vscodeignore`.
 
 `dist:linux` builds each format in an isolated unpacked tree, merges their
 channel entries with the AppImage as `path`, and inspects the actual squashfs
-to reject any AppImage containing `resources/package-type`. Linux build hosts
+to reject any AppImage containing `resources/package-type`. Only the Debian
+build overrides electron-builder's `productName` to `grok-build-desktop` to
+select its install directory; the AppImage keeps the shared configuration.
+The menu name remains `Grok Build Desktop`, `StartupWMClass` remains
+`Grok Build Desktop (Community)`, and `main.ts` sets the app name and
+`GrokBuildDesktop` settings directory independently of builder metadata.
+The packaged `package.json` is identical in both formats. Linux build hosts
 need `squashfs-tools` and `desktop-file-utils` in addition to Node 20 and npm.
 The release and packaging CI jobs also test Debian 12 / Ubuntu 24.04 package
 lifecycle and native Ubuntu 24.04 sandbox launch before upload.

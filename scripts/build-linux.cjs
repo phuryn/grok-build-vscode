@@ -78,6 +78,9 @@ async function buildLinux(extraArgs) {
       const targetDir = path.join(staging, target);
       run(process.execPath, [require.resolve('electron-builder/cli.js'),
         '--linux', target, '--x64', '--publish', 'never', ...extraArgs,
+        // FpmTarget installs under /opt/${sanitizedProductName}; Chromium's
+        // setuid-helper wrapper splits paths on spaces (#213).
+        ...(target === 'deb' ? ['-c.productName=grok-build-desktop'] : []),
         '-c.extraMetadata.grokCloudBuild=true', `-c.directories.output=${targetDir}`,
       ], { cwd: root });
       feeds.push(yaml.load(fs.readFileSync(path.join(targetDir, 'latest-linux.yml'), 'utf8')));

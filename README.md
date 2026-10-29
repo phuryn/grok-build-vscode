@@ -304,7 +304,7 @@ Standalone app for **macOS** (Apple Silicon + Intel), **Windows** (x64) and **Li
 
 **Windows is not signed yet**, so Microsoft Defender SmartScreen may show “Windows protected your PC.” Choose **More info** → **Run anyway**.
 
-**Debian / Ubuntu:** download the `.deb` from [GitHub Releases](https://github.com/phuryn/grok-build-vscode/releases) and run `sudo apt install ./Grok-Build-Desktop-<version>-linux-amd64.deb`. It adds the menu entry and dependencies, configures Chromium's sandbox helper, and removes with `sudo apt remove grok-build-desktop`. Use this package on Ubuntu 24.04+: its user-namespace restrictions prevent the AppImage from launching normally. **Update available** opens the new `.deb`; install it with the same `apt` command to upgrade.
+**Debian / Ubuntu:** download the `.deb` from [GitHub Releases](https://github.com/phuryn/grok-build-vscode/releases) and run `sudo apt install ./Grok-Build-Desktop-<version>-linux-amd64.deb`. It installs under `/opt/grok-build-desktop`, adds the **Grok Build Desktop** menu entry and dependencies, configures Chromium's sandbox helper, and removes with `sudo apt remove grok-build-desktop`. Use this package on Ubuntu 24.04+: its user-namespace restrictions prevent the AppImage from launching normally. **Update available** opens the new `.deb`; install it with the same `apt` command to upgrade.
 
 **Other Linux systems:** the AppImage is one file: `chmod +x` it and run it. It needs FUSE (`libfuse2` on Debian; `libfuse2t64` on Ubuntu 24.04+) and updates itself in place where the distro permits unprivileged user namespaces. There is exactly one AppImage per release.
 

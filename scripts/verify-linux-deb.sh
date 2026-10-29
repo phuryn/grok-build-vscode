@@ -25,19 +25,20 @@ done
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
 dpkg-deb -R "$deb" "$scratch/package"
-app="$scratch/package/opt/Grok Build Desktop"
+app="$scratch/package/opt/grok-build-desktop"
 test -x "$app/grok-build-desktop"
 test -f "$app/chrome-sandbox"
 test "$(cat "$app/resources/package-type")" = deb
 desktop="$scratch/package/usr/share/applications/grok-build-desktop.desktop"
 grep -Fx 'Name=Grok Build Desktop' "$desktop"
-grep -Fx 'Exec="/opt/Grok Build Desktop/grok-build-desktop" %U' "$desktop"
+grep -Fx 'Exec=/opt/grok-build-desktop/grok-build-desktop %U' "$desktop"
 grep -Fx 'Icon=grok-build-desktop' "$desktop"
 grep -Fx 'StartupWMClass=Grok Build Desktop (Community)' "$desktop"
 grep -Fx 'Categories=Development;' "$desktop"
 desktop-file-validate "$desktop"
 test -f "$scratch/package/usr/share/icons/hicolor/512x512/apps/grok-build-desktop.png"
-bash -n "$scratch/package/DEBIAN/postinst" "$scratch/package/DEBIAN/postrm"
+bash -n "$scratch/package/DEBIAN/postinst"
+bash -n "$scratch/package/DEBIAN/postrm"
 
 artifact_dir=$(dirname "$deb")
 appimage="$artifact_dir/Grok-Build-Desktop-$version-linux-x86_64.AppImage"
@@ -53,12 +54,17 @@ grep '/AppRun$' "$scratch/appimage.list"
 unsquashfs -o "$offset" -d "$scratch/appimage" "$appimage" resources/app.asar >/dev/null
 node - "$script_dir/.." "$app/resources/app.asar" "$scratch/appimage/resources/app.asar" <<'JS'
 const [root, ...archives] = process.argv.slice(2);
+const assert = require('node:assert/strict');
 const asar = require(require.resolve('@electron/asar', { paths: [root] }));
+const metadata = [];
 for (const archive of archives) {
     const meta = JSON.parse(asar.extractFile(archive, 'package.json'));
     if (![true, 'true'].includes(meta.grokCloudBuild)) throw Error(`cloud flag missing: ${archive}`);
+    metadata.push(meta);
 }
+assert.deepEqual(metadata[0], metadata[1], 'deb productName override must not change packaged package.json');
 console.log('Both packaged asars retain grokCloudBuild');
+console.log('Deb and AppImage packaged package.json match');
 JS
 node "$script_dir/build-linux.cjs" --verify-feed "$artifact_dir" "$version"
 echo "PASS package files: $(basename "$deb") ($version)"

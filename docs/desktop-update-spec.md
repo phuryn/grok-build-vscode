@@ -31,8 +31,9 @@ release page. The rail button says **Update available**; the panel opens
 that page (`openUpdateRelease`, host-local inbound).
 
 For a packaged Linux `.deb`, `readLinuxPackageType` reads the installed
-`resources/package-type` before any updater is constructed. The notice checks
-only releases with the exact `Grok-Build-Desktop-<version>-linux-amd64.deb`
+`/opt/grok-build-desktop/resources/package-type` before any updater is
+constructed. The notice checks only releases with the exact
+`Grok-Build-Desktop-<version>-linux-amd64.deb`
 asset and opens that asset at
 `https://github.com/phuryn/grok-build-vscode/releases/download/<tag>/<filename>`.
 The host constructs the URL from the matched tag and filename; a partial
@@ -73,8 +74,10 @@ under the relay's `refresh-sprite-hosts.mjs`. Only a desk run of the AppImage
 reaches the feed.
 
 A `.deb` is attached as well. `scripts/build-linux.cjs` runs electron-builder
-once per format in separate output trees. FpmTarget writes
-`resources/package-type` with `deb` only in its own tree; target scheduling
+once per format in separate output trees, overriding `productName` only for
+the Debian run to install under `/opt/grok-build-desktop`. The AppImage's
+product name and both formats' packaged `package.json` stay unchanged.
+FpmTarget writes `resources/package-type` with `deb` only in its own tree; target scheduling
 cannot put it in the AppImage. The build and release gate inspect the real
 squashfs and fail if the marker is present. An AppImage consequently stays
 on `AppImageUpdater`, which filters the channel by extension.

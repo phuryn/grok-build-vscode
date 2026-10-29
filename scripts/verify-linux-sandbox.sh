@@ -34,8 +34,8 @@ sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=1
 test "$(sysctl -n kernel.apparmor_restrict_unprivileged_userns)" = 1
 uname -a
 sudo apt-get install -y --no-install-recommends "$deb"
-test "$(stat -c '%u:%g:%a' '/opt/Grok Build Desktop/chrome-sandbox')" = 0:0:4755
-stat -c '%U:%G %a %n' '/opt/Grok Build Desktop/chrome-sandbox'
+test "$(stat -c '%u:%g:%a' '/opt/grok-build-desktop/chrome-sandbox')" = 0:0:4755
+stat -c '%U:%G %a %n' '/opt/grok-build-desktop/chrome-sandbox'
 cp "$appimage" "$scratch/app.AppImage"
 cp "$script_dir/linux-sandbox-smoke.py" "$scratch/smoke.py"
 chmod +x "$scratch/app.AppImage"

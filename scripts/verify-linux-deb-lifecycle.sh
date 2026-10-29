@@ -11,29 +11,29 @@ apt-get update -qq
 apt-get install -y --no-install-recommends "$previous" desktop-file-utils
 check_install() {
     test "$(dpkg-query -W -f='${Version}' grok-build-desktop)" = "$1"
-    test "$(readlink -f /usr/bin/grok-build-desktop)" = '/opt/Grok Build Desktop/grok-build-desktop'
+    test "$(readlink -f /usr/bin/grok-build-desktop)" = '/opt/grok-build-desktop/grok-build-desktop'
     test -x /usr/bin/grok-build-desktop
     desktop-file-validate /usr/share/applications/grok-build-desktop.desktop
     test -f /usr/share/icons/hicolor/512x512/apps/grok-build-desktop.png
-    test "$(cat '/opt/Grok Build Desktop/resources/package-type')" = deb
-    test "$(stat -c '%u:%g:%a' '/opt/Grok Build Desktop/chrome-sandbox')" = 0:0:4755
-    test "$(stat -c '%u:%g:%a' '/opt/Grok Build Desktop')" = 0:0:755
+    test "$(cat '/opt/grok-build-desktop/resources/package-type')" = deb
+    test "$(stat -c '%u:%g:%a' '/opt/grok-build-desktop/chrome-sandbox')" = 0:0:4755
+    test "$(stat -c '%u:%g:%a' '/opt/grok-build-desktop')" = 0:0:755
     # ldd needs the real path so $ORIGIN resolves beside Electron's libraries.
-    ldd '/opt/Grok Build Desktop/grok-build-desktop' > /tmp/ldd.log
+    ldd '/opt/grok-build-desktop/grok-build-desktop' > /tmp/ldd.log
     if grep 'not found' /tmp/ldd.log; then exit 1; fi
     update-alternatives --query grok-build-desktop
-    stat -c '%U:%G %a %n' '/opt/Grok Build Desktop/chrome-sandbox'
+    stat -c '%U:%G %a %n' '/opt/grok-build-desktop/chrome-sandbox'
 }
 check_install "$expect_previous"
 echo "PASS install $expect_previous"
 # Reproduce the old hook's helper mode; the upgrade must repair it.
-chmod 0755 '/opt/Grok Build Desktop/chrome-sandbox'
+chmod 0755 '/opt/grok-build-desktop/chrome-sandbox'
 apt-get install -y --no-install-recommends "$current"
 check_install "$expect_version"
 echo "PASS upgrade to $expect_version (0755 repaired to 4755)"
 apt-get remove -y grok-build-desktop
 for entry in /usr/bin/grok-build-desktop /etc/alternatives/grok-build-desktop \
-    /usr/share/applications/grok-build-desktop.desktop '/opt/Grok Build Desktop' \
+    /usr/share/applications/grok-build-desktop.desktop '/opt/grok-build-desktop' \
     /usr/share/icons/hicolor/512x512/apps/grok-build-desktop.png; do
     test ! -e "$entry" && test ! -L "$entry"
 done
