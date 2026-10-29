@@ -90,6 +90,22 @@ try {
       assert.equal(g.sideways, false);
       assert.equal(g.focus, "Allow once");
       results.push({ surface, name, ...g, text: undefined });
+      const caption = page.locator(".permission-command-caption");
+      if (remote && name === "40-lines") {
+        assert.equal(await caption.textContent(), "40 lines · scroll to read all");
+        const hint = await caption.evaluate((el) => {
+          const rect = el.getBoundingClientRect();
+          const pre = el.previousElementSibling.getBoundingClientRect();
+          const actions = document.querySelector(".card-actions").getBoundingClientRect();
+          return { tag: el.tagName, tabIndex: el.tabIndex,
+            visibleBetween: rect.height > 0 && rect.top >= pre.bottom && rect.bottom <= actions.top };
+        });
+        assert.equal(hint.tag, "DIV");
+        assert.equal(hint.tabIndex, -1);
+        assert.ok(hint.visibleBetween, "caption must be visible between the scroll box and actions");
+      } else {
+        assert.equal(await caption.count(), 0, "only overflowing remote approvals need a caption");
+      }
       if (name === "3-lines") {
         assert.equal(await page.locator(".permission-command-scroll").count(), 0);
         assert.equal(g.height, g.fullHeight);
@@ -210,7 +226,7 @@ try {
   }
   fs.writeFileSync(path.join(out, "results.json"), JSON.stringify(results, null, 2));
   console.log(JSON.stringify(results, null, 2));
-  console.log("PASS: layout, full command reachability, keyboard approval, wheel chaining, phone touch chaining, editor/desktop View all, no remote View all or overlay, resolution.");
+  console.log("PASS: layout, full command reachability, keyboard approval, wheel chaining, phone touch chaining, editor/desktop View all, remote scroll caption without View all or overlay, resolution.");
 } finally {
   await browser.close();
 }

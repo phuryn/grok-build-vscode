@@ -13412,6 +13412,7 @@
     pre.title = fullText;
     container.appendChild(pre);
     let viewAll = null;
+    let scrollCaption = null;
     let expanded = false;
     let previewLabel = logicalPreview.truncated
       ? `View all (${formatCount(logicalPreview.lineCount)} lines) →`
@@ -13493,6 +13494,19 @@ ${fullText}`
           pre.removeAttribute("role");
           pre.removeAttribute("aria-label");
         }
+      }
+      // Mobile scrollbars are transient: make the hidden command length clear
+      // without opening an overlay or adding another keyboard stop.
+      if (IS_REMOTE && scrollable && truncated) {
+        if (!scrollCaption) {
+          scrollCaption = document.createElement("div");
+          scrollCaption.className = "card-subtitle permission-command-caption";
+          scrollCaption.textContent = `${formatCount(logicalPreview.lineCount)} ${logicalPreview.lineCount === 1 ? "line" : "lines"} · scroll to read all`;
+          pre.after(scrollCaption);
+        }
+      } else if (scrollCaption) {
+        scrollCaption.remove();
+        scrollCaption = null;
       }
       previewLabel = truncated ? `View all (${formatCount(logicalPreview.lineCount)} lines) →` : "View all →";
       if (!expanded) {

@@ -565,9 +565,12 @@ The Changes DOM suite names the owner scenarios **GitHub disconnected, GitHub re
 `test/permission-card.dom.test.ts` covers long and short execute commands on editor,
 desktop and remote surfaces, wrapped single-line commands, live answers, pending
 replay and buffered resolution. Editor/desktop pending commands keep View all;
-remote pending commands have only the scroll box, with no View all or preview
-overlay. Remote transcript previews retain inline expansion. Other card kinds
-keep their existing behavior. `test/permission-keyboard.dom.test.ts` checks
+remote pending commands have a plain, muted line-count caption below the scroll
+box, with no View all or preview overlay. The caption appears only while the
+command overflows, follows resize and replay, and disappears on resolution.
+Editor/desktop commands get no caption. Remote transcript previews retain inline
+expansion. Other card kinds keep their existing behavior.
+`test/permission-keyboard.dom.test.ts` checks
 that the scroll region is tabbable without stealing default-button focus, leaves
 native scroll keys available, and preserves keyboard answering and replay focus.
 A second remote approval remains uncovered when it takes default-button focus.
@@ -577,7 +580,8 @@ input checks. It saves 40-line and three-line commands at desktop, editor, phone
 and short-phone sizes in `.screens/issue-208/`, including the final command line.
 It checks that actions remain visible, wheel and emulated touch gestures chain at
 both scroll boundaries, editor/desktop View all and keyboard approval still work,
-and remote pending cards expose no View all or overlay route.
+and overflowing remote commands show their non-interactive line-count caption
+without exposing a View all or overlay route.
 
 ## New-install mode defaults and Windows Muse
 

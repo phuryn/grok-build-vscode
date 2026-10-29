@@ -254,6 +254,7 @@ describe("permission card diff preview (real chat.js in a DOM)", () => {
     expect(title.classList.contains("command-full")).toBe(false);
     expect(title.classList.contains("permission-command-scroll")).toBe(true);
     expect(doc.querySelector("#preview-overlay")).toBeNull();
+    expect(doc.querySelector(".permission-command-caption")!.textContent).toBe("1 line · scroll to read all");
     expect(posted.filter((m: any) => m.type === "openText")).toHaveLength(0);
   });
 });
@@ -282,7 +283,7 @@ describe("pending command scroll box (#208)", () => {
     };
 
     it(`${surface}: keeps all 40 lines in a scroll region beside the actions`, () => {
-      const { window, doc } = boot();
+      const { window, doc, posted } = boot();
       dispatch(window, request());
       const box = doc.querySelector(".permission-command-scroll")!;
       expect(box.textContent).toBe(longCommand);
@@ -293,8 +294,17 @@ describe("pending command scroll box (#208)", () => {
       if (surface === "remote") {
         expect(doc.querySelector(".command-view-all")).toBeNull();
         expect(doc.querySelector("#preview-overlay")).toBeNull();
+        const caption = doc.querySelector(".permission-command-caption") as HTMLElement;
+        expect(caption.textContent).toBe("40 lines · scroll to read all");
+        expect(box.nextElementSibling).toBe(caption);
+        expect(caption.tagName).toBe("DIV");
+        expect(caption.tabIndex).toBe(-1);
+        click(window, caption);
+        expect(doc.querySelector("#preview-overlay")).toBeNull();
+        expect(posted.filter((m) => m.type === "openText" || m.type === "permissionAnswer")).toHaveLength(0);
       } else {
         expect(doc.querySelector(".command-view-all")!.textContent).toBe("View all (40 lines) →");
+        expect(doc.querySelector(".permission-command-caption")).toBeNull();
       }
       if (surface === "desktop") {
         click(window, doc.querySelector(".command-view-all")!);
@@ -306,6 +316,7 @@ describe("pending command scroll box (#208)", () => {
       const { window, doc } = boot();
       dispatch(window, request("echo one\necho two\necho three"));
       expect(doc.querySelector(".permission-command-scroll")).toBeNull();
+      expect(doc.querySelector(".permission-command-caption")).toBeNull();
       expect(doc.querySelector(".command-view-all")).toBeNull();
       expect(doc.querySelector(".command-card-title")!.hasAttribute("tabindex")).toBe(false);
     });
@@ -319,6 +330,7 @@ describe("pending command scroll box (#208)", () => {
       expect(doc.querySelector(".permission-command-scroll")).toBeNull();
       expect(doc.querySelector(".command-card-title")).toBeNull();
       expect(doc.querySelector(".command-view-all")).toBeNull();
+      expect(doc.querySelector(".permission-command-caption")).toBeNull();
     });
 
     it(`${surface}: rebuilds a pending box on replay and removes it on buffered resolution`, () => {
@@ -327,7 +339,10 @@ describe("pending command scroll box (#208)", () => {
       dispatch(window, request());
       dispatch(window, { type: "historyReplay", active: false });
       expect(doc.querySelector(".permission-command-scroll")!.textContent).toBe(longCommand);
-      if (surface === "remote") expect(doc.querySelector(".command-view-all")).toBeNull();
+      if (surface === "remote") {
+        expect(doc.querySelector(".command-view-all")).toBeNull();
+        expect(doc.querySelector(".permission-command-caption")!.textContent).toBe("40 lines · scroll to read all");
+      }
       // Re-enter again with the resolution buffered after the original request.
       dispatch(window, { type: "clearMessages" });
       dispatch(window, { type: "historyReplay", active: true });
@@ -337,6 +352,7 @@ describe("pending command scroll box (#208)", () => {
       expect(doc.querySelector(".perm-resolved")).not.toBeNull();
       expect(doc.querySelector(".permission-command-scroll")).toBeNull();
       expect(doc.querySelector(".command-view-all")).toBeNull();
+      expect(doc.querySelector(".permission-command-caption")).toBeNull();
     });
 
     it(`${surface}: leaves transcript IN/OUT previews clipped, with their existing View all`, () => {
@@ -356,6 +372,7 @@ describe("pending command scroll box (#208)", () => {
         expect(preview.hasAttribute("tabindex")).toBe(false);
       }
       expect(doc.querySelector(".permission-command-scroll")).toBeNull();
+      expect(doc.querySelector(".permission-command-caption")).toBeNull();
       click(window, doc.querySelector(".command-view-all")!);
       if (surface === "remote") {
         expect(doc.querySelector(".tool-cmd.command-full")).not.toBeNull();
@@ -365,6 +382,22 @@ describe("pending command scroll box (#208)", () => {
     });
   }
 
+  it("removes the remote caption when a wrapped command fits after resize and restores it once", () => {
+    const { window, doc } = bootWebview({ remote: true, beforeScripts: mockWrappedCommandLayout });
+    dispatch(window, request("echo one\necho two\necho three"));
+    const box = doc.querySelector(".command-card-title") as HTMLElement & { _syncOverflowAffordance(): void };
+    expect(doc.querySelector(".permission-command-caption")!.textContent).toBe("3 lines · scroll to read all");
+    const height = vi.spyOn(window.HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(52);
+    box._syncOverflowAffordance();
+    expect(doc.querySelector(".permission-command-scroll")).toBeNull();
+    expect(doc.querySelector(".permission-command-caption")).toBeNull();
+    height.mockReturnValue(208);
+    box._syncOverflowAffordance();
+    box._syncOverflowAffordance();
+    expect(doc.querySelectorAll(".permission-command-caption")).toHaveLength(1);
+    expect(box.nextElementSibling).toBe(doc.querySelector(".permission-command-caption"));
+  });
+
   it("does not turn other permission kinds or plan reviews into command scrollers", () => {
     const { window, doc } = bootWebview();
     dispatch(window, request(longCommand, "read"));
@@ -373,5 +406,6 @@ describe("pending command scroll box (#208)", () => {
     expect(doc.querySelectorAll(".card.permission")).toHaveLength(2);
     expect(doc.querySelector(".plan-body")!.textContent).toContain("echo line-40");
     expect(doc.querySelector(".permission-command-preview")).toBeNull();
+    expect(doc.querySelector(".permission-command-caption")).toBeNull();
   });
 });
