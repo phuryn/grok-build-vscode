@@ -664,7 +664,13 @@ newest-first), built from two pure primitives in
   *because the id is a UUIDv7 whose timestamp is creation, not last activity* — an
   id-sort would order by when the session was first opened, which is wrong.
 - `readSessionEntries` reads + parses `summary.json` for **exactly the visible page's
-  ids** and applies name overrides.
+  ids** and applies name overrides. A row's `cwd` is the project it is listed under,
+  never the `info.cwd` inside `summary.json`: the CLI can record another spelling of
+  the folder there, and the remote gate refuses a whole `sessions` list when one row's
+  cwd is not an authorized project path (#224). Resuming is the other way round:
+  `findSessionCatalogCwd` returns the spelling of the catalog leaf that holds the
+  conversation, because `session/load` finds it only under that exact cwd string (a
+  `C:/…` leaf beside the project's `C:\…` one is `FS_NOT_FOUND` under `C:\…`).
 
 The combined `buildSessionsList` authorizes cwd before scheduling any
 provider, so a stale remote project cannot spawn an adapter or mutate its

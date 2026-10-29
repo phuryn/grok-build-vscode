@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 4.15.5 — 2026-10-29
+
+**A project's history loads on the web again, new installs start with fewer prompts, and Muse runs commands on Windows.**
 
 ### Changed
 
@@ -8,6 +10,7 @@
 
 ### Fixed
 
+- **A project's conversations load on the web and phone again (#224).** A project could stay on "Loading…" for good on the web while the desktop listed all its conversations. One conversation whose `summary.json` spelled the project's path differently was enough to hold back the whole list. Thanks to ajkessel for the logs.
 - **Muse can run commands on Windows.** Muse's shell sandbox is disabled there because it fails in serve mode. On request is hidden; existing On request conversations reopen in Prompt unmatched with an explanation. Sandbox settings are hidden on Windows, while workspace trust stays configurable.
 
 ## 4.15.4 — 2026-10-28

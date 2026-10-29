@@ -269,6 +269,8 @@ These actually spawn real shell children (the resolved POSIX `$SHELL` or `/bin/s
 - **`capAutoName` / `capSessionMetaAutoNames`** — storage ceiling for `autoName` (`AUTO_NAME_MAX_CHARS` 120): long prompts cut on a nearby word boundary, multi-line whitespace collapsed, already-short and exactly-at-limit names unchanged, empty/undefined → `""`. The map helper caps only `autoName`, leaves `customName` and already-short entries byte-identical, and is a no-op the second time.
 
 - Lists sessions from grok's on-disk layout (`~/.grok/sessions/<urlencoded-cwd>/<id>/`) for the current cwd only
+- A row's `cwd` is the project it is listed under, even when `summary.json` records another spelling of it (#224): the remote gate refuses a whole list over one row outside the project
+- Resuming a conversation stored under an alias catalog leaf returns that leaf's spelling, not the candidate's: `session/load` finds it only under the cwd string the CLI keyed the leaf by
 - Row naming precedence (#96): a manual `customName`, then grok's own title (`cliSessionTitle` — `session_summary`, else `generated_title`), then our first-message `autoName`, then `Untitled (<date>)`. A legacy primer-derived title is rejected in both its summarized and verbatim forms, while a real session that merely mentions a primer is kept
 - Sorts by most-recently-updated; tolerates malformed/missing session files without throwing
 - Delete removes the right entry and leaves others intact

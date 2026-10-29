@@ -2,7 +2,7 @@
   "name": "grok-vscode-phuryn",
   "displayName": "AFK Pilot: Grok Build, Muse Code, Claude, Codex & more in one place",
   "description": "One place for Grok Build (Grok 4.7) and Muse Code (Muse Wonder), plus Codex (GPT-6 Astra), Claude Code (Opus 5.5) and Google Antigravity (Gemini 4 Argon, experimental). Previously Grok Build (Community). Remote Control from your phone, voice control, multiple sessions, images and videos, Mermaid diagrams, and LaTeX. Works with SuperGrok, X Premium+, and xAI API key. Fair Source (FSL-1.1-MIT). Not affiliated with or endorsed by SpaceXAI (formerly xAI), Meta, OpenAI, Anthropic or Google.",
-  "version": "4.15.4",
+  "version": "4.15.5",
   "publisher": "PawelHuryn",
   "author": {
     "name": "Paweł Huryn",
@@ -386,7 +386,7 @@
             "Auto accept — auto-approve every permission request"
           ],
           "default": "",
-          "description": "Mode for new sessions. Updated automatically to remember your last switch between Agent, Auto and Auto accept (Plan is never remembered). Empty keeps existing installs in Agent, and starts new installs in Auto accept for Grok/Antigravity or Allow all for Muse. Claude uses Auto and Codex uses Agent on all installs. Muse's separately remembered choice wins. If Claude Code's Auto mode is not available for the model, the conversation stays in Agent mode."
+          "description": "Mode for new sessions. Updated automatically to remember your last switch between Agent, Auto and Auto accept (Plan is never remembered). Empty keeps existing installs in Agent, and starts new installs in Auto accept for Grok/Antigravity or Allow all for Muse. Claude uses Auto and Codex uses Agent on all installs. Muse's separately remembered choice wins wherever that mode is offered (On request is not, on Windows or cloud machines). If Claude Code's Auto mode is not available for the model, the conversation stays in Agent mode."
         },
         "grok.includeActiveFileByDefault": {
           "type": "boolean",
