@@ -18,7 +18,8 @@ check_install() {
     test "$(cat '/opt/Grok Build Desktop/resources/package-type')" = deb
     test "$(stat -c '%u:%g:%a' '/opt/Grok Build Desktop/chrome-sandbox')" = 0:0:4755
     test "$(stat -c '%u:%g:%a' '/opt/Grok Build Desktop')" = 0:0:755
-    ldd /usr/bin/grok-build-desktop > /tmp/ldd.log
+    # ldd needs the real path so $ORIGIN resolves beside Electron's libraries.
+    ldd '/opt/Grok Build Desktop/grok-build-desktop' > /tmp/ldd.log
     if grep 'not found' /tmp/ldd.log; then exit 1; fi
     update-alternatives --query grok-build-desktop
     stat -c '%U:%G %a %n' '/opt/Grok Build Desktop/chrome-sandbox'

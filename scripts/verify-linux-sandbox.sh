@@ -20,7 +20,8 @@ old_restriction=$(sysctl -n kernel.apparmor_restrict_unprivileged_userns)
 scratch=$(mktemp -d)
 cleanup() {
     sudo pkill -KILL -u "$smoke_user" 2>/dev/null || true
-    sudo cp "$scratch"/*.log "$logs/" 2>/dev/null || true
+    # The runner cannot traverse the smoke user's 0700 scratch directory.
+    sudo bash -c 'cp -- "$1"/*.log "$2/"' bash "$scratch" "$logs" 2>/dev/null || true
     sudo chown -R "$(id -u):$(id -g)" "$logs"
     sudo apt-get purge -y grok-build-desktop || true
     sudo userdel -r "$smoke_user" 2>/dev/null || true
@@ -44,11 +45,18 @@ sudo chown -R "$smoke_user:$smoke_user" "$scratch"
 
 # Some runner images disable the sysctl; others give the runner's own login
 # special privileges. We explicitly enable it and use a fresh unprivileged UID.
-if sudo -u "$smoke_user" unshare --user --map-root-user true > "$scratch/unshare.log" 2>&1; then
+if sudo -u "$smoke_user" env LC_ALL=C bash -c \
+    'exec unshare --user --map-root-user true > "$1" 2>&1' bash "$scratch/unshare.log"; then
     echo 'unprivileged userns unexpectedly succeeded: restriction is ineffective' >&2
     exit 1
+else
+    unshare_status=$?
 fi
-cat "$scratch/unshare.log"
+sudo cat "$scratch/unshare.log"
+if [ "$unshare_status" -ne 1 ] || ! sudo grep -Eq '^unshare: .*Operation not permitted$' "$scratch/unshare.log"; then
+    echo 'unshare did not fail with the expected user-namespace permission error' >&2
+    exit 1
+fi
 for kind in appimage deb; do
     executable=/usr/bin/grok-build-desktop
     if [ "$kind" = appimage ]; then executable="$scratch/app.AppImage"; fi
@@ -58,6 +66,6 @@ for kind in appimage deb; do
       GROK_DESKTOP_USER_DATA="$scratch/profile-$kind" \
       GROK_DESKTOP_CONFIG_JSON="$scratch/config.json" \
       xvfb-run -a python3 "$scratch/smoke.py" "$kind" "$executable" "$scratch/$kind.log"
-    cat "$scratch/$kind.log"
+    sudo cat "$scratch/$kind.log"
 done
 echo 'PASS Ubuntu 24.04 AppArmor=1: AppImage reproduces #213; installed deb launches sandboxed'
