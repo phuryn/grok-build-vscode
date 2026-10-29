@@ -563,17 +563,21 @@ The Changes DOM suite names the owner scenarios **GitHub disconnected, GitHub re
 ## Pending command approval scrolling (#208)
 
 `test/permission-card.dom.test.ts` covers long and short execute commands on editor,
-desktop and remote surfaces, wrapped single-line commands, View all, live answers,
-pending replay and buffered resolution. Transcript IN/OUT previews and other card
-kinds keep their existing behavior. `test/permission-keyboard.dom.test.ts` checks
+desktop and remote surfaces, wrapped single-line commands, live answers, pending
+replay and buffered resolution. Editor/desktop pending commands keep View all;
+remote pending commands have only the scroll box, with no View all or preview
+overlay. Remote transcript previews retain inline expansion. Other card kinds
+keep their existing behavior. `test/permission-keyboard.dom.test.ts` checks
 that the scroll region is tabbable without stealing default-button focus, leaves
 native scroll keys available, and preserves keyboard answering and replay focus.
+A second remote approval remains uncovered when it takes default-button focus.
 
 Run `node scripts/permission-command-screens.mjs` for real Chromium layout and
 input checks. It saves 40-line and three-line commands at desktop, editor, phone
 and short-phone sizes in `.screens/issue-208/`, including the final command line.
 It checks that actions remain visible, wheel and emulated touch gestures chain at
-both scroll boundaries, and View all and keyboard approval still work.
+both scroll boundaries, editor/desktop View all and keyboard approval still work,
+and remote pending cards expose no View all or overlay route.
 
 ## New-install mode defaults and Windows Muse
 

@@ -159,6 +159,23 @@ describe("permission card keyboard (real chat.js in a DOM)", () => {
     expect(doc.activeElement).toBe(input);
   });
 
+  it("a second remote approval takes focus without a command preview overlay covering it", () => {
+    const { window, doc, posted } = bootWebview({ remote: true });
+    card(window, [REJECT, ALLOW], 208, longCommand);
+    const box = doc.querySelector(".permission-command-scroll") as HTMLElement;
+    box.focus();
+    key(window, box, { key: "End" });
+    card(window, [REJECT, ALLOW], 209, "echo second command");
+    expect(doc.querySelector(".command-view-all")).toBeNull();
+    expect(doc.querySelector("#preview-overlay")).toBeNull();
+    expect(doc.activeElement).toBe(doc.querySelector('[data-perm-req-id="209"] .card-actions button'));
+    expect(posted.filter((m) => m.type === "permissionAnswer")).toHaveLength(0);
+    click(window, doc.activeElement!); // browser activation of the focused button
+    expect(posted.filter((m) => m.type === "permissionAnswer"))
+      .toEqual([{ type: "permissionAnswer", requestId: 209, optionId: "a" }]);
+    expect(doc.querySelector('[data-perm-req-id="208"] .permission-command-scroll')).not.toBeNull();
+  });
+
   it("renders approve first even when the CLI sends reject first", () => {
     const { window, doc } = bootWebview();
     card(window, [REJECT, ALLOW]);

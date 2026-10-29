@@ -13413,27 +13413,23 @@
     container.appendChild(pre);
     let viewAll = null;
     let expanded = false;
-    // A pending approval must keep its actions visible even after View all.
-    // Remote transcript previews still expand inline; pending commands use
-    // the shared overlay, just like the desktop app.
-    const inlineExpand = IS_REMOTE && !scrollable;
     let previewLabel = logicalPreview.truncated
       ? `View all (${formatCount(logicalPreview.lineCount)} lines) →`
       : "View all →";
     const ensureViewAll = () => {
       if (viewAll) {
         viewAll._setCollapsedText?.(previewLabel);
-        if (!inlineExpand) viewAll.textContent = previewLabel;
+        if (!IS_REMOTE) viewAll.textContent = previewLabel;
         return viewAll;
       }
-      viewAll = inlineExpand
+      viewAll = IS_REMOTE
         ? makeInlineExpandToggle(previewLabel, "msg-collapse-btn command-view-all", (expanding) => {
             expanded = expanding;
             pre.classList.toggle("command-full", expanding);
             pre.classList.toggle("command-preview-capped", !expanding);
           })
         : document.createElement("button");
-      if (!inlineExpand) {
+      if (!IS_REMOTE) {
         viewAll.type = "button";
         viewAll.className = "preview-link command-view-all";
         viewAll.textContent = previewLabel;
@@ -13449,7 +13445,7 @@
           }
           const openLanguage = language
             || (className === "tool-cmd" ? state.commandLanguage : "");
-          if (IS_REMOTE || hostPreviewsInApp()) {
+          if (hostPreviewsInApp()) {
             const parsed = previewFileRef(openRef);
             openPreviewOverlay({
               kind: "text",
@@ -13506,7 +13502,11 @@ ${fullText}`
         pre.classList.remove("command-preview-capped");
       }
       const overflowing = visible && className === "tool-cmd" && pre.clientWidth > 0 && pre.scrollWidth > pre.clientWidth;
-      if (truncated || overflowing) ensureViewAll();
+      // Remote pending commands are fully readable in their scroll box. Omit
+      // View all: the shared overlay has host-only actions and can cover a new
+      // approval that takes keyboard focus. Remote transcript previews still
+      // expand inline; editor/desktop approvals keep their View all action.
+      if ((truncated || overflowing) && !(IS_REMOTE && scrollable)) ensureViewAll();
       else if (viewAll && viewAll.getAttribute("aria-expanded") !== "true") {
         viewAll.remove();
         viewAll = null;

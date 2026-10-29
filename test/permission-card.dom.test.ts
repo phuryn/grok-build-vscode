@@ -233,7 +233,7 @@ describe("permission card diff preview (real chat.js in a DOM)", () => {
     expect(posted).toContainEqual({ type: "openText", content: `# Command\n${command}` });
   });
 
-  it("opens a remote permission command in the overlay without expanding the card", () => {
+  it("keeps a wrapped remote permission command in its scroll box without View all", () => {
     const { window, doc, posted } = bootWebview({
       remote: true,
       beforeScripts: mockWrappedCommandLayout,
@@ -249,12 +249,11 @@ describe("permission card diff preview (real chat.js in a DOM)", () => {
     });
 
     const title = doc.querySelector(".command-card-title") as HTMLElement;
-    const viewAll = doc.querySelector(".command-view-all") as HTMLButtonElement;
-    expect(viewAll).not.toBeNull();
-    click(window, viewAll);
+    expect(doc.querySelector(".command-view-all")).toBeNull();
+    expect(title.textContent).toBe(command);
     expect(title.classList.contains("command-full")).toBe(false);
     expect(title.classList.contains("permission-command-scroll")).toBe(true);
-    expect(doc.querySelector("#preview-overlay .preview-body")!.textContent).toContain(command);
+    expect(doc.querySelector("#preview-overlay")).toBeNull();
     expect(posted.filter((m: any) => m.type === "openText")).toHaveLength(0);
   });
 });
@@ -291,7 +290,12 @@ describe("pending command scroll box (#208)", () => {
       expect(box.getAttribute("aria-label")).toBe("Command awaiting approval");
       expect(box.querySelector(".card-actions")).toBeNull();
       expect(doc.querySelectorAll(".card-actions button")).toHaveLength(2);
-      expect(doc.querySelector(".command-view-all")!.textContent).toBe("View all (40 lines) →");
+      if (surface === "remote") {
+        expect(doc.querySelector(".command-view-all")).toBeNull();
+        expect(doc.querySelector("#preview-overlay")).toBeNull();
+      } else {
+        expect(doc.querySelector(".command-view-all")!.textContent).toBe("View all (40 lines) →");
+      }
       if (surface === "desktop") {
         click(window, doc.querySelector(".command-view-all")!);
         expect(doc.querySelector("#preview-overlay .preview-body")!.textContent).toContain(longCommand);
@@ -323,6 +327,7 @@ describe("pending command scroll box (#208)", () => {
       dispatch(window, request());
       dispatch(window, { type: "historyReplay", active: false });
       expect(doc.querySelector(".permission-command-scroll")!.textContent).toBe(longCommand);
+      if (surface === "remote") expect(doc.querySelector(".command-view-all")).toBeNull();
       // Re-enter again with the resolution buffered after the original request.
       dispatch(window, { type: "clearMessages" });
       dispatch(window, { type: "historyReplay", active: true });

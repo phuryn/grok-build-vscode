@@ -100,10 +100,16 @@ try {
       assert.equal(g.touchAction, "auto");
       assert.ok(g.fullHeight > g.height);
       const pre = page.locator(".permission-command-scroll");
-      // Default action -> View all -> command. No programmatic focus shortcut.
+      // Default action -> command remotely, via View all on editor/desktop.
+      // No programmatic focus shortcut.
       await page.keyboard.press("Shift+Tab");
-      assert.ok(await page.locator(".command-view-all").evaluate((el) => el === document.activeElement));
-      await page.keyboard.press("Shift+Tab");
+      if (remote) {
+        assert.equal(await page.locator(".command-view-all").count(), 0);
+        assert.equal(await page.locator("#preview-overlay").count(), 0);
+      } else {
+        assert.ok(await page.locator(".command-view-all").evaluate((el) => el === document.activeElement));
+        await page.keyboard.press("Shift+Tab");
+      }
       assert.ok(await pre.evaluate((el) => el === document.activeElement));
       await page.keyboard.press("End");
       await page.waitForTimeout(200);
@@ -176,12 +182,18 @@ try {
         await cdp.detach();
       }
       await page.locator("#messages").evaluate((el) => { el.scrollTop = el.scrollHeight; });
-      await page.locator(".command-view-all").click();
-      if (surface === "editor") {
-        assert.ok(await page.evaluate(() => window.__posted.some((m) => m.type === "openText")));
+      if (remote) {
+        assert.equal(await page.locator(".command-view-all").count(), 0);
+        assert.equal(await page.locator("#preview-overlay").count(), 0);
+        assert.equal(await page.evaluate(() => window.__posted.some((m) => m.type === "openText")), false);
       } else {
-        assert.ok((await page.locator("#preview-overlay .preview-body").textContent()).includes("npm test"));
-        await page.locator(".preview-close-btn").click();
+        await page.locator(".command-view-all").click();
+        if (surface === "editor") {
+          assert.ok(await page.evaluate(() => window.__posted.some((m) => m.type === "openText")));
+        } else {
+          assert.ok((await page.locator("#preview-overlay .preview-body").textContent()).includes("npm test"));
+          await page.locator(".preview-close-btn").click();
+        }
       }
       assert.ok((await geometry()).actionsBottom <= (await geometry()).messagesBottom);
       await page.locator(".card-actions button").first().focus();
@@ -198,7 +210,7 @@ try {
   }
   fs.writeFileSync(path.join(out, "results.json"), JSON.stringify(results, null, 2));
   console.log(JSON.stringify(results, null, 2));
-  console.log("PASS: layout, full command reachability, keyboard approval, wheel chaining, phone touch chaining, View all, resolution.");
+  console.log("PASS: layout, full command reachability, keyboard approval, wheel chaining, phone touch chaining, editor/desktop View all, no remote View all or overlay, resolution.");
 } finally {
   await browser.close();
 }
