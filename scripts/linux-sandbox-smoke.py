@@ -14,17 +14,37 @@ assert kind in ("deb", "appimage")
 baseline_depth = len(re.search(r"^NSpid:\s+(.+)$", pathlib.Path('/proc/self/status').read_text(), re.M)[1].split())
 
 
-def sandbox_zygotes():
+def cmdline_tokens(raw):
+    args = [arg for arg in raw.split(b'\0') if arg]
+    # Chromium's SetProcessTitleFromCommandLine joins argv with spaces for
+    # setproctitle. Preserve real argument boundaries when they still exist.
+    return args[0].split() if len(args) == 1 else args
+
+
+def sandbox_zygotes(diagnostics=False):
     evidence = []
-    for entry in pathlib.Path('/proc').glob('[0-9]*'):
+    if diagnostics:
+        print(f'UID {os.getuid()} processes (test PID namespace depth: {baseline_depth})', file=sys.stderr)
+        print(f'{"PID":>7}  {"NSpid":<24}  CMDLINE (first 200 characters)', file=sys.stderr)
+    for entry in sorted(pathlib.Path('/proc').glob('[0-9]*'), key=lambda entry: int(entry.name)):
         try:
             status = (entry / 'status').read_text()
             if int(re.search(r'^Uid:\s+(\d+)', status, re.M)[1]) != os.getuid():
                 continue
-            args = (entry / 'cmdline').read_bytes().split(b'\0')
+            nspid_match = re.search(r'^NSpid:\s+(.+)$', status, re.M)
+            nspid = ' '.join(nspid_match[1].split()) if nspid_match else ''
+            unreadable = ''
+            try:
+                args = cmdline_tokens((entry / 'cmdline').read_bytes())
+            except OSError as error:
+                args = []
+                unreadable = f'<cmdline unreadable: {error.strerror}>'
+            if diagnostics:
+                cmdline = unreadable or ' '.join(b' '.join(args).decode('utf-8', errors='replace').split())
+                print(f'{entry.name:>7}  {nspid or "<missing>":<24}  {cmdline[:200] or "<empty>"}',
+                      file=sys.stderr, flush=True)
             if b'--type=zygote' not in args or b'--no-zygote-sandbox' in args:
                 continue
-            nspid = re.search(r'^NSpid:\s+(.+)$', status, re.M)[1]
             if len(nspid.split()) > baseline_depth:
                 evidence.append(f'pid={entry.name} sandboxed zygote NSpid={nspid}')
         except (OSError, TypeError):
@@ -67,6 +87,10 @@ with open(log_name, 'w') as log:
             assert not re.search(r'FATAL:|No usable sandbox|startup failed:|did-fail-load', contents), contents
             print('PASS deb: visible window, live process, no sandbox-disabling flags')
             print('\n'.join(evidence))
+    except AssertionError:
+        if kind == 'deb':
+            sandbox_zygotes(diagnostics=True)
+        raise
     finally:
         # Chromium children share our launched process group; never leave a
         # surviving GUI/zygote behind to make the next control pass by accident.
