@@ -1,5 +1,17 @@
 # Changelog
 
+## 4.15.6 — 2026-10-29
+
+**A Debian package that launches on Ubuntu 24.04, and long commands you can read before you approve them.**
+
+### Added
+
+- **Grok Build Desktop ships a `.deb` for Debian and Ubuntu (#213).** On Ubuntu 24.04 and later the AppImage does not start: the system blocks the user namespaces Chromium's sandbox relies on, and an AppImage cannot carry the root-owned helper that replaces them. Download the `.deb` from GitHub Releases and run `sudo apt install ./Grok-Build-Desktop-4.15.6-linux-amd64.deb`; it sets up the sandbox helper Ubuntu requires, so the app starts without `--no-sandbox`. It does not update itself: **Update available** opens the next `.deb`. The AppImage is unchanged. Thanks to mateolafalce for the package, and to ajkessel for the report.
+
+### Fixed
+
+- **A long command waiting for approval can be read in full (#208).** The approval card cut a long command off; it now scrolls inside the card, with Allow and Reject still in reach. On a phone or in a browser the card also says how many lines the command has. Thanks to padixa.
+
 ## 4.15.5 — 2026-10-29
 
 **A project's history loads on the web again, new installs start with fewer prompts, and Muse runs commands on Windows.**

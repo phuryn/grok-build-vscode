@@ -133,7 +133,7 @@ list **both** zip archives (`…-mac-arm64.zip` and `…-mac-x64.zip`).
 Squirrel.Mac updates from the zip, not the dmg. A yml that only has one
 arch is a failed build, not a feed the relay should publish. Linux
 `latest-linux.yml` must list `Grok-Build-Desktop-<version>-linux-x86_64.AppImage`
-as `path` (note `x86_64`, not the `x64` every other target uses) and must also
+as `path` (note `x86_64` for the AppImage, `amd64` for the Debian package, and `x64` for the Windows and macOS x86-64 targets) and must also
 list `Grok-Build-Desktop-<version>-linux-amd64.deb` in `files`. The legacy
 `path` field stays the AppImage so a client that does not filter by extension
 does not install the deb as if it were the AppImage. Rewrite every `files[]`
@@ -186,7 +186,7 @@ upgrade and removal, and `verify-linux-sandbox.sh`. That last check explicitly
 enables AppArmor's unprivileged-userns restriction, requires an ordinary
 AppImage launch to fail with the SUID-helper error, then requires a normal
 installed `.deb` launch to show its window with a namespace-isolated Chromium
-zygote. Neither launch disables the sandbox. Packaging CI uses the same gates.
+zygote. Neither launch passes a sandbox-disabling switch. Packaging CI uses the same gates.
 
 macOS builds both arches in **one** `electron-builder --mac` invocation
 (`dist:mac`). The workflow then asserts `latest-mac.yml` contains both

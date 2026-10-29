@@ -28,7 +28,7 @@ Example for version `3.1.0`:
 - `Grok-Build-Desktop-3.1.0-linux-x86_64.AppImage`
 - `Grok-Build-Desktop-3.1.0-linux-amd64.deb`
 
-**Note the Linux arch spelling.** electron-builder writes `x86_64` for the
+**Note the Linux arch spelling.** For x86-64, electron-builder writes `x86_64` for the
 AppImage, `amd64` for the Debian package, and `x64` for every other target, so
 anything matching installer names by pattern needs all three spellings. There
 is exactly one AppImage per release. See
