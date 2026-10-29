@@ -13371,9 +13371,9 @@
 
   const MAX_COMMAND_PREVIEW_LINES = 6;
   // A command you are asked to approve shows more of itself than one in the
-  // transcript: 4 lines was too few to judge it (#208). Still clipped, never a
-  // nested scroller -- a scroll box inside the chat catches the wheel while you
-  // scroll the conversation, which #71 asked us to remove. View all has the rest.
+  // transcript (#208). Pending execute cards scroll within this cap, then lose
+  // the box when answered. Transcript IN/OUT previews stay clipped (#71), so
+  // nested scrollers do not accumulate in the conversation's history.
   const PERMISSION_COMMAND_PREVIEW_LINES = 10;
 
   function makeInlineExpandToggle(collapsedText, className, onToggle) {
@@ -13397,7 +13397,7 @@
     return toggle;
   }
 
-  function appendCommandPreview(container, text, className, language, maxLines = MAX_COMMAND_PREVIEW_LINES, openRef, isCommand = false) {
+  function appendCommandPreview(container, text, className, language, maxLines = MAX_COMMAND_PREVIEW_LINES, openRef, isCommand = false, scrollable = false) {
     const fullText = text == null ? "" : String(text);
     const logicalPreview = commandTextPreview(fullText, maxLines);
     const pre = document.createElement("pre");
@@ -13406,29 +13406,34 @@
     // can then compare this element's full scrollHeight with its clamped
     // clientHeight without cloning the text or guessing a line-height.
     pre.classList.add("command-preview-capped");
+    if (scrollable) pre.classList.add("permission-command-preview");
     pre.textContent = fullText;
     pre.style.setProperty("--command-preview-lines", String(maxLines));
     pre.title = fullText;
     container.appendChild(pre);
     let viewAll = null;
     let expanded = false;
+    // A pending approval must keep its actions visible even after View all.
+    // Remote transcript previews still expand inline; pending commands use
+    // the shared overlay, just like the desktop app.
+    const inlineExpand = IS_REMOTE && !scrollable;
     let previewLabel = logicalPreview.truncated
       ? `View all (${formatCount(logicalPreview.lineCount)} lines) →`
       : "View all →";
     const ensureViewAll = () => {
       if (viewAll) {
         viewAll._setCollapsedText?.(previewLabel);
-        if (!IS_REMOTE) viewAll.textContent = previewLabel;
+        if (!inlineExpand) viewAll.textContent = previewLabel;
         return viewAll;
       }
-      viewAll = IS_REMOTE
+      viewAll = inlineExpand
         ? makeInlineExpandToggle(previewLabel, "msg-collapse-btn command-view-all", (expanding) => {
             expanded = expanding;
             pre.classList.toggle("command-full", expanding);
             pre.classList.toggle("command-preview-capped", !expanding);
           })
         : document.createElement("button");
-      if (!IS_REMOTE) {
+      if (!inlineExpand) {
         viewAll.type = "button";
         viewAll.className = "preview-link command-view-all";
         viewAll.textContent = previewLabel;
@@ -13444,7 +13449,7 @@
           }
           const openLanguage = language
             || (className === "tool-cmd" ? state.commandLanguage : "");
-          if (hostPreviewsInApp()) {
+          if (IS_REMOTE || hostPreviewsInApp()) {
             const parsed = previewFileRef(openRef);
             openPreviewOverlay({
               kind: "text",
@@ -13479,6 +13484,20 @@ ${fullText}`
       if (!expanded) pre.classList.add("command-preview-capped");
       const renderedTruncated = hasLayout && pre.scrollHeight > pre.clientHeight;
       const truncated = logicalTruncated || renderedTruncated;
+      if (scrollable) {
+        pre.classList.toggle("permission-command-scroll", truncated);
+        if (truncated) {
+          // Tab can reach the scroll region; arrival still focuses the default
+          // action. Native arrow/PageUp/PageDown scrolling needs no key handler.
+          pre.tabIndex = 0;
+          pre.setAttribute("role", "region");
+          pre.setAttribute("aria-label", "Command awaiting approval");
+        } else {
+          pre.removeAttribute("tabindex");
+          pre.removeAttribute("role");
+          pre.removeAttribute("aria-label");
+        }
+      }
       previewLabel = truncated ? `View all (${formatCount(logicalPreview.lineCount)} lines) →` : "View all →";
       if (!expanded) {
         if (hasLayout && !truncated) pre.classList.remove("command-preview-capped");
@@ -17267,7 +17286,7 @@ ${fullText}`
     // categorize()'s "command" bucket without being one.
     const isCommandCard = toolKind(req.toolCall) === "execute";
     appendCommandPreview(el, cardTitle, "card-title command-card-title",
-      isCommandCard ? state.commandLanguage : undefined, PERMISSION_COMMAND_PREVIEW_LINES, undefined, isCommandCard);
+      isCommandCard ? state.commandLanguage : undefined, PERMISSION_COMMAND_PREVIEW_LINES, undefined, isCommandCard, isCommandCard);
 
     const diff = state.pendingDiffByToolCallId.get(req.toolCall?.toolCallId);
     if (diff) {

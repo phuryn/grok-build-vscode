@@ -22,10 +22,10 @@ const ALLOW = { optionId: "a", name: "Allow once", kind: "allow_once" };
 const ALWAYS = { optionId: "aa", name: "Allow always", kind: "allow_always" };
 const REJECT = { optionId: "r", name: "Reject", kind: "reject_once" };
 
-function card(window: any, options: unknown[], id = 1) {
+function card(window: any, options: unknown[], id = 1, title = "Run npm test") {
   dispatch(window, {
     type: "permissionRequest",
-    req: { id, toolCall: { toolCallId: "tc", kind: "execute", title: "Run npm test" }, options },
+    req: { id, toolCall: { toolCallId: "tc", kind: "execute", title }, options },
   });
 }
 
@@ -121,6 +121,44 @@ describe("isTypeThroughKey (#68)", () => {
 });
 
 describe("permission card keyboard (real chat.js in a DOM)", () => {
+  const longCommand = Array.from({ length: 40 }, (_, i) => `echo line-${i + 1}`).join("\n");
+
+  it.each([false, true])("a long command is tabbable without taking the default button's focus (remote=%s)", (remote) => {
+    const { window, doc, posted } = bootWebview({ remote });
+    card(window, [REJECT, ALLOW], 208, longCommand);
+    const box = doc.querySelector(".permission-command-scroll") as HTMLElement;
+    expect(box.tabIndex).toBe(0);
+    expect(doc.activeElement).toBe(buttons(doc)[0]);
+    expect(buttons(doc).map((b) => b.classList.contains("chosen"))).toEqual([true, false]);
+
+    box.focus();
+    for (const key of ["ArrowDown", "ArrowUp", "PageDown", "PageUp", "Home", "End", " "]) {
+      const event = new (window as any).KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+      box.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(false); // native scrolling stays available
+      expect(doc.activeElement).toBe(box);
+    }
+    expect(posted.filter((m) => m.type === "permissionAnswer")).toHaveLength(0);
+    buttons(doc)[0].focus();
+    key(window, doc.activeElement!, { key: "ArrowRight" });
+    expect(doc.activeElement).toBe(buttons(doc)[1]);
+    key(window, doc.activeElement!, { key: "ArrowLeft" });
+    click(window, doc.activeElement!); // browser activation of the focused button
+    expect(posted).toContainEqual({ type: "permissionAnswer", requestId: 208, optionId: "a" });
+    expect(doc.querySelector(".permission-command-scroll")).toBeNull();
+  });
+
+  it("a replayed long command leaves focus in the composer", () => {
+    const { window, doc } = bootWebview();
+    const input = doc.querySelector("#input") as HTMLTextAreaElement;
+    input.focus();
+    dispatch(window, { type: "historyReplay", active: true });
+    card(window, [REJECT, ALLOW], 208, longCommand);
+    dispatch(window, { type: "historyReplay", active: false });
+    expect(doc.querySelector(".permission-command-scroll")).not.toBeNull();
+    expect(doc.activeElement).toBe(input);
+  });
+
   it("renders approve first even when the CLI sends reject first", () => {
     const { window, doc } = bootWebview();
     card(window, [REJECT, ALLOW]);

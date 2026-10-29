@@ -5089,15 +5089,37 @@ body.dragging { outline: 2px dashed var(--vscode-focusBorder); outline-offset: -
   font-family: var(--vscode-font-family);
 }
 .card.permission .command-card-title {
-  /* Permission actions must remain in view while a long command is clipped to
-     the same row-bound mechanism as command IN/OUT previews. The View all
-     control is the way out; this title never becomes a nested chat scroller. */
+  /* Pending execute commands scroll within a height cap to keep actions visible
+     (#208). Answering removes the box; transcript IN/OUT previews stay clipped
+     so nested scrollers never accumulate in history (#71). */
   margin: 0;
   padding: 0;
   min-width: 0;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   line-height: 1.35;
+}
+.card.permission .permission-command-preview {
+  display: block;
+  -webkit-line-clamp: unset;
+  line-clamp: unset;
+  /* At most ten line-heights or a fifth of the viewport, leaving room for
+     the action row and composer even on short phone windows. */
+  max-height: min(calc(var(--command-preview-lines) * 1lh), 20dvh);
+  overflow: hidden;
+}
+.card.permission .permission-command-scroll {
+  overflow-y: auto;
+  /* Let wheel/touch gestures continue into the conversation at either edge. */
+  overscroll-behavior: auto;
+  padding: 6px 8px;
+  border: 1px solid var(--vscode-editorWidget-border);
+  border-radius: var(--radius);
+  background: var(--vscode-editor-background);
+}
+.permission-command-scroll:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -1px;
 }
 .card .card-subtitle {
   color: var(--vscode-descriptionForeground);

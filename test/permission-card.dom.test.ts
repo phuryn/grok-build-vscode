@@ -6,10 +6,20 @@
 //   - carries the `requestId` on both `openDiff` and `permissionAnswer` so the
 //     host can pair the auto-opened tab with the answer and close it,
 //   - still offers a manual "open diff →" button to re-open it.
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import { bootWebview, dispatch, click } from "./webview-harness";
 
 const DIFF = { type: "diff", path: "src/foo.ts", oldText: "a\nb", newText: "a\nB\nc" };
+
+afterEach(() => vi.restoreAllMocks());
+
+function mockWrappedCommandLayout(win: any) {
+  for (const [property, size] of [["clientWidth", 120], ["clientHeight", 52], ["scrollHeight", 208]] as const) {
+    vi.spyOn(win.HTMLElement.prototype, property, "get").mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains("command-card-title") ? size : 0;
+    });
+  }
+}
 
 function seedDiffAndCard(window: any, requestId: number | string = 7) {
   // The host posts the edit content as a toolCallUpdate; chat.js stashes it in
@@ -190,22 +200,9 @@ describe("permission card diff preview (real chat.js in a DOM)", () => {
     expect(posted.filter((m: any) => m.type === "openDiff")).toHaveLength(0);
   });
 
-  it("clips a long permission command and keeps its View all path", () => {
-    const { window, doc } = bootWebview({
-      beforeScripts: (win) => {
-        Object.defineProperty(win.HTMLElement.prototype, "clientWidth", {
-          configurable: true,
-          get() { return this.classList?.contains("command-card-title") ? 120 : 0; },
-        });
-        Object.defineProperty(win.HTMLElement.prototype, "clientHeight", {
-          configurable: true,
-          get() { return this.classList?.contains("command-card-title") ? 52 : 0; },
-        });
-        Object.defineProperty(win.HTMLElement.prototype, "scrollHeight", {
-          configurable: true,
-          get() { return this.classList?.contains("command-card-title") ? 208 : 0; },
-        });
-      },
+  it("scrolls even a single wrapped command and keeps its editor View all path", () => {
+    const { window, doc, posted } = bootWebview({
+      beforeScripts: mockWrappedCommandLayout,
     });
     const command = `python -c "${"print('x');".repeat(300)}"`;
     dispatch(window, {
@@ -226,29 +223,20 @@ describe("permission card diff preview (real chat.js in a DOM)", () => {
     expect(title.title).toBe(command);
     expect(title.tagName).toBe("PRE");
     expect(title.classList.contains("command-preview-capped")).toBe(true);
+    expect(title.classList.contains("permission-command-scroll")).toBe(true);
+    expect(title.tabIndex).toBe(0);
     // Ten lines of a command you are asked to approve (#208), not four.
     expect(title.style.getPropertyValue("--command-preview-lines")).toBe("10");
     expect(card.querySelector(".command-view-all")!.textContent).toBe("View all (1 lines) →");
     expect(card.querySelectorAll(".card-actions button")).toHaveLength(2);
+    click(window, card.querySelector(".command-view-all")!);
+    expect(posted).toContainEqual({ type: "openText", content: `# Command\n${command}` });
   });
 
-  it("expands a clipped permission command inline for the remote client", () => {
+  it("opens a remote permission command in the overlay without expanding the card", () => {
     const { window, doc, posted } = bootWebview({
       remote: true,
-      beforeScripts: (win) => {
-        Object.defineProperty(win.HTMLElement.prototype, "clientWidth", {
-          configurable: true,
-          get() { return this.classList?.contains("command-card-title") ? 120 : 0; },
-        });
-        Object.defineProperty(win.HTMLElement.prototype, "clientHeight", {
-          configurable: true,
-          get() { return this.classList?.contains("command-card-title") ? 52 : 0; },
-        });
-        Object.defineProperty(win.HTMLElement.prototype, "scrollHeight", {
-          configurable: true,
-          get() { return this.classList?.contains("command-card-title") ? 208 : 0; },
-        });
-      },
+      beforeScripts: mockWrappedCommandLayout,
     });
     const command = `python -c "${"print('x');".repeat(300)}"`;
     dispatch(window, {
@@ -264,7 +252,121 @@ describe("permission card diff preview (real chat.js in a DOM)", () => {
     const viewAll = doc.querySelector(".command-view-all") as HTMLButtonElement;
     expect(viewAll).not.toBeNull();
     click(window, viewAll);
-    expect(title.classList.contains("command-full")).toBe(true);
+    expect(title.classList.contains("command-full")).toBe(false);
+    expect(title.classList.contains("permission-command-scroll")).toBe(true);
+    expect(doc.querySelector("#preview-overlay .preview-body")!.textContent).toContain(command);
     expect(posted.filter((m: any) => m.type === "openText")).toHaveLength(0);
+  });
+});
+
+describe("pending command scroll box (#208)", () => {
+  const longCommand = Array.from({ length: 40 }, (_, i) => `echo line-${i + 1}`).join("\n");
+  const request = (title = longCommand, kind = "execute") => ({
+    type: "permissionRequest",
+    req: {
+      id: 208,
+      toolCall: { toolCallId: "tc-scroll", kind, title },
+      options: [
+        { optionId: "allow", name: "Allow once", kind: "allow_once" },
+        { optionId: "reject", name: "Reject", kind: "reject_once" },
+      ],
+    },
+  });
+
+  for (const surface of ["editor", "desktop", "remote"]) {
+    const boot = () => {
+      const harness = bootWebview({ remote: surface === "remote" });
+      if (surface === "desktop") {
+        dispatch(harness.window, { type: "initialState", capabilities: { previewInApp: true } });
+      }
+      return harness;
+    };
+
+    it(`${surface}: keeps all 40 lines in a scroll region beside the actions`, () => {
+      const { window, doc } = boot();
+      dispatch(window, request());
+      const box = doc.querySelector(".permission-command-scroll")!;
+      expect(box.textContent).toBe(longCommand);
+      expect(box.getAttribute("role")).toBe("region");
+      expect(box.getAttribute("aria-label")).toBe("Command awaiting approval");
+      expect(box.querySelector(".card-actions")).toBeNull();
+      expect(doc.querySelectorAll(".card-actions button")).toHaveLength(2);
+      expect(doc.querySelector(".command-view-all")!.textContent).toBe("View all (40 lines) →");
+      if (surface === "desktop") {
+        click(window, doc.querySelector(".command-view-all")!);
+        expect(doc.querySelector("#preview-overlay .preview-body")!.textContent).toContain(longCommand);
+      }
+    });
+
+    it(`${surface}: leaves a three-line command without a scroll region or extra tab stop`, () => {
+      const { window, doc } = boot();
+      dispatch(window, request("echo one\necho two\necho three"));
+      expect(doc.querySelector(".permission-command-scroll")).toBeNull();
+      expect(doc.querySelector(".command-view-all")).toBeNull();
+      expect(doc.querySelector(".command-card-title")!.hasAttribute("tabindex")).toBe(false);
+    });
+
+    it.each(["allow", "reject"])(`${surface}: removes the scroll box after %s`, (option) => {
+      const { window, doc } = boot();
+      dispatch(window, request());
+      const actions = doc.querySelectorAll(".card-actions button");
+      click(window, actions[option === "allow" ? 0 : 1]);
+      expect(doc.querySelector(".perm-resolved")).not.toBeNull();
+      expect(doc.querySelector(".permission-command-scroll")).toBeNull();
+      expect(doc.querySelector(".command-card-title")).toBeNull();
+      expect(doc.querySelector(".command-view-all")).toBeNull();
+    });
+
+    it(`${surface}: rebuilds a pending box on replay and removes it on buffered resolution`, () => {
+      const { window, doc } = boot();
+      dispatch(window, { type: "historyReplay", active: true });
+      dispatch(window, request());
+      dispatch(window, { type: "historyReplay", active: false });
+      expect(doc.querySelector(".permission-command-scroll")!.textContent).toBe(longCommand);
+      // Re-enter again with the resolution buffered after the original request.
+      dispatch(window, { type: "clearMessages" });
+      dispatch(window, { type: "historyReplay", active: true });
+      dispatch(window, request());
+      dispatch(window, { type: "permissionResolved", requestId: 208, optionId: "allow" });
+      dispatch(window, { type: "historyReplay", active: false });
+      expect(doc.querySelector(".perm-resolved")).not.toBeNull();
+      expect(doc.querySelector(".permission-command-scroll")).toBeNull();
+      expect(doc.querySelector(".command-view-all")).toBeNull();
+    });
+
+    it(`${surface}: leaves transcript IN/OUT previews clipped, with their existing View all`, () => {
+      const { window, doc, posted } = boot();
+      dispatch(window, { type: "expandCommandOutputs", value: true });
+      dispatch(window, { type: "toolCall", call: {
+        toolCallId: "tc-transcript", kind: "execute", title: longCommand,
+        rawInput: { command: longCommand },
+      } });
+      dispatch(window, { type: "commandOutput", command: longCommand,
+        output: longCommand, exitCode: 0 });
+      const previews = [...doc.querySelectorAll(".cmd-io pre")];
+      expect(previews).toHaveLength(2);
+      for (const preview of previews) {
+        expect(preview.classList.contains("command-preview-capped")).toBe(true);
+        expect(preview.classList.contains("permission-command-preview")).toBe(false);
+        expect(preview.hasAttribute("tabindex")).toBe(false);
+      }
+      expect(doc.querySelector(".permission-command-scroll")).toBeNull();
+      click(window, doc.querySelector(".command-view-all")!);
+      if (surface === "remote") {
+        expect(doc.querySelector(".tool-cmd.command-full")).not.toBeNull();
+        expect(doc.querySelector("#preview-overlay")).toBeNull();
+        expect(posted.filter((m) => m.type === "openText")).toHaveLength(0);
+      }
+    });
+  }
+
+  it("does not turn other permission kinds or plan reviews into command scrollers", () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, request(longCommand, "read"));
+    const plan = request();
+    dispatch(window, { ...plan, req: { ...plan.req, id: 209, plan: longCommand } });
+    expect(doc.querySelectorAll(".card.permission")).toHaveLength(2);
+    expect(doc.querySelector(".plan-body")!.textContent).toContain("echo line-40");
+    expect(doc.querySelector(".permission-command-preview")).toBeNull();
   });
 });

@@ -560,6 +560,21 @@ The Playwright scripts provide geometry that happy-dom cannot: `scripts/changes-
 
 The Changes DOM suite names the owner scenarios **GitHub disconnected, GitHub remote**, **Project without GitHub**, and **Origin conflict**. It verifies local commits without GitHub, a spent message after a successful commit with failed push, preserved drafts when committing fails, optional notice actions, and the branch pull link's capability/remote/branch gates. Real chat mounts verify that pull suggestions append to existing composer text with focus and never send or run git, that overlays close while docks stay open, and that GitHub actions open the Providers settings category through the overlay or IDE editor route. The Changes screenshot harness includes the rejected notice with its action at 320px and desk, and a long branch name that yields width to the persistent pull link.
 
+## Pending command approval scrolling (#208)
+
+`test/permission-card.dom.test.ts` covers long and short execute commands on editor,
+desktop and remote surfaces, wrapped single-line commands, View all, live answers,
+pending replay and buffered resolution. Transcript IN/OUT previews and other card
+kinds keep their existing behavior. `test/permission-keyboard.dom.test.ts` checks
+that the scroll region is tabbable without stealing default-button focus, leaves
+native scroll keys available, and preserves keyboard answering and replay focus.
+
+Run `node scripts/permission-command-screens.mjs` for real Chromium layout and
+input checks. It saves 40-line and three-line commands at desktop, editor, phone
+and short-phone sizes in `.screens/issue-208/`, including the final command line.
+It checks that actions remain visible, wheel and emulated touch gestures chain at
+both scroll boundaries, and View all and keyboard approval still work.
+
 ## New-install mode defaults and Windows Muse
 
 `test/default-mode-cohort.test.ts` checks each client-state/globalState signal,
