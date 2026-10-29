@@ -37,13 +37,24 @@ would break the fleet tooling. The `.deb` is a different filename and does not
 count as a second AppImage.
 
 On Debian and Ubuntu, install the package with
-`apt install ./Grok-Build-Desktop-<version>-linux-amd64.deb` (or double-click
+`sudo apt install ./Grok-Build-Desktop-<version>-linux-amd64.deb` (or double-click
 it). The package name is `grok-build-desktop`. It installs the binary under
 `/opt`, links `/usr/bin/grok-build-desktop`, and registers
 `grok-build-desktop.desktop` in the application menu. Remove it with
-`apt remove grok-build-desktop`. A newer package upgrades in place. The
-AppImage remains the single-file download and still needs FUSE (`libfuse2` on
-Debian and Ubuntu).
+`sudo apt remove grok-build-desktop`. A newer package upgrades in place.
+
+**Use the `.deb` on Ubuntu 24.04 and later.** Ubuntu restricts unprivileged
+user namespaces through AppArmor. Chromium's fallback helper cannot acquire
+root ownership inside a user's AppImage mount, so that format aborts at launch
+(#213). The Debian post-install script sets `/opt/Grok Build Desktop/chrome-sandbox`
+to `root:root`, mode `4755`, on every install and upgrade. Failure fails the
+installation. Chromium can then use its setuid sandbox fallback; the package
+does not disable the sandbox or change the system's user-namespace policy.
+No AppArmor profile is added. Removing the package removes the helper and its
+alternatives registration as well as the menu entry and icon.
+
+The AppImage remains the single-file download for systems permitting user
+namespaces. It needs FUSE (`libfuse2` on Debian, `libfuse2t64` on Ubuntu 24.04+).
 
 ## Closing the window
 
@@ -76,6 +87,31 @@ npm run dist:dir         # unpacked dir only (fast layout check; no installer)
 Artifacts land in `dist-desktop/` (gitignored). The VS Code VSIX path is unchanged:
 `npm run package` still produces `grok-vscode-phuryn-<version>.vsix` and still
 excludes all desktop sources via `.vscodeignore`.
+
+`dist:linux` builds each format in an isolated unpacked tree, merges their
+channel entries with the AppImage as `path`, and inspects the actual squashfs
+to reject any AppImage containing `resources/package-type`. Linux build hosts
+need `squashfs-tools` and `desktop-file-utils` in addition to Node 20 and npm.
+The release and packaging CI jobs also test Debian 12 / Ubuntu 24.04 package
+lifecycle and native Ubuntu 24.04 sandbox launch before upload.
+
+On Windows with Docker Desktop, run:
+
+```powershell
+powershell -NoProfile -File scripts/build-verify-linux.ps1
+```
+
+It builds from the current working tree in `node:20-bookworm`, checks the
+AppImage and feed, then installs, upgrades from a synthetic earlier package,
+removes and purges in `ubuntu:24.04` and `debian:12`. The predecessor uses the
+same payload with an earlier Debian version because no earlier `.deb` has
+been published. Before upgrading, the test sets the helper to `0755` to check
+that installation repairs it. Results are printed and artifacts are kept in
+`dist-desktop/linux-verify-<id>/`. Container success does not prove AppArmor:
+`scripts/verify-linux-sandbox.sh` runs on the native `ubuntu-24.04` CI runner,
+requires the AppImage's SUID failure, then requires a visible installed app
+and a Chromium zygote in a nested PID namespace, without sandbox-disabling
+flags. It explicitly sets `kernel.apparmor_restrict_unprivileged_userns=1`.
 
 **If `dist:win` fails on `Cannot create symbolic link` (local Windows only):**
 electron-builder downloads its `winCodeSign` bundle for `rcedit` / `signtool`,
@@ -178,13 +214,22 @@ cert is available.
 
 ## Auto-update
 
-Packaged Windows, macOS and Linux builds check a relay-served generic feed
+Packaged Windows, macOS and Linux AppImage builds check a relay-served generic feed
 (`https://afkpilot.com/update/win/latest.yml`, `…/mac/latest-mac.yml` and
 `…/linux/latest-linux.yml`) on start and every 12 hours, download in the
 background, and install on quit or when the rail button says **Restart to
 update**. Check or download failure is silent and falls back to the
 **Update available** notice (opens `https://afkpilot.com/desktop-update`).
 No GitHub provider — a vsix-only release would stall that feed.
+
+**Debian packages use a download notice.** The host reads the `deb` marker
+from `resources/package-type` before constructing an updater. It checks for
+the newest non-draft GitHub release with a matching amd64 `.deb`, then shows
+**Update available**, which opens that exact package's download URL. Install
+the downloaded package with `sudo apt install ./<filename>.deb`. There is no
+background package download, install on quit, or **Restart to update** promise
+for this format. This avoids relying on DebUpdater's beta desktop-elevation
+path. Unreadable package markers also disable automatic installation.
 
 **Linux serves the same AppImage the cloud machines install, and needs no cloud
 check to stay safe.** `AppImageUpdater.isUpdaterActive()` returns false unless

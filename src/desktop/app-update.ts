@@ -1,12 +1,13 @@
 /**
  * Desktop update helpers — pure, no network, no Electron.
  *
- * Packaged win32/darwin/linux run electron-updater against the relay generic
- * feed (`desktopUpdateFeedConfig`). Check/download failure falls back to the
- * GitHub Releases notice. The updater itself is injected; this module never
+ * Packaged Windows/macOS/AppImage run electron-updater against the relay generic
+ * feed (`desktopUpdateFeedConfig`); deb installs use a download notice.
+ * Failures fall back to the GitHub Releases notice. The updater is injected; this module never
  * imports it.
  * Contract: docs/desktop-update-spec.md.
  */
+import type { LinuxPackageType } from "./package-meta";
 
 /**
  * Anchored installer asset suffixes. `.exe.blockmap` / `.zip.blockmap` must
@@ -97,6 +98,7 @@ export interface DesktopReleaseNotice {
  */
 export function pickLatestDesktopRelease(
   releases: readonly GithubReleaseLike[] | null | undefined,
+  packageType?: LinuxPackageType,
 ): DesktopReleaseNotice | null {
   if (!Array.isArray(releases) || releases.length === 0) return null;
   let best: { version: string; url: string; semver: Semver } | null = null;
@@ -113,9 +115,14 @@ export function pickLatestDesktopRelease(
     const semver = parseSemver(tag);
     if (!semver) continue;
     const version = `${semver.major}.${semver.minor}.${semver.patch}`;
-    const url =
-      (typeof r.html_url === "string" && r.html_url) ||
-      `https://github.com/phuryn/grok-build-vscode/releases/tag/${encodeURIComponent(tag)}`;
+    const debName = `Grok-Build-Desktop-${tag.replace(/^v/i, "")}-linux-amd64.deb`;
+    // A partial release with only mac/Windows assets must not lure a deb user
+    // into downloading the AppImage that cannot launch on their Ubuntu desk.
+    if (packageType === "deb" && !assets.some((a: { name?: string }) => a?.name === debName)) continue;
+    const url = packageType === "deb"
+      ? `https://github.com/phuryn/grok-build-vscode/releases/download/${encodeURIComponent(tag)}/${encodeURIComponent(debName)}`
+      : (typeof r.html_url === "string" && r.html_url) ||
+        `https://github.com/phuryn/grok-build-vscode/releases/tag/${encodeURIComponent(tag)}`;
     if (!best || compareSemver(semver, best.semver) > 0) {
       best = { version, url, semver };
     }
@@ -130,8 +137,9 @@ export function pickLatestDesktopRelease(
 export function noticeIfUpdateAvailable(
   currentVersion: string | null | undefined,
   releases: readonly GithubReleaseLike[] | null | undefined,
+  packageType?: LinuxPackageType,
 ): DesktopReleaseNotice | null {
-  const latest = pickLatestDesktopRelease(releases);
+  const latest = pickLatestDesktopRelease(releases, packageType);
   if (!latest) return null;
   if (!isNewerVersion(latest.version, currentVersion)) return null;
   return latest;
@@ -266,7 +274,9 @@ export function desktopAutoUpdateEnabled(opts: {
   platform: NodeJS.Platform | string | null | undefined;
   packaged: boolean;
   forceDev?: boolean;
+  packageType?: LinuxPackageType;
 }): boolean {
+  if (opts.platform === "linux" && opts.packageType && opts.packageType !== "appimage") return false;
   if (!desktopUpdateFeedConfig(opts.platform)) return false;
   return !!opts.packaged || !!opts.forceDev;
 }
@@ -366,6 +376,7 @@ export function attachDesktopAutoUpdate(opts: {
   currentVersion: string;
   packaged: boolean;
   forceDev?: boolean;
+  packageType?: LinuxPackageType;
   ui: DesktopUpdateUi;
 }): DesktopUpdateSession {
   let state = initialAppUpdateState();
@@ -393,7 +404,8 @@ export function attachDesktopAutoUpdate(opts: {
     try {
       const notice = await opts.ui.fetchNotice();
       if (isReady()) return;
-      if (notice) opts.ui.postNotice(notice.version, desktopUpdatePageUrl(opts.currentVersion));
+      if (notice) opts.ui.postNotice(notice.version,
+        opts.packageType === "deb" ? notice.url : desktopUpdatePageUrl(opts.currentVersion));
     } catch (e) {
       opts.ui.log(`[update] notice fallback failed: ${updaterLogLine(e)}`);
     }

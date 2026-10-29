@@ -1,0 +1,63 @@
+name: Linux packaging
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'electron-builder.yml'
+      - 'package*.json'
+      - 'packaging/**'
+      - 'scripts/*linux*'
+      - 'scripts/release.*'
+      - 'src/desktop/main.ts'
+      - 'src/desktop/preload.ts'
+      - 'src/desktop/package-meta.ts'
+      - 'src/desktop/app-update.ts'
+      - '.github/workflows/linux-packaging.yml'
+      - '.github/workflows/desktop-release.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'electron-builder.yml'
+      - 'package*.json'
+      - 'packaging/**'
+      - 'scripts/*linux*'
+      - 'scripts/release.*'
+      - 'src/desktop/main.ts'
+      - 'src/desktop/preload.ts'
+      - 'src/desktop/package-meta.ts'
+      - 'src/desktop/app-update.ts'
+      - '.github/workflows/linux-packaging.yml'
+      - '.github/workflows/desktop-release.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-packaging-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  packages:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends squashfs-tools desktop-file-utils xvfb xauth xdotool apparmor libfuse2t64
+      - run: npm ci
+      - run: npm run dist:linux
+      - run: bash scripts/verify-linux-deb.sh dist-desktop/*-linux-amd64.deb
+      - run: bash scripts/verify-linux-sandbox.sh dist-desktop/*-linux-amd64.deb
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-sandbox-logs
+          path: dist-desktop/linux-sandbox-logs/
+          if-no-files-found: ignore
+          retention-days: 7

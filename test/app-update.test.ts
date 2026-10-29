@@ -436,6 +436,65 @@ function fakeUpdater(script?: {
 }
 
 describe("attachDesktopAutoUpdate", () => {
+  it("keeps prerelease deb filenames intact and constructs the official download URL", () => {
+    expect(noticeIfUpdateAvailable("4.7.0", [{
+      tag_name: "v4.8.0-rc.1", prerelease: true, html_url: "https://untrusted.test/",
+      assets: [{ name: "Grok-Build-Desktop-4.8.0-rc.1-linux-amd64.deb" }],
+    }], "deb")).toEqual({
+      version: "4.8.0",
+      url: "https://github.com/phuryn/grok-build-vscode/releases/download/v4.8.0-rc.1/Grok-Build-Desktop-4.8.0-rc.1-linux-amd64.deb",
+    });
+  });
+
+  it("notices only a release with the matching deb and never constructs DebUpdater", async () => {
+    const releases = [
+      { tag_name: "v4.9.0", assets: [{ name: "Grok-Build-Desktop-4.9.0-linux-x86_64.AppImage" }] },
+      { tag_name: "v4.8.0", assets: [{ name: "Grok-Build-Desktop-4.8.0-linux-amd64.deb" }] },
+      { tag_name: "v4.10.0", draft: true, assets: [{ name: "Grok-Build-Desktop-4.10.0-linux-amd64.deb" }] },
+    ];
+    const notice = noticeIfUpdateAvailable("4.7.0", releases, "deb");
+    const url = "https://github.com/phuryn/grok-build-vscode/releases/download/v4.8.0/Grok-Build-Desktop-4.8.0-linux-amd64.deb";
+    expect(notice).toEqual({ version: "4.8.0", url });
+    expect(noticeIfUpdateAvailable("4.8.0", releases, "deb")).toBeNull();
+    const posted: unknown[] = [];
+    let constructed = false;
+    const session = attachDesktopAutoUpdate({
+      updater: () => { constructed = true; throw Error("DebUpdater must not run"); },
+      platform: "linux", packaged: true, currentVersion: "4.7.0", packageType: "deb",
+      ui: {
+        log: () => {}, fetchNotice: async () => notice,
+        postNotice: (version, link) => posted.push({ version, url: link }),
+        postReady: () => { throw Error("a deb is never staged for restart"); },
+      },
+    });
+    await session.check();
+    session.install();
+    expect(constructed).toBe(false);
+    expect(posted).toEqual([notice]);
+    expect(session.getState().phase).toBe("idle");
+  });
+
+  it("keeps an unreadable Linux package marker on the notice-only path", async () => {
+    const session = attachDesktopAutoUpdate({
+      updater: () => { throw Error("unknown package format must not install"); },
+      platform: "linux", packaged: true, currentVersion: "4.7.0", packageType: "unknown",
+      ui: { postNotice: () => {}, postReady: () => {}, log: () => {}, fetchNotice: async () => null },
+    });
+    await session.check();
+  });
+
+  it("keeps deb notices silent on a network failure", async () => {
+    const session = attachDesktopAutoUpdate({
+      updater: () => { throw Error("must not construct"); },
+      platform: "linux", packaged: true, currentVersion: "4.7.0", packageType: "deb",
+      ui: {
+        postNotice: () => { throw Error("must not notify"); }, postReady: () => {}, log: () => {},
+        fetchNotice: async () => { throw Error("offline"); },
+      },
+    });
+    await expect(session.check()).resolves.toBeUndefined();
+  });
+
   // These two exist because of a Linux-only, unpackaged-only startup crash that
   // nothing here could see. `electron-updater` exports `autoUpdater` as a
   // GETTER that builds the platform updater on first read; on Linux that is

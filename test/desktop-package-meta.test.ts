@@ -1,6 +1,21 @@
 import { describe, expect, it } from "vitest";
-import { extensionIdFromPackageMeta, isCloudBuildFromPackageMeta, PACKAGED_EXTENSION_NAME_FIELD } from "../src/desktop/package-meta";
+import { extensionIdFromPackageMeta, isCloudBuildFromPackageMeta, PACKAGED_EXTENSION_NAME_FIELD, readLinuxPackageType } from "../src/desktop/package-meta";
 import { OFFICIAL_EXTENSION_ID } from "../src/telemetry";
+
+describe("readLinuxPackageType", () => {
+  it("recognizes the deb marker and a missing AppImage marker", () => {
+    expect(readLinuxPackageType(() => "deb\n")).toBe("deb");
+    expect(readLinuxPackageType(() => { throw Object.assign(new Error("missing"), { code: "ENOENT" }); })).toBe("appimage");
+  });
+  it("fails closed on unreadable or unexpected markers", () => {
+    for (const code of ["EACCES", "EIO"]) {
+      expect(readLinuxPackageType(() => { throw Object.assign(new Error(code), { code }); })).toBe("unknown");
+    }
+    for (const marker of ["", "rpm", "deb-untrusted"]) {
+      expect(readLinuxPackageType(() => marker)).toBe("unknown");
+    }
+  });
+});
 
 describe("extensionIdFromPackageMeta", () => {
   it("restores the name half that extraMetadata.name overwrites", () => {

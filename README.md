@@ -304,7 +304,9 @@ Standalone app for **macOS** (Apple Silicon + Intel), **Windows** (x64) and **Li
 
 **Windows is not signed yet**, so Microsoft Defender SmartScreen may show “Windows protected your PC.” Choose **More info** → **Run anyway**.
 
-**Linux** is an AppImage or a Debian package. The AppImage is one file: `chmod +x` it and run it. It needs FUSE (`libfuse2` on Debian and Ubuntu) and updates itself in place. Debian and Ubuntu can instead install `Grok-Build-Desktop-<version>-linux-amd64.deb`. That build adds an application menu entry, pulls the libraries Electron needs, and removes with the package manager. There is still exactly one AppImage per release.
+**Debian / Ubuntu:** download the `.deb` from [GitHub Releases](https://github.com/phuryn/grok-build-vscode/releases) and run `sudo apt install ./Grok-Build-Desktop-<version>-linux-amd64.deb`. It adds the menu entry and dependencies, configures Chromium's sandbox helper, and removes with `sudo apt remove grok-build-desktop`. Use this package on Ubuntu 24.04+: its user-namespace restrictions prevent the AppImage from launching normally. **Update available** opens the new `.deb`; install it with the same `apt` command to upgrade.
+
+**Other Linux systems:** the AppImage is one file: `chmod +x` it and run it. It needs FUSE (`libfuse2` on Debian; `libfuse2t64` on Ubuntu 24.04+) and updates itself in place where the distro permits unprivileged user namespaces. There is exactly one AppImage per release.
 
 **Closing the window keeps the app running** on Windows and Linux: it hides to a tray icon so the agent — and any phone linked to this machine — keeps working. **Quit** from the tray menu to stop it, or turn the behaviour off in Settings → General. There is no tray on macOS, where closing the window still quits the app — the macOS answer is its own convention, the dock rather than a menu-bar item, and that is a separate change.
 

@@ -214,16 +214,14 @@ linux:
   # never has. That is what keeps a sprite from self-updating out from under
   # refresh-sprite-hosts.mjs without a cloud check anywhere in the app.
   #
-  # The .deb is a third artifact, not a second AppImage. Cloud selectors match
+  # The .deb is a separate artifact, not a second AppImage. Cloud selectors match
   # the `.AppImage` extension, so the Debian package does not make them
   # ambiguous. `executableName` is shared by both Linux targets: the published
   # AppImage filename stays `Grok-Build-Desktop-<version>-linux-x86_64.AppImage`.
   #
-  # AppImage is listed first on purpose. electron-builder finishes async
-  # targets before sync fpm targets. The deb build then writes
-  # `resources/package-type` (`deb`) into the unpacked tree, which
-  # electron-updater reads to pick DebUpdater. That write must not land in
-  # the AppImage, or a desk running the file would try `dpkg` on quit.
+  # dist:linux builds these in separate output trees (scripts/build-linux.cjs).
+  # FpmTarget writes resources/package-type into its unpacked tree; isolation
+  # keeps that marker out of the AppImage regardless of target scheduling.
   publish:
     provider: generic
     url: https://afkpilot.com/update/linux

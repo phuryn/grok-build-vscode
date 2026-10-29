@@ -68,7 +68,7 @@ import {
   DESKTOP_PUBLIC_REPO_URL,
 } from "./host-dialogs";
 import { createFileMemento } from "./memento";
-import { extensionIdFromPackageMeta, isCloudBuildFromPackageMeta } from "./package-meta";
+import { extensionIdFromPackageMeta, isCloudBuildFromPackageMeta, readLinuxPackageType } from "./package-meta";
 import {
   desktopUserHomeDir,
   provisionDefaultProjectDir,
@@ -916,11 +916,14 @@ async function createApp(): Promise<void> {
     },
   });
 
-  // In-app updater on packaged win32/darwin; GitHub notice is the fallback
-  // (and the only path when unpackaged / Linux / check-or-download fails).
+  // Windows/macOS/AppImage update in-app. Debian installs get a direct .deb
+  // download notice; apt handles elevation, dependencies and maintainer scripts.
   // Failure is silence. Re-check every 12h. In-memory pending frame only —
   // re-post on reload so the rail button survives a document refresh.
   const appVersion = app.getVersion() || pkg.version;
+  const packageType = process.platform === "linux" && app.isPackaged
+    ? readLinuxPackageType(() => fs.readFileSync(path.join(process.resourcesPath, "package-type"), "utf8"))
+    : undefined;
   let pendingUpdate:
     | { kind: "notice"; version: string; url: string }
     | { kind: "ready"; version: string }
@@ -946,7 +949,7 @@ async function createApp(): Promise<void> {
       if (!res.ok) return null;
       const body = (await res.json()) as unknown;
       if (!Array.isArray(body)) return null;
-      return noticeIfUpdateAvailable(appVersion, body as GithubReleaseLike[]);
+      return noticeIfUpdateAvailable(appVersion, body as GithubReleaseLike[], packageType);
     } catch {
       return null;
     }
@@ -961,6 +964,7 @@ async function createApp(): Promise<void> {
     platform: process.platform,
     currentVersion: appVersion,
     packaged: app.isPackaged,
+    packageType,
     forceDev: process.env.GROK_DESKTOP_UPDATE_DEV === "1",
     ui: {
       postNotice: postUpdateNotice,

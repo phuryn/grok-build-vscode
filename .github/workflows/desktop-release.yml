@@ -67,12 +67,12 @@ jobs:
           - os: windows-latest
             script: dist:win
             name: windows
-          # Linux builds two artifacts from one electron-builder run: the AppImage
+          # Linux builds two artifacts in isolated electron-builder trees: the AppImage
           # (cloud hosts extract it; desks can run the file) and a .deb for
           # Debian and Ubuntu. Unsigned by design: there is nothing to sign
           # either one for. The AppImage filename stays the versioned
           # x86_64 asset the fleet selects by extension.
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             script: dist:linux
             name: linux
     runs-on: ${{ matrix.os }}
@@ -93,6 +93,12 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
+
+      - name: Linux package verification tools
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends squashfs-tools desktop-file-utils xvfb xauth xdotool apparmor libfuse2t64
 
       # electron-builder hands APPLE_API_KEY to `notarytool --key`, which wants a
       # PATH to the .p8 — not the key itself. A repository secret can only hold
@@ -153,6 +159,24 @@ jobs:
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_TEAM_ID: L6TFKRX6QQ
 
+      # Both artifact upload and release upload are behind these gates.
+      - name: Verify Linux artifacts and Debian/Ubuntu package lifecycle
+        if: runner.os == 'Linux'
+        run: bash scripts/verify-linux-deb.sh dist-desktop/*-linux-amd64.deb
+
+      - name: Prove sandboxed launch under Ubuntu userns restrictions
+        if: runner.os == 'Linux'
+        run: bash scripts/verify-linux-sandbox.sh dist-desktop/*-linux-amd64.deb
+
+      - name: Preserve Linux sandbox diagnostics
+        if: always() && runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-sandbox-logs
+          path: dist-desktop/linux-sandbox-logs/
+          if-no-files-found: ignore
+          retention-days: 7
+
       # Installers plus the updater channel files (latest.yml / latest-mac.yml).
       # dist-desktop/ also holds unpacked app trees and electron-builder's
       # other metadata, which nobody downloads.
@@ -187,9 +211,8 @@ jobs:
             # have looked for win-x64.exe in a file that never mentions it.
             f=dist-desktop/latest-linux.yml
             test -f "$f" || { echo "missing $f" >&2; exit 1; }
-            # path stays the AppImage. DebUpdater picks the .deb out of files[]
-            # by extension; an old client that still reads path must not be
-            # handed the deb.
+            # path stays the AppImage; existing clients must never be handed
+            # the deb. The stronger artifact/hash checks already ran above.
             grep -Eq '^path: .*linux-x86_64\.AppImage\r?$' "$f" || { echo "$f path is not the AppImage" >&2; exit 1; }
             grep -Eq 'linux-amd64\.deb\r?$' "$f" || { echo "$f missing the deb" >&2; exit 1; }
             shopt -s nullglob

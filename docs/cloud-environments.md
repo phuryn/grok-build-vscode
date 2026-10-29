@@ -123,11 +123,21 @@ under the relay's refresh tooling, while a desk user gets real in-place
 updates. There is deliberately no cloud check in the updater path: the
 property is structural, and a check would be one more thing to keep true.
 
+`dist:linux` marks both isolated package builds with `grokCloudBuild`.
+`resolveRelayUrl` and `resolveInjectedDeviceToken` require that flag **and**
+`GROK_CLOUD_ENVIRONMENT=1` before accepting a packaged host's relay/token
+environment. Installing either artifact on a desk does not by itself grant
+that trust. macOS and Windows installers do not carry the build flag.
+
 There is **exactly one AppImage per release**, and the relay's boot script,
 `refresh-sprite-hosts.mjs` and `patch-sprite-host.mjs` all select it by the
 `.AppImage` extension alone. Attaching a second one would make every one of
 those selectors ambiguous. Do not add a variant without changing them first.
 The Debian package attached beside it (`Grok-Build-Desktop-<version>-linux-amd64.deb`)
-is not an AppImage, so those selectors stay unambiguous. The process inside
+is not an AppImage, so those selectors stay unambiguous. Its `deb` package marker
+is confined to its own build tree; the release gate rejects an AppImage carrying
+`resources/package-type`. `latest-linux.yml` retains the AppImage as its legacy
+`path`. The process inside
 the AppImage is named `grok-build-desktop`. Hosts that run the AppImage file,
-or `AppRun` after extracting it, do not depend on that inner name.
+or `AppRun` after extracting it, still use that entry point; process probes
+continue to see `grok-build-desktop`.

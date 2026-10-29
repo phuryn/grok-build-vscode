@@ -636,7 +636,7 @@
     "dist": "npm run compile && electron-builder --publish never",
     "dist:mac": "npm run compile && electron-builder --mac --publish never",
     "dist:win": "npm run compile && electron-builder --win --x64 --publish never",
-    "dist:linux": "npm run compile && electron-builder --linux --x64 --publish never -c.extraMetadata.grokCloudBuild=true",
+    "dist:linux": "npm run compile && node scripts/build-linux.cjs",
     "dist:dir": "npm run compile && electron-builder --dir --publish never"
   },
   "devDependencies": {

@@ -19,8 +19,8 @@ export const PACKAGED_EXTENSION_NAME_FIELD = "grokExtensionName";
 /**
  * Marks a build made to run as a CLOUD ENVIRONMENT rather than on a desk.
  *
- * Injected by `dist:linux` only, which builds both the AppImage and the deb
- * in one invocation, so both carry the flag. A packaged build otherwise
+ * Injected by `dist:linux` into its isolated AppImage and deb builds, so both
+ * carry the flag. A packaged build otherwise
  * refuses the environment entirely: no relay override, no injected device
  * token. That is right for an app on a laptop and fatal for a machine with
  * no keyboard, which can only be told who it is by the relay that created it.
@@ -42,6 +42,17 @@ export const PACKAGED_CLOUD_BUILD_FIELD = "grokCloudBuild";
  */
 export function isCloudBuildFromPackageMeta(pkg: { grokCloudBuild?: unknown }): boolean {
   return pkg.grokCloudBuild === true || pkg.grokCloudBuild === "true";
+}
+
+export type LinuxPackageType = "appimage" | "deb" | "unknown";
+
+/** Missing marker is the AppImage layout; unreadable/unknown markers fail closed. */
+export function readLinuxPackageType(readMarker: () => string): LinuxPackageType {
+  try {
+    return readMarker().trim() === "deb" ? "deb" : "unknown";
+  } catch (error) {
+    return (error as NodeJS.ErrnoException)?.code === "ENOENT" ? "appimage" : "unknown";
+  }
 }
 
 const FALLBACK_PUBLISHER = "PawelHuryn";

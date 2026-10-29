@@ -282,7 +282,7 @@ if ($SkipInstallers) {
     $hasWin = @($names | Where-Object { $_ -like "*.exe" }).Count -gt 0
     $hasMac = @($names | Where-Object { $_ -like "*.dmg" }).Count -gt 0
     $hasLinux = @($names | Where-Object { $_ -like "*.AppImage" }).Count -gt 0
-    $hasDeb = @($names | Where-Object { $_ -like "*-linux-amd64.deb" }).Count -gt 0
+    $hasDeb = $names -contains "Grok-Build-Desktop-$version-linux-amd64.deb"
     $missing = @(
       if (-not $hasWin) { ".exe" }
       if (-not $hasMac) { ".dmg" }
