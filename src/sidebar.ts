@@ -4663,7 +4663,7 @@ Only continue if you trust this code.`,
     this.postSessionsList();
   }
 
-  private noteSessionActivity(session: Session, sent = false): void {
+  private noteSessionActivity(session: Session, sent = false, prompted = sent): void {
     const sid = session.activeSessionId ?? session.client?.sessionId;
     if (!sid) return;
     const activeAt = Date.now();
@@ -4674,7 +4674,9 @@ Only continue if you trust this code.`,
     const routineRun = (previous.customName ?? "").trim().startsWith(ROUTINE_SESSION_TAG);
     void this.state.update(SESSION_META_KEY, {
       ...overrides,
-      [sid]: { ...previous, activeAt, ...(sent && !routineRun ? { sentAt: activeAt } : {}) },
+      [sid]: { ...previous, activeAt,
+        ...(prompted && session.provider === "deepseek" ? { deepseekPrompted: true } : {}),
+        ...(sent && !routineRun ? { sentAt: activeAt } : {}) },
     });
     for (const provider of INTERNAL_PROVIDERS.filter(usesAdapterHistory)) {
       const history = this.adapterHistory(provider);
@@ -10889,6 +10891,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     currentClient?.on("messageChunk", captureChunk);
     session.suppressContent = true;
     try {
+      // Internal prompts count as dsh history, but are not sends by the person.
+      if (currentClient && session.provider === "deepseek") this.noteSessionActivity(session, false, true);
       await currentClient?.prompt(
         "Summarize our conversation so far in a concise paragraph. Be brief.",
       );
@@ -10904,6 +10908,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       this.emit(session, { type: "sessionContext" });
       session.suppressContent = true;
       try {
+        if (session.provider === "deepseek") this.noteSessionActivity(session, false, true);
         await session.client.prompt(`[Context from previous session]\n${summary}`);
       } catch { /* best effort */ } finally {
         session.suppressContent = false;
@@ -15449,8 +15454,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   private deepseekSessionHasPrompt(id: string, overrides: SessionMetaOverrides): boolean {
     // Both dsh homes are host-managed. Creation/rename/listing alone says
     // nothing about prompts; keep failed sends as well as completed turns.
-    const meta = overrides[id];
-    return typeof meta?.sentAt === "number" || !!meta?.autoName || !!meta?.usageLog?.length
+    // sentAt also counts: records written before deepseekPrompted existed.
+    return overrides[id]?.deepseekPrompted === true || typeof overrides[id]?.sentAt === "number"
       || [...this.pool].some((s) => s.provider === "deepseek" && s.activeSessionId === id && s.userMessageCount > 0);
   }
 

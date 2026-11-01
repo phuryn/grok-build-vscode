@@ -17336,7 +17336,9 @@ ${fullText}`
   }
 
   function updatePermissionOptions(requestId, options) {
-    const cards = liveTranscriptQueryAll(".card.permission");
+    const cards = historyPark
+      ? [...historyPark.querySelectorAll(".card.permission")]
+      : liveTranscriptQueryAll(".card.permission");
     const el = cards.find((card) =>
       card.dataset.permReqId === String(requestId) &&
       !card.classList.contains("perm-resolved") &&
@@ -22050,7 +22052,9 @@ ${fullText}`
         // Replayed (on re-focus) right after the buffered permissionRequest, or
         // live right after the user answers — collapse the matching card if it's
         // still active. Idempotent: a live click already collapsed it.
-        const cards = liveTranscriptQueryAll(".card.permission");
+        const cards = historyPark
+          ? [...historyPark.querySelectorAll(".card.permission")]
+          : liveTranscriptQueryAll(".card.permission");
         const el = cards.find((c) =>
           c.dataset.permReqId === String(msg.requestId) &&
           !c.classList.contains("perm-resolved") &&

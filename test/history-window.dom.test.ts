@@ -167,6 +167,43 @@ function replayUserTurns(window: Window, n: number) {
 }
 
 describe("history window plan/permission cards (#102 prepend)", () => {
+  it("resolves parked permissions in the park without changing a live card with the same id", () => {
+    const { window, doc } = bootWebview();
+    setHistoryWindow(window, 1);
+    const request = (title: string) => ({ type: "permissionRequest", req: { id: 0,
+      toolCall: { title, kind: "other" }, options: [{ optionId: title, kind: "allow_once", name: title }],
+    } });
+    dispatch(window, { type: "historyReplay", active: true });
+    dispatch(window, { type: "userMessage", text: "old turn" });
+    dispatch(window, request("Old request"));
+    dispatch(window, { type: "permissionOptions", requestId: 0,
+      options: [{ optionId: "old-update", kind: "allow_once", name: "Old options" }] });
+    dispatch(window, { type: "permissionResolved", requestId: 0, outcome: "closed" });
+    dispatch(window, { type: "userMessage", text: "new turn" });
+    dispatch(window, request("New request"));
+    dispatch(window, { type: "historyReplay", active: false });
+    expect(api(window).__grokHistory.prefixRemaining()).toBe(1);
+    const live = doc.querySelector(".card.permission")!;
+    expect(live.querySelector("button")!.textContent).toBe("New request");
+
+    api(window).__grokHistory.expandMore();
+    const cards = [...doc.querySelectorAll(".card.permission")];
+    expect(cards).toHaveLength(2);
+    expect(cards[0].textContent).toContain("Closed");
+    expect(cards[0].textContent).toContain("Old request");
+    expect(cards[0].querySelector("button")).toBeNull();
+    expect(cards[1]).toBe(live);
+    expect(live.querySelector("button")!.textContent).toBe("New request");
+    expect(live.classList.contains("perm-resolved")).toBe(false);
+    // Outside hydration, both frames still target the live transcript.
+    dispatch(window, { type: "permissionOptions", requestId: 0,
+      options: [{ optionId: "new-update", kind: "allow_once", name: "New options" }] });
+    expect(live.querySelector("button")!.textContent).toBe("New options");
+    dispatch(window, { type: "permissionResolved", requestId: 0, outcome: "closed" });
+    expect(live.querySelector("button")).toBeNull();
+    expect(live.textContent).toContain("Closed");
+  });
+
   it("a conversation shorter than one window still places cards beside their turns", () => {
     const { window, doc } = bootWebview();
     setHistoryWindow(window, 80);
@@ -242,4 +279,3 @@ describe("history window plan/permission cards (#102 prepend)", () => {
     expect(afterTwo.at(-1)).toBe("user:u1500");
   }, 20_000);
 });
-

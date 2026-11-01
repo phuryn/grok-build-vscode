@@ -56,6 +56,8 @@ export interface SessionMetaOverride {
   /** Provider-reported cwd for stores that are not laid out under the Grok home. */
   providerCwd?: string;
   deepseekHarness?: "default" | "minimal";
+  /** A prompt was sent through this host, including routine runs and failed turns. */
+  deepseekPrompted?: boolean;
   musePosture?: MusePosture;
   /**
    * "This conversation was used just now", asserted by the host rather than
