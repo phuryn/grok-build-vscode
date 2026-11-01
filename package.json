@@ -593,6 +593,16 @@
           ],
           "default": "gpt-live-transcribe",
           "description": "OpenAI Realtime transcription model. Dictionary terms become model-specific vocabulary hints. The explicit batch mode uses gpt-4o-transcribe."
+        },
+        "grok.experimentalDeepSeek": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show DeepSeek through its official dsh developer preview on this computer. Desktop hosts only."
+        },
+        "grok.deepseekPath": {
+          "type": "string",
+          "default": "",
+          "description": "Optional DeepSeek installation directory (node/ and runtime/). Overrides the managed pinned install; PATH is not searched. Restart DeepSeek conversations after changing."
         }
       }
     }

@@ -166,10 +166,13 @@ export function attachStdinShutdown(stdin, onShutdown) {
 function requestSoftKill(child) {
   if (!child || child.exitCode != null || child.signalCode != null) return;
   if (process.platform === "win32" && child.pid) {
-    spawn("taskkill", ["/T", "/F", "/PID", String(child.pid)], {
+    const killer = spawn("taskkill", ["/T", "/F", "/PID", String(child.pid)], {
       stdio: "ignore",
       windowsHide: true,
     });
+    const fallback = () => { try { child.kill("SIGKILL"); } catch { /* already gone */ } };
+    killer.once("error", fallback);
+    killer.once("exit", code => { if (code !== 0) fallback(); });
     return;
   }
   try {
@@ -182,10 +185,13 @@ function requestSoftKill(child) {
 function requestHardKill(child) {
   if (!child || child.exitCode != null || child.signalCode != null) return;
   if (process.platform === "win32" && child.pid) {
-    spawn("taskkill", ["/T", "/F", "/PID", String(child.pid)], {
+    const killer = spawn("taskkill", ["/T", "/F", "/PID", String(child.pid)], {
       stdio: "ignore",
       windowsHide: true,
     });
+    const fallback = () => { try { child.kill("SIGKILL"); } catch { /* already gone */ } };
+    killer.once("error", fallback);
+    killer.once("exit", code => { if (code !== 0) fallback(); });
     return;
   }
   try {

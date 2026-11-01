@@ -31,23 +31,27 @@ describe("provider registration across surfaces", () => {
     expect(connectedProviderIds(all, all)).toEqual(INTERNAL_PROVIDERS);
     const host: any = Object.create(GrokSidebar.prototype);
     host.providerConnectionState = all;
+    host.context = { globalStorageUri: { fsPath: "/storage" } };
     host.codexSessionCache = new Map(); host.claudeSessionCache = new Map();
     host.locateProvider = vi.fn(() => "/cli");
     // Antigravity is advertised only where it is offered: the experimental
     // setting on, and not a cloud machine.
     let experimental = true;
-    host.host = { getConfiguration: () => ({ get: (key: string, fallback: unknown) => key === "experimentalAntigravity" ? experimental : fallback }) };
+    host.host = { getConfiguration: () => ({ get: (key: string, fallback: unknown) => ["experimentalAntigravity", "experimentalDeepSeek"].includes(key) ? experimental : fallback }) };
     expect(Object.keys(host.locatedProviders())).toEqual([...INTERNAL_PROVIDERS]);
     expect(host.providerStateMessage().providers.map((p: any) => p.id).sort()).toEqual([...INTERNAL_PROVIDERS].sort());
     experimental = false;
     expect(host.providerStateMessage().providers.map((p: any) => p.id)).not.toContain("agy");
     expect(host.locatedProviders().agy).toBe(false);
+    expect(host.locatedProviders().deepseek).toBe(false);
+    expect(host.providerStateMessage().providers.map((p: any) => p.id)).not.toContain("deepseek");
     experimental = true;
     for (const id of INTERNAL_PROVIDERS) {
       expect(isInternalProvider(id)).toBe(true);
       expect(sanitizeSessionStartProps({ provider: id }).provider).toBe(id);
       expect(PROVIDER_ACTIONS[id].label).toBe(providerDisplayName(id));
       expect(providerSupports(id, "compact")).toBe(supportsCompaction(id));
+      expect(providerSupports(id, "clientMcp")).toBe(supportsClientMcpServers(id));
       expect(providerSupports(id, "deleteHistory")).toBe(supportsHistoryDeletion(id));
       expect(!!host.createProviderBackend(id)).toBe(usesAdapterHistory(id));
       expect(!!host.adapterHistory(id)).toBe(usesAdapterHistory(id));

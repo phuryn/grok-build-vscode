@@ -311,7 +311,7 @@ export function acpClientCapabilities(
     _meta: { jetbrains: { air: { version: 1, capabilities: ["nativeSubagentSessions"] } } } };
   if (provider === "claude") return { ...ACP_DELEGATED_FS_CAPABILITIES,
     _meta: { jetbrains: { air: { version: 1, capabilities: ["asyncTasks"] } } } };
-  if (provider === "agy") return ACP_SERVER_EXECUTED_CAPABILITIES;
+  if (provider === "agy" || provider === "deepseek") return ACP_SERVER_EXECUTED_CAPABILITIES;
   if (provider !== "grok") return ACP_DELEGATED_FS_CAPABILITIES;
   if (!versionVerified) return ACP_DELEGATED_FS_CAPABILITIES;
   const parsed = parseGrokVersion(grokVersion ?? "");
@@ -371,7 +371,7 @@ export class AcpClient extends EventEmitter {
     if (expected.sessionId !== current.sessionId || expected.modelId !== current.modelId || expected.generation !== current.generation)
       throw new Error("The context selection belongs to an older session or model. Please choose again.");
     if (!current.available || !current.sizes.includes(size)) throw new Error(current.reason ?? "This model does not offer that context size.");
-    if (this.contextWindowChanging || [...this.pending.values()].some(p => p.isPrompt || p.method === "session/set_model" || p.method === "session/set_config_option" || p.method === "session/new" || p.method === "session/load")) throw new Error("Wait for the current turn or context change to finish.");
+    if (this.contextWindowChanging || [...this.pending.values()].some(p => p.isPrompt || p.method === "session/set_model" || p.method === "session/set_config_option" || p.method === "session/new" || p.method === "session/load" || p.method === "session/resume")) throw new Error("Wait for the current turn or context change to finish.");
     const previousUsed = this.lastContextUsed;
     const previousWindow = this.lastContextWindow;
     const previousSize = this.selectedContextWindow;
@@ -696,7 +696,7 @@ export class AcpClient extends EventEmitter {
     this.hookCalls.reset();
     let raw: any;
     try {
-      raw = await this.request("session/load", { sessionId, cwd: this.opts.cwd, mcpServers, ...this.backend.sessionParams?.(this.opts.cwd) });
+      raw = await this.request(this.provider === "deepseek" ? "session/resume" : "session/load", { sessionId, cwd: this.opts.cwd, mcpServers, ...this.backend.sessionParams?.(this.opts.cwd) });
       // The replay is the session's past turns; whatever the backend still
       // holds open from it is settled, inside the host's replay window.
       this.endTurn("completed");
@@ -875,6 +875,8 @@ export class AcpClient extends EventEmitter {
       typeof textOrBlocks === "string"
         ? [{ type: "text", text: textOrBlocks }]
         : textOrBlocks;
+    if (this.provider === "deepseek" && prompt.some(block => block.type === "image"))
+      throw new Error("DeepSeek does not accept image attachments on this ACP route.");
     let raw: any;
     try {
       raw = await this.request("session/prompt", {
@@ -1389,6 +1391,7 @@ export class AcpClient extends EventEmitter {
             try {
               const tk = spawn("taskkill", ["/PID", String(proc.pid), "/T", "/F"]);
               tk.on("error", () => { try { proc.kill(); } catch { /* already gone */ } });
+              tk.once("exit", code => { if (code !== 0) { try { proc.kill(); } catch { /* already gone */ } } });
             } catch { try { proc.kill(); } catch { /* already gone */ } }
           } else {
             try { proc.kill(); } catch { /* already gone */ }
@@ -1422,6 +1425,7 @@ export class AcpClient extends EventEmitter {
         try {
           const tk = spawn("taskkill", ["/PID", String(proc.pid), "/T", "/F"]);
           tk.on("error", fallbackKill);
+          tk.once("exit", code => { if (code !== 0) fallbackKill(); });
         } catch {
           fallbackKill();
         }
@@ -1689,6 +1693,16 @@ export class AcpClient extends EventEmitter {
       return;
     }
     if (r.event === "configOptionUpdate") {
+      if (this.provider === "deepseek") {
+        const models = this.backend.normalizeSessionResponse({ configOptions: r.configOptions })?.models?.availableModels;
+        if (Array.isArray(models)) this.availableModels = models.map((model: any) => ({
+          modelId: model.modelId, name: model.name,
+          totalContextTokens: this.availableModels.find(old => old.modelId === model.modelId)?.totalContextTokens,
+          supportsReasoningEffort: model._meta?.supportsReasoningEffort === true,
+          reasoningEffort: model._meta?.reasoningEffort,
+          reasoningEfforts: model._meta?.reasoningEfforts?.map((effort: any) => effort.value),
+        }));
+      }
       const state = this.backend.configState({ configOptions: r.configOptions }, {
         modelId: this.currentModelId,
         reasoningEffort: this.currentReasoningEffort,
@@ -1704,6 +1718,7 @@ export class AcpClient extends EventEmitter {
         this.currentModeId = state.modeId;
         this.emit("modeChanged", state.modeId);
       }
+      if (this.provider === "deepseek") this.emit("modelChanged", this.currentModelId);
       return;
     }
     if (r.event === "commandsUpdate") {

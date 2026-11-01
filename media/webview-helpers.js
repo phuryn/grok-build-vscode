@@ -1,11 +1,12 @@
 (function (root) {
   // Kept set-equal to INTERNAL_PROVIDERS by provider-enumerations.test.ts.
   const PROVIDER_ACTIONS = {
-    grok: { label: "Grok", deleteHistory: true, compact: true },
-    codex: { label: "Codex", deleteHistory: true, compact: true },
-    claude: { label: "Claude", deleteHistory: true, compact: true },
-    muse: { label: "Muse Code", deleteHistory: false, compact: false },
-    agy: { label: "Antigravity", deleteHistory: false, compact: false },
+    grok: { label: "Grok", deleteHistory: true, compact: true, clientMcp: true },
+    codex: { label: "Codex", deleteHistory: true, compact: true, clientMcp: true },
+    claude: { label: "Claude", deleteHistory: true, compact: true, clientMcp: true },
+    muse: { label: "Muse Code", deleteHistory: false, compact: false, clientMcp: false },
+    agy: { label: "Antigravity", deleteHistory: false, compact: false, clientMcp: false },
+    deepseek: { label: "DeepSeek", deleteHistory: false, compact: false, clientMcp: false },
   };
   function providerSupports(provider, action) {
     return Object.hasOwn(PROVIDER_ACTIONS, provider || "grok")
@@ -95,7 +96,7 @@
     "listRoutines", "saveRoutine", "deleteRoutine", "setRoutinePaused", "runRoutineNow",
     "setShowThinking", "setAppPurpose", "setExpandCommandOutputs",
     "dropFile", "permissionAnswer", "exitPlanAnswer", "questionAnswer", "questionCancel",
-    "setContextWindow", "setModel", "installCodex", "cancelCodexInstall", "installAgy", "cancelAgyInstall", "agySignIn", "setExperimentalAntigravity", "runInstallCmd", "runMuseInstallCmd", "runGrokLogin", "cancelDeviceLogin", "submitDeviceLoginCode", "logout", "checkGrokUpdate", "updateGrok", "updateCodex", "updateClaude",
+    "setContextWindow", "setModel", "installCodex", "cancelCodexInstall", "installAgy", "cancelAgyInstall", "agySignIn", "setExperimentalAntigravity", "setExperimentalDeepSeek", "installDeepSeek", "cancelDeepSeekInstall", "deepseekConnect", "setDeepSeekHarness", "runInstallCmd", "runMuseInstallCmd", "runGrokLogin", "cancelDeviceLogin", "submitDeviceLoginCode", "logout", "checkGrokUpdate", "updateGrok", "updateCodex", "updateClaude",
     "recheckConnection", "refreshProviders", "retryProviderSession", "listSessions", "listRepoSessions", "selectRepo", "toggleRepoPin", "setRepoArchived", "setRepoColor", "setRepoIcon", "toggleSessionPin", "resumeSession", "renameSession", "deleteSession",
       "clearAllSessions", "pickFile", "mentionQuery", "addMentionFile", "listProjectDir", "readProjectFile", "writeProjectFile", "gitStatus", "gitFileDiff", "turnFileDiff", "turnFileOpenDiff", "gitRun", "pasteImage", "uploadFile", "voiceStart", "voiceStop",
       "remoteVoiceStart", "remoteVoiceChunk", "remoteVoiceStop", "setVoiceBackend", "configureOpenAiVoice",
@@ -2196,7 +2197,7 @@
       if (known.isRemote && tip.remoteNeedsMcpSettings && !known.mcpSettings) return false;
       // -1 is "the host never told us" — see the doc comment.
       if (tip.id === "routines" && known.routineCount < 0) return false;
-      if (tip.id === "connectors" && known.connectorCount < 0) return false;
+      if (tip.id === "connectors" && (known.connectorCount < 0 || f.clientMcp === false)) return false;
       return tip.eligible(known);
     });
   }

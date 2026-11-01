@@ -265,6 +265,6 @@ describe("New session in the top bar", () => {
 describe("context popover width", () => {
   it("caps the shared popover at 350px in CSS", () => {
     const css = readFileSync(fileURLToPath(new URL("../media/chat.css", import.meta.url)), "utf8");
-    expect(css).toMatch(/#context-popover\s*\{[^}]*max-width:\s*350px/);
+    expect(css).toMatch(/#context-popover\s*\{[^}]*max-width:\s*min\(350px, var\(--context-panel-width/);
   });
 });

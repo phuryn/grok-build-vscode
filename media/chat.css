@@ -1432,7 +1432,8 @@ a.pr-open:hover {
      phone: the cap was never the binding constraint, the intrinsic width was.
      Ask for the content's natural width and let max-width do the capping. */
   width: max-content;
-  max-width: 350px;
+  min-width: 0;
+  max-width: min(350px, var(--context-panel-width, calc(100vw - 12px)));
   box-sizing: border-box;
 }
 /* 350px is a desk number. On a phone the rows want more, and the ask was for
@@ -1440,10 +1441,15 @@ a.pr-open:hover {
    clears, so it stays where it is and `width: max-content` above is what
    actually lets the box take it. */
 @media (hover: none), (pointer: coarse) {
-  #context-popover { max-width: min(94vw, 420px); }
+  #context-popover { max-width: min(94vw, 420px, var(--context-panel-width, calc(100vw - 12px))); }
 }
 #context-popover .popover-fineprint,
-#context-popover .popover-info { white-space: normal; }
+#context-popover .popover-info { white-space: normal; overflow-wrap: anywhere; min-width: 0; }
+#context-popover .popover-info { flex-wrap: wrap; }
+#context-popover .context-compact {
+  box-sizing: border-box; white-space: normal; overflow-wrap: anywhere;
+  height: auto; min-height: 28px; padding: 6px 10px;
+}
 /* A figure is one word however the label behaves: `overflow-wrap: anywhere` is
    there for long version strings in the About panel, and applied to a number it
    breaks it mid-digits. Wrapping is the label's job. */

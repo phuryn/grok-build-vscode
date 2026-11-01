@@ -1,0 +1,14 @@
+# dsh 0.2.1-rc.5: retain the complete sdk-minimal tree, replace only transport.
+- id: sdk-app-startup
+  disabled: true
+- id: sdk-jsonrpc-server
+  disabled: true
+- insert:
+    - id: acp-app-startup
+      name: '@deepseek-ai/dsh-acp-app'
+    - id: acp
+      name: '@deepseek-ai/dsh-acp'
+      inject: [acpAppStartup]
+      config:
+        provider: deepseek-official
+        model: deepseek-v4-flash

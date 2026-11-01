@@ -117,6 +117,9 @@ import { pickSttBackend, resolveOpenAiVoiceKey, SttBackend, SttPreference, Voice
 import { OPENAI_STT_MODEL } from "./openai-voice";
 import { summarizeForSpeech } from "./speech-summary";
 import type { PromptResultMeta, PromptUsage, SessionInfoContext } from "./acp-dispatch";
+import { DeepSeekBackend, DEEPSEEK_COLD_REOPEN, type DeepSeekHarness } from "./deepseek-backend";
+import { DEEPSEEK_API_KEY_SECRET, deepseekKey, validDeepSeekKey, isDeepSeekCredentialError, deepseekPromptErrorText } from "./deepseek-auth";
+import { locateDeepSeek, installManagedDeepSeek, DEEPSEEK_VERSION } from "./deepseek-managed-installer";
 import { MediaRef, adapterCompactSignal, adapterContextOccupancy, agentTimestampMsFromMeta, autoCompactStartedNote, childStreamFromRoute, commandOutputForToolCall, commandOutputFromLiveTerminal, contextUsedFromCompactNotification, enforceCompleteSessionCost, errorDetail, gateZeroTokenMeta, isAuthErrorText, isCredentialError, isIncompatibleAgentError, isResumeNotFound, isRateLimitError, isSubagentLifecycleUpdate, occupancyFromAdapterTurn, parseSessionInfoContext, permissionOutcomeFor, promptErrorText, rateLimitNoticeText, sessionInfoCacheFresh, sumUsage, summarizeBackgroundCommand, usageIsRealMeasurement, type UpdateRoute } from "./acp-dispatch";
 import { createMcpPrepareState, prepareMcpToolCall } from "./mcp-tool";
 import { EFFORT_PREFS_KEY, MUSE_MODE_PREF_KEY, MUSE_ON_REQUEST_UNAVAILABLE, museSandboxUnavailable, museOnRequestUnavailable, resolvedDefaultMode, configWriteTarget, isMuseModeId, modeToRemember, rememberedEffort, sessionModes, startsInNativeAuto, startsInYolo, musePosture, museShellSandboxEnabled, usesClientAutoAccept, type ModeId, type MuseSettings, type EffortPrefs } from "./mode-prefs";
@@ -846,6 +849,9 @@ export class GrokSidebar {
   private adapterHistoryRuns?: Map<AcpProvider, Promise<void>>;
   private codexInstallAbort?: AbortController;
   private agyInstallAbort?: AbortController;
+  private deepseekInstallAbort?: AbortController;
+  private deepseekKeySource?: "environment" | "saved";
+  private deepseekSessionCache = new Map<string, SessionListEntry[]>();
   private providerConnectionState: ProviderConnections = {};
   private providerRuns = new Map<AcpProvider, AbortController>();
   private providerLoginAttempts = new Map<AcpProvider, AbortController>();
@@ -1092,7 +1098,7 @@ export class GrokSidebar {
     "setRoutinePaused",
     "runRoutineNow",
     "setShowThinking",
-    "setExperimentalAntigravity",
+    "setExperimentalAntigravity", "setExperimentalDeepSeek", "installDeepSeek", "cancelDeepSeekInstall", "deepseekConnect",
     "setAppPurpose",
     "setExpandCommandOutputs",
     "setSteerByDefault",
@@ -1838,6 +1844,9 @@ export class GrokSidebar {
       });
       return this.agyServerPath;
     }
+    if (provider === "deepseek") return this.deepseekOffered() ? locateDeepSeek({
+      configuredPath: this.host.getConfiguration("grok").get<string>("deepseekPath", ""), storageRoot: this.context.globalStorageUri.fsPath,
+    }) : undefined;
     if (this.claudeCliPath && fs.existsSync(this.claudeCliPath)) return this.claudeCliPath;
     const located = locateClaudeCli({
       configuredPath: this.host.getConfiguration("grok").get<string>("claudeCliPath", ""),
@@ -1873,14 +1882,24 @@ export class GrokSidebar {
       muse: !!this.locateProvider("muse"),
       // Not offered reads as not installed, so nothing can run it.
       agy: this.agyOffered() && !!this.locateProvider("agy"),
+      deepseek: this.deepseekOffered() && !!this.locateProvider("deepseek"),
     };
   }
 
   /**
-   * Antigravity is experimental and desk-only: off unless
-   * `grok.experimentalAntigravity` is set, and never on a cloud machine. Every
-   * Antigravity surface keys off the host advertising it, so this is the gate.
+   * Experimental providers are desk-only. Their providerState advertisement
+   * is the renderer gate; cloud hosts never advertise either one.
    */
+  private deepseekOffered(): boolean {
+    return this.host?.getConfiguration?.("grok")?.get<boolean>("experimentalDeepSeek", false) === true && !isCloudEnvironment();
+  }
+
+  private async deepseekCredential() {
+    const credential = deepseekKey(process.env, await this.context.secrets.get(DEEPSEEK_API_KEY_SECRET));
+    this.deepseekKeySource = credential.source;
+    return credential;
+  }
+
   private agyOffered(): boolean {
     return this.host?.getConfiguration?.("grok")?.get<boolean>("experimentalAntigravity", false) === true
       && !isCloudEnvironment();
@@ -1897,7 +1916,7 @@ export class GrokSidebar {
     state: "connect-agent" | ReturnType<typeof missingProviderState>;
     provider?: AcpProvider;
   } {
-    if (provider === "agy" && !this.agyOffered()) return { state: "connect-agent" };
+    if (provider === "agy" && !this.agyOffered() || provider === "deepseek" && !this.deepseekOffered()) return { state: "connect-agent" };
     return {
       state: this.usableProviders().length ? missingProviderState(provider) : "connect-agent",
       provider,
@@ -1911,6 +1930,7 @@ export class GrokSidebar {
     if (provider === "codex") return { cache: this.codexSessionCache };
     if (provider === "muse") return { cache: this.museSessionCache ??= new Map() };
     if (provider === "agy") return { cache: this.agySessionCache ??= new Map() };
+    if (provider === "deepseek") return { cache: this.deepseekSessionCache ??= new Map() };
     if (provider === "claude") return { cache: this.claudeSessionCache };
     return undefined;
   }
@@ -1939,11 +1959,12 @@ export class GrokSidebar {
     }));
   }
 
-  private createProviderBackend(provider: AcpProvider): CodexBackend | ClaudeBackend | MuseBackend | AgyBackend | undefined {
+  private createProviderBackend(provider: AcpProvider, harness?: DeepSeekHarness): CodexBackend | ClaudeBackend | MuseBackend | AgyBackend | DeepSeekBackend | undefined {
     if (provider === "codex") return new CodexBackend();
     if (provider === "claude") return new ClaudeBackend();
     if (provider === "muse") return new MuseBackend(undefined, museSandboxUnavailable(isCloudEnvironment()));
     if (provider === "agy") return new AgyBackend();
+    if (provider === "deepseek") return new DeepSeekBackend({ storageRoot: this.context.globalStorageUri.fsPath, harness });
     return undefined;
   }
 
@@ -1979,7 +2000,7 @@ export class GrokSidebar {
    * something available the session's own provider is the specific gap to
    * close, so show that.
    */
-  private onboardingForSession(session: Session): "connect-agent" | "auth-required" | "codex-login" | "claude-login" | "muse-login" | "agy-login" {
+  private onboardingForSession(session: Session): "connect-agent" | "auth-required" | "codex-login" | "claude-login" | "muse-login" | "agy-login" | "deepseek-login" {
     if (session.hasHistory) return providerLoginState(session.provider);
     return this.usableProviders().length ? providerLoginState(session.provider) : "connect-agent";
   }
@@ -2170,6 +2191,7 @@ export class GrokSidebar {
   private async reprobeProviderCredentials(provider: AcpProvider, requireProof = false): Promise<boolean> {
     if (!this.hasProviderConsent(provider)) return false;
     const signal = this.providerRunSignal(provider);
+    if (provider === "deepseek") return this.deepseekOffered() && !!(await this.deepseekCredential()).key;
     // MSP exposes no credential-status operation. A catalog read cannot prove sign-in.
     if (provider === "muse") return false;
     // Antigravity's honest cheap answer is its stored sign-in. A probe process
@@ -2607,6 +2629,7 @@ export class GrokSidebar {
   private async deviceLoginCredentialReady(provider: AcpProvider, requireProof = false): Promise<boolean> {
     if (!this.hasProviderConsent(provider)) return false;
     const signal = this.providerRunSignal(provider);
+    if (provider === "deepseek") return this.reprobeProviderCredentials(provider, requireProof);
     if (provider === "muse") return this.providerCredentialFilePresent(provider);
     if (provider === "agy") return this.reprobeProviderCredentials(provider, requireProof);
     if (provider === "claude") {
@@ -2826,20 +2849,24 @@ export class GrokSidebar {
     });
   }
 
-  /** Download the pinned Antigravity server into extension storage. Desk only:
-   *  the message is host-local, and the gate keeps it off cloud machines. */
-  private async installManagedAgyServer(): Promise<void> {
-    if (this.agyInstallAbort || !this.agyOffered()) return;
-    if (this.locateProvider("agy")) {
-      this.postLocal({ type: "onboarding", state: "agy-login", provider: "agy", platform: process.platform });
+  /** Shared desk installer UI and progress for Antigravity and DeepSeek. */
+  private async installManagedAgyServer(provider: "agy" | "deepseek" = "agy"): Promise<void> {
+    if (provider === "agy" ? this.agyInstallAbort || !this.agyOffered() : this.deepseekInstallAbort || !this.deepseekOffered()) return;
+    if (this.locateProvider(provider)) {
+      this.postLocal({ type: "onboarding", state: providerLoginState(provider), provider, platform: process.platform });
+      return;
+    }
+    if (provider === "deepseek" && this.host.getConfiguration("grok").get<string>("deepseekPath", "").trim()) {
+      this.postLocal({ type: "onboarding", state: "missing-deepseek", provider, platform: process.platform,
+        reason: "The configured DeepSeek installation is incomplete or uses a different version. Correct grok.deepseekPath, or clear it to use the managed install." });
       return;
     }
     const controller = new AbortController();
-    this.agyInstallAbort = controller;
+    if (provider === "agy") this.agyInstallAbort = controller; else this.deepseekInstallAbort = controller;
     // One frame per percent: the archive arrives in thousands of chunks.
     let lastStep = "";
     try {
-      const binary = await installManagedAgy({
+      const binary = await (provider === "agy" ? installManagedAgy : installManagedDeepSeek)({
         storageRoot: this.context.globalStorageUri.fsPath,
         signal: controller.signal,
         onProgress: (phase, value) => {
@@ -2847,22 +2874,23 @@ export class GrokSidebar {
           const step = `${phase}:${percent}`;
           if (step === lastStep) return;
           lastStep = step;
-          this.postLocal({ type: "agyInstallProgress", phase, receivedBytes: value?.receivedBytes, totalBytes: value?.totalBytes });
+          this.postLocal({ type: "agyInstallProgress", provider, phase, receivedBytes: value?.receivedBytes, totalBytes: value?.totalBytes });
         },
       });
-      this.agyServerPath = binary;
+      if (provider === "agy") this.agyServerPath = binary;
       this.postProviderState();
-      this.postLocal({ type: "agyInstallProgress", phase: "idle" });
-      this.postLocal({ type: "onboarding", state: "agy-login", provider: "agy", platform: process.platform });
+      this.postLocal({ type: "agyInstallProgress", provider, phase: "idle" });
+      this.postLocal({ type: "onboarding", state: providerLoginState(provider), provider, platform: process.platform });
     } catch (error) {
       const reason = controller.signal.aborted
-        ? "Antigravity installation was cancelled."
-        : `Antigravity installation failed: ${errorDetail(error)}`;
-      this.host.appendLine(`[agy] managed install failed: ${reason}`);
-      this.postLocal({ type: "agyInstallProgress", phase: "idle", reason });
-      this.postLocal({ type: "onboarding", state: "missing-agy", platform: process.platform, reason, provider: "agy" });
+        ? providerDisplayName(provider) + " installation was cancelled."
+        : `${providerDisplayName(provider)} installation failed: ${errorDetail(error)}`;
+      this.host.appendLine(`[${provider}] managed install failed: ${reason}`);
+      this.postLocal({ type: "agyInstallProgress", provider, phase: "idle", reason });
+      this.postLocal({ type: "onboarding", state: missingProviderState(provider), platform: process.platform, reason, provider });
     } finally {
       if (this.agyInstallAbort === controller) this.agyInstallAbort = undefined;
+      if (this.deepseekInstallAbort === controller) this.deepseekInstallAbort = undefined;
     }
   }
 
@@ -2924,6 +2952,8 @@ export class GrokSidebar {
     return {
       type: "providerState",
       providers: [
+        ...(this.deepseekOffered() ? [{ id: "deepseek" as const, connected: connected.deepseek === true && located.deepseek === true, ...button,
+          keySource: this.deepseekKeySource, ...(needsLogin.deepseek ? { needsLogin: true } : {}), ...(located.deepseek ? { cliVersion: DEEPSEEK_VERSION } : {}) }] : []),
         { id: "muse", connected: museConnected, ...button,
           ...(museConnected && versions.muse ? { cliVersion: versions.muse } : {}),
           ...(needsLogin.muse ? { needsLogin: true } : {}) },
@@ -3046,7 +3076,7 @@ export class GrokSidebar {
         if (opts.credentials === true) await this.reprobeProviderCredentials(provider).catch(() => false);
         // Antigravity's version arrives with its handshake: there is no cheap
         // `--version` for a server that takes 15-25 s to start on Windows.
-        if (provider !== "grok" && provider !== "agy") await this.reprobeProviderVersion(provider);
+        if (provider !== "grok" && provider !== "agy" && provider !== "deepseek") await this.reprobeProviderVersion(provider);
       }));
     } finally {
       this.providerRefreshInFlight = false;
@@ -3332,6 +3362,18 @@ export class GrokSidebar {
       if (e.affectsConfiguration("grok.codexCliPath")) {
         this.codexCliPath = undefined;
         this.postProviderState();
+      }
+      if (e.affectsConfiguration("grok.deepseekPath") || e.affectsConfiguration("grok.experimentalDeepSeek")) {
+        this.deepseekInstallAbort?.abort();
+        for (const s of new Set([this.focused, ...this.pool, ...this.remoteClients.detachedActiveValues()])) {
+          if (s.provider === "deepseek") {
+            const client = this.detachClient(s); void client?.dispose();
+            s.priming = false; s.status = "idle";
+            this.emit(s, { type: "setBusy", value: false });
+          }
+        }
+        this.deepseekSessionCache?.clear(); this.adapterHistoryStamps?.delete("deepseek");
+        void this.deepseekCredential().then(() => this.postProviderState());
       }
       if (e.affectsConfiguration("grok.agyServerPath") || e.affectsConfiguration("grok.experimentalAntigravity")) {
         this.agyServerPath = undefined;
@@ -4082,6 +4124,7 @@ Only continue if you trust this code.`,
     // setMode throws "no session" (and for Plan that error is surfaced to the user).
     // The mode button is disabled while busy; this backstops the toggle-mode command.
     if (!session.client || !session.client.sessionId || session.priming) return;
+    if (session.provider === "deepseek" && session.deepseekHarness === "minimal") return;
     if (session.provider === "muse" && session.museSandboxUnavailable && modeId === "onRequest") {
       this.reportRequester(requester, "warning", museOnRequestUnavailable(session.museSandboxUnavailable));
       return;
@@ -4729,7 +4772,7 @@ Only continue if you trust this code.`,
     // Auto accept is not a verdict on a plan-review card. Same rule as
     // autoApprovePendingPermissions, including after a failed mode RPC
     // that already cleared the Plan bit.
-    if (supportsAutoAccept(session.provider) && usesClientAutoAccept(session.provider) && session.autoApprove && !planActive && !isPlanReviewPermission(req.toolCall?.kind)) {
+    if (!(session.provider === "deepseek" && session.deepseekHarness === "minimal") && supportsAutoAccept(session.provider) && usesClientAutoAccept(session.provider) && session.autoApprove && !planActive && !isPlanReviewPermission(req.toolCall?.kind)) {
       const opt = pickAutoAcceptOption(req.options, session.provider);
       if (opt) { client.respondPermission(req.id, opt.optionId); return; }
     }
@@ -4829,7 +4872,7 @@ Only continue if you trust this code.`,
    *  unread plan, and the card must stay answerable. A card with no allow
    *  option is left for the user as well. */
   private autoApprovePendingPermissions(session: Session): void {
-    if (!supportsAutoAccept(session.provider)) return;
+    if (!supportsAutoAccept(session.provider) || session.provider === "deepseek" && session.deepseekHarness === "minimal") return;
     const client = session.client;
     if (!usesClientAutoAccept(session.provider)) return;
     if (!client || session.pendingPermissions.size === 0) return;
@@ -9410,6 +9453,13 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     provider: AcpProvider = "grok",
     opts: { fromRemote?: boolean; report?: (text: string) => void; signOutCli?: boolean } = {},
   ): Promise<void> {
+    if (provider === "deepseek" && opts.signOutCli) {
+      if (opts.fromRemote || !this.deepseekOffered()) return;
+      await this.context.secrets.delete(DEEPSEEK_API_KEY_SECRET);
+      await this.deepseekCredential();
+      await this.disconnectProvider(provider, opts.report);
+      return;
+    }
     if (!opts.signOutCli && !isCloudEnvironment()) {
       await this.disconnectProvider(provider, opts.report);
       return;
@@ -9991,6 +10041,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     this.codexInstallAbort = undefined;
     this.agyInstallAbort?.abort(new Error("Installation cancelled."));
     this.agyInstallAbort = undefined;
+    this.deepseekInstallAbort?.abort(new Error("Installation cancelled."));
+    this.deepseekInstallAbort = undefined;
     void this.agyRelay?.close();
     try { this.keepAwake.stop(); } catch { /* the pid watcher reaps it anyway */ }
     try { this.settingsEditor?.dispose(); } catch { /* tab already gone */ }
@@ -10072,6 +10124,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
 
   private probeProviderVersion(provider: AcpProvider): Promise<string> {
     if (!this.hasProviderConsent(provider)) return Promise.resolve("");
+    if (provider === "deepseek") return Promise.resolve(DEEPSEEK_VERSION);
     if (provider === "agy") return Promise.resolve(this.providerCliVersions.agy ?? "");
     if (provider === "codex") return this.probeCodexVersion();
     if (provider === "claude") return this.probeClaudeVersion();
@@ -10937,7 +10990,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     target: Session = this.focused,
     intent: SessionStartIntent = "replace",
     clock?: OpenClock,
-    opts: { silent?: boolean; canReplace?: () => boolean } = {},
+    opts: { silent?: boolean; canReplace?: () => boolean; modelId?: string; deepseekHarness?: DeepSeekHarness } = {},
   ): Promise<AcpClient | undefined> {
     return this.withCloudHostWork(async () => {
       if (target.provider === "muse") await this.museCliChange;
@@ -10954,7 +11007,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     /** A start the PERSON did not ask for. Its failure belongs wherever the
      *  caller is reporting, never as a red banner in a conversation they were
      *  only looking at. The caller reads the undefined return instead. */
-    opts: { silent?: boolean; canReplace?: () => boolean } = {},
+    opts: { silent?: boolean; canReplace?: () => boolean; modelId?: string; deepseekHarness?: DeepSeekHarness } = {},
   ): Promise<AcpClient | undefined> {
     // Read the caller's clock BEFORE this function can add to it: the load
     // reservation, the workspace-switch queue, the cwd resolution, the
@@ -11017,7 +11070,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // Session (hasHistory still false) and then loads an existing conversation
     // into it. Treating that as empty handed a Grok rail click to Codex, then
     // blamed Codex for the spawn that followed.
-    if (!resumeId && !target.hasHistory && !this.usableProviders().includes(target.provider)) {
+    if (!resumeId && !opts.deepseekHarness && !target.hasHistory && !this.usableProviders().includes(target.provider)) {
       const fallback = this.defaultProviderForProject(this.sessionCwd(target));
       if (fallback !== target.provider && this.usableProviders().includes(fallback)) {
         this.host.appendLine(
@@ -11093,6 +11146,12 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     clock.record("approve-gate", approveGateMs);
     const openedAt = clock.now();
     const replacedClient = session.client;
+    // dsh resume supplies no transcript. A session frame in our buffer proves
+    // this host already holds this conversation, even after its client died.
+    // A cold open may have reserved activeSessionId but has no such frame.
+    const warmDeepSeekResume = session.provider === "deepseek" && !!resumeId
+      && session.activeSessionId === resumeId
+      && session.buffer.some(m => m.type === "session" && m.sessionId === resumeId);
     if (replacedClient) {
       this.queueInFlightPlanCommentsOnExit(session, replacedClient, session.gen);
     }
@@ -11107,7 +11166,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       await testDelay.wait;
       if (gen !== session.gen) return undefined;
     }
-    session.buffer = [];
+    if (!warmDeepSeekResume) session.buffer = [];
     session.subscriptionUsage = undefined;
     session.status = "idle";
     // The replacement session has no turn, whatever the old one was doing. This
@@ -11145,7 +11204,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     }
     const disposeMs = replacedClient ? clock.elapsed(disposeAt) : 0;
     clock.record("dispose", disposeMs);
-    if (session.provider === "muse" && resumeId) {
+    if ((session.provider === "muse" || session.provider === "deepseek") && resumeId) {
       await this.sessionMetaWrites;
       if (gen !== session.gen) return undefined;
     }
@@ -11153,7 +11212,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // toolbar shows the right one from the first paint — no Agent → Auto accept
     // flash while the session spins up and primes. Resumed sessions stay
     // verdict-driven (plan-restore decides), so they don't pre-apply it.
-    const rememberedYolo = supportsAutoAccept(session.provider) && startsInYolo(
+    if (session.provider === "deepseek") session.deepseekHarness = (resumeId ? this.state.get<SessionMetaOverrides>(SESSION_META_KEY, {})[resumeId]?.deepseekHarness : opts.deepseekHarness ?? session.deepseekHarness) ?? "default";
+    const rememberedYolo = !(session.provider === "deepseek" && session.deepseekHarness === "minimal") && supportsAutoAccept(session.provider) && startsInYolo(
       this.defaultModeForProvider(session.provider),
       !!resumeId,
     );
@@ -11183,7 +11243,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     session.museShellSandbox = session.musePosture ? museShellSandboxEnabled(session.musePosture, !!session.museSandboxUnavailable) : undefined;
     session.autoApprove = session.musePosture ? session.musePosture.mode === "yolo" : rememberedYolo || configAutoApprove;
     session.planActive = false;
-    session.hasHistory = !!resumeId;
+    if (!warmDeepSeekResume) session.hasHistory = !!resumeId;
     session.suppressContent = false;
     session.captureAgentText = undefined;
     session.lastSessionInfoAt = 0;
@@ -11196,11 +11256,11 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     if (session.planModeRecovery?.warningTimer) clearTimeout(session.planModeRecovery.warningTimer);
     session.planModeRecovery = undefined;
     session.interjectionCount = 0;
-    session.historyEventCount = 0;
+    if (!warmDeepSeekResume) session.historyEventCount = 0;
     session.replayUserRaw = "";
     session.replayUserCounted = false;
     session.replayUserIsInterjection = false;
-    session.userMessageCount = 0;
+    if (!warmDeepSeekResume) session.userMessageCount = 0;
     if (!resumeId || resumeId !== session.activeSessionId) {
       session.telemetrySessionOrigin = undefined;
       session.remoteMessageReported = false;
@@ -11212,9 +11272,11 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     session.feedbackCommandsAdvertise = undefined;
     session.liveFeedbackEligible = false;
     session.turnRating = 0;
-    session.activeSessionId = undefined;
-    session.titleGenerated = false;
-    session.firstUserMessageForTitle = undefined;
+    if (!warmDeepSeekResume) session.activeSessionId = undefined;
+    if (!warmDeepSeekResume) {
+      session.titleGenerated = false;
+      session.firstUserMessageForTitle = undefined;
+    }
     session.priming = true;
     session.compactUsageArmed = false;
     session.adapterCompactThisTurn = false;
@@ -11226,7 +11288,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // turn re-arms it.
     this.emit(session, sessionModeMessage(session, session.musePosture?.mode ?? (session.autoApprove ? "yolo" : session.nativeAuto ? "auto" : "agent")));
     if (configAutoApprove) this.noticeAlwaysApproveOnce(this.sessionCwd(session));
-    if (resumeId) this.emit(session, { type: "clearMessages" });
+    if (resumeId && !warmDeepSeekResume) this.emit(session, { type: "clearMessages" });
 
     // Lock the composer (spinner, disabled) for start() + newSession()/load so a
     // prompt cannot be sent before the session exists. Success and failure paths
@@ -11253,6 +11315,15 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // server's own session/new start Google's browser sign-in, which on a
     // phone-driven start opens at an empty desk. Signing in stays a press at
     // the computer.
+    const deepseekCredential = session.provider === "deepseek" ? await this.deepseekCredential() : undefined;
+    if (session.provider === "deepseek" && !deepseekCredential?.key) {
+      if (gen !== session.gen) return undefined;
+      this.pool.delete(session); session.priming = false;
+      this.emit(session, { type: "setBusy", value: false });
+      this.setProviderNeedsLogin("deepseek", true);
+      this.emit(session, { type: "onboarding", state: "deepseek-login", provider: "deepseek", platform: process.platform });
+      return undefined;
+    }
     const agyCredential = session.provider === "agy" ? await this.agyCredentialFor() : undefined;
     if (session.provider === "agy" && !agyCredential) {
       if (gen !== session.gen) return undefined;
@@ -11315,7 +11386,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     }
     if (this.mcpConnectorKeysReady) await this.mcpConnectorKeysReady;
     if (gen !== session.gen) return undefined;
-    const env = session.provider === "grok" ? this.buildEnv(cwd) : { ...process.env };
+    const env = session.provider === "grok" ? this.buildEnv(cwd) : { ...process.env, ...(deepseekCredential?.key ? { DEEPSEEK_API_KEY: deepseekCredential.key } : {}) };
     const effortStr = this.defaultEffortForProvider(session.provider);
     const effort = effortStr ? (effortStr as EffortLevel) : undefined;
     // Transient spawn/init after an update can throw once; retry the plain
@@ -11328,7 +11399,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // gateway address, so its output is redacted for the relay's prefix.
     const createBoundClient = (relay?: AgyRelayLease): AcpClient => {
     try { runSignal.throwIfAborted(); } catch (error) { relay?.release(); throw error; }
-    const redact = (text: string) => relay ? this.agyKeyRelay().redact(text) : text;
+    const redact = (text: string) => deepseekCredential?.key ? text.split(deepseekCredential.key).join("[redacted]") : relay ? this.agyKeyRelay().redact(text) : text;
     const client = new AcpClient({
       signal: runSignal,
       cliPath,
@@ -11342,7 +11413,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       ...(session.provider === "grok"
         ? { grokVersion: grokHandshakeVersion, grokVersionVerified }
         : { backend: session.provider === "muse" ? new MuseBackend(session.musePosture, session.museSandboxUnavailable)
-          : session.provider === "agy" ? new AgyBackend({ keyMode: !!relay }) : this.createProviderBackend(session.provider) }),
+          : session.provider === "agy" ? new AgyBackend({ keyMode: !!relay }) : this.createProviderBackend(session.provider, session.deepseekHarness) }),
     });
     if (relay) client.once("exit", () => relay.release());
     session.client = client;
@@ -11414,6 +11485,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
             provider: session.provider,
             providerCwd: cwd,
             ...(posture ? { musePosture: posture } : {}),
+            ...(session.provider === "deepseek" ? { deepseekHarness: session.deepseekHarness ?? "default" } : {}),
           },
         }));
       }
@@ -11425,6 +11497,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         worktree: !!session.worktree,
         provider: session.provider,
       });
+      if (session.provider === "deepseek") this.emit(session, sessionModeMessage(session, this.displayMode(session)));
       if (session.provider === "grok") {
         const metaEnabled = parseFeedbackEnabledMeta(res);
         if (metaEnabled !== undefined) session.feedbackMetaEnabled = metaEnabled;
@@ -11464,6 +11537,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     client.on("modelChanged", (id) => {
       if (gen !== session.gen) return;
       this.emit(session, { type: "modelChanged", modelId: id });
+      if (session.provider === "deepseek") this.emit(session, sessionModeMessage(session, this.displayMode(session)));
     });
     client.on("modeChanged", (id) => {
       if (gen !== session.gen) return;
@@ -11735,7 +11809,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     });
     client.on("contextUsage", (used: number | undefined, window?: number) => {
       if (gen !== session.gen) return;
-      if (session.provider === "muse") {
+      if (session.provider === "muse" || session.provider === "deepseek") {
         const id = session.activeSessionId;
         if (id) {
           const current = this.state.get<SessionMetaOverrides>(SESSION_META_KEY, {});
@@ -11978,7 +12052,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       await client.start();
       clock.record("spawn+init", clock.elapsed(spawnAt));
       if (gen !== session.gen) { client.dispose(); return undefined; }
-      const defaultModel = this.providerDefaultForProject(cwd, session.provider) ?? "";
+      const defaultModel = opts.modelId ?? this.providerDefaultForProject(cwd, session.provider) ?? "";
       if (resumeId) {
         replayBegan = true;
         // Queue any saved plans BEFORE replay starts so the webview can interleave
@@ -12035,7 +12109,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
 
         const loadAt = clock.now();
         let replayAt = 0;
-        await this.replayLoadedHistory(session, async () => {
+        const load = async () => {
           try {
             await client.loadSession(resumeId, defaultModel || undefined);
           } catch (e) {
@@ -12057,10 +12131,15 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           clock.record("new", 0);
           clock.record("load", clock.elapsed(loadAt));
           replayAt = clock.now();
-        });
+        };
+        // No replay means neither a replay bracket nor its inference that zero
+        // replayed messages makes this an untouched, switchable conversation.
+        if (session.provider === "deepseek") await load();
+        else await this.replayLoadedHistory(session, load);
         clock.record("replay(post)", clock.elapsed(replayAt));
+        if (session.provider === "deepseek" && !warmDeepSeekResume) this.emit(session, { type: "planNotice", text: DEEPSEEK_COLD_REOPEN });
         session.activeSessionId = resumeId;
-        session.titleGenerated = true; // existing session, name already in storage
+        if (!warmDeepSeekResume) session.titleGenerated = true; // existing session, name already in storage
 
         // Plan-gate restoration: the CLI replays its own current_mode_update
         // events during loadSession, which our modeChanged handler honors by
@@ -12517,7 +12596,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           // A phone can take over a running turn: its send may be queued before
           // handleSend reaches the prompt commit point. Receipt is remote use.
           if (session.hasHistory) this.reportRemoteMessage(session, origin);
-          await this.handleSend(msg.text, msg.bare === true, session, origin, queuedSendCommit, msg.submissionId, undefined, msg.chips);
+          await this.handleSend(msg.text, msg.bare === true, session, origin, queuedSendCommit, msg.submissionId, undefined, msg.chips,
+            // Older renderers (or a provider switch in flight) can miss the
+            // pre-send image gate. Return text to its sender, not every viewer.
+            () => { if (!queuedSendCommit) this.restoreComposerFor(session, requester, msg.text); });
         } finally {
           if (queuedSendCommit) finishQueuedSendCommit(session, queuedSendCommit, false);
         }
@@ -13030,6 +13112,12 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       case "installCodex":
         await this.installManagedCodexCli();
         break;
+      case "installDeepSeek":
+        if (origin === "local") await this.installManagedAgyServer("deepseek");
+        break;
+      case "cancelDeepSeekInstall":
+        if (origin === "local") this.deepseekInstallAbort?.abort(new Error("Installation cancelled."));
+        break;
       case "installAgy":
         if (origin !== "local") break;
         await this.installManagedAgyServer();
@@ -13174,6 +13262,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         );
         break;
       }
+      case "setExperimentalDeepSeek":
+        if (origin === "local" && !isCloudEnvironment()) await this.host.getConfiguration("grok").update("experimentalDeepSeek", !!msg.value, "global");
+        this.postProviderState();
+        break;
       case "setExperimentalAntigravity":
         // The config watcher re-posts providerState, which is what the
         // toggle reads back.
@@ -13326,6 +13418,12 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       }
       case "runGrokLogin": {
         const provider: AcpProvider = isInternalProvider(msg.provider) ? msg.provider : "grok";
+        if (provider === "deepseek") {
+          if (origin !== "local" || !this.deepseekOffered()) break;
+          await this.deepseekCredential(); this.postProviderState();
+          this.postLocal({ type: "onboarding", state: this.locateProvider(provider) ? "deepseek-login" : "missing-deepseek", provider, platform: process.platform });
+          break;
+        }
         if (provider === "agy" && (origin === "remote" || !this.agyOffered())) {
           // Google's sign-in opens a browser on THIS machine, which from a
           // phone would be a desk nobody is sitting at. Refused before any
@@ -13492,6 +13590,62 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           provider,
           launched: true,
         });
+        break;
+      }
+      case "deepseekConnect": {
+        if (origin !== "local" || !this.deepseekOffered() || !this.locateProvider("deepseek")) break;
+        if (msg.key !== undefined) {
+          if (!validDeepSeekKey(msg.key)) break;
+          await this.context.secrets.store(DEEPSEEK_API_KEY_SECRET, msg.key);
+        }
+        const credential = await this.deepseekCredential();
+        if (!credential.key) break;
+        const exits: Promise<void>[] = [];
+        for (const live of new Set([this.focused, ...this.pool, ...this.remoteClients.detachedActiveValues()])) {
+          if (live?.provider !== "deepseek" || !live.client) continue;
+          const client = this.detachClient(live); if (client) exits.push(client.dispose());
+          live.priming = false; live.status = "idle";
+          this.emit(live, { type: "setBusy", value: false });
+        }
+        await Promise.all(exits);
+        this.setProviderNeedsLogin("deepseek", false);
+        await this.setProviderConnected("deepseek", true);
+        await this.adoptSessionsForConnectedProvider("deepseek", session);
+        this.postProviderState();
+        this.postLocal({ type: "onboarding", state: "provider-connected", provider: "deepseek", platform: process.platform });
+        break;
+      }
+      case "setDeepSeekHarness": {
+        const reply = this.composerDraftReply(msg.draftId, requester);
+        if (!this.deepseekOffered() || session.provider !== "deepseek") { reply?.(msg.sessionId); break; }
+        const matches = () => session.client?.sessionId === msg.sessionId && session.gen === msg.generation
+          && session.client?.currentModelId === msg.modelId && !session.priming && !turnIsInFlight(session) && !this.pickerChange;
+        if (!matches() || (msg.harness !== "minimal" && msg.harness !== "default") || (session.deepseekHarness ?? "default") === msg.harness) {
+          reply?.(msg.sessionId);
+          this.emit(session, sessionModeMessage(session, this.displayMode(session)));
+          break;
+        }
+        const locked = () => session.hasHistory || session.userMessageCount > 0;
+        if (locked() && msg.newConversation !== true) {
+          reply?.(msg.sessionId);
+          this.emit(session, { type: "error", text: "Harness is fixed for this conversation. Choose New conversation to use the other harness." });
+          this.emit(session, sessionModeMessage(session, this.displayMode(session)));
+          break;
+        }
+        if (msg.newConversation) {
+          const choice = { harness: msg.harness, modelId: msg.modelId };
+          if (origin === "remote" && clientId) await this.newRemoteSession(clientId, true, undefined, choice);
+          else await this.newFocusedSession(origin, this.sessionCwd(session), undefined, choice);
+        } else {
+          try {
+            await this.startSession(undefined, session, "replace", undefined, {
+              deepseekHarness: msg.harness, modelId: msg.modelId, canReplace: () => matches() && !locked(),
+            });
+          } finally {
+            reply?.(session.client?.sessionId ?? session.activeSessionId ?? msg.sessionId);
+            this.emit(session, sessionModeMessage(session, this.displayMode(session)));
+          }
+        }
         break;
       }
       case "agySignIn": {
@@ -14478,7 +14632,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   private reservedMcpIdentityFor(session: Session): ReservedMcpIdentity {
     const cwd = this.sessionCwd(session);
     const parts: ReservedMcpIdentity[] = [];
-    if (session.provider === "muse" || session.provider === "agy") return { names: [], urls: [] };
+    if (session.provider === "muse" || session.provider === "agy" || session.provider === "deepseek") return { names: [], urls: [] };
     for (const filePath of mcpConfigPaths({
       cwd,
       provider: session.provider,
@@ -15039,6 +15193,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     const cached: SessionListEntry[] = [];
     if (providers.includes("codex")) cached.push(...(this.codexSessionCache.get(projectProviderKey(cwd)) ?? []));
     if (providers.includes("muse")) cached.push(...(this.museSessionCache?.get(projectProviderKey(cwd)) ?? []));
+    if (providers.includes("deepseek")) cached.push(...(this.deepseekSessionCache?.get(projectProviderKey(cwd)) ?? []));
     if (providers.includes("agy")) cached.push(...(this.agySessionCache?.get(projectProviderKey(cwd)) ?? []));
     if (providers.includes("claude")) cached.push(...(this.claudeSessionCache.get(projectProviderKey(cwd)) ?? []));
     // The adapters list everything, so the horizon (HISTORY_HORIZON_MS) is
@@ -15336,6 +15491,19 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         .filter(([, o]) => typeof o?.pinnedAt === "number").map(([id]) => id));
       const catalog = listAgyCatalog(process.platform, { since: Date.now() - HISTORY_HORIZON_MS, keepIds: pinned });
       for (const [key, cwd] of listable()) listed.set(key, agySessionsFor(catalog, cwd, process.platform));
+    } else if (provider === "deepseek") {
+      for (const harness of ["default", "minimal"] as const) {
+        const client = new AcpClient({ signal, cliPath, cwd: this.projectHomeDir(), env: { ...process.env },
+          backend: this.createProviderBackend(provider, harness), log: () => {} });
+        try {
+          await client.start();
+          for (const [key, cwd] of listable()) {
+            const page = await client.listSessions(cwd, process.platform);
+            listed.set(key, [...(listed.get(key) ?? []), ...page.sessions]);
+          }
+        } finally { await client.dispose(); }
+        if (signal.aborted) return;
+      }
     } else {
       const client = await this.adapterHistoryClient(provider, cliPath);
       if (!client || signal.aborted) return;
@@ -15400,6 +15568,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           ...previous,
           provider,
           providerCwd: entry.cwd,
+          ...(entry.deepseekHarness ? { deepseekHarness: entry.deepseekHarness } : {}),
           activeAt: typeof previous.activeAt === "number"
             ? previous.activeAt
             : stableOverrides[entry.sessionId]?.activeAt,
@@ -16670,6 +16839,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       claude: pickSttBackend({ ...state, provider: "claude" }) ?? null,
       muse: pickSttBackend({ ...state, provider: "muse" }) ?? null,
       agy: pickSttBackend({ ...state, provider: "agy" }) ?? null,
+      deepseek: pickSttBackend({ ...state, provider: "deepseek" }) ?? null,
     } };
   }
 
@@ -18132,6 +18302,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     owner: AttachmentOwner = () => this.focused,
     previewId?: string,
   ): Promise<Session | undefined> {
+    if (owner()?.provider === "deepseek") throw new Error("DeepSeek does not accept image attachments on this ACP route.");
     const dir = this.imageStagingDir();
     await fs.promises.mkdir(dir, { recursive: true });
     const absPath = path.join(dir, `image-${randomUUID()}${extFromMime(mimeType)}`);
@@ -18144,6 +18315,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       // raced a reconnect that is about to come back.
       return undefined;
     }
+    if (session.provider === "deepseek") throw new Error("DeepSeek does not accept image attachments on this ACP route.");
     const rel = originPath
       ? normalizeRelPath(path.relative(this.sessionCwd(session), originPath))
       : undefined;
@@ -18386,12 +18558,13 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     submissionId?: string,
     onStarted?: () => void,
     requestedChips?: FileChip[],
+    onImageReadFailure?: () => void,
   ): Promise<void> {
     if (this.cloudHostUpdate && !this.cloudHostUpdate.admitting) {
       this.emit(target ?? this.focused, { type: "error", text: CLOUD_UPDATE_REFUSAL });
       return;
     }
-    await this.withCloudHostWork(() => this.handleAdmittedSend(text, bare, target, origin, queuedSendCommit, submissionId, onStarted, requestedChips));
+    await this.withCloudHostWork(() => this.handleAdmittedSend(text, bare, target, origin, queuedSendCommit, submissionId, onStarted, requestedChips, onImageReadFailure));
   }
 
   private async handleAdmittedSend(
@@ -18399,6 +18572,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     queuedSendCommit?: { text: string; items: QueuedSendEntry[] }, submissionId?: string,
     onStarted?: () => void,
     requestedChips?: FileChip[],
+    onImageReadFailure?: () => void,
   ): Promise<void> {
     // `target` lets a queued-send flush fire into a BACKGROUNDED session (its
     // turn ended while another was focused). Only the focused session may spawn
@@ -18507,7 +18681,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         if (chip.hidden || !isImageChip(chip)) continue;
         const read = await this.readImageChip(chip, session, gen);
         if (read === "gone") return;
-        if (read === "failed") return;
+        if (read === "failed") { onImageReadFailure?.(); return; }
         images.push(read);
       }
     }
@@ -18723,9 +18897,9 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       // prompt went to the session the person is looking at.
       this.host.appendLine(
         `[${session.provider}] prompt failed for session ${session.client?.sessionId ?? session.activeSessionId ?? "none"}`
-        + `: ${errorDetail(e)}`,
+        + `: ${session.provider === "deepseek" ? deepseekPromptErrorText(e) : errorDetail(e)}`,
       );
-      this.emit(session, { type: "agentError", text: promptErrorText(e) });
+      this.emit(session, { type: "agentError", text: session.provider === "deepseek" ? deepseekPromptErrorText(e) : promptErrorText(e) });
       this.noteLiveTurnEnded(session);
       this.setStatus(session, "error");
     } finally {
@@ -18764,6 +18938,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     chips: FileChip[],
     promptBlocks: Parameters<AcpClient["prompt"]>[0],
   ): Promise<boolean> {
+    if (session.provider === "deepseek") {
+      if (isDeepSeekCredentialError(err)) this.setProviderNeedsLogin("deepseek", true);
+      return false;
+    }
     const errorText = errorDetail(err);
     const credential = session.client?.isCredentialError(err) === true || isCredentialError(err);
     if (!credential && !isAuthErrorText(errorText)) return false;
@@ -19159,6 +19337,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     session: Session,
     gen: number,
   ): Promise<PromptImageInput | "failed" | "gone"> {
+    if (session.provider === "deepseek") {
+      this.emit(session, { type: "agentError", text: "DeepSeek does not accept image attachments on this ACP route. Remove the image to send this message." });
+      return "failed";
+    }
     try {
       const bytes = await fs.promises.readFile(chip.path);
       if (bytes.length === 0) throw new Error("file is empty");
@@ -21399,7 +21581,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   }
 
   /** Start a brand-new session, keeping the current one alive in the background. */
-  private async newFocusedSession(origin: MsgOrigin, requestedCwd?: string, onCreated?: (id: string) => void): Promise<void> {
+  private async newFocusedSession(origin: MsgOrigin, requestedCwd?: string, onCreated?: (id: string) => void, deepseek?: { harness: DeepSeekHarness; modelId?: string }): Promise<void> {
     // The answer to a CLI update belongs to the update, not to every
     // conversation opened afterwards. This lives in the two session
     // constructors rather than in `case "newSession"` because a remote's
@@ -21437,7 +21619,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     const targetCwd = named?.cwd ?? this.historyCwdFor(origin);
     const leavingId = this.focused.activeSessionId;
     this.parkFocused();
-    const unused = this.findUnusedEmptySession(targetCwd, "local", leavingId);
+    const unused = deepseek ? undefined : this.findUnusedEmptySession(targetCwd, "local", leavingId);
     if (unused) onCreated?.(unused.id);
     if (unused?.session?.client) {
       this.focusSession(unused.session);
@@ -21451,14 +21633,16 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     } else {
       this.focused = this.newLocalSession();
       this.setSessionCwd(this.focused, targetCwd, this.workspaceRoot());
-      this.focused.provider = this.defaultProviderForProject(targetCwd);
+      this.focused.provider = deepseek ? "deepseek" : this.defaultProviderForProject(targetCwd);
+      if (deepseek) this.focused.deepseekHarness = deepseek.harness;
       // The webview toolbar button clears its own DOM before posting newSession,
       // but the Command Palette command lands here directly — without this clear
       // the old transcript stayed onscreen under the fresh session. (The toolbar
       // path just clears twice, a no-op.)
       this.emit(this.focused, { type: "clearMessages" });
       const created = this.focused;
-      await this.startSession(undefined, created);
+      await this.startSession(undefined, created, "replace", undefined, { modelId: deepseek?.modelId, deepseekHarness: deepseek?.harness });
+      if (deepseek) this.emit(created, { type: "planNotice", text: "Started a new DeepSeek conversation with the " + deepseek.harness + " harness. Your previous conversation is kept in history." });
       if (created.activeSessionId) onCreated?.(created.activeSessionId);
     }
     await this.persistWorktreeBinding(this.focused);
@@ -21507,14 +21691,14 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     };
   }
 
-  private async newRemoteSession(clientId: string, notifyCatalog = true, onCreated?: (id: string) => void): Promise<void> {
+  private async newRemoteSession(clientId: string, notifyCatalog = true, onCreated?: (id: string) => void, deepseek?: { harness: DeepSeekHarness; modelId?: string }): Promise<void> {
     this.clearSettledCliUpdates();
     const ownerTabToken = this.remoteClients.tabToken(clientId);
     const cwd = this.remoteClients.cwd(clientId);
     const leavingId = this.remoteClients.active(clientId)?.activeSessionId;
     this.parkRemoteSession(clientId);
     this.dropRemoteVoice(clientId);
-    const unused = this.findUnusedEmptySession(cwd, "remote", leavingId);
+    const unused = deepseek ? undefined : this.findUnusedEmptySession(cwd, "remote", leavingId);
     if (unused) onCreated?.(unused.id);
     if (unused?.session?.client) {
       this.focusRemoteSession(clientId, unused.session, notifyCatalog);
@@ -21536,10 +21720,12 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     }
     const session = new Session();
     this.setSessionCwd(session, cwd, this.workspaceRoot());
-    session.provider = this.defaultProviderForProject(cwd);
+    session.provider = deepseek ? "deepseek" : this.defaultProviderForProject(cwd);
+    if (deepseek) session.deepseekHarness = deepseek.harness;
     this.remoteClients.setActive(clientId, session);
     this.emit(session, { type: "clearMessages" });
-    await this.startSession(undefined, session);
+    await this.startSession(undefined, session, "replace", undefined, { modelId: deepseek?.modelId, deepseekHarness: deepseek?.harness });
+    if (deepseek) this.emit(session, { type: "planNotice", text: "Started a new DeepSeek conversation with the " + deepseek.harness + " harness. Your previous conversation is kept in history." });
     if (session.activeSessionId) onCreated?.(session.activeSessionId);
     await this.persistWorktreeBinding(session);
     this.sweepEmptySessions(this.sessionCwd(session));
@@ -22604,6 +22790,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           await this.newRemoteSession(currentClientId, true, this.composerDraftReply(m.draftId, requester));
         } else if (m.type === "resumeSession") {
           await this.openRemoteSession(currentClientId, m.id, m.cwd, true, m.claim === true);
+        } else if (m.type === "setDeepSeekHarness") {
+          await this.onMessage(m, "remote", currentClientId);
         } else if (m.type === "selectRepo") {
           await this.selectRemoteRepo(currentClientId, m.cwd);
         }

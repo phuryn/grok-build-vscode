@@ -3,7 +3,7 @@
  * selection and the active remote view per browser tab live in the extension.
  */
 export function serializesRemoteSessionTransition(type: string): boolean {
-  return type === "newSession" || type === "resumeSession" || type === "selectRepo";
+  return type === "newSession" || type === "resumeSession" || type === "selectRepo" || type === "setDeepSeekHarness";
 }
 
 export class RemoteClientState<T, C = never> {

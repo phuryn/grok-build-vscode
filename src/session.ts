@@ -91,7 +91,7 @@ export function pickAutoAcceptOption<T extends AutoAcceptOption>(
   if (provider === "muse") {
     return usable.find((option) => option.kind === "allow_once" && option._meta?.scope === "once");
   }
-  if (provider === "agy") return usable.find((option) => option.kind === "allow_once");
+  if (provider === "agy" || provider === "deepseek") return usable.find((option) => option.kind === "allow_once");
   return usable.find((option) => option.kind === "allow_always")
     ?? usable.find((option) => option.kind === "allow_once");
 }
@@ -136,6 +136,7 @@ export class Session {
   nativeAuto = false;
   /** The agent answered an Auto request with its fallback; see onNativeAutoMode. */
   nativeAutoFellBack = false;
+  deepseekHarness?: "default" | "minimal";
   musePosture?: import("./mode-prefs").MusePosture;
   /** Launch fact, never changed by a live approval-mode switch. */
   museShellSandbox?: boolean;
@@ -682,7 +683,9 @@ export function finishQueuedSendCommit(
 
 /** The same choices and restrictions feed live UI updates and reconnects. */
 export function sessionModeMessage(session: Session, modeId: string): Extract<HostMsg, { type: "modeChanged" }> {
-  return { type: "modeChanged", modeId, modes: sessionModes(session.provider, !!session.museSandboxUnavailable),
+  return { type: "modeChanged", modeId, modes: session.provider === "deepseek" && session.deepseekHarness === "minimal" ? [] : sessionModes(session.provider, !!session.museSandboxUnavailable),
+    ...(session.provider === "deepseek" ? { deepseekHarness: session.deepseekHarness ?? "default", deepseekHarnessLocked: session.hasHistory || session.userMessageCount > 0,
+      ...(session.client?.sessionId ? { deepseekHarnessContext: { sessionId: session.client.sessionId, modelId: session.client.currentModelId, generation: session.gen } } : {}) } : {}),
     ...(session.provider === "muse" && !session.museSandboxUnavailable && session.museShellSandbox !== true
       ? { disabledModes: { onRequest: MUSE_ON_REQUEST_UNAVAILABLE } } : {}),
   };

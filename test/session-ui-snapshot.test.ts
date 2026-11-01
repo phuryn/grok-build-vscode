@@ -12,6 +12,7 @@ const OFFERED_MODES = {
   codex: ["agent", "yolo"],
   muse: ["yolo", "agent", "onRequest"],
   agy: ["agent", "yolo"],
+  deepseek: ["agent", "yolo"],
 };
 
 describe("sessionUiSnapshot", () => {
@@ -31,6 +32,7 @@ describe("sessionUiSnapshot", () => {
       type: "modeChanged",
       modeId: "agent",
       modes: OFFERED_MODES[provider],
+      ...(provider === "deepseek" ? { deepseekHarness: "default", deepseekHarnessLocked: false } : {}),
     });
   });
 

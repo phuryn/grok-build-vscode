@@ -105,7 +105,7 @@ export function sessionModes(provider: string, sandboxUnavailable = false): Mode
   // Deny unmatched stalls Muse's end-of-turn reminder agent; see research/muse-modes.md.
   if (provider === "muse") return sandboxUnavailable ? ["yolo", "agent"] : ["yolo", "agent", "onRequest"];
   if (hasNativeAutoMode(provider)) return ["agent", "auto", "plan", "yolo"];
-  return provider === "codex" || provider === "agy"
+  return provider === "codex" || provider === "agy" || provider === "deepseek"
     ? ["agent", "yolo"]
     : ["agent", "plan", "yolo"];
 }

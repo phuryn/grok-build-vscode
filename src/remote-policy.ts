@@ -302,6 +302,7 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
   // Carries a pasted Gemini API key: it never crosses the relay.
   agySignIn: "host-local",
   setExperimentalAntigravity: "host-local",
+  setExperimentalDeepSeek: "host-local", installDeepSeek: "host-local", cancelDeepSeekInstall: "host-local", deepseekConnect: "host-local", setDeepSeekHarness: "full",
   questionAnswer: "propose",
   questionCancel: "propose",
   queueSend: "propose",
@@ -632,6 +633,7 @@ export const REMOTE_REQUIRES_BOUND_SESSION: Record<WebviewMsg["type"], boolean> 
   cancelAgyInstall: false,
   agySignIn: false,
   setExperimentalAntigravity: false,
+  setExperimentalDeepSeek: false, installDeepSeek: false, cancelDeepSeekInstall: false, deepseekConnect: false, setDeepSeekHarness: true,
   questionAnswer: true,
   questionCancel: true,
   queueSend: true,

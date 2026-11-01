@@ -78,7 +78,7 @@ function coldHost(connected = false, cache?: any, saved?: Record<string, any>) {
   const host = {
     appendLine: vi.fn(), workspaceRoot: () => dir, workspaceFolders: () => [dir],
     // Antigravity is offered only with its experimental setting on.
-    getConfiguration: () => ({ get: (key: string, fallback?: any) => key === "experimentalAntigravity" ? true : fallback, inspect: () => undefined }),
+    getConfiguration: () => ({ get: (key: string, fallback?: any) => ["experimentalAntigravity", "experimentalDeepSeek"].includes(key) ? true : fallback, inspect: () => undefined }),
     registerTextDocumentContentProvider: () => ({ dispose() {} }),
     secrets: { get: async () => undefined },
     setContext: vi.fn(), showErrorMessage: vi.fn(), showInformationMessage: vi.fn(),

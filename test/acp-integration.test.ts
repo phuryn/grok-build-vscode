@@ -494,6 +494,7 @@ describe("ACP integration (real subprocess, fake CLI)", () => {
   it("respond*/cancel swallow stdin write failures instead of crashing", async () => {
     // Simulate a destroyed pipe that throws on write, the way Node's stdin does
     // after the child exits.
+    const originalStdin = (client as any).proc.stdin;
     (client as any).proc.stdin = {
       writable: true,
       write() {
@@ -502,9 +503,11 @@ describe("ACP integration (real subprocess, fake CLI)", () => {
       destroy() {},
     };
 
-    expect(client.respondPermission(1, "opt-1")).toBe(false);
-    expect(client.respondExitPlan(2, "rejected")).toBe(false);
-    await expect(client.cancel()).resolves.toBe(false);
+    try {
+      expect(client.respondPermission(1, "opt-1")).toBe(false);
+      expect(client.respondExitPlan(2, "rejected")).toBe(false);
+      await expect(client.cancel()).resolves.toBe(false);
+    } finally { (client as any).proc.stdin = originalStdin; }
   });
 
   it("session/load replays chat_history.jsonl from GROK_HOME before resolving", async () => {
@@ -607,6 +610,7 @@ describe("ACP integration (real subprocess, fake CLI)", () => {
 
   it("a write to a non-writable stdin is skipped, not attempted", () => {
     let called = false;
+    const originalStdin = (client as any).proc.stdin;
     (client as any).proc.stdin = {
       writable: false,
       write() {
@@ -615,7 +619,9 @@ describe("ACP integration (real subprocess, fake CLI)", () => {
       },
       destroy() {},
     };
-    expect(client.respondPermission(1, "opt-1")).toBe(false);
-    expect(called).toBe(false);
+    try {
+      expect(client.respondPermission(1, "opt-1")).toBe(false);
+      expect(called).toBe(false);
+    } finally { (client as any).proc.stdin = originalStdin; }
   });
 });

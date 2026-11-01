@@ -1,0 +1,8 @@
+{
+  "name": "afk-pilot-deepseek-runtime",
+  "version": "0.0.0",
+  "private": true,
+  "dependencies": {
+    "@deepseek-ai/dsh": "0.2.1-rc.5"
+  }
+}

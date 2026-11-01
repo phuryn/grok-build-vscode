@@ -55,6 +55,7 @@ export interface SessionMetaOverride {
   provider?: AcpProvider;
   /** Provider-reported cwd for stores that are not laid out under the Grok home. */
   providerCwd?: string;
+  deepseekHarness?: "default" | "minimal";
   musePosture?: MusePosture;
   /**
    * "This conversation was used just now", asserted by the host rather than

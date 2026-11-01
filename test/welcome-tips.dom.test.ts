@@ -75,6 +75,14 @@ function offeredTips(h: Harness, limit = 14): string[] {
 }
 
 describe("empty-state advice", () => {
+  it.each(["deepseek", "muse", "agy", "grok"])("offers connectors only when %s accepts client MCP servers", provider => {
+    const h = bootWebview();
+    settle(h, { providers: [{ id: provider, connected: true }], dismissed: ["providers", "routines"] });
+    expect(tipId(h)).toBe("connectors"); // Grok is still the current provider.
+    dispatch(h.window, { type: "session", sessionId: "s", provider, models: [] });
+    if (provider !== "grok") expect(tipId(h)).not.toBe("connectors");
+    expect(offeredTips(h).includes("connectors")).toBe(provider === "grok");
+  });
   it("shows one tip once the screen has settled", () => {
     const h = bootWebview({ ready: false });
     settle(h);

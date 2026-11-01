@@ -1,0 +1,137 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { GrokSidebar } from "../src/sidebar";
+import { Session, sessionModeMessage } from "../src/session";
+import { deepseekKey, DEEPSEEK_API_KEY_SECRET, isDeepSeekCredentialError } from "../src/deepseek-auth";
+import { CLOUD_ENVIRONMENT_ENV } from "../src/remote-frames";
+import { INBOUND_DISPOSITION, allowFromRemote } from "../src/remote-policy";
+import { parseWebviewMsg } from "../src/desktop/webview-msg-validate";
+
+function host(enabled = true): any {
+  const s = Object.create(GrokSidebar.prototype);
+  s.focused = new Session(); s.focused.provider = "deepseek";
+  s.workspaceRoot = () => "/workspace";
+  s.pool = new Set([s.focused]); s.providerConnectionState = {}; s.providerNeedsLogin = {};
+  s.host = { appendLine: vi.fn(), getConfiguration: () => ({ get: (key: string, fallback: unknown) => key === "experimentalDeepSeek" ? enabled : fallback }) };
+  const secrets = new Map();
+  s.context = { globalStorageUri: { fsPath: "/storage" }, secrets: {
+    get: vi.fn(async (key: string) => secrets.get(key)), store: vi.fn(async (key: string, value: string) => secrets.set(key, value)), delete: vi.fn(async (key: string) => secrets.delete(key)),
+  } };
+  s.state = { get: (_key: string, fallback: unknown) => fallback };
+  s.remoteClients = { detachedActiveValues: () => [], clients: () => [], active: () => s.focused, cwd: () => "/workspace" };
+  s.captureRemoteRequester = () => undefined;
+  s.locateProvider = vi.fn(() => "/managed"); s.locatedProviders = () => ({ deepseek: true });
+  s.postLocal = vi.fn(); s.postProviderState = vi.fn(); s.setProviderNeedsLogin = vi.fn();
+  s.setProviderConnected = vi.fn(async () => {}); s.adoptSessionsForConnectedProvider = vi.fn(async () => {});
+  s.startSession = vi.fn(); s.installManagedAgyServer = vi.fn();
+  s.emit = vi.fn(); s.displayMode = () => "agent"; s.sessionCwd = () => "/workspace";
+  return s;
+}
+beforeEach(() => { vi.stubEnv(CLOUD_ENVIRONMENT_ENV, ""); vi.stubEnv("DEEPSEEK_API_KEY", ""); });
+afterEach(() => vi.unstubAllEnvs());
+
+describe("DeepSeek desk boundary and credentials", () => {
+  it.each(["local", "remote"])("returns text to its sender and ends busy when an older %s renderer sends an image", async origin => {
+    const s = host(), session = s.focused;
+    session.activeSessionId = "s";
+    session.client = { sessionId: "s", prompt: vi.fn() };
+    session.chips = [{ id: "image", path: "/image.png", relPath: "Image #1", imageIndex: 1, mimeType: "image/png" }];
+    s.pendingAttach = new Set();
+    s.restoreComposerFor = vi.fn();
+    const requester = { tabId: "phone-tab" };
+    s.captureRemoteRequester = () => requester;
+    await s.onMessage({ type: "send", text: "Keep my image question" }, origin, origin === "remote" ? "phone" : undefined);
+    expect(s.restoreComposerFor).toHaveBeenCalledWith(session, origin === "remote" ? requester : undefined, "Keep my image question");
+    expect(s.emit).toHaveBeenCalledWith(session, { type: "agentError", text: expect.stringContaining("Remove the image") });
+    expect(session.chips).toHaveLength(1);
+    expect(session.client.prompt).not.toHaveBeenCalled();
+  });
+  it("advertises only at an opted-in desk", () => {
+    expect(host().providerStateMessage().providers.some((p: any) => p.id === "deepseek")).toBe(true);
+    expect(host(false).providerStateMessage().providers.some((p: any) => p.id === "deepseek")).toBe(false);
+    vi.stubEnv(CLOUD_ENVIRONMENT_ENV, "1");
+    expect(host().providerStateMessage().providers.some((p: any) => p.id === "deepseek")).toBe(false);
+  });
+  it("refuses remote install, connect and key writes before consent", async () => {
+    const s = host();
+    for (const msg of [{ type: "runGrokLogin", provider: "deepseek" }, { type: "installDeepSeek" }, { type: "deepseekConnect", key: "secret" }]) await s.onMessage(msg, "remote");
+    expect(s.context.secrets.store).not.toHaveBeenCalled(); expect(s.setProviderConnected).not.toHaveBeenCalled();
+    expect(s.installManagedAgyServer).not.toHaveBeenCalled();
+    for (const type of ["installDeepSeek", "cancelDeepSeekInstall", "deepseekConnect", "setExperimentalDeepSeek"] as const) {
+      expect(INBOUND_DISPOSITION[type]).toBe("host-local"); expect(allowFromRemote(type, "full", { isCloud: true })).toBe(false);
+    }
+  });
+  it("adopts the environment first, saves locally and never publishes a key", async () => {
+    const s = host(); vi.stubEnv("DEEPSEEK_API_KEY", "environment-secret");
+    await s.onMessage({ type: "deepseekConnect", key: "saved-secret" }, "local");
+    expect(s.context.secrets.store).toHaveBeenCalledWith(DEEPSEEK_API_KEY_SECRET, "saved-secret");
+    expect(await s.deepseekCredential()).toEqual({ key: "environment-secret", source: "environment" });
+    expect(s.setProviderConnected).toHaveBeenCalledWith("deepseek", true);
+    expect(JSON.stringify(s.providerStateMessage())).not.toContain("secret");
+    expect(deepseekKey({}, "saved-secret")).toEqual({ key: "saved-secret", source: "saved" });
+  });
+  it("neither probes nor reads credentials before consent", async () => {
+    const s = host(); expect(await s.deviceLoginCredentialReady("deepseek", true)).toBe(false);
+    expect(s.context.secrets.get).not.toHaveBeenCalled();
+  });
+  it("never recovers a rejected DeepSeek key by restarting/resending", async () => {
+    const s = host(); const error = { message: "Internal error", data: "turn failed: 401 Invalid API key" };
+    expect(isDeepSeekCredentialError(error)).toBe(true);
+    expect(await s.recoverAuthAndResend(s.focused, error, "text", [])).toBe(false);
+    expect(s.startSession).not.toHaveBeenCalled(); expect(s.setProviderNeedsLogin).toHaveBeenCalledWith("deepseek", true);
+    expect(isDeepSeekCredentialError(new Error("429 rate limit"))).toBe(false);
+  });
+  it("locks harness after a turn and suppresses Minimal approvals in snapshots and commands", async () => {
+    const s = host(); const session = s.focused;
+    session.deepseekHarness = "minimal"; session.hasHistory = true;
+    session.client = { sessionId: "s", currentModelId: "opaque-model", setMode: vi.fn() };
+    expect(sessionModeMessage(session, "agent")).toMatchObject({ modes: [], deepseekHarness: "minimal", deepseekHarnessLocked: true });
+    await s.onMessage({ type: "setDeepSeekHarness", harness: "default", sessionId: "s", modelId: "opaque-model", generation: session.gen }, "local");
+    await s.onMessage({ type: "setMode", modeId: "yolo" }, "local");
+    expect(session.deepseekHarness).toBe("minimal"); expect(session.autoApprove).toBe(false);
+    expect(s.startSession).not.toHaveBeenCalled(); expect(session.client.setMode).not.toHaveBeenCalled();
+  });
+  it("validates keys and harness names at the desktop boundary", () => {
+    for (const key of ["", "a\nb", "x".repeat(513), {}]) expect(parseWebviewMsg({ type: "deepseekConnect", key })).toBeNull();
+    expect(parseWebviewMsg({ type: "deepseekConnect", key: "valid" })).not.toBeNull();
+    expect(parseWebviewMsg({ type: "setDeepSeekHarness", harness: "other" })).toBeNull();
+  });
+  it("replaces only an untouched conversation with matching model/session/generation", async () => {
+    const s = host(), session = s.focused;
+    session.client = { sessionId: "s", currentModelId: "opaque-model" };
+    const msg = { type: "setDeepSeekHarness", harness: "minimal", sessionId: "s", modelId: "opaque-model", generation: session.gen };
+    expect(parseWebviewMsg(msg)).not.toBeNull();
+    for (const changed of [{ sessionId: "old" }, { modelId: "old" }, { generation: session.gen + 1 }]) {
+      await s.onMessage({ ...msg, ...changed }, "local");
+    }
+    expect(s.startSession).not.toHaveBeenCalled();
+    await s.onMessage(msg, "local");
+    const options = s.startSession.mock.calls[0][4];
+    expect(options).toMatchObject({ deepseekHarness: "minimal", modelId: "opaque-model" });
+    expect(options.canReplace()).toBe(true);
+    session.userMessageCount = 1;
+    expect(options.canReplace()).toBe(false); // First send wins while startup awaits the lock.
+  });
+  it.each(["local", "remote"])("explicitly starts another conversation and leaves the old one intact (%s)", async origin => {
+    const s = host(), session = s.focused;
+    session.hasHistory = true; session.deepseekHarness = "default";
+    session.client = { sessionId: "s", currentModelId: "opaque-model" };
+    s.newFocusedSession = vi.fn(); s.newRemoteSession = vi.fn();
+    await s.onMessage({ type: "setDeepSeekHarness", harness: "minimal", sessionId: "s", modelId: "opaque-model", generation: session.gen, newConversation: true }, origin, "phone");
+    const fn = origin === "remote" ? s.newRemoteSession : s.newFocusedSession;
+    expect(fn).toHaveBeenCalledOnce();
+    expect(fn.mock.calls[0][3]).toEqual({ harness: "minimal", modelId: "opaque-model" });
+    expect(session.client.sessionId).toBe("s"); expect(session.deepseekHarness).toBe("default");
+    expect(s.startSession).not.toHaveBeenCalled();
+  });
+  it("correlates an untouched conversation's draft with its replacement id, or its old id on refusal", async () => {
+    const s = host(), session = s.focused;
+    session.client = { sessionId: "s", currentModelId: "opaque-model" };
+    const msg = { type: "setDeepSeekHarness", harness: "minimal", sessionId: "s", modelId: "opaque-model", generation: session.gen, draftId: "draft" };
+    s.startSession.mockImplementation(async () => { session.client = { sessionId: "new", currentModelId: "opaque-model" }; });
+    await s.onMessage(msg, "local");
+    expect(s.postLocal).toHaveBeenCalledWith({ type: "composerDraftSession", draftId: "draft", sessionId: "new" });
+    s.postLocal.mockClear();
+    await s.onMessage(msg, "local"); // stale old id
+    expect(s.postLocal).toHaveBeenCalledWith({ type: "composerDraftSession", draftId: "draft", sessionId: "s" });
+  });
+});

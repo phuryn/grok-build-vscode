@@ -550,7 +550,7 @@ export type HostMsg =
   | { type: "providerState"; providers: { id: AcpProvider; connected: boolean; unavailableReason?: string; needsLogin?: boolean; keepsCliSignIn?: boolean; cliVersion?: string; adapterVersion?: string; latestCliVersion?: string; updateAvailable?: boolean; cliUpdate?: { status: "idle" | "running" | "succeeded" | "failed"; message?: string };
       /** Antigravity only: how it is signed in, and which ways have something
        *  stored on the machine. Never the key itself. Additive. */
-      signInMethod?: "google" | "api-key"; savedSignIns?: ("google" | "api-key")[] }[]; checking?: boolean }
+      keySource?: "environment" | "saved"; signInMethod?: "google" | "api-key"; savedSignIns?: ("google" | "api-key")[] }[]; checking?: boolean }
   /** Grok's grok.com + user-level MCP inventory (`_x.ai/mcp/list`; project-file
    *  servers omitted). The desk keeps launch recipes and `configFile`; remotes
    *  receive `projectMcpServerForRemote` (page fields only — no `tag`).
@@ -581,7 +581,7 @@ export type HostMsg =
     }
   | { type: "codexInstallProgress"; phase: "downloading" | "verifying" | "installing" | "idle"; receivedBytes?: number; totalBytes?: number; reason?: string }
   /** Same shape for the managed Antigravity server; desk only. */
-  | { type: "agyInstallProgress"; phase: "downloading" | "verifying" | "installing" | "idle"; receivedBytes?: number; totalBytes?: number; reason?: string }
+  | { type: "agyInstallProgress"; provider?: "agy" | "deepseek"; phase: "downloading" | "verifying" | "installing" | "idle"; receivedBytes?: number; totalBytes?: number; reason?: string }
   /** Plan picker gate. `recheckable` means the version probe failed (not a
    *  verified-old CLI) — the row stays clickable so a later pick re-probes. */
   | { type: "planModeAvailability"; available: boolean; reason?: string; recheckable?: boolean }
@@ -667,7 +667,7 @@ export type HostMsg =
   // keeps its previous rule (Muse's button hidden, Codex without Plan).
   // Muse's native-id advertisement (three on cloud, four on desk) gates its names and new setMode values;
   // disabledModes adds launch restrictions without removing the choices.
-  | { type: "modeChanged"; modeId: string; modes?: ModeId[]; disabledModes?: Partial<Record<ModeId, string>> }
+  | { type: "modeChanged"; deepseekHarness?: "default" | "minimal"; deepseekHarnessLocked?: boolean; deepseekHarnessContext?: { sessionId: string; modelId?: string; generation: number }; modeId: string; modes?: ModeId[]; disabledModes?: Partial<Record<ModeId, string>> }
   | { type: "openModePopover" }
   | { type: "voiceState"; status: "listening" | "transcribing" | "idle" }
   | { type: "voiceConfigured"; value: boolean; sendPhrase?: string; keyterms?: string[]; backendState?: VoiceBackendState }
@@ -912,7 +912,7 @@ export type HostMsg =
   // itself and a terminal is the better affordance, so nothing changes there.
   | {
       type: "onboarding";
-      state: "connect-agent" | "missing-cli" | "auth-required" | "missing-codex" | "codex-login" | "missing-claude" | "claude-login" | "missing-muse" | "muse-login" | "missing-agy" | "agy-login" | "provider-connected" | "no-project";
+      state: "connect-agent" | "missing-cli" | "auth-required" | "missing-codex" | "codex-login" | "missing-claude" | "claude-login" | "missing-muse" | "muse-login" | "missing-agy" | "agy-login" | "missing-deepseek" | "deepseek-login" | "provider-connected" | "no-project";
       platform?: string;
       reason?: string;
       provider?: AcpProvider;
@@ -1355,6 +1355,11 @@ export type WebviewMsg =
    *  key, stored in HostSecrets; absent means the saved one. Host-local. */
   | { type: "agySignIn"; method: "google" | "api-key"; key?: string }
   | { type: "setExperimentalAntigravity"; value: boolean }
+  | { type: "setExperimentalDeepSeek"; value: boolean }
+  | { type: "installDeepSeek" }
+  | { type: "cancelDeepSeekInstall" }
+  | { type: "deepseekConnect"; key?: string }
+  | { type: "setDeepSeekHarness"; harness: "default" | "minimal"; sessionId: string; modelId?: string; generation: number; newConversation?: boolean; draftId?: string }
   | { type: "runInstallCmd" }
   | { type: "runMuseInstallCmd" }
   | { type: "runGrokLogin"; provider?: AcpProvider }
@@ -1644,7 +1649,7 @@ const WEBVIEW_MESSAGE_TYPE_MAP: Record<WebviewMsg["type"], true> = {
   setShowThinking: true, setAppPurpose: true, setExpandCommandOutputs: true, setSteerByDefault: true, setPromptNav: true, setPinLiveWorkflows: true, setExpandDiffCard: true,
   setSoundNotifications: true, setProcessingSound: true, setReadRepliesAloud: true, setSummarizeRepliesAloud: true, setVoiceSendPhrase: true, setVoiceKeyterms: true, setTelemetryEnabled: true, setThumbsFeedback: true, setDesktopTray: true, summarizeSpeech: true, requestImageFull: true, requestImageOriginal: true, composerFocus: true,
   dropFile: true, permissionAnswer: true, exitPlanAnswer: true, questionAnswer: true,
-  questionCancel: true, setModel: true, installCodex: true, cancelCodexInstall: true, installAgy: true, cancelAgyInstall: true, agySignIn: true, setExperimentalAntigravity: true, runInstallCmd: true, runMuseInstallCmd: true, runGrokLogin: true,
+  questionCancel: true, setModel: true, installCodex: true, cancelCodexInstall: true, installAgy: true, cancelAgyInstall: true, agySignIn: true, setExperimentalAntigravity: true, setExperimentalDeepSeek: true, installDeepSeek: true, cancelDeepSeekInstall: true, deepseekConnect: true, setDeepSeekHarness: true, runInstallCmd: true, runMuseInstallCmd: true, runGrokLogin: true,
   cancelDeviceLogin: true, submitDeviceLoginCode: true,
   logout: true, checkGrokUpdate: true, updateGrok: true, updateCodex: true, updateClaude: true, recheckConnection: true, refreshProviders: true, retryProviderSession: true,
   listSessions: true, listRepoSessions: true, selectRepo: true, toggleRepoPin: true, toggleSessionPin: true,

@@ -22,7 +22,7 @@ function sidebar(provider: string, consent = true): any {
 beforeEach(() => vi.resetAllMocks());
 
 describe("the CLI owns Connect credentials", () => {
-  it.each(["grok", "codex", "claude", "muse", "agy"])("does not check %s without consent", async provider => {
+  it.each(["grok", "codex", "claude", "muse", "agy", "deepseek"])("does not check %s without consent", async provider => {
     const s = sidebar(provider, false);
     expect(await s.deviceLoginCredentialReady(provider, true)).toBe(false);
     expect(s.reprobeProviderCredentials).not.toHaveBeenCalled();

@@ -266,6 +266,7 @@ const CREDENTIAL_FILES: Partial<Record<AcpProvider, string>> = {
 export function subscriptionCredentialContext(provider: AcpProvider, env: NodeJS.ProcessEnv): string {
   if (provider === "muse") return "muse:cli-owned";
   // No usage meter for Antigravity; its key only has to be stable.
+  if (provider === "deepseek") return "deepseek:server-owned";
   if (provider === "agy") return "agy:server-owned";
   const home = env.HOME || env.USERPROFILE || homedir();
   const root = provider === "grok" ? env.GROK_HOME || path.join(home, ".grok")

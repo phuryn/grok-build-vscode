@@ -339,6 +339,16 @@ describe("projects rail", () => {
       .toEqual(["provider-status-badge dot-none", "provider-status-badge dot-none"]);
   });
 
+  it("names the advertised DeepSeek glyph in its tooltip and accessible label", () => {
+    const h = boot("/work/alpha");
+    dispatch(h.window, { type: "providerState", providers: [{ id: "grok", connected: true }, { id: "deepseek", connected: true }] });
+    dispatch(h.window, sessionsFrame([{ ...row("d1", "/work/alpha", "DeepSeek session", 9), provider: "deepseek" }]));
+    const glyph = h.doc.querySelector(".rail-session .provider-deepseek") as HTMLElement;
+    expect(glyph).not.toBeNull();
+    expect(glyph.title).toBe("DeepSeek");
+    expect(glyph.getAttribute("aria-label")).toBe("DeepSeek");
+  });
+
   it("renders duplicate ids once and selects equal GPT names by id", () => {
     const { doc, window, posted } = boot();
     dispatch(window, {
