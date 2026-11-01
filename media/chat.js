@@ -17216,6 +17216,7 @@ ${fullText}`
     allow_always: "Allowed",
     allow_once: "Allowed",
     reject_once: "Rejected",
+    closed: "Closed",
   };
 
   // Replace a permission card with a single muted, non-interactive line once the
@@ -17232,7 +17233,7 @@ ${fullText}`
     // split mislabelled a reject_always as allowed. `/reject|deny/i` is the
     // test resolvePermissionCardEl already uses a few lines below.
     const rejected = /reject|deny/i.test(String(kind || ""));
-    line.className = "perm-resolved-line perm-" + (rejected ? "rejected" : "allowed");
+    line.className = "perm-resolved-line perm-" + (kind === "closed" ? "closed" : rejected ? "rejected" : "allowed");
     const verb = document.createElement("span");
     verb.className = "perm-resolved-verb";
     verb.textContent = PERM_VERB[kind] || (rejected ? "Rejected" : "Allowed");
@@ -17418,9 +17419,11 @@ ${fullText}`
     // Keep host audit annotations when the title already includes the entire
     // command (for example, an automatic session grant). A bare tool name
     // such as pwsh is not a command preview.
-    const cardTitle = isCommandCard
-      ? command && !call.title?.includes(command) ? command : call.title || command || "Run command"
-      : toolLabel(call, { full: true });
+    const cardTitle = state.activeProvider === "deepseek"
+      ? isCommandCard
+        ? command && !call.title?.includes(command) ? command : call.title || command || "Run command"
+        : toolLabel(call, { full: true })
+      : call.title || `permission: ${call.kind || "tool"}`;
     const el = document.createElement("div");
     el.className = "card permission";
     // Tag the card so a buffered `permissionResolved` (replayed when this session
@@ -17434,9 +17437,9 @@ ${fullText}`
     appendCommandPreview(el, cardTitle, "card-title command-card-title",
       isCommandCard ? state.commandLanguage : undefined, PERMISSION_COMMAND_PREVIEW_LINES, undefined, isCommandCard, isCommandCard);
 
-    // Permission requests can carry the diff themselves, without a preceding
+    // dsh permission requests can carry the diff themselves, without a preceding
     // tool update. Use the same extraction and preview as the tool row.
-    applyToolDiffs(call);
+    if (state.activeProvider === "deepseek") applyToolDiffs(call);
     const diff = state.pendingDiffByToolCallId.get(call.toolCallId);
     if (diff) {
       const subtitle = document.createElement("div");
@@ -22054,6 +22057,10 @@ ${fullText}`
           !c.classList.contains("resolved")
         );
         if (el) {
+          if (msg.outcome === "closed") {
+            collapsePermissionCard(el, "closed", el._permTitle);
+            break;
+          }
           const opt = (el._permOptions || []).find((o) => o.optionId === msg.optionId);
           resolvePermissionCardEl(el, opt, el._permTitle);
         }

@@ -5,7 +5,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RemoteClientState } from "../src/remote-client-state";
-import { Session } from "../src/session";
+import { Session, sessionUiSnapshot } from "../src/session";
 import type { HostMsg } from "../src/protocol";
 import { CLOUD_ENVIRONMENT_ENV } from "../src/remote-frames";
 import { bootWebview, click, dispatch } from "./webview-harness";
@@ -227,6 +227,52 @@ function onboardings(sidebar: any): HostMsg[] {
 }
 
 describe("startSession bounded spawn retry", () => {
+  it.each(["replacement", "detach", "Stop"])("retires DeepSeek permissions on %s before a new client reuses their ids", async cause => {
+    const sidebar = makeSidebar("/repo");
+    const session = sidebar.focused;
+    session.provider = "deepseek";
+    sidebar.connectedProviders = sidebar.usableProviders = () => ["deepseek"];
+    sidebar.providerConnectionState = { deepseek: true };
+    sidebar.deepseekOffered = () => true;
+    sidebar.deepseekCredential = async () => ({ key: "test-key", source: "saved" });
+    const h = bootWebview();
+    dispatch(h.window, { type: "providerState", providers: [{ id: "deepseek", connected: true }] });
+    sidebar.view.webview.postMessage = (message: HostMsg) => dispatch(h.window, message);
+    const first = await sidebar.startSession(undefined, session);
+    session.autoApprove = false;
+    const request = (id: number, command: string) => ({ id, toolCall: { toolCallId: command, title: "pwsh", kind: "other", rawInput: { command } },
+      options: [{ optionId: "allow", kind: "allow_once", name: "Allow once" }, { optionId: "reject", kind: "reject_once", name: "Reject" }] });
+    first.emit("permissionRequest", request(0, "echo X"));
+    first.emit("permissionRequest", request(1, "echo another old request"));
+    expect(session.pendingPermissions.size).toBe(2);
+    expect(h.doc.querySelectorAll(".permission .card-actions")).toHaveLength(2);
+    if (cause === "detach") sidebar.detachClient(session);
+    if (cause === "Stop") {
+      first.cancel = vi.fn(async () => {});
+      await sidebar.onMessage({ type: "cancel" }, "local");
+    }
+    const replacement = await sidebar.startSession("new-session", session, "replace");
+    expect(replacement).toBeDefined();
+    expect(replacement).not.toBe(first);
+    expect(session.pendingPermissions.size).toBe(0);
+    for (const requestId of [0, 1]) expect(session.buffer).toContainEqual({ type: "permissionResolved", requestId, outcome: "closed" });
+    expect(h.doc.querySelectorAll(".permission .card-actions")).toHaveLength(0);
+    expect(h.doc.querySelectorAll(".perm-closed")).toHaveLength(2);
+    session.autoApprove = false;
+    replacement.emit("permissionRequest", request(0, "echo Y"));
+    // Refocus replays the held transcript, then updates the new request's buttons.
+    dispatch(h.window, { type: "clearMessages" });
+    for (const message of session.buffer) dispatch(h.window, message);
+    for (const message of sessionUiSnapshot(session, "agent")) dispatch(h.window, message);
+    expect(h.doc.querySelectorAll(".perm-closed")).toHaveLength(2);
+    expect(h.doc.querySelectorAll(".permission .card-actions")).toHaveLength(1);
+    const live = h.doc.querySelector(".permission:not(.perm-resolved)")!;
+    expect(live.textContent).toContain("echo Y");
+    expect(h.doc.querySelectorAll(".perm-resolved button")).toHaveLength(0);
+    click(h.window, live.querySelector("button.primary"));
+    expect(h.posted.filter(message => message.type === "permissionAnswer")).toEqual([{ type: "permissionAnswer", requestId: 0, optionId: "allow" }]);
+  });
+
   it.each(["re-key", "crash", "unsettled Stop", "path change"])("keeps DeepSeek's held transcript on %s without replay", async cause => {
     const sidebar = makeSidebar("/repo");
     const session = sidebar.focused;

@@ -18502,8 +18502,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // and flushes any queued sends itself, so a notice emitted afterwards could
     // land behind that queued turn's userMessage/agentStart — reading as if the
     // new turn had failed, and clearing the busy state of a turn that had only
-    // just begun. Live-only as a consequence (the restart clears the buffer);
-    // the conversation itself is reloaded from disk intact.
+    // just begun. Replay-capable providers reload the conversation from disk;
+    // a warm DeepSeek restart retains the host's buffer, including this notice.
     session.staleSendReported = true;
     this.emit(session, {
       type: "agentError",
@@ -21068,6 +21068,11 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       this.emit(session, { type: "questionResolved", requestId, outcome: "closed" });
     }
     session.pendingQuestions.clear();
+    // Request ids belong to a connection and can be reused by its replacement.
+    // Retire the visible and buffered cards before forgetting their requests.
+    for (const requestId of session.pendingPermissions.keys()) {
+      this.emit(session, { type: "permissionResolved", requestId, outcome: "closed" });
+    }
     session.pendingPermissions.clear();
     session.pendingExitPlans.clear();
     this.syncHumanWait(session);

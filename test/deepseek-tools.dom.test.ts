@@ -10,6 +10,16 @@ function defaultHarness(remote = false) {
 }
 
 describe("dsh generic ACP tools", () => {
+  it("preserves Antigravity's fetch approval title", () => {
+    const h = bootWebview();
+    dispatch(h.window, { type: "providerState", providers: [{ id: "agy", connected: true }] });
+    dispatch(h.window, { type: "session", sessionId: "agy", provider: "agy", models: [] });
+    dispatch(h.window, { type: "permissionRequest", req: { id: 0, toolCall: {
+      toolCallId: "fetch", title: "Run read_url_content?", kind: "fetch", rawInput: { url: "https://example.com/page" },
+    }, options: [{ optionId: "allow", name: "Allow once", kind: "allow_once" }] } });
+    expect(h.doc.querySelector(".permission .card-title")!.textContent).toBe("Run read_url_content?");
+  });
+
   it("shows the full pwsh command in a Default approval, including its arguments", () => {
     const h = defaultHarness();
     const command = 'Set-Content -LiteralPath "C:/work/config.json" -Value "changed"';

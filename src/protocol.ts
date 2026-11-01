@@ -858,7 +858,10 @@ export type HostMsg =
   | { type: "toolCallUpdate"; call: ToolCallPayload }
   | { type: "permissionRequest"; req: PermissionRequest }
   | { type: "permissionOptions"; requestId: number | string; options: PermissionRequest["options"] }
-  | { type: "permissionResolved"; requestId: number | string; optionId: string }
+  | ({ type: "permissionResolved"; requestId: number | string } & (
+      | { optionId: string; outcome?: never }
+      | { outcome: "closed"; optionId?: never }
+    ))
   | { type: "questionResolved"; requestId: number | string; outcome: "accepted" | "stale" | "closed" }
   | { type: "subscriptionUsage"; windows: SubscriptionWindow[] }
   // The host spreads the plan-review snapshot (planPath/planName) into the bare
