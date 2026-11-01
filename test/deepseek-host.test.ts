@@ -5,6 +5,8 @@ import { deepseekKey, DEEPSEEK_API_KEY_SECRET, isDeepSeekCredentialError } from 
 import { CLOUD_ENVIRONMENT_ENV } from "../src/remote-frames";
 import { INBOUND_DISPOSITION, allowFromRemote } from "../src/remote-policy";
 import { parseWebviewMsg } from "../src/desktop/webview-msg-validate";
+import { AcpClient } from "../src/acp";
+import type { SessionMetaOverrides } from "../src/sessions";
 
 function host(enabled = true): any {
   const s = Object.create(GrokSidebar.prototype);
@@ -27,7 +29,46 @@ function host(enabled = true): any {
   return s;
 }
 beforeEach(() => { vi.stubEnv(CLOUD_ENVIRONMENT_ENV, ""); vi.stubEnv("DEEPSEEK_API_KEY", ""); });
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
+
+describe("DeepSeek history", () => {
+  it("omits unprompted harness sessions without deleting them, but keeps failed sends", async () => {
+    const s = host();
+    let metadata: SessionMetaOverrides = {
+      abandoned: { provider: "deepseek", deepseekHarness: "default", activeAt: 123, customName: "Renamed but empty" },
+      prompted: { provider: "deepseek", deepseekHarness: "minimal", sentAt: 456, activeAt: 789 },
+      failed: { provider: "deepseek", sentAt: 457 },
+      legacy: { provider: "deepseek", autoName: "A completed turn without a known time" },
+    };
+    const cache = new Map();
+    s.state.get = () => metadata;
+    s.updateSessionMeta = async (update: (current: SessionMetaOverrides) => SessionMetaOverrides | null) => { metadata = update(metadata) ?? metadata; };
+    s.adapterHistory = () => ({ cache });
+    s.connectedProviders = () => ["deepseek"];
+    s.providerRunSignal = () => new AbortController().signal;
+    s.adapterHistoryFolderMap = () => new Map([["workspace", "/workspace"]]);
+    s.authorizedSessionCwds = () => ["/workspace"];
+    s.projectHomeDir = () => "/workspace";
+    s.postSessionsList = vi.fn(); s.sendLocalRepoSessionsPreview = vi.fn();
+    vi.spyOn(AcpClient.prototype, "start").mockResolvedValue(undefined);
+    vi.spyOn(AcpClient.prototype, "dispose").mockResolvedValue(undefined);
+    const list = vi.spyOn(AcpClient.prototype, "listSessions").mockResolvedValueOnce({
+      sessions: ["abandoned", "failed", "legacy"].map(sessionId => ({ sessionId, cwd: "/workspace" })),
+    }).mockResolvedValueOnce({ sessions: [{ sessionId: "prompted", cwd: "/workspace" }] });
+    await s.listAdapterHistory("deepseek");
+    expect(list).toHaveBeenCalledTimes(2);
+    expect(cache.get("workspace").map((row: any) => row.id)).toEqual(["failed", "legacy", "prompted"]);
+    expect(metadata.abandoned).toEqual({ provider: "deepseek", deepseekHarness: "default", activeAt: 123, customName: "Renamed but empty" });
+    expect(metadata.legacy.activeAt).toBeUndefined();
+    expect(metadata.failed.activeAt).toBeUndefined();
+    s.focused.lastActiveAt = Date.now(); // Reopening must not promote a live row either.
+    expect(s.liveSessionEntry(s.focused, "prompted", "/workspace", metadata).updatedAt).toBe(789);
+    expect(s.liveSessionEntry(s.focused, "legacy", "/workspace", metadata).updatedAt).toBe(0);
+    expect(s.deepseekSessionHasPrompt("abandoned", metadata)).toBe(false);
+    s.focused.activeSessionId = "sending"; s.focused.userMessageCount = 1;
+    expect(s.deepseekSessionHasPrompt("sending", metadata)).toBe(true);
+  });
+});
 
 describe("DeepSeek desk boundary and credentials", () => {
   it.each(["local", "remote"])("returns text to its sender and ends busy when an older %s renderer sends an image", async origin => {

@@ -15203,6 +15203,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     const adapter = cached.filter((entry) => withinHistoryHorizon(entry.updatedAt, now));
     for (const session of this.pool) {
       if (!usesAdapterHistory(session.provider) || !session.activeSessionId || !pathsEqual(this.sessionCwd(session), cwd)) continue;
+      if (session.provider === "deepseek" && !this.deepseekSessionHasPrompt(session.activeSessionId, overrides)) continue;
       if (adapter.some((entry) => entry.id === session.activeSessionId)) continue;
       adapter.push(this.liveSessionEntry(session, session.activeSessionId, this.sessionCwd(session), overrides));
     }
@@ -15445,6 +15446,14 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     return run;
   }
 
+  private deepseekSessionHasPrompt(id: string, overrides: SessionMetaOverrides): boolean {
+    // Both dsh homes are host-managed. Creation/rename/listing alone says
+    // nothing about prompts; keep failed sends as well as completed turns.
+    const meta = overrides[id];
+    return typeof meta?.sentAt === "number" || !!meta?.autoName || !!meta?.usageLog?.length
+      || [...this.pool].some((s) => s.provider === "deepseek" && s.activeSessionId === id && s.userMessageCount > 0);
+  }
+
   /**
    * One listing of a provider's history, for every folder asked about
    * (adapterHistoryFolders), filling each folder's rows in the cache.
@@ -15518,8 +15527,13 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       }
     }
     if (signal.aborted) return;
-    const result = { sessions: [...listed.values()].flat() };
     const overrides = this.state.get<SessionMetaOverrides>(SESSION_META_KEY, {});
+    if (provider === "deepseek") {
+      for (const [key, sessions] of listed) {
+        listed.set(key, sessions.filter((entry) => this.deepseekSessionHasPrompt(entry.sessionId, overrides)));
+      }
+    }
+    const result = { sessions: [...listed.values()].flat() };
     const stableOverrides: SessionMetaOverrides = { ...overrides };
     // First-seen adapter listing time is a baseline only. Claude restamps
     // `updatedAt` on `session/load` (measured). Codex does not restamp, but
@@ -15532,6 +15546,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     const stampable = (entry: BackendSessionListEntry) => !!overrides[entry.sessionId]
       || withinHistoryHorizon(adapterListEntry(entry, {}, provider, listedAt).updatedAt, listedAt);
     for (const entry of result.sessions) {
+      if (provider === "deepseek") continue; // No timestamp in dsh's list; never invent one.
       const previous = stableOverrides[entry.sessionId] ?? {};
       if (typeof previous.activeAt === "number" || !stampable(entry)) continue;
       stableOverrides[entry.sessionId] = {
@@ -15699,6 +15714,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       for (const s of this.pool) {
         const id = s.activeSessionId;
         if (!id || onDisk.has(id) || seen.has(id)) continue;
+        if (s.provider === "deepseek" && !this.deepseekSessionHasPrompt(id, overrides)) continue;
         const sCwd = this.sessionCwd(s);
         if (!repoCwdKeys.has(normalizeFsPath(sCwd))) continue;
         const entry = this.liveSessionEntry(s, id, sCwd, overrides);
@@ -15839,7 +15855,9 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     const firstMsg = (session.firstUserMessageForTitle || "").trim()
       || (overrides[id]?.autoName || "").trim();
     const displayName = customName || session.agentTitle || (firstMsg ? fallbackName(firstMsg, now) : "New session");
-    const ts = session.lastActiveAt || now;
+    const ts = session.provider === "deepseek"
+      ? adapterListEntry({ sessionId: id, cwd }, overrides, "deepseek").updatedAt
+      : session.lastActiveAt || now;
     return {
       id,
       cwd,

@@ -18,8 +18,23 @@ import {
   type ProviderHistoryCursor,
 } from "../src/provider-ui";
 import type { SessionListEntry } from "../src/sessions";
+// @ts-expect-error Plain JS renderer helper has no declaration file.
+import { formatRelativeTime } from "../media/webview-helpers.js";
 
 describe("provider UI pure policy", () => {
+  it("uses stored DeepSeek activity across listings and leaves unknown time blank", () => {
+    const raw = { sessionId: "deepseek-session", cwd: "/workspace" };
+    const sentAt = Date.UTC(2026, 10, 1, 9);
+    const activeAt = sentAt + 1000;
+    const metadata = { [raw.sessionId]: { sentAt, activeAt } };
+    for (const now of [activeAt + 60_000, activeAt + 3_600_000]) {
+      expect(adapterListEntry(raw, metadata, "deepseek", now).updatedAt).toBe(activeAt);
+      expect(adapterListEntry(raw, { [raw.sessionId]: { sentAt } }, "deepseek", now).updatedAt).toBe(sentAt);
+      expect(adapterListEntry(raw, {}, "deepseek", now)).toMatchObject({ updatedAt: 0, createdAt: 0, displayName: "Untitled" });
+      expect(formatRelativeTime(adapterListEntry(raw, {}, "deepseek", now).updatedAt, now)).toBe("");
+    }
+  });
+
   it("requires both explicit connection state and a located binary", () => {
     expect(connectedProviderIds(
       { grok: true, codex: true },

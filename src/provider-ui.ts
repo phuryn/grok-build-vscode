@@ -224,13 +224,16 @@ export function adapterListEntry(
     ? raw.updatedAt
     : Date.parse(String(raw.updatedAt ?? ""));
   const reportedAt = Number.isFinite(parsed) ? parsed : now;
-  const updatedAt = adapterActivityAt(provider, reportedAt, meta?.activeAt);
+  // dsh lists only id/cwd. Listing or reopening is not conversation activity.
+  const updatedAt = provider === "deepseek"
+    ? meta?.activeAt ?? meta?.sentAt ?? 0
+    : adapterActivityAt(provider, reportedAt, meta?.activeAt);
   const customName = meta?.customName?.trim() || undefined;
   const autoName = meta?.autoName?.trim() || title;
   return {
     id: raw.sessionId,
     cwd: raw.cwd,
-    displayName: customName || autoName || `Untitled (${new Date(updatedAt).toLocaleDateString()})`,
+    displayName: customName || autoName || (updatedAt ? `Untitled (${new Date(updatedAt).toLocaleDateString()})` : "Untitled"),
     rawSummary: title,
     customName,
     updatedAt,
