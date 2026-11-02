@@ -1036,6 +1036,7 @@
     // grok.processingSound: a quiet repeating cue while a live turn is still
     // running. Separate from the completion/error notification and off by default.
     processingSound: false,
+    inputNeededSound: false,
     // grok.worktree — true when the focused session runs in an isolated git
     // worktree (from the `session` message). Gates the gear Apply/Remove items.
     isWorktree: false,
@@ -1206,7 +1207,8 @@
 
   // ---------- sound notifications (#59) ----------
   // Synth tones via Web Audio — no bundled assets, CSP-safe, offline. Completion
-  // rises, errors fall, and the in-flight reminder is a single soft pulse. The
+  // rises, errors fall, input-needed goes high-low-high, and the in-flight
+  // reminder is a single soft pulse. The
   // AudioContext is created only while a sound setting is on, unlocked on the
   // first user gesture (autoplay starts it "suspended"), and suspended again
   // once the last note ends — a running-but-silent context holds the OS audio
@@ -1217,7 +1219,7 @@
   let audioToneGen = 0;
   let audioSuspendTimer = null;
   function soundFeaturesOn() {
-    return !!(state.soundNotifications || state.processingSound);
+    return !!(state.soundNotifications || state.processingSound || state.inputNeededSound);
   }
   function ensureAudioCtx() {
     if (audioCtx) return audioCtx;
@@ -1280,7 +1282,9 @@
       ? [{ f: 311, s: 0, d: 0.18 }, { f: 233, s: 0.15, d: 0.26 }]
       : kind === "processing"
         ? [{ f: 440, s: 0, d: 0.16 }]
-        : [{ f: 587, s: 0, d: 0.14 }, { f: 880, s: 0.13, d: 0.20 }];
+        : kind === "inputNeeded"
+          ? [{ f: 784, s: 0, d: 0.12 }, { f: 659, s: 0.14, d: 0.12 }, { f: 784, s: 0.28, d: 0.22 }]
+          : [{ f: 587, s: 0, d: 0.14 }, { f: 880, s: 0.13, d: 0.20 }];
     const master = ctx.createGain();
     master.gain.value = kind === "processing" ? 0.035 : 0.08;
     master.connect(ctx.destination);
@@ -1315,6 +1319,39 @@
     const away = document.visibilityState === "hidden" || !document.hasFocus();
     if (!away) return;
     playNotificationTone(kind);
+  }
+
+  // Catalog dots are current-state baselines, never notifications. Only an
+  // observed working → needs-you delta can ring: the first waiting dot on a
+  // fresh page, repeated dots, and pending cards restored AFTER replay stay quiet.
+  const inputSoundDots = new Map();
+  let inputSoundConnection = null;
+  function observeInputNeededSound(msg) {
+    if (msg.type === "initialState" || msg.type === "hostReachable" ||
+        (msg.type === "historyReplay" && msg.active)) {
+      inputSoundDots.clear();
+      return;
+    }
+    if (msg.type === "hostLink" && msg.link) {
+      if (!msg.link.reachable || inputSoundConnection !== msg.link.connection) inputSoundDots.clear();
+      inputSoundConnection = msg.link.connection;
+      return;
+    }
+    if (state.replaying) return;
+    if (["sessions", "repoSessions", "pinnedSessions", "recentSessions"].includes(msg.type)) {
+      for (const [id, dot] of Object.entries(msg.dots || {})) inputSoundDots.set(id, dot);
+      return;
+    }
+    if (msg.type === "sessionRemoved") {
+      inputSoundDots.delete(msg.id);
+      return;
+    }
+    if (msg.type !== "sessionDot") return;
+    const previous = inputSoundDots.get(msg.id);
+    inputSoundDots.set(msg.id, msg.dot);
+    if (previous !== "working" || msg.dot !== "needs-you" || !state.inputNeededSound) return;
+    if (document.visibilityState !== "hidden" && document.hasFocus()) return;
+    playNotificationTone("inputNeeded");
   }
 
   function moveComposerCaret(direction) {
@@ -3588,6 +3625,7 @@
       fontScale: CLIENT_OWNS_FONT_SCALE ? state.remoteFontScale : state.hostFontScale,
       soundNotifications: !!state.soundNotifications,
       processingSound: !!state.processingSound,
+      inputNeededSound: !!state.inputNeededSound,
       readRepliesAloud: IS_REMOTE ? !!state.remoteTts : !!state.readRepliesAloud,
       summarizeRepliesAloud: IS_REMOTE ? !!state.remoteSummarizeRepliesAloud : !!state.summarizeRepliesAloud,
       voiceConfigured: !!state.voiceConfigured,
@@ -3690,6 +3728,10 @@
         break;
       case "soundNotifications":
         state.soundNotifications = !!value;
+        unlockAudio();
+        break;
+      case "inputNeededSound":
+        state.inputNeededSound = !!value;
         unlockAudio();
         break;
       case "processingSound":
@@ -20607,13 +20649,14 @@ ${fullText}`
   const SETTINGS_LIVE_MSGS = new Set([
     "museSettings",
     "cloudHostUpdateState", "initialState", "showThinking", "appPurpose", "expandCommandOutputs",
-    "steerByDefault", "promptNav", "expandDiffCard", "steerUnavailable", "soundNotifications", "processingSound",
+    "steerByDefault", "promptNav", "expandDiffCard", "steerUnavailable", "soundNotifications", "processingSound", "inputNeededSound",
     "readRepliesAloud", "summarizeRepliesAloud", "fontScale", "voiceConfigured",
     "providerState", "githubState", "mcpServers", "mcpConnectors", "remoteStatus", "telemetryEnabled", "thumbsFeedback", "grokUpdateStatus", "initialized",
   ]);
 
   function handleHostMessage(msg) {
     if (!msg || typeof msg !== "object") return;
+    observeInputNeededSound(msg);
     observePreferences(msg);
     if (state.replayHold && msg.type !== "historyReplay" && REPLAY_HOLD_TYPES.has(msg.type)) {
       state.replayHeld.push(msg);
@@ -20678,6 +20721,7 @@ ${fullText}`
         }
         if (typeof msg.soundNotifications === "boolean") state.soundNotifications = msg.soundNotifications;
         if (typeof msg.processingSound === "boolean") state.processingSound = msg.processingSound;
+        if (typeof msg.inputNeededSound === "boolean") state.inputNeededSound = msg.inputNeededSound;
         releaseAudioIfSilent();
         // Absent appPurpose (older host) → Knowledge work — smaller surface.
         state.appPurpose = msg.appPurpose === "coding" ? "coding" : "knowledge";
@@ -21018,6 +21062,10 @@ ${fullText}`
           clearTimeout(processingCueTimer);
           processingCueTimer = null;
         }
+        releaseAudioIfSilent();
+        break;
+      case "inputNeededSound":
+        state.inputNeededSound = !!msg.value;
         releaseAudioIfSilent();
         break;
       case "readRepliesAloud": {

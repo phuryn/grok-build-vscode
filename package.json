@@ -498,6 +498,11 @@
           "default": false,
           "markdownDescription": "Play a quiet repeating sound while the agent is still working. The first cue waits seven seconds, then repeats every eight seconds until the turn ends. Off by default and separate from the completion/error sound. Also toggleable live from Settings → **Notifications → Still-processing sound**."
         },
+        "grok.inputNeededSound": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Play a short sound when a conversation needs your input, such as a permission, question, or plan approval. Off by default. Plays only when the AFK Pilot panel is not focused or visible. Also toggleable live from Settings → **Notifications → Sound when input is needed**."
+        },
         "grok.readRepliesAloud": {
           "type": "boolean",
           "default": false,

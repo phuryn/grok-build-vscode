@@ -1108,6 +1108,7 @@ export class GrokSidebar {
     "setExpandDiffCard",
     "setSoundNotifications",
     "setProcessingSound",
+    "setInputNeededSound",
     "setReadRepliesAloud",
     "setSummarizeRepliesAloud",
     "setVoiceSendPhrase",
@@ -3435,6 +3436,12 @@ export class GrokSidebar {
         this.post({
           type: "processingSound",
           value: this.host.getConfiguration("grok").get<boolean>("processingSound", false),
+        });
+      }
+      if (e.affectsConfiguration("grok.inputNeededSound")) {
+        this.post({
+          type: "inputNeededSound",
+          value: this.host.getConfiguration("grok").get<boolean>("inputNeededSound", false),
         });
       }
       if (e.affectsConfiguration("grok.readRepliesAloud")) {
@@ -13321,6 +13328,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         await this.host.getConfiguration("grok")
           .update("processingSound", !!msg.value, "global");
         break;
+      case "setInputNeededSound":
+        await this.host.getConfiguration("grok")
+          .update("inputNeededSound", !!msg.value, "global");
+        break;
       case "setReadRepliesAloud":
         await this.host.getConfiguration("grok")
           .update("readRepliesAloud", !!msg.value, "global");
@@ -19171,6 +19182,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       pinLiveWorkflows: cfg.get("pinLiveWorkflows", true),
       soundNotifications: cfg.get("soundNotifications", false),
       processingSound: cfg.get("processingSound", false),
+      inputNeededSound: cfg.get("inputNeededSound", false),
       readRepliesAloud: cfg.get("readRepliesAloud", false),
       telemetryEnabled: cfg.get("telemetry.enabled", true),
       // Desktop-only and platform-gated; the row hides itself on everything
@@ -23558,6 +23570,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         fontScale: this.chatFontScale(),
         soundNotifications: cfg.get("soundNotifications", false),
         processingSound: cfg.get("processingSound", false),
+        inputNeededSound: cfg.get("inputNeededSound", false),
         readRepliesAloud: cfg.get("readRepliesAloud", false),
         summarizeRepliesAloud: cfg.get("summarizeRepliesAloud", true),
         voiceConfigured: !!this.voiceBackendState(this.sessionCwd(this.focused), this.focused.provider).backend,

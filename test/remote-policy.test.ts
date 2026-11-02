@@ -32,6 +32,14 @@ import { pathsEqual } from "../src/worktree";
 const sorted = (a: readonly string[]) => [...a].sort();
 
 describe("remote-policy classification tables", () => {
+  it("keeps input-needed sound configuration host-local, like processing sound", () => {
+    expect(INBOUND_DISPOSITION.setInputNeededSound).toBe("host-local");
+    expect(INBOUND_DISPOSITION.setInputNeededSound).toBe(INBOUND_DISPOSITION.setProcessingSound);
+    expect(REMOTE_REQUIRES_BOUND_SESSION.setInputNeededSound).toBe(false);
+    expect(OUTBOUND_DISPOSITION.inputNeededSound).toBe("host-local");
+    expect(OUTBOUND_DISPOSITION.inputNeededSound).toBe(OUTBOUND_DISPOSITION.processingSound);
+    expect(OUTBOUND_PROJECT_AUTH.inputNeededSound).toBe("none");
+  });
   it.each(["questionResolved", "uiConfirmResolved"] as const)("mirrors %s within the owning session scope", (type) => {
     expect(OUTBOUND_DISPOSITION[type]).toBe("mirror");
     expect(OUTBOUND_PROJECT_AUTH[type]).toBe("scope");
@@ -583,6 +591,7 @@ describe("mayDeliverRemoteHostMsg (outbound project authorization)", () => {
       steerByDefault: false,
       soundNotifications: false,
       processingSound: false,
+      inputNeededSound: false,
       readRepliesAloud: false,
       capabilities: caps,
     };

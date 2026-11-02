@@ -21,7 +21,7 @@ const INITIAL_STATE = {
   type: "initialState",
   effort: "", cwd: "/w", useCtrlEnter: false, extVersion: "3.17.2",
   showThinking: false, expandCommandOutputs: false, steerByDefault: false,
-  soundNotifications: false, processingSound: false, readRepliesAloud: false,
+  soundNotifications: false, processingSound: false, inputNeededSound: false, readRepliesAloud: false,
 };
 
 type TipFacts = Partial<{

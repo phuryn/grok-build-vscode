@@ -311,6 +311,7 @@ describe("clearMessages defers destroying the transcript", () => {
       steerByDefault: false,
       soundNotifications: false,
       processingSound: false,
+      inputNeededSound: false,
       readRepliesAloud: false,
       capabilities: {},
     };

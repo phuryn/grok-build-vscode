@@ -20,7 +20,7 @@ function boot(opts: { remote?: boolean; caps?: Record<string, unknown> } = {}) {
     type: "initialState",
     effort: "", cwd: "/w", useCtrlEnter: false, extVersion: "3.18.0",
     showThinking: false, expandCommandOutputs: false, steerByDefault: false,
-    soundNotifications: false, processingSound: false, readRepliesAloud: false,
+    soundNotifications: false, processingSound: false, inputNeededSound: false, readRepliesAloud: false,
     appPurpose: "coding",
     capabilities: opts.caps ?? { remoteAgentSignIn: true },
   });

@@ -87,6 +87,9 @@ describe("host <-> webview message contract (src/protocol.ts is the source of tr
       packageJson.contributes.configuration.properties["grok.processingSound"].default,
     ).toBe(false);
     expect(
+      packageJson.contributes.configuration.properties["grok.inputNeededSound"].default,
+    ).toBe(false);
+    expect(
       packageJson.contributes.configuration.properties["grok.summarizeRepliesAloud"].default,
     ).toBe(true);
     expect(

@@ -262,6 +262,7 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
     case "setExperimentalAntigravity":
     case "setSoundNotifications":
     case "setProcessingSound":
+    case "setInputNeededSound":
     case "setReadRepliesAloud":
     case "setSummarizeRepliesAloud":
     case "setExpandCommandOutputs":

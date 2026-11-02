@@ -45,6 +45,7 @@ export const CONFIG_DEFAULTS: Readonly<Record<string, unknown>> = {
   "grok.pinLiveWorkflows": true,
   "grok.soundNotifications": false,
   "grok.processingSound": false,
+  "grok.inputNeededSound": false,
   "grok.readRepliesAloud": false,
   "grok.summarizeRepliesAloud": true,
   "grok.remote.keepAwake": true,

@@ -38,6 +38,7 @@ function bootWithCaps(
     steerByDefault: false,
     soundNotifications: false,
     processingSound: false,
+    inputNeededSound: false,
     readRepliesAloud: false,
     capabilities: { uploadFile: true, remoteVoice: true, ...capabilities },
   });

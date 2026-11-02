@@ -85,6 +85,7 @@ function seedChat(h: ReturnType<typeof bootWebview>, extra: Record<string, unkno
     steerByDefault: false,
     soundNotifications: false,
     processingSound: false,
+    inputNeededSound: false,
     readRepliesAloud: false,
     appPurpose: "coding",
     capabilities: { uploadFile: true, remoteVoice: true, ...(extra.capabilities as object || {}) },
@@ -213,6 +214,7 @@ describe("settings catalog", () => {
     expect(sound.map((row) => row.id)).toEqual(expect.arrayContaining([
       "soundNotifications",
       "processingSound",
+      "inputNeededSound",
     ]));
   });
 
@@ -611,7 +613,7 @@ describe("settings overlay (chat.js)", () => {
     search.dispatchEvent(new h.window.Event("input", { bubbles: true }));
     const overlay = h.doc.getElementById("settings-overlay")!;
     const ids = [...overlay.querySelectorAll(".settings-row")].map((el) => (el as HTMLElement).dataset.id);
-    expect(ids).toEqual(expect.arrayContaining(["soundNotifications", "processingSound"]));
+    expect(ids).toEqual(expect.arrayContaining(["soundNotifications", "processingSound", "inputNeededSound"]));
     expect(ids).not.toContain("appPurpose");
     expect(overlay.textContent).toMatch(/Notifications/);
   });
@@ -627,6 +629,49 @@ describe("settings overlay (chat.js)", () => {
     expect(thinking).toBeTruthy();
     click(h.window, thinking);
     expect(h.posted).toContainEqual({ type: "setShowThinking", value: true });
+  });
+
+  it.each([
+    ["desk", { vscode: true }], ["desktop", {}], ["remote", { remote: true }],
+  ] as const)("offers the independent input-needed sound switch on %s", (_surface, options) => {
+    const h = bootWebview({ ...options, beforeScripts(w) {
+      if (_surface === "desktop") (w as any).grokDesktopShell = true;
+    } });
+    seedChat(h, _surface === "desktop" ? { capabilities: { relocateView: false, showOutput: false } } : {});
+    openSettings(h);
+    clickSettingsNav(h, "Notifications");
+    const toggle = () => h.doc.querySelector('[data-id="inputNeededSound"] .settings-switch') as HTMLElement;
+    expect(toggle()).toBeTruthy();
+    expect(toggle().getAttribute("aria-checked")).toBe("false");
+    click(h.window, toggle());
+    expect(h.posted).toContainEqual({ type: "setInputNeededSound", value: true });
+    expect(toggle().getAttribute("aria-checked")).toBe("true");
+    expect(h.doc.querySelector('[data-id="soundNotifications"] .settings-switch')?.getAttribute("aria-checked")).toBe("false");
+    expect(h.doc.querySelector('[data-id="processingSound"] .settings-switch')?.getAttribute("aria-checked")).toBe("false");
+    dispatch(h.window, { type: "inputNeededSound", value: false });
+    expect(toggle().getAttribute("aria-checked")).toBe("false");
+    dispatch(h.window, { type: "initialState", inputNeededSound: true });
+    expect(toggle().getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("posts the input-needed sound setter from the separate desk Settings page", () => {
+    const window = new Window({ url: "https://localhost/" });
+    (window as any).eval(settingsSrc);
+    const api = (window as any).GrokSettings;
+    const root = window.document.createElement("div");
+    window.document.body.append(root);
+    const posted: unknown[] = [];
+    api.mount(root, {
+      snapshot: api.defaultSnapshot(),
+      env: api.defaultEnv({ isDesktop: false }),
+      standalone: true,
+      category: "notifications",
+      post: (msg: unknown) => posted.push(msg),
+    });
+    const toggle = root.querySelector('[data-id="inputNeededSound"] .settings-switch')!;
+    expect(toggle).toBeTruthy();
+    toggle.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    expect(posted).toContainEqual({ type: "setInputNeededSound", value: true });
   });
 
   it("omits host-local rows under the remote capability profile", () => {
@@ -692,7 +737,7 @@ describe("settings overlay (chat.js)", () => {
     const ids = api.visibleRows(snapshot, vscodeEnv).map((row: { id: string }) => row.id);
     expect(ids).toEqual(expect.arrayContaining([
       "showThinking", "expandCommandOutputs", "expandDiffCard", "steerByDefault",
-      "soundNotifications", "processingSound",
+      "soundNotifications", "processingSound", "inputNeededSound",
       "readRepliesAloud", "summarizeRepliesAloud",
       "openProjectConfig", "showLogs",
       "openVsCodeSettings", "moveView",

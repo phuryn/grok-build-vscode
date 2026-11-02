@@ -205,7 +205,7 @@ describe("projects rail", () => {
       type: "initialState",
       effort: "", cwd: "", useCtrlEnter: false, extVersion: "0",
       showThinking: false, expandCommandOutputs: false, steerByDefault: false,
-      soundNotifications: false, processingSound: false, readRepliesAloud: false,
+      soundNotifications: false, processingSound: false, inputNeededSound: false, readRepliesAloud: false,
       capabilities: { addProjectFolder: true },
     });
     expect(rail(doc).textContent).toContain("Loading…");
@@ -539,7 +539,7 @@ describe("projects rail", () => {
     dispatch(h.window, {
       type: "initialState", effort: "", cwd: "/work/alpha", useCtrlEnter: false, extVersion: "3.19.9",
       showThinking: false, expandCommandOutputs: false, steerByDefault: false, soundNotifications: false,
-      processingSound: false, readRepliesAloud: false, appPurpose: "coding", capabilities: {},
+      processingSound: false, inputNeededSound: false, readRepliesAloud: false, appPurpose: "coding", capabilities: {},
     });
     dispatch(h.window, { type: "repos", entries: repos, selectedCwd: "/work/alpha", activeCwd: "/work/alpha" });
 
@@ -2745,7 +2745,7 @@ describe("rail overflow menus toggle", () => {
       type: "initialState",
       effort: "medium", cwd: "/work/alpha", useCtrlEnter: false, extVersion: "0",
       showThinking: true, expandCommandOutputs: false, steerByDefault: false,
-      soundNotifications: false, processingSound: false, readRepliesAloud: false,
+      soundNotifications: false, processingSound: false, inputNeededSound: false, readRepliesAloud: false,
       capabilities: {
         uploadFile: true, remoteVoice: false,
         addProjectFolder: true, removeProjectFolder: true,

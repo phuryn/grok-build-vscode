@@ -413,7 +413,7 @@ export type HostMsg =
       & import("./remote-files").RemoteProjectFileWire)
   | ({ type: "providerConfigWriteResult"; requestId?: string; provider: "grok" | "codex" | "claude"; relPath: string }
       & ({ ok: true; stamp: { mtimeMs: number; size: number } } | { ok: false; reason: string }))
-  | { type: "initialState"; effort: string; cwd: string; useCtrlEnter: boolean; extVersion: string; showThinking: boolean; expandCommandOutputs: boolean; steerByDefault: boolean; promptNav: boolean; /** Absent on older hosts means pinned. */ pinLiveWorkflows?: boolean; /** Absent on older hosts means collapsed. */ expandDiffCard?: boolean; soundNotifications: boolean; processingSound: boolean; readRepliesAloud: boolean; /** Global "Use this app for" — absent on older hosts means Knowledge work. */ appPurpose?: "knowledge" | "coding";
+  | { type: "initialState"; effort: string; cwd: string; useCtrlEnter: boolean; extVersion: string; showThinking: boolean; expandCommandOutputs: boolean; steerByDefault: boolean; promptNav: boolean; /** Absent on older hosts means pinned. */ pinLiveWorkflows?: boolean; /** Absent on older hosts means collapsed. */ expandDiffCard?: boolean; soundNotifications: boolean; processingSound: boolean; inputNeededSound: boolean; readRepliesAloud: boolean; /** Global "Use this app for" — absent on older hosts means Knowledge work. */ appPurpose?: "knowledge" | "coding";
       /** VS Code language id for command View all, from the host shell dialect.
        *  Absent on older hosts — View all then omits language. */
       commandLanguage?: string;
@@ -591,6 +591,7 @@ export type HostMsg =
   // grok.soundNotifications — live toggle for the turn-complete/error sound (#59).
   | { type: "soundNotifications"; value: boolean }
   | { type: "processingSound"; value: boolean }
+  | { type: "inputNeededSound"; value: boolean }
   // grok.readRepliesAloud — local VS Code speech-synthesis preference.
   | { type: "readRepliesAloud"; value: boolean }
   | { type: "summarizeRepliesAloud"; value: boolean }
@@ -1298,6 +1299,7 @@ export type WebviewMsg =
   // grok.soundNotifications gear switch (#59) — persisted globally by the host.
   | { type: "setSoundNotifications"; value: boolean }
   | { type: "setProcessingSound"; value: boolean }
+  | { type: "setInputNeededSound"; value: boolean }
   | { type: "setReadRepliesAloud"; value: boolean }
   | { type: "setSummarizeRepliesAloud"; value: boolean }
   | { type: "summarizeSpeech"; requestId: number; text: string }
@@ -1635,7 +1637,7 @@ const HOST_MESSAGE_TYPE_MAP: Record<HostMsg["type"], true> = {
   agentError: true, agentEnd: true, exit: true, setBusy: true, summarizing: true,
   sessionContext: true, clearMessages: true, onboarding: true, error: true, hostNotice: true,
   xaiNotification: true, subagentUpdate: true, childStream: true, runProgress: true, commandOutput: true, expandCommandOutputs: true, steerByDefault: true, promptNav: true, pinLiveWorkflows: true, expandDiffCard: true,
-  soundNotifications: true, processingSound: true, readRepliesAloud: true, summarizeRepliesAloud: true, speechSummary: true, imageFull: true, imageOriginal: true, moveComposerCaret: true, remoteStatus: true, showRemoteHandoff: true, remoteHandoff: true, hostReachable: true, hostLink: true,
+  soundNotifications: true, processingSound: true, inputNeededSound: true, readRepliesAloud: true, summarizeRepliesAloud: true, speechSummary: true, imageFull: true, imageOriginal: true, moveComposerCaret: true, remoteStatus: true, showRemoteHandoff: true, remoteHandoff: true, hostReachable: true, hostLink: true,
   setAllToolDetails: true, focusInput: true, findInSession: true, restoreComposer: true, truncateMessages: true, uiConfirmRequest: true, uiConfirmResolved: true,
   sessions: true, sessionRemoved: true, sessionOpening: true, projectPrompt: true, repoSessions: true, pinnedSessions: true, recentSessions: true, repos: true, sessionDot: true, queuedSends: true, submitQueuedSend: true,
   steerUnavailable: true, feedbackAvailability: true, turnFeedbackAck: true, usage: true,
@@ -1650,7 +1652,7 @@ const WEBVIEW_MESSAGE_TYPE_MAP: Record<WebviewMsg["type"], true> = {
   openProjectConfig: true, listMcpServers: true, connectMcpConnector: true, disconnectMcpConnector: true,
   listRoutines: true, saveRoutine: true, deleteRoutine: true, setRoutinePaused: true, runRoutineNow: true, showLogs: true, toggleDevTools: true, openSettings: true, openSettingsSurface: true, closeSettingsSurface: true, dismissWelcomeTip: true, welcomeTipShown: true, moveView: true,
   setShowThinking: true, setAppPurpose: true, setExpandCommandOutputs: true, setSteerByDefault: true, setPromptNav: true, setPinLiveWorkflows: true, setExpandDiffCard: true,
-  setSoundNotifications: true, setProcessingSound: true, setReadRepliesAloud: true, setSummarizeRepliesAloud: true, setVoiceSendPhrase: true, setVoiceKeyterms: true, setTelemetryEnabled: true, setThumbsFeedback: true, setDesktopTray: true, summarizeSpeech: true, requestImageFull: true, requestImageOriginal: true, composerFocus: true,
+  setSoundNotifications: true, setProcessingSound: true, setInputNeededSound: true, setReadRepliesAloud: true, setSummarizeRepliesAloud: true, setVoiceSendPhrase: true, setVoiceKeyterms: true, setTelemetryEnabled: true, setThumbsFeedback: true, setDesktopTray: true, summarizeSpeech: true, requestImageFull: true, requestImageOriginal: true, composerFocus: true,
   dropFile: true, permissionAnswer: true, exitPlanAnswer: true, questionAnswer: true,
   questionCancel: true, setModel: true, installCodex: true, cancelCodexInstall: true, installAgy: true, cancelAgyInstall: true, agySignIn: true, setExperimentalAntigravity: true, setExperimentalDeepSeek: true, installDeepSeek: true, cancelDeepSeekInstall: true, deepseekConnect: true, setDeepSeekHarness: true, runInstallCmd: true, runMuseInstallCmd: true, runGrokLogin: true,
   cancelDeviceLogin: true, submitDeviceLoginCode: true,

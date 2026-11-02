@@ -78,7 +78,7 @@ const initialState = (capabilities) => ({
   type: "initialState",
   effort: "", cwd: "/work/project", useCtrlEnter: false, extVersion: "3.17.2",
   showThinking: false, expandCommandOutputs: false, steerByDefault: false,
-  soundNotifications: false, processingSound: false, readRepliesAloud: false,
+  soundNotifications: false, processingSound: false, inputNeededSound: false, readRepliesAloud: false,
   appPurpose: "knowledge", hostKind: "extension", hostName: "Pawel-Desk",
   capabilities: { uploadFile: true, remoteVoice: true, ...capabilities },
 });

@@ -841,6 +841,16 @@
       message: (value) => ({ type: "setProcessingSound", value }),
     },
     {
+      id: "inputNeededSound",
+      category: "notifications",
+      title: "Sound when input is needed",
+      description: "Play a short sound when a conversation needs your input, only when the AFK Pilot panel is not focused or visible.",
+      kind: "toggle",
+      defaultValue: false,
+      get: (s) => !!(s && s.inputNeededSound),
+      message: (value) => ({ type: "setInputNeededSound", value }),
+    },
+    {
       id: "providerGrok",
       category: "providers",
       logo: "grok",
@@ -1784,6 +1794,9 @@
       case "processingSound":
         next.processingSound = !!value;
         break;
+      case "inputNeededSound":
+        next.inputNeededSound = !!value;
+        break;
       case "voiceSendPhrase":
         next.voiceSendPhrase = String(value ?? "");
         break;
@@ -1829,6 +1842,7 @@
       fontScale: 1,
       soundNotifications: false,
       processingSound: false,
+      inputNeededSound: false,
       readRepliesAloud: false,
       summarizeRepliesAloud: true,
       voiceConfigured: false,

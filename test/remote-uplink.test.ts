@@ -438,6 +438,7 @@ describe("RemoteUplink socket-level project authorization", () => {
     steerByDefault: false,
     soundNotifications: false,
     processingSound: false,
+    inputNeededSound: false,
     readRepliesAloud: false,
     capabilities: caps,
   };
@@ -452,6 +453,7 @@ describe("RemoteUplink socket-level project authorization", () => {
     steerByDefault: false,
     soundNotifications: false,
     processingSound: false,
+    inputNeededSound: false,
     readRepliesAloud: false,
     capabilities: caps,
   };
