@@ -235,9 +235,14 @@ A DeepSeek launch receipt leaves the card "in background", with an explanation
 and no duration: the child reports to its parent agent, never on this tool call.
 A launch failure still shows its error; parent completion does not finish a card.
 
-Measured live on Windows, 2026-11-02 (Flash, one prompt each): Default and
-Minimal both ran `Get-ChildItem -Force -Name .` through `pwsh` with the shell
-overlay; the keyed catalog read "DeepSeek V4 Flash", "DeepSeek V4.1 Flash 1017"
+Measured live on Windows, 2026-11-02/03 (Flash, one prompt each). The first
+overlay (`- id: pwsh-sandbox` with `name: '@deepseek-ai/dsh-pwsh-local'`) was
+silently skipped: dsh's `applyEntryPatches` treats a row's `name` as a match
+guard (`dsh-app-boot`, "name mismatch ... skipping"), so the sandbox stayed. A
+plain `Get-ChildItem` in a fresh temp folder could not tell the difference; a
+write outside the workspace could: denied with that overlay, `ok` with the
+current one (disable `pwsh-sandbox`, insert `dsh-pwsh-local`). The keyed
+catalog read "DeepSeek V4 Flash", "DeepSeek V4.1 Flash 1017"
 (dsh's own `ui-deepseek-model-label-1017` badge, mirrored under its condition)
 and "DeepSeek V4 Pro"; the launch receipt was exactly
 `started subagent <uuid>`, and the parent's next reply carried the child's

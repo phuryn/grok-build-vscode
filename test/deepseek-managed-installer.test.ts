@@ -134,8 +134,13 @@ describe("pinned private DeepSeek runtime", () => {
     if (platform === "win32") {
       expect(full.args.at(-2)).toBe("--patch");
       const overlay = fs.readFileSync(full.args.at(-1)!, "utf8");
-      expect(overlay).toContain("id: pwsh-sandbox");
-      expect(overlay).toContain("name: '@deepseek-ai/dsh-pwsh-local'");
+      // dsh treats a patch row's `name` as a match guard: a row pairing the
+      // sandbox's id with the local executor's name is SKIPPED, and the
+      // sandbox stays (measured live: writes outside the workspace denied).
+      // The working shape disables the sandbox row and inserts the executor.
+      expect(overlay).toMatch(/^- id: pwsh-sandbox\r?\n  disabled: true$/m);
+      expect(overlay).toMatch(/^- insert:\r?\n    - id: pwsh-local\r?\n      name: '@deepseek-ai\/dsh-pwsh-local'$/m);
+      expect(overlay).not.toMatch(/id: pwsh-sandbox\r?\n\s*name:/);
       expect(overlay).not.toMatch(/sandbox-policy|danger-full-access|approval:/);
       expect(full.args.at(-1)!.startsWith(full.env.DSH_HOME! + path.sep)).toBe(true);
     } else expect(full.args).not.toContain("--patch");

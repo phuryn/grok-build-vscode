@@ -1,4 +1,12 @@
-# dsh 0.2.1-rc.5: use the official unconfined PowerShell executor on Windows.
-# Keep the tool, subprocess lifecycle, file policy and approval services intact.
+# dsh 0.2.1-rc.5, Default on Windows: dsh's ACL sandbox can fail before any
+# command runs (SetNamedSecurityInfoW on the workspace). The owner chose the
+# official unconfined PowerShell executor instead (2026-11-03, as for Muse on
+# Windows); the tool, subprocess lifecycle, file policy and approval services
+# stay as they are. A patch row's `name` only guards the match (a different
+# name makes dsh skip the row), so the sandbox row is disabled and the local
+# executor inserted, the way minimal-acp.patch.yml swaps transport.
 - id: pwsh-sandbox
-  name: '@deepseek-ai/dsh-pwsh-local'
+  disabled: true
+- insert:
+    - id: pwsh-local
+      name: '@deepseek-ai/dsh-pwsh-local'
