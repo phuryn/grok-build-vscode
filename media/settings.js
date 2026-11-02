@@ -848,6 +848,9 @@
       kind: "toggle",
       defaultValue: false,
       get: (s) => !!(s && s.inputNeededSound),
+      // Client-local on a remote (stored on that device), host-backed on a
+      // desk, where VS Code's Settings is a separate webview. Same as promptNav.
+      localOnly: (s, env) => !!(env && env.isRemote),
       message: (value) => ({ type: "setInputNeededSound", value }),
     },
     {

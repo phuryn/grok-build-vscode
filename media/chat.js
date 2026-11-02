@@ -156,6 +156,7 @@
   const EXPAND_DIFF_CARD_KEY = "grok.remote.expandDiffCard";
   const PIN_LIVE_WORKFLOWS_KEY = IS_REMOTE ? "grok.remote.pinLiveWorkflows" : "grok.pinLiveWorkflows";
   const PROMPT_NAV_KEY = IS_REMOTE ? "grok.remote.promptNav" : "grok.promptNav";
+  const INPUT_NEEDED_SOUND_KEY = "grok.remote.inputNeededSound";
   const REMOTE_TTS_KEY = "grok.remote.tts";
   const REMOTE_TTS_SUMMARY_KEY = "grok.remote.ttsSummary";
   const REMOTE_STORAGE_SUFFIX = (
@@ -1036,7 +1037,9 @@
     // grok.processingSound: a quiet repeating cue while a live turn is still
     // running. Separate from the completion/error notification and off by default.
     processingSound: false,
-    inputNeededSound: false,
+    // grok.inputNeededSound on a desk; on a phone or browser tab it is this
+    // device's own choice, kept across reloads and never taken from the host.
+    inputNeededSound: IS_REMOTE ? storedBool(INPUT_NEEDED_SOUND_KEY, false) : false,
     // grok.worktree — true when the focused session runs in an isolated git
     // worktree (from the `session` message). Gates the gear Apply/Remove items.
     isWorktree: false,
@@ -1324,11 +1327,13 @@
   // Catalog dots are current-state baselines, never notifications. Only an
   // observed working → needs-you delta can ring: the first waiting dot on a
   // fresh page, repeated dots, and pending cards restored AFTER replay stay quiet.
+  // A history replay does NOT reset the baselines: opening another conversation
+  // while a turn runs re-sends no `working` dot, so forgetting it there made the
+  // approval that followed silent. Dots seen during a replay are recorded, never rung.
   const inputSoundDots = new Map();
   let inputSoundConnection = null;
   function observeInputNeededSound(msg) {
-    if (msg.type === "initialState" || msg.type === "hostReachable" ||
-        (msg.type === "historyReplay" && msg.active)) {
+    if (msg.type === "initialState" || msg.type === "hostReachable") {
       inputSoundDots.clear();
       return;
     }
@@ -1337,7 +1342,6 @@
       inputSoundConnection = msg.link.connection;
       return;
     }
-    if (state.replaying) return;
     if (["sessions", "repoSessions", "pinnedSessions", "recentSessions"].includes(msg.type)) {
       for (const [id, dot] of Object.entries(msg.dots || {})) inputSoundDots.set(id, dot);
       return;
@@ -1349,7 +1353,7 @@
     if (msg.type !== "sessionDot") return;
     const previous = inputSoundDots.get(msg.id);
     inputSoundDots.set(msg.id, msg.dot);
-    if (previous !== "working" || msg.dot !== "needs-you" || !state.inputNeededSound) return;
+    if (state.replaying || previous !== "working" || msg.dot !== "needs-you" || !state.inputNeededSound) return;
     if (document.visibilityState !== "hidden" && document.hasFocus()) return;
     playNotificationTone("inputNeeded");
   }
@@ -3733,7 +3737,11 @@
       case "inputNeededSound":
         state.inputNeededSound = !!value;
         unlockAudio();
-        break;
+        // Remote only, like promptNav: the host never stores a remote's choice,
+        // so a reconnect snapshot would otherwise switch it back off.
+        if (!IS_REMOTE) break;
+        storeRemotePref(INPUT_NEEDED_SOUND_KEY, state.inputNeededSound);
+        return;
       case "processingSound":
         state.processingSound = !!value;
         unlockAudio();
@@ -20721,7 +20729,7 @@ ${fullText}`
         }
         if (typeof msg.soundNotifications === "boolean") state.soundNotifications = msg.soundNotifications;
         if (typeof msg.processingSound === "boolean") state.processingSound = msg.processingSound;
-        if (typeof msg.inputNeededSound === "boolean") state.inputNeededSound = msg.inputNeededSound;
+        if (!IS_REMOTE && typeof msg.inputNeededSound === "boolean") state.inputNeededSound = msg.inputNeededSound;
         releaseAudioIfSilent();
         // Absent appPurpose (older host) → Knowledge work — smaller surface.
         state.appPurpose = msg.appPurpose === "coding" ? "coding" : "knowledge";

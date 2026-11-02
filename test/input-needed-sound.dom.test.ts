@@ -152,7 +152,7 @@ describe("sound when input is needed (#228)", () => {
     expect(h.notes).toEqual(inputTone);
   });
 
-  it("discards the pre-replay baseline and ignores replayed cards, dots, and post-replay options", () => {
+  it("ignores replayed cards, dots, and post-replay options", () => {
     const h = boot();
     dot(h, "working");
     dispatch(h.window, { type: "historyReplay", active: true });
@@ -169,6 +169,27 @@ describe("sound when input is needed (#228)", () => {
     expect(h.notes).toEqual([]);
     waiting(h);
     expect(h.notes).toEqual(inputTone);
+  });
+
+  it("still chimes after another conversation's history loads while a turn keeps working", () => {
+    // Review finding: switching conversations replays history but re-sends no
+    // `working` dot for the turn that is still running.
+    const h = boot();
+    dot(h, "working", "running");
+    dispatch(h.window, { type: "historyReplay", active: true });
+    dispatch(h.window, { type: "historyReplay", active: false });
+    dot(h, "needs-you", "running");
+    expect(h.notes).toEqual(inputTone);
+  });
+
+  it("records a dot that arrives during a replay without ringing for it", () => {
+    const h = boot();
+    dot(h, "working");
+    dispatch(h.window, { type: "historyReplay", active: true });
+    dot(h, "needs-you");
+    dispatch(h.window, { type: "historyReplay", active: false });
+    dot(h, "needs-you");
+    expect(h.notes).toEqual([]);
   });
 
   it.each(["initialState", "hostReachable", "hostLink"])("forgets stale working state on reconnect via %s", type => {

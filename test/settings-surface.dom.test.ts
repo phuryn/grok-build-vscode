@@ -631,8 +631,35 @@ describe("settings overlay (chat.js)", () => {
     expect(h.posted).toContainEqual({ type: "setShowThinking", value: true });
   });
 
+  it("keeps a remote's input-needed sound switch on the device, through a reconnect snapshot", () => {
+    const h = bootWebview({ remote: true });
+    seedChat(h);
+    openSettings(h);
+    clickSettingsNav(h, "Notifications");
+    const toggle = () => h.doc.querySelector('[data-id="inputNeededSound"] .settings-switch') as HTMLElement;
+    expect(toggle().getAttribute("aria-checked")).toBe("false");
+    click(h.window, toggle());
+    expect(toggle().getAttribute("aria-checked")).toBe("true");
+    // The host drops a remote's setter (host-local), so it is never sent.
+    expect(h.posted.some((m) => m.type === "setInputNeededSound")).toBe(false);
+    expect(h.window.localStorage.getItem("grok.remote.inputNeededSound")).toBe("true");
+    // A reconnect's snapshot carries the DESK's value; the phone keeps its own.
+    dispatch(h.window, { type: "initialState", inputNeededSound: false });
+    expect(toggle().getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("starts a remote from its stored input-needed sound choice", () => {
+    const h = bootWebview({ remote: true, beforeScripts(w) {
+      w.localStorage.setItem("grok.remote.inputNeededSound", "true");
+    } });
+    seedChat(h);
+    openSettings(h);
+    clickSettingsNav(h, "Notifications");
+    expect(h.doc.querySelector('[data-id="inputNeededSound"] .settings-switch')?.getAttribute("aria-checked")).toBe("true");
+  });
+
   it.each([
-    ["desk", { vscode: true }], ["desktop", {}], ["remote", { remote: true }],
+    ["desk", { vscode: true }], ["desktop", {}],
   ] as const)("offers the independent input-needed sound switch on %s", (_surface, options) => {
     const h = bootWebview({ ...options, beforeScripts(w) {
       if (_surface === "desktop") (w as any).grokDesktopShell = true;
