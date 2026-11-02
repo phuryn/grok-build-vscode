@@ -2677,6 +2677,12 @@
       };
     }
     if (globalThis.GrokWebviewHelpers.providerSupports(state.activeProvider, "compact")) lead.appendChild(act);
+    if (state.activeProvider === "deepseek") {
+      const note = document.createElement("div");
+      note.className = "popover-fineprint";
+      note.textContent = "Manual compaction is unavailable through DeepSeek's ACP connection.";
+      lead.appendChild(note);
+    }
     contextPopover.insertBefore(lead, keep);
     if (!keep && sizeControl) contextPopover.appendChild(sizeControl);
 
@@ -4428,42 +4434,29 @@
     select.id = "deepseek-harness"; select.className = "settings-select context-window-select";
     select.innerHTML = '<option value="default">Default</option><option value="minimal">Minimal</option>';
     select.value = value; select.disabled = locked || busy;
-    const choose = (harness, newConversation) => {
+    const choose = (harness) => {
       const now = state.deepseekHarnessContext;
       if (!deepseekAdvertised || state.activeProvider !== "deepseek" || state.busy || state.busyLocked || state.startingPhase || state.deepseekHarnessPending
         || !now || now.sessionId !== identity.sessionId || now.generation !== identity.generation || now.modelId !== identity.modelId
-        || state.currentModelId !== identity.modelId || (!newConversation && (state.deepseekHarnessLocked || visibleUserBubbleCount() > 0))) return;
+        || state.currentModelId !== identity.modelId || state.deepseekHarnessLocked || visibleUserBubbleCount() > 0) return;
       state.deepseekHarnessPending = true;
-      let draftId;
-      if (!newConversation) {
-        // A different process id still represents this untouched conversation.
-        // Reuse the correlated draft reply so sessionName cannot switch away
-        // from text typed before or during the replacement.
-        draftId = newRemoteTabToken();
-        pendingComposerDrafts.add(draftId);
-        composerSessionId = draftId;
-        composerLoadDraft = null;
-        composerExpectedSessionId = null;
-        syncFocusedRemoteHandoff();
-      }
-      vscode.postMessage({ type: "setDeepSeekHarness", ...identity, harness, ...(newConversation ? { newConversation: true } : { draftId }) });
+      // The replacement process still represents this untouched conversation.
+      const draftId = newRemoteTabToken();
+      pendingComposerDrafts.add(draftId);
+      composerSessionId = draftId;
+      composerLoadDraft = null;
+      composerExpectedSessionId = null;
+      syncFocusedRemoteHandoff();
+      vscode.postMessage({ type: "setDeepSeekHarness", ...identity, harness, draftId });
       renderContextPopover();
     };
-    select.onchange = () => { const next = select.value; select.value = value; choose(next, false); };
+    select.onchange = () => { const next = select.value; select.value = value; choose(next); };
     row.append(label, select); wrap.append(row);
     const note = document.createElement("div"); note.className = "popover-fineprint";
-    note.textContent = busy ? "Waiting for the harness to be ready."
-      : locked ? "Harness is fixed for this conversation. The other harness starts a new conversation."
+    note.textContent = locked ? "Start a new session to use a different DeepSeek harness."
+      : busy ? "Waiting for the harness to be ready."
         : "Choose before your first message.";
     wrap.append(note);
-    if (locked) {
-      const other = value === "minimal" ? "default" : "minimal";
-      const action = document.createElement("button"); action.type = "button"; action.className = "context-compact";
-      action.dataset.deepseekNewHarness = other; action.disabled = busy;
-      action.textContent = "New conversation with " + (other === "minimal" ? "Minimal" : "Default");
-      action.onclick = () => choose(other, true);
-      wrap.append(action);
-    }
     return wrap;
   }
 
@@ -11696,7 +11689,7 @@
       const suffix = provider === "deepseek" ? "DeepSeek" : "Agy";
       const install = state[provider === "deepseek" ? "deepseekInstall" : "agyInstall"];
       const installing = install.phase !== "idle";
-      const percent = install.totalBytes > 0
+      const percent = install.totalBytes > 0 && (provider !== "deepseek" || install.phase === "downloading")
         ? Math.min(100, Math.round((install.receivedBytes / install.totalBytes) * 100))
         : null;
       const progressLabel = install.phase === "downloading"
@@ -11708,7 +11701,7 @@
         + `<p class="onb-desc">${provider === "deepseek" ? "Install the pinned official dsh harness and its private Node runtime into this app's storage. Your system Node is unchanged." : "Download Google's Antigravity agent server into this app's storage. It is a large download: about 125 MB, and more on Linux."}</p>`
         + (reason ? `<p class="onb-install-error" role="alert">${escapeHtml(reason)}</p>` : "")
         + (installing
-          ? `<div class="onb-install-progress" role="status"><span>${escapeHtml(progressLabel)}</span>`
+          ? `<div class="onb-install-progress" role="status"><span>${provider === "deepseek" ? escapeHtml(progressLabel.replace(/\.\.\.$/, "")) + BLINK_DOTS : escapeHtml(progressLabel)}</span>`
             + (percent == null ? "" : `<progress max="100" value="${percent}">${percent}%</progress>`)
             + `<button class="onb-action onb-secondary" type="button" data-act="cancel${suffix}Install">Cancel</button></div>`
           : `<button class="onb-action" type="button" data-act="install${suffix}">Install ${name}</button>`)
@@ -11737,10 +11730,14 @@
     const visible = deepseekAdvertised && state.activeProvider === "deepseek";
     if (!banner && visible) {
       banner = document.createElement("p"); banner.id = "deepseek-full-access"; banner.className = "onb-desc";
-      banner.textContent = "Minimal runs with full access to files and shell commands, without approval prompts.";
       const composer = document.querySelector(".composer"); if (composer) composer.prepend(banner);
     }
-    if (banner) banner.hidden = !visible || state.deepseekHarness !== "minimal";
+    if (banner) {
+      banner.textContent = state.deepseekHarness === "minimal"
+        ? "Minimal runs with full access to files and shell commands, without approval prompts."
+        : "DeepSeek shell commands run without a sandbox on Windows.";
+      banner.hidden = !visible || state.deepseekHarness !== "minimal" && !state.deepseekShellUnsandboxed;
+    }
     if (!contextPopover.hidden) renderContextPopover();
   }
 
@@ -14985,7 +14982,7 @@ ${fullText}`
   }
 
   function observeSubagentLive(el) {
-    if (state.replaying || el.classList.contains("subagent-done") || el.classList.contains("subagent-background") || el._liveStartedAt != null) return;
+    if (state.replaying || el._deepseekLaunchReceipt || el.classList.contains("subagent-done") || el.classList.contains("subagent-background") || el._liveStartedAt != null) return;
     el._liveStartedAt = Date.now();
     if (!workflowAgeTimer) workflowAgeTimer = setInterval(refreshWorkflowAges, 1000);
   }
@@ -15251,6 +15248,26 @@ ${fullText}`
     const output = out && typeof out.output === "string" ? out.output
       : out && typeof out.text === "string" ? out.text
       : toolUpdateText(call);
+    // dsh completes the launch tool while the child is still working. That
+    // receipt is neither a child result nor evidence of its running time.
+    const deepseekReceipt = state.activeProvider === "deepseek" && status === "completed"
+      && /^started subagent\s+([0-9a-f-]+)\s*$/i.exec(String(output || "").trim());
+    if (deepseekReceipt) {
+      el.dataset.subagentId = deepseekReceipt[1];
+      el._deepseekLaunchReceipt = true;
+      el._liveStartedAt = null;
+      // dsh's child reports to its parent agent (send_message), never on this
+      // tool call, so no result will land here. "in background" is the honest
+      // state: no spinner, no timer, no invented finish.
+      el.classList.add("subagent-background");
+      const stream = el.querySelector(".subagent-stream");
+      if (!stream.querySelector(".deepseek-subagent-started")) {
+        workflowText(stream, "subagent-prose deepseek-subagent-started",
+          "Subagent started. DeepSeek doesn't show its work here; the main agent receives its result.");
+      }
+      refreshSubagentCard(el);
+      return;
+    }
     // A background spawn (rawInput.background: true) "completes" immediately
     // with a started-ack while the child keeps running — that's not the
     // result. Keep running; the real output arrives on the
@@ -21491,6 +21508,7 @@ ${fullText}`
       }
       case "modeChanged":
         state.deepseekHarness = msg.deepseekHarness;
+        state.deepseekShellUnsandboxed = msg.deepseekShellUnsandboxed;
         state.deepseekHarnessLocked = msg.deepseekHarnessLocked;
         state.deepseekHarnessContext = msg.deepseekHarnessContext;
         state.deepseekHarnessPending = false;

@@ -3,6 +3,7 @@ import type { HostMsg } from "./protocol";
 import type { FileChip } from "./chips";
 import { permissionOptionsForPlan } from "./plan-gate";
 import type { AcpProvider } from "./acp-backend";
+import { deepseekShellUnsandboxed } from "./deepseek-backend";
 import { MUSE_ON_REQUEST_UNAVAILABLE, museSandboxUnavailable, sessionModes } from "./mode-prefs";
 import { isCloudEnvironment } from "./remote-frames";
 import type { SubscriptionUsageBinding } from "./subscription-usage";
@@ -684,7 +685,7 @@ export function finishQueuedSendCommit(
 /** The same choices and restrictions feed live UI updates and reconnects. */
 export function sessionModeMessage(session: Session, modeId: string): Extract<HostMsg, { type: "modeChanged" }> {
   return { type: "modeChanged", modeId, modes: session.provider === "deepseek" && session.deepseekHarness === "minimal" ? [] : sessionModes(session.provider, !!session.museSandboxUnavailable),
-    ...(session.provider === "deepseek" ? { deepseekHarness: session.deepseekHarness ?? "default", deepseekHarnessLocked: session.hasHistory || session.userMessageCount > 0,
+    ...(session.provider === "deepseek" ? { deepseekHarness: session.deepseekHarness ?? "default", deepseekShellUnsandboxed: deepseekShellUnsandboxed(session.deepseekHarness), deepseekHarnessLocked: session.hasHistory || session.userMessageCount > 0,
       ...(session.client?.sessionId ? { deepseekHarnessContext: { sessionId: session.client.sessionId, modelId: session.client.currentModelId, generation: session.gen } } : {}) } : {}),
     ...(session.provider === "muse" && !session.museSandboxUnavailable && session.museShellSandbox !== true
       ? { disabledModes: { onRequest: MUSE_ON_REQUEST_UNAVAILABLE } } : {}),

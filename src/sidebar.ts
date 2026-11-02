@@ -852,6 +852,7 @@ export class GrokSidebar {
   private deepseekInstallAbort?: AbortController;
   private deepseekKeySource?: "environment" | "saved";
   private deepseekSessionCache = new Map<string, SessionListEntry[]>();
+  private deepseekModelProbe?: Promise<void>;
   private providerConnectionState: ProviderConnections = {};
   private providerRuns = new Map<AcpProvider, AbortController>();
   private providerLoginAttempts = new Map<AcpProvider, AbortController>();
@@ -2103,6 +2104,43 @@ export class GrokSidebar {
     for (const session of this.remoteClients.detachedActiveValues()) rearm(session);
   }
 
+  private async invalidateDeepSeekModels(): Promise<void> {
+    this.providerRuns?.get("deepseek")?.abort();
+    this.providerRuns?.delete("deepseek");
+    this.deepseekModelProbe = undefined;
+    const { deepseek: _old, ...rest } = this.state.get<ProviderModelCache>(PROVIDER_MODEL_CACHE_KEY, {});
+    await this.state.update(PROVIDER_MODEL_CACHE_KEY, rest);
+  }
+
+  /** session/new discovers models without sending a prompt or proving the key. */
+  private warmConnectedDeepSeekModels(): Promise<void> {
+    if (!this.deepseekOffered() || !this.hasProviderConsent("deepseek")) return Promise.resolve();
+    if (this.deepseekModelProbe) return this.deepseekModelProbe;
+    const signal = this.providerRunSignal("deepseek");
+    const cliPath = this.locateProvider("deepseek");
+    if (!cliPath) return Promise.resolve();
+    const probe = (async () => {
+      const credential = await this.deepseekCredential();
+      signal.throwIfAborted();
+      const client = new AcpClient({ signal, cliPath, cwd: this.workspaceRoot() || this.projectHomeDir(),
+        env: { ...process.env, ...(credential.key ? { DEEPSEEK_API_KEY: credential.key } : {}) },
+        backend: this.createProviderBackend("deepseek"), log: () => {} });
+      try {
+        await client.start();
+        signal.throwIfAborted();
+        await client.newSession();
+        signal.throwIfAborted();
+        await this.cacheProviderModels("deepseek", client.availableModels, client.currentModelId);
+      } finally { await client.dispose(); }
+    })().catch(() => {
+      if (!signal.aborted) this.host.appendLine("[deepseek] Could not read the model catalog. Reconnect DeepSeek to retry.");
+    }).finally(() => {
+      if (this.deepseekModelProbe === probe) this.deepseekModelProbe = undefined;
+    });
+    this.deepseekModelProbe = probe;
+    return probe;
+  }
+
   private async warmConnectedCodexModels(requireProof = false): Promise<boolean> {
     if (!this.hasProviderConsent("codex")) return false;
     const signal = this.providerRunSignal("codex");
@@ -2192,7 +2230,11 @@ export class GrokSidebar {
   private async reprobeProviderCredentials(provider: AcpProvider, requireProof = false): Promise<boolean> {
     if (!this.hasProviderConsent(provider)) return false;
     const signal = this.providerRunSignal(provider);
-    if (provider === "deepseek") return this.deepseekOffered() && !!(await this.deepseekCredential()).key;
+    if (provider === "deepseek") {
+      if (!this.deepseekOffered()) return false;
+      await this.warmConnectedDeepSeekModels();
+      return !!(await this.deepseekCredential()).key;
+    }
     // MSP exposes no credential-status operation. A catalog read cannot prove sign-in.
     if (provider === "muse") return false;
     // Antigravity's honest cheap answer is its stored sign-in. A probe process
@@ -3366,6 +3408,7 @@ export class GrokSidebar {
       }
       if (e.affectsConfiguration("grok.deepseekPath") || e.affectsConfiguration("grok.experimentalDeepSeek")) {
         this.deepseekInstallAbort?.abort();
+        void this.invalidateDeepSeekModels().then(() => this.warmConnectedDeepSeekModels());
         for (const s of new Set([this.focused, ...this.pool, ...this.remoteClients.detachedActiveValues()])) {
           if (s.provider === "deepseek") {
             const client = this.detachClient(s); void client?.dispose();
@@ -13624,8 +13667,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           this.emit(live, { type: "setBusy", value: false });
         }
         await Promise.all(exits);
+        await this.invalidateDeepSeekModels();
         this.setProviderNeedsLogin("deepseek", false);
         await this.setProviderConnected("deepseek", true);
+        await this.warmConnectedDeepSeekModels();
         await this.adoptSessionsForConnectedProvider("deepseek", session);
         this.postProviderState();
         this.postLocal({ type: "onboarding", state: "provider-connected", provider: "deepseek", platform: process.platform });
@@ -13642,25 +13687,19 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           break;
         }
         const locked = () => session.hasHistory || session.userMessageCount > 0;
-        if (locked() && msg.newConversation !== true) {
+        if (locked()) {
           reply?.(msg.sessionId);
-          this.emit(session, { type: "error", text: "Harness is fixed for this conversation. Choose New conversation to use the other harness." });
+          this.emit(session, { type: "error", text: "Start a new session to use a different DeepSeek harness." });
           this.emit(session, sessionModeMessage(session, this.displayMode(session)));
           break;
         }
-        if (msg.newConversation) {
-          const choice = { harness: msg.harness, modelId: msg.modelId };
-          if (origin === "remote" && clientId) await this.newRemoteSession(clientId, true, undefined, choice);
-          else await this.newFocusedSession(origin, this.sessionCwd(session), undefined, choice);
-        } else {
-          try {
-            await this.startSession(undefined, session, "replace", undefined, {
-              deepseekHarness: msg.harness, modelId: msg.modelId, canReplace: () => matches() && !locked(),
-            });
-          } finally {
-            reply?.(session.client?.sessionId ?? session.activeSessionId ?? msg.sessionId);
-            this.emit(session, sessionModeMessage(session, this.displayMode(session)));
-          }
+        try {
+          await this.startSession(undefined, session, "replace", undefined, {
+            deepseekHarness: msg.harness, modelId: msg.modelId, canReplace: () => matches() && !locked(),
+          });
+        } finally {
+          reply?.(session.client?.sessionId ?? session.activeSessionId ?? msg.sessionId);
+          this.emit(session, sessionModeMessage(session, this.displayMode(session)));
         }
         break;
       }
@@ -19275,6 +19314,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // than waiting for a first attempt.
     this.postProjectSetup();
     for (const provider of this.connectedProviders()) {
+      if (provider === "deepseek") {
+        void this.warmConnectedDeepSeekModels();
+        continue;
+      }
       const signal = this.providerRunSignal(provider);
       void this.probeProviderVersion(provider).then(version => {
         if (!signal.aborted) return this.refreshModelsIfCliChanged(provider, version);
@@ -21621,7 +21664,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   }
 
   /** Start a brand-new session, keeping the current one alive in the background. */
-  private async newFocusedSession(origin: MsgOrigin, requestedCwd?: string, onCreated?: (id: string) => void, deepseek?: { harness: DeepSeekHarness; modelId?: string }): Promise<void> {
+  private async newFocusedSession(origin: MsgOrigin, requestedCwd?: string, onCreated?: (id: string) => void): Promise<void> {
     // The answer to a CLI update belongs to the update, not to every
     // conversation opened afterwards. This lives in the two session
     // constructors rather than in `case "newSession"` because a remote's
@@ -21659,7 +21702,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     const targetCwd = named?.cwd ?? this.historyCwdFor(origin);
     const leavingId = this.focused.activeSessionId;
     this.parkFocused();
-    const unused = deepseek ? undefined : this.findUnusedEmptySession(targetCwd, "local", leavingId);
+    const unused = this.findUnusedEmptySession(targetCwd, "local", leavingId);
     if (unused) onCreated?.(unused.id);
     if (unused?.session?.client) {
       this.focusSession(unused.session);
@@ -21673,16 +21716,14 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     } else {
       this.focused = this.newLocalSession();
       this.setSessionCwd(this.focused, targetCwd, this.workspaceRoot());
-      this.focused.provider = deepseek ? "deepseek" : this.defaultProviderForProject(targetCwd);
-      if (deepseek) this.focused.deepseekHarness = deepseek.harness;
+      this.focused.provider = this.defaultProviderForProject(targetCwd);
       // The webview toolbar button clears its own DOM before posting newSession,
       // but the Command Palette command lands here directly — without this clear
       // the old transcript stayed onscreen under the fresh session. (The toolbar
       // path just clears twice, a no-op.)
       this.emit(this.focused, { type: "clearMessages" });
       const created = this.focused;
-      await this.startSession(undefined, created, "replace", undefined, { modelId: deepseek?.modelId, deepseekHarness: deepseek?.harness });
-      if (deepseek) this.emit(created, { type: "planNotice", text: "Started a new DeepSeek conversation with the " + deepseek.harness + " harness. Your previous conversation is kept in history." });
+      await this.startSession(undefined, created, "replace");
       if (created.activeSessionId) onCreated?.(created.activeSessionId);
     }
     await this.persistWorktreeBinding(this.focused);
@@ -21731,14 +21772,14 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     };
   }
 
-  private async newRemoteSession(clientId: string, notifyCatalog = true, onCreated?: (id: string) => void, deepseek?: { harness: DeepSeekHarness; modelId?: string }): Promise<void> {
+  private async newRemoteSession(clientId: string, notifyCatalog = true, onCreated?: (id: string) => void): Promise<void> {
     this.clearSettledCliUpdates();
     const ownerTabToken = this.remoteClients.tabToken(clientId);
     const cwd = this.remoteClients.cwd(clientId);
     const leavingId = this.remoteClients.active(clientId)?.activeSessionId;
     this.parkRemoteSession(clientId);
     this.dropRemoteVoice(clientId);
-    const unused = deepseek ? undefined : this.findUnusedEmptySession(cwd, "remote", leavingId);
+    const unused = this.findUnusedEmptySession(cwd, "remote", leavingId);
     if (unused) onCreated?.(unused.id);
     if (unused?.session?.client) {
       this.focusRemoteSession(clientId, unused.session, notifyCatalog);
@@ -21760,12 +21801,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     }
     const session = new Session();
     this.setSessionCwd(session, cwd, this.workspaceRoot());
-    session.provider = deepseek ? "deepseek" : this.defaultProviderForProject(cwd);
-    if (deepseek) session.deepseekHarness = deepseek.harness;
+    session.provider = this.defaultProviderForProject(cwd);
     this.remoteClients.setActive(clientId, session);
     this.emit(session, { type: "clearMessages" });
-    await this.startSession(undefined, session, "replace", undefined, { modelId: deepseek?.modelId, deepseekHarness: deepseek?.harness });
-    if (deepseek) this.emit(session, { type: "planNotice", text: "Started a new DeepSeek conversation with the " + deepseek.harness + " harness. Your previous conversation is kept in history." });
+    await this.startSession(undefined, session, "replace");
     if (session.activeSessionId) onCreated?.(session.activeSessionId);
     await this.persistWorktreeBinding(session);
     this.sweepEmptySessions(this.sessionCwd(session));

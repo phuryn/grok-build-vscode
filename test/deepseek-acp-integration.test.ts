@@ -3,10 +3,27 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AcpClient, type PermissionRequest } from "../src/acp";
-import { DeepSeekBackend } from "../src/deepseek-backend";
+import { DeepSeekBackend, deepseekModelName, normalizeDeepSeekSession } from "../src/deepseek-backend";
 import { deepseekRuntimePaths } from "../src/deepseek-managed-installer";
+import { supportsCompaction } from "../src/acp-backend";
 
 describe("DeepSeek official ACP contract (fake subprocess only)", () => {
+  it("cleans catalog labels and preserves supplied release tags, descriptions and opaque values", () => {
+    const value = '["deepseek-official","model-id-must-stay-opaque"]';
+    const normalized = normalizeDeepSeekSession({ configOptions: [{ id: "model", currentValue: value,
+      options: [{ name: "DeepSeek", options: [{ value, name: "DeepSeek-V4.1-Flash-1017", description: "Catalog description" }] }] }] });
+    expect(normalized.models.availableModels[0]).toMatchObject({ modelId: value, name: "DeepSeek V4.1 Flash 1017", description: "Catalog description" });
+    expect(normalized.models.currentModelId).toBe(value);
+  });
+  it("adds dsh's own 1017 badge only under dsh's condition", () => {
+    const flash = JSON.stringify(["deepseek-official", "deepseek-flash"]);
+    expect(deepseekModelName("DeepSeek-V4.1-Flash", flash)).toBe("DeepSeek V4.1 Flash 1017");
+    expect(deepseekModelName("DeepSeek-V4.1-Flash", JSON.stringify(["deepseek-account", "deepseek-flash"]))).toBe("DeepSeek V4.1 Flash 1017");
+    expect(deepseekModelName("DeepSeek-V4.1-Flash", JSON.stringify(["someone-else", "deepseek-flash"]))).toBe("DeepSeek V4.1 Flash");
+    expect(deepseekModelName("DeepSeek-V4.2-Flash", flash)).toBe("DeepSeek V4.2 Flash");
+    expect(deepseekModelName("deepseek-v4-flash", JSON.stringify(["deepseek-official", "deepseek-v4-flash"]))).toBe("DeepSeek V4 Flash");
+    expect(deepseekModelName("DeepSeek-V4.1-Flash", "not json")).toBe("DeepSeek V4.1 Flash");
+  });
   let root: string;
   const clients: AcpClient[] = [];
   const sink = () => path.join(root, "requests.jsonl");
@@ -34,7 +51,7 @@ describe("DeepSeek official ACP contract (fake subprocess only)", () => {
     expect(received()[0].params.clientCapabilities).toEqual({ fs: { readTextFile: false, writeTextFile: false }, terminal: false });
     expect(received().find(v => v.method === "session/new").params.mcpServers).toEqual([]);
     expect(client.availableModels).toHaveLength(1);
-    expect(client.availableModels[0]).toMatchObject({ name: "deepseek-v4-flash", totalContextTokens: 1000000 });
+    expect(client.availableModels[0]).toMatchObject({ name: "DeepSeek V4 Flash", totalContextTokens: 1000000 });
     expect(client.currentModelId).toBe('["deepseek-official","deepseek-v4-flash"]');
     await expect(client.setModel('["deepseek-official","deepseek-v4-pro"]')).rejects.toThrow();
     await client.setReasoningEffort("max");
@@ -64,7 +81,7 @@ describe("DeepSeek official ACP contract (fake subprocess only)", () => {
     client.on("contextUsage", (used, window) => usage.push({ used, window }));
     await client.start(); await client.newSession();
     expect(init[0]).toMatchObject({ authMethods: [], agentCapabilities: { promptCapabilities: { image: false } } });
-    expect(client.availableModels.map(m => m.name)).toEqual(["deepseek-v4-flash", "DeepSeek-V4.1-Flash", "DeepSeek-V4-Pro"]);
+    expect(client.availableModels.map(m => m.name)).toEqual(["DeepSeek V4 Flash", "DeepSeek V4.1 Flash 1017", "DeepSeek V4 Pro"]);
     const value = '["deepseek-official","deepseek-flash"]';
     await client.setModel(value);
     expect(client.currentModelId).toBe(value);
@@ -97,5 +114,21 @@ describe("DeepSeek official ACP contract (fake subprocess only)", () => {
     const error = await client.prompt("hello").catch(e => e);
     expect(client.isCredentialError(error)).toBe(true);
     expect(error.message).toContain("Internal error");
+  });
+  it.each(["default", "minimal"] as const)("does not advertise commands or claim native compaction in %s", async harness => {
+    const client = make(harness);
+    await client.start(); await client.newSession();
+    expect(client.availableCommands).toEqual([]);
+    expect(supportsCompaction(client.provider)).toBe(false);
+    const chunks: string[] = [], occupancy: number[] = [];
+    client.on("messageChunk", text => chunks.push(text));
+    client.on("contextUsage", used => occupancy.push(used));
+    await client.prompt("hello");
+    const before = occupancy.at(-1);
+    chunks.length = 0;
+    await client.prompt("/compact");
+    expect(received().at(-1).params.prompt).toEqual([{ type: "text", text: "/compact" }]);
+    expect(chunks).toEqual(["done"]); // Ordinary prompt; no command execution in the fake bridge.
+    expect(occupancy.at(-1)).toBe(before);
   });
 });

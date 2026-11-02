@@ -49,13 +49,12 @@ describe("DeepSeek renderer capabilities", () => {
     dispatch(h.window, { type: "sessionName", sessionId: "s", name: "New session", cwd: "/work" });
     expect(input.value).toBe("keep this"); expect(select(h).disabled).toBe(false);
   });
-  it("shows a locked choice and requires an explicit new conversation", () => {
+  it("shows the locked choice and the new-session note without an action", () => {
     const h = setup(false, "default", true);
     expect(select(h).disabled).toBe(true);
-    expect(h.doc.getElementById("context-popover")!.textContent).toContain("starts a new conversation");
+    expect(h.doc.getElementById("context-popover")!.textContent).toContain("Start a new session to use a different DeepSeek harness.");
+    expect(h.doc.querySelector('[data-deepseek-new-harness]')).toBeNull();
     expect(h.posted.some(m => m.type === "setDeepSeekHarness")).toBe(false);
-    click(h.window, h.doc.querySelector('[data-deepseek-new-harness="minimal"]'));
-    expect(h.posted.at(-1)).toEqual({ type: "setDeepSeekHarness", ...identity, harness: "minimal", newConversation: true });
   });
   it("refuses a popup choice captured for an old model", () => {
     const h = setup(); const old = select(h);
@@ -85,6 +84,19 @@ describe("DeepSeek renderer capabilities", () => {
     expect(field.value).toBe(""); expect(h.posted).toContainEqual({ type: "deepseekConnect", key: "new-key" });
     expect(h.doc.body.textContent).toContain("saved key");
   });
+  it("animates installation with the shared dots and omits download percentages during npm ci", () => {
+    const h = bootWebview();
+    dispatch(h.window, { type: "providerState", providers: [{ id: "deepseek", connected: false }] });
+    dispatch(h.window, { type: "onboarding", state: "missing-deepseek", provider: "deepseek" });
+    dispatch(h.window, { type: "agyInstallProgress", provider: "deepseek", phase: "installing", receivedBytes: 100, totalBytes: 100 });
+    const progress = h.doc.querySelector(".onb-install-progress")!;
+    expect(progress.textContent).toContain("Installing DeepSeek");
+    expect(progress.querySelectorAll(".blink-dots span")).toHaveLength(3);
+    expect(progress.querySelector("progress")).toBeNull();
+    expect(progress.textContent).not.toContain("100%");
+    click(h.window, progress.querySelector('[data-act="cancelDeepSeekInstall"]'));
+    expect(h.posted).toContainEqual({ type: "cancelDeepSeekInstall" });
+  });
   it("offers only Connect when the environment supplies the key", () => {
     const h = bootWebview();
     dispatch(h.window, { type: "providerState", providers: [{ id: "deepseek", connected: false, keySource: "environment" }] });
@@ -106,7 +118,25 @@ describe("DeepSeek renderer capabilities", () => {
     dispatch(h.window, { type: "session", sessionId: "g", provider: "grok", models: [] });
     expect(popup.querySelector(".subscription-usage")).not.toBeNull();
   });
-  it.each([490, 250])("bounds the locked popup to a %spx panel and allows its copy and button to wrap", width => {
+  it.each([false, true])("explains that manual Compact is unavailable over ACP (remote=%s)", remote => {
+    const h = setup(remote);
+    dispatch(h.window, { type: "contextUsage", used: 40000, window: 1000000 });
+    select(h);
+    const popup = h.doc.getElementById("context-popover")!;
+    expect(popup.querySelector(".context-compact")).toBeNull();
+    expect(popup.textContent).toContain("Manual compaction is unavailable through DeepSeek's ACP connection.");
+    expect(h.posted.some(m => m.type === "send" && m.text === "/compact")).toBe(false);
+  });
+  it.each([false, true])("shows the host's Windows shell launch fact on desk and phone (remote=%s)", remote => {
+    const h = setup(remote);
+    dispatch(h.window, { type: "modeChanged", modeId: "agent", deepseekHarness: "default", deepseekShellUnsandboxed: true });
+    const banner = h.doc.getElementById("deepseek-full-access")!;
+    expect(banner.hidden).toBe(false);
+    expect(banner.textContent).toBe("DeepSeek shell commands run without a sandbox on Windows.");
+    dispatch(h.window, { type: "modeChanged", modeId: "agent", deepseekHarness: "default", deepseekShellUnsandboxed: false });
+    expect(banner.hidden).toBe(true);
+  });
+  it.each([490, 250])("bounds the locked popup to a %spx panel and allows its copy to wrap", width => {
     const h = setup(false, "minimal", true);
     const popup = h.doc.getElementById("context-popover")!;
     // Happy DOM has no layout engine: verify the real positioning code's panel
@@ -117,7 +147,7 @@ describe("DeepSeek renderer capabilities", () => {
     expect(popup.style.right).toBe("6px");
     expect(popup.style.left).toBe("auto");
     expect(popup.style.getPropertyValue("--context-panel-width")).toBe(`${width - 12}px`);
-    expect(popup.querySelector('[data-deepseek-new-harness="default"]')).not.toBeNull();
+    expect(popup.querySelector('[data-deepseek-new-harness]')).toBeNull();
     const css = readFileSync(new URL("../media/chat.css", import.meta.url), "utf8");
     expect(css).toMatch(/#context-popover\s*\{[^}]*max-width:\s*min\(350px, var\(--context-panel-width/s);
     expect(css).toMatch(/#context-popover \.context-compact\s*\{[^}]*white-space: normal;[^}]*height: auto/s);

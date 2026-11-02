@@ -19,7 +19,7 @@ function host(enabled = true): any {
   s.context = { globalStorageUri: { fsPath: "/storage" }, secrets: {
     get: vi.fn(async (key: string) => secrets.get(key)), store: vi.fn(async (key: string, value: string) => secrets.set(key, value)), delete: vi.fn(async (key: string) => secrets.delete(key)),
   } };
-  s.state = { get: (_key: string, fallback: unknown) => fallback };
+  s.state = { get: (_key: string, fallback: unknown) => fallback, update: vi.fn(async () => {}) };
   s.remoteClients = { detachedActiveValues: () => [], clients: () => [], active: () => s.focused, cwd: () => "/workspace" };
   s.captureRemoteRequester = () => undefined;
   s.locateProvider = vi.fn(() => "/managed"); s.locatedProviders = () => ({ deepseek: true });
@@ -31,6 +31,62 @@ function host(enabled = true): any {
 }
 beforeEach(() => { vi.stubEnv(CLOUD_ENVIRONMENT_ENV, ""); vi.stubEnv("DEEPSEEK_API_KEY", ""); });
 afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
+
+describe("DeepSeek catalog before a first message", () => {
+  function catalogHost() {
+    const s = host();
+    s.hasProviderConsent = () => true;
+    s.cacheProviderModels = vi.fn(async () => {});
+    vi.spyOn(AcpClient.prototype, "start").mockResolvedValue(undefined);
+    const dispose = vi.spyOn(AcpClient.prototype, "dispose").mockResolvedValue(undefined);
+    const prompt = vi.spyOn(AcpClient.prototype, "prompt");
+    const create = vi.spyOn(AcpClient.prototype, "newSession").mockImplementation(async function (this: AcpClient) {
+      this.availableModels = [{ modelId: '["deepseek-official","deepseek-v4-flash"]', name: "DeepSeek V4 Flash" }];
+      this.currentModelId = this.availableModels[0].modelId;
+      return { sessionId: "catalog" };
+    });
+    return { s, create, dispose, prompt };
+  }
+  it("reads the catalog on Connect even while another provider owns the conversation", async () => {
+    const { s, create, dispose, prompt } = catalogHost();
+    s.focused.provider = "grok";
+    await s.onMessage({ type: "deepseekConnect", key: "fake-key" }, "local");
+    expect(create).toHaveBeenCalledOnce(); expect(dispose).toHaveBeenCalledOnce();
+    expect(s.cacheProviderModels).toHaveBeenCalledWith("deepseek", [{ modelId: '["deepseek-official","deepseek-v4-flash"]', name: "DeepSeek V4 Flash" }], '["deepseek-official","deepseek-v4-flash"]');
+    expect(prompt).not.toHaveBeenCalled();
+    expect(s.focused.provider).toBe("grok");
+  });
+  it("deduplicates a pending read and discards it when the key is replaced", async () => {
+    const { s, create, dispose, prompt } = catalogHost();
+    let release!: () => void;
+    const pending = new Promise<void>(r => { release = r; });
+    create.mockImplementationOnce(async function (this: AcpClient) {
+      await pending;
+      this.availableModels = [{ modelId: "old-keyless", name: "old catalog" }];
+      return { sessionId: "old" };
+    });
+    const old = s.warmConnectedDeepSeekModels();
+    expect(s.warmConnectedDeepSeekModels()).toBe(old);
+    await vi.waitFor(() => expect(create).toHaveBeenCalledOnce());
+    await s.onMessage({ type: "deepseekConnect", key: "new-key" }, "local");
+    release(); await old;
+    expect(s.cacheProviderModels).toHaveBeenCalledOnce();
+    expect(s.cacheProviderModels.mock.calls[0][1][0].modelId).not.toBe("old-keyless");
+    expect(create).toHaveBeenCalledTimes(2); expect(dispose).toHaveBeenCalledTimes(2);
+    expect(prompt).not.toHaveBeenCalled();
+  });
+  it("does not launch without consent and never treats a catalog failure as a rejected key", async () => {
+    const { s, create, dispose } = catalogHost();
+    s.hasProviderConsent = () => false;
+    await s.warmConnectedDeepSeekModels(); expect(create).not.toHaveBeenCalled();
+    s.hasProviderConsent = () => true;
+    create.mockRejectedValueOnce(new Error("offline"));
+    await s.warmConnectedDeepSeekModels();
+    expect(dispose).toHaveBeenCalledOnce();
+    expect(s.cacheProviderModels).not.toHaveBeenCalled();
+    expect(s.setProviderNeedsLogin).not.toHaveBeenCalled();
+  });
+});
 
 describe("DeepSeek history", () => {
   function historyHost(initial: SessionMetaOverrides) {
@@ -187,17 +243,17 @@ describe("DeepSeek desk boundary and credentials", () => {
     session.userMessageCount = 1;
     expect(options.canReplace()).toBe(false); // First send wins while startup awaits the lock.
   });
-  it.each(["local", "remote"])("explicitly starts another conversation and leaves the old one intact (%s)", async origin => {
+  it.each(["local", "remote"])("refuses the removed new-conversation action on a locked harness (%s)", async origin => {
     const s = host(), session = s.focused;
-    session.hasHistory = true; session.deepseekHarness = "default";
+    session.hasHistory = true;
     session.client = { sessionId: "s", currentModelId: "opaque-model" };
     s.newFocusedSession = vi.fn(); s.newRemoteSession = vi.fn();
-    await s.onMessage({ type: "setDeepSeekHarness", harness: "minimal", sessionId: "s", modelId: "opaque-model", generation: session.gen, newConversation: true }, origin, "phone");
-    const fn = origin === "remote" ? s.newRemoteSession : s.newFocusedSession;
-    expect(fn).toHaveBeenCalledOnce();
-    expect(fn.mock.calls[0][3]).toEqual({ harness: "minimal", modelId: "opaque-model" });
-    expect(session.client.sessionId).toBe("s"); expect(session.deepseekHarness).toBe("default");
+    const msg = { type: "setDeepSeekHarness", harness: "minimal", sessionId: "s", modelId: "opaque-model", generation: session.gen, newConversation: true };
+    expect(parseWebviewMsg(msg)).toBeNull();
+    await s.onMessage(msg, origin, "phone"); // An older renderer cannot bypass the lock.
+    expect(s.newFocusedSession).not.toHaveBeenCalled(); expect(s.newRemoteSession).not.toHaveBeenCalled();
     expect(s.startSession).not.toHaveBeenCalled();
+    expect(s.emit).toHaveBeenCalledWith(session, { type: "error", text: "Start a new session to use a different DeepSeek harness." });
   });
   it("correlates an untouched conversation's draft with its replacement id, or its old id on refusal", async () => {
     const s = host(), session = s.focused;

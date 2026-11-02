@@ -1,0 +1,4 @@
+# dsh 0.2.1-rc.5: use the official unconfined PowerShell executor on Windows.
+# Keep the tool, subprocess lifecycle, file policy and approval services intact.
+- id: pwsh-sandbox
+  name: '@deepseek-ai/dsh-pwsh-local'

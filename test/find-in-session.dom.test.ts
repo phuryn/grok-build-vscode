@@ -275,11 +275,15 @@ describe("find in conversation (#99)", () => {
     api(window).setRegex(true);
     expect(() => api(window).setQuery("^needle-line$")).not.toThrow();
     expect(api(window).invalid()).toBe(false);
+    // Regex searches yield between slices on a loaded worker. Read the count
+    // after the UI reports a settled search, rather than its partial prefix.
+    await vi.waitFor(() => expect(doc.querySelector(".find-count")!.textContent).toBe("1/1"));
     expect(api(window).matchCount()).toBe(1);
     // Anchors are per text node (the `m` flag), which is what makes the
     // issue's `^_+build$` shape work at all.
     expect(() => api(window).setQuery("^z+build$")).not.toThrow();
     expect(api(window).invalid()).toBe(false);
+    await vi.waitFor(() => expect(doc.querySelector(".find-count")!.textContent).toBe("1/1"));
     expect(api(window).matchCount()).toBe(1);
     // The issue's own example targeted BUILD OUTPUT. That is a payload body, so
     // it is no longer searched (owner, 2026-08-19) — a real narrowing of what

@@ -111,13 +111,37 @@ describe("pinned private DeepSeek runtime", () => {
     expect(() => nodeChecksum("", "node.zip")).toThrow();
     const sum = `${"a".repeat(64)}  node.zip\n`; expect(() => nodeChecksum(sum + sum, "node.zip")).toThrow();
     const storageRoot = root();
-    const args = { cliPath: storageRoot, cwd: storageRoot, env: { ELECTRON_RUN_AS_NODE: "1", DSH_HOME: "/foreign", DSH_SYSTEM_PROMPT: "override" } };
+    const args = { cliPath: storageRoot, cwd: storageRoot, env: { ELECTRON_RUN_AS_NODE: "1", DSH_HOME: "/foreign", DSH_SYSTEM_PROMPT: "override",
+      VSCODE_IPC_HOOK: "\\\\.\\pipe\\vscode-ipc", VSCODE_PID: "1", PATH: "/bin" } };
     const full = new DeepSeekBackend({ storageRoot }).spawn(args);
     const minimal = new DeepSeekBackend({ storageRoot, harness: "minimal" }).spawn(args);
     expect(full.env.DSH_HOME).not.toBe(minimal.env.DSH_HOME);
-    expect(full.args.slice(-2)).toEqual(["--profile", "acp"]);
+    expect(full.args.slice(1, 3)).toEqual(["--profile", "acp"]);
     expect(minimal.args).toContain("sdk-minimal"); expect(minimal.args).toContain("--patch");
     expect(minimal.env.ELECTRON_RUN_AS_NODE).toBeUndefined(); expect(minimal.env.DSH_SYSTEM_PROMPT).toBeUndefined();
+    // With VS Code's IPC hook inherited, dsh 0.2.1-rc.5 never answers initialize.
+    for (const spawned of [full, minimal]) {
+      expect(Object.keys(spawned.env).filter(k => k.startsWith("VSCODE_"))).toEqual([]);
+      expect(spawned.env.PATH).toBe("/bin");
+    }
     expect(fs.readFileSync(minimal.args.at(-1)!, "utf8")).toContain("@deepseek-ai/dsh-acp");
+  });
+  it.each(["win32", "linux", "darwin"] as const)("uses the official local shell overlay only for Default on %s", platform => {
+    const storageRoot = root();
+    const options = { cliPath: storageRoot, cwd: storageRoot, env: {} };
+    const full = new DeepSeekBackend({ storageRoot, platform }).spawn(options);
+    expect(full.args.slice(1, 3)).toEqual(["--profile", "acp"]);
+    if (platform === "win32") {
+      expect(full.args.at(-2)).toBe("--patch");
+      const overlay = fs.readFileSync(full.args.at(-1)!, "utf8");
+      expect(overlay).toContain("id: pwsh-sandbox");
+      expect(overlay).toContain("name: '@deepseek-ai/dsh-pwsh-local'");
+      expect(overlay).not.toMatch(/sandbox-policy|danger-full-access|approval:/);
+      expect(full.args.at(-1)!.startsWith(full.env.DSH_HOME! + path.sep)).toBe(true);
+    } else expect(full.args).not.toContain("--patch");
+    const minimal = new DeepSeekBackend({ storageRoot, platform, harness: "minimal" }).spawn(options);
+    expect(minimal.args).toContain("sdk-minimal");
+    expect(fs.readFileSync(minimal.args.at(-1)!, "utf8")).not.toContain("dsh-pwsh-local");
+    expect(full.env.DSH_PERMISSION_MODE).toBeUndefined();
   });
 });

@@ -77,4 +77,35 @@ describe("dsh generic ACP tools", () => {
     dispatch(h.window, { type: "toolCall", call: { toolCallId: "child", title: "subagent", kind: "other", status: "in_progress", rawInput: { description: "Check the parser", prompt: "Read parser.ts" } } });
     expect(h.doc.querySelector(".subagent-title")!.textContent).toBe("Check the parser");
   });
+  it.each([false, true])("shows a DeepSeek launch receipt as in background, with an explanation (remote=%s)", remote => {
+    const h = defaultHarness(remote);
+    dispatch(h.window, { type: "toolCall", call: { toolCallId: "child", title: "subagent", kind: "other", status: "in_progress", rawInput: { description: "Read-only project state summary" } } });
+    dispatch(h.window, { type: "toolCallUpdate", call: { toolCallId: "child", status: "completed", content: [{ type: "content", content: { type: "text", text: "started subagent 591754ec-37cd-43bb-b462-a49335e2f470" } }] } });
+    dispatch(h.window, { type: "agentEnd" }); // Parent completion is not child completion.
+    const card = h.doc.querySelector(".subagent-card")!;
+    expect(card.classList.contains("subagent-done")).toBe(false);
+    // dsh's child reports to the parent agent, never on this card: no spinner,
+    // no timer, no invented finish.
+    expect(card.querySelector(".subagent-status")!.textContent).toBe("in background");
+    expect((card.querySelector(".subagent-time") as HTMLElement).hidden).toBe(true);
+    expect(card.querySelector(".subagent-title")!.textContent).toBe("Read-only project state summary");
+    click(h.window, card.querySelector(".subagent-row"));
+    expect(card.querySelector(".subagent-stream")!.textContent).toContain("Subagent started. DeepSeek doesn't show its work here; the main agent receives its result.");
+    expect(card.querySelector(".subagent-result")!.textContent).toBe("");
+  });
+  it("still shows an actual DeepSeek launch failure", () => {
+    const h = defaultHarness();
+    dispatch(h.window, { type: "toolCall", call: { toolCallId: "child", title: "subagent", status: "in_progress", rawInput: { description: "Read the project" } } });
+    dispatch(h.window, { type: "toolCallUpdate", call: { toolCallId: "child", status: "failed", content: [{ type: "content", content: { type: "text", text: "Could not start subagent" } }] } });
+    const card = h.doc.querySelector(".subagent-card")!;
+    expect(card.querySelector(".subagent-status")!.textContent).toBe("failed");
+    expect(card.querySelector(".subagent-result")!.textContent).toContain("Could not start subagent");
+  });
+  it("preserves another provider's completion even if its result resembles the dsh receipt", () => {
+    const h = bootWebview();
+    dispatch(h.window, { type: "session", sessionId: "grok", provider: "grok", models: [] });
+    dispatch(h.window, { type: "toolCall", call: { toolCallId: "child", title: "subagent", status: "completed", rawOutput: { text: "started subagent 591754ec-37cd-43bb-b462-a49335e2f470" } } });
+    expect(h.doc.querySelector(".subagent-card")!.classList.contains("subagent-done")).toBe(true);
+    expect(h.doc.querySelector(".subagent-result")!.textContent).toContain("started subagent");
+  });
 });

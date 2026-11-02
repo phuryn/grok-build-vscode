@@ -1,5 +1,14 @@
 # Grok CLI over ACP — current field feedback
 
+DeepSeek Default on Windows uses the official `dsh-pwsh-local` component through
+a launch patch because its ACL sandbox can fail before shell execution while
+granting workspace access. Its ACP bridge omits human command dispatch and
+per-child result/lifecycle projection: Compact is unavailable, and a launch
+receipt leaves the subagent card "in background" with an explanation. dsh
+0.2.1-rc.5 never answers `initialize` when it inherits `VSCODE_IPC_HOOK`, so
+it is spawned without the editor's `VSCODE_*` variables. Evidence and verification limits:
+[DeepSeek ACP](../../research/deepseek-acp.md#first-test-feedback-source-evidence).
+
 Muse MSP resume contention and its ACP error mapping are documented separately in [Muse Code adapter](../../research/muse-adapter.md). A prompt arriving while Muse runs a turn of its own (a workflow's result delivery) is queued by Muse (`ifBusy: "queue"`, disposition `queued`) and awaited; Stop reclaims it with `turn/unqueue`.
 
 Muse Deny unmatched is temporarily omitted from the picker: it denies its own

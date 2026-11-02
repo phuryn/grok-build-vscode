@@ -32,7 +32,24 @@ describe("sessionUiSnapshot", () => {
       type: "modeChanged",
       modeId: "agent",
       modes: OFFERED_MODES[provider],
-      ...(provider === "deepseek" ? { deepseekHarness: "default", deepseekHarnessLocked: false } : {}),
+      ...(provider === "deepseek" ? { deepseekHarness: "default", deepseekShellUnsandboxed: false, deepseekHarnessLocked: false } : {}),
+    });
+  });
+
+  it.each([
+    ["win32", "default", true],
+    ["win32", "minimal", false],
+    ["linux", "default", false],
+    ["darwin", "default", false],
+  ] as const)("restores DeepSeek's shell notice for %s / %s", (platform, harness, unsandboxed) => {
+    Object.defineProperty(process, "platform", { value: platform });
+    const session = new Session();
+    session.provider = "deepseek";
+    session.deepseekHarness = harness;
+    session.hasHistory = true;
+    expect(sessionUiSnapshot(session, "agent")).toContainEqual({
+      type: "modeChanged", modeId: "agent", modes: harness === "minimal" ? [] : ["agent", "yolo"],
+      deepseekHarness: harness, deepseekShellUnsandboxed: unsandboxed, deepseekHarnessLocked: true,
     });
   });
 

@@ -668,7 +668,7 @@ export type HostMsg =
   // keeps its previous rule (Muse's button hidden, Codex without Plan).
   // Muse's native-id advertisement (three on cloud, four on desk) gates its names and new setMode values;
   // disabledModes adds launch restrictions without removing the choices.
-  | { type: "modeChanged"; deepseekHarness?: "default" | "minimal"; deepseekHarnessLocked?: boolean; deepseekHarnessContext?: { sessionId: string; modelId?: string; generation: number }; modeId: string; modes?: ModeId[]; disabledModes?: Partial<Record<ModeId, string>> }
+  | { type: "modeChanged"; deepseekHarness?: "default" | "minimal"; deepseekShellUnsandboxed?: boolean; deepseekHarnessLocked?: boolean; deepseekHarnessContext?: { sessionId: string; modelId?: string; generation: number }; modeId: string; modes?: ModeId[]; disabledModes?: Partial<Record<ModeId, string>> }
   | { type: "openModePopover" }
   | { type: "voiceState"; status: "listening" | "transcribing" | "idle" }
   | { type: "voiceConfigured"; value: boolean; sendPhrase?: string; keyterms?: string[]; backendState?: VoiceBackendState }
@@ -1364,7 +1364,7 @@ export type WebviewMsg =
   | { type: "installDeepSeek" }
   | { type: "cancelDeepSeekInstall" }
   | { type: "deepseekConnect"; key?: string }
-  | { type: "setDeepSeekHarness"; harness: "default" | "minimal"; sessionId: string; modelId?: string; generation: number; newConversation?: boolean; draftId?: string }
+  | { type: "setDeepSeekHarness"; harness: "default" | "minimal"; sessionId: string; modelId?: string; generation: number; draftId?: string }
   | { type: "runInstallCmd" }
   | { type: "runMuseInstallCmd" }
   | { type: "runGrokLogin"; provider?: AcpProvider }

@@ -44,7 +44,10 @@ rl.on('line', async line => {
     case 'session/close': live.delete(p.sessionId); return ok({});
     case 'session/set_config_option': {
       const s = stored[p.sessionId];
-      if (p.configId === 'model') s.model = p.value;
+      if (p.configId === 'model') {
+        if (!modelOptions.some(option => option.value === p.value)) return fail('unknown model option', undefined, -32602);
+        s.model = p.value;
+      }
       else if (p.configId === 'reasoning_effort') s.effort = p.value;
       else return fail('Unknown config');
       save(); update(p.sessionId, { sessionUpdate: 'config_option_update', configOptions: config(s) }); return ok({ configOptions: config(s) });
@@ -55,6 +58,7 @@ rl.on('line', async line => {
       return;
     }
     case 'session/prompt': {
+      // dsh ACP queues text verbatim, including /compact; it exposes no commands.
       if (process.env.DEEPSEEK_API_KEY === 'rejected') return fail('Internal error', 'turn failed: AuthenticationError: 401 Invalid API key');
       const text = p.prompt.map(v => v.text || '').join('');
       if (text === 'long') { pending.set(p.sessionId, m.id); return; }

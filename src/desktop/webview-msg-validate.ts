@@ -521,8 +521,8 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
       if (raw.harness !== "default" && raw.harness !== "minimal") return null;
       if (!isString(raw.sessionId) || !raw.sessionId || !Number.isSafeInteger(raw.generation) || (raw.generation as number) < 0) return null;
       if (raw.modelId !== undefined && !isString(raw.modelId)) return null;
-      if (raw.newConversation !== undefined && typeof raw.newConversation !== "boolean") return null;
-      if (raw.draftId !== undefined && (!isString(raw.draftId) || !raw.draftId || raw.draftId.length > 200 || raw.newConversation === true)) return null;
+      if (raw.newConversation !== undefined) return null;
+      if (raw.draftId !== undefined && (!isString(raw.draftId) || !raw.draftId || raw.draftId.length > 200)) return null;
       break;
     case "deepseekConnect":
       if (raw.key !== undefined && (typeof raw.key !== "string" || !raw.key || raw.key.length > 512 || /\s|[\x00-\x1f\x7f]/.test(raw.key))) return null;
