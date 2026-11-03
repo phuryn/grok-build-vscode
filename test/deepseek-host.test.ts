@@ -162,26 +162,6 @@ describe("DeepSeek history", () => {
 });
 
 describe("DeepSeek desk boundary and credentials", () => {
-  it("does not end an existing turn when an empty /goal races from another view", async () => {
-    const s = host(), session = s.focused;
-    const turn = beginTurn(session);
-    await s.handleSend("/goal", false, session, "remote");
-    expect(session.turnToken).toBe(turn);
-    expect(s.emit.mock.calls.some(([, message]: any[]) => message.type === "agentEnd" || message.type === "agentError")).toBe(false);
-    expect(s.emit).toHaveBeenCalledWith(session, { type: "planNotice", text: "Add an objective: /goal what to achieve." });
-  });
-  it.each(["local", "remote"])("rejects an empty /goal before recording or prompting (%s)", async origin => {
-    const s = host(), session = s.focused;
-    session.client = { sessionId: "s", prompt: vi.fn() };
-    session.chips = [{ id: "file", path: "/file.ts", relPath: "file.ts" }];
-    await s.onMessage({ type: "send", text: "/goal \n" }, origin, origin === "remote" ? "phone" : undefined);
-    expect(session.client.prompt).not.toHaveBeenCalled();
-    expect(session.userMessageCount).toBe(0);
-    expect(session.hasHistory).toBe(false);
-    expect(session.chips).toHaveLength(1);
-    expect(s.emit).toHaveBeenCalledWith(session, { type: "planNotice", text: "Add an objective: /goal what to achieve." });
-    expect(s.emit.mock.calls.some(([, message]: any[]) => message.type === "userMessage")).toBe(false);
-  });
   it.each(["local", "remote"])("returns text to its sender and ends busy when an older %s renderer sends an image", async origin => {
     const s = host(), session = s.focused;
     session.activeSessionId = "s";

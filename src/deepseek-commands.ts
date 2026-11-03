@@ -13,10 +13,6 @@ export const DEEPSEEK_GOAL_COMMANDS: SlashCommand[] = [
   { name: "goal-done", description: "Ask DeepSeek to mark the goal complete." },
 ];
 const goalNames = new Set(DEEPSEEK_GOAL_COMMANDS.map(c => c.name));
-export const DEEPSEEK_GOAL_OBJECTIVE_NOTICE = "Add an objective: /goal what to achieve.";
-export function deepseekPromptNotice(text: string): string | undefined {
-  return /^\/goal\s*$/.test(text) ? DEEPSEEK_GOAL_OBJECTIVE_NOTICE : undefined;
-}
 
 function absent(error: unknown): boolean {
   return ["ENOENT", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? "");
@@ -101,14 +97,19 @@ export function rewriteDeepSeekPrompt(text: string, commands: readonly SlashComm
   const goal = /^\/(goal(?:-status|-pause|-resume|-done)?)(?=\s|$)/.exec(text);
   if (goal && commands.some(c => c.name === goal[1] && !isAdvertisedSkill(c))) {
     const rest = text.slice(goal[0].length).trim();
+    // Never throws and never drops words: whatever follows the command goes to
+    // the model too. A bare /goal asks for its objective rather than being
+    // refused, so it can sit in a send queue like any other message.
+    const said = (instruction: string, alone: string) => `${instruction} ${rest || alone}`.trim();
     switch (goal[1]) {
       case "goal":
-        if (!rest) throw new Error(DEEPSEEK_GOAL_OBJECTIVE_NOTICE);
-        return `Set a session goal with create_goal. Objective: ${rest}. Then start working on it.`;
-      case "goal-status": return "Call get_goal and tell me the current goal and its status. Do nothing else.";
-      case "goal-pause": return 'This is my direct request: call get_goal for the current goal_id and revision, then pause the current session goal with update_goal using those values and action "pause". Do nothing else.';
-      case "goal-resume": return 'This is my direct request: call get_goal for the current goal_id and revision, then resume the current session goal with update_goal using those values and action "resume", then continue working on it.';
-      case "goal-done": return 'Call get_goal for the current goal_id and revision, then mark the current session goal complete with update_goal using those values and action "complete". Do nothing else.';
+        return rest
+          ? `Set a session goal with create_goal. Objective: ${rest}. Then start working on it.`
+          : "I want to set a session goal. Ask me what its objective should be, then set it with create_goal. Do nothing else until I answer.";
+      case "goal-status": return said("Call get_goal and tell me the current goal and its status.", "Do nothing else.");
+      case "goal-pause": return said('This is my direct request: call get_goal for the current goal_id and revision, then pause the current session goal with update_goal using those values and action "pause".', "Do nothing else.");
+      case "goal-resume": return said('This is my direct request: call get_goal for the current goal_id and revision, then resume the current session goal with update_goal using those values and action "resume", then continue working on it.', "");
+      case "goal-done": return said('Call get_goal for the current goal_id and revision, then mark the current session goal complete with update_goal using those values and action "complete".', "Do nothing else.");
     }
   }
   const skills = new Set(commands.filter(isAdvertisedSkill).map(c => c.name));

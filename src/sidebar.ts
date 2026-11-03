@@ -119,7 +119,6 @@ import { OPENAI_STT_MODEL } from "./openai-voice";
 import { summarizeForSpeech } from "./speech-summary";
 import type { PromptResultMeta, PromptUsage, SessionInfoContext } from "./acp-dispatch";
 import { DeepSeekBackend, DEEPSEEK_COLD_REOPEN, type DeepSeekHarness } from "./deepseek-backend";
-import { deepseekPromptNotice } from "./deepseek-commands";
 import { DEEPSEEK_API_KEY_SECRET, deepseekKey, validDeepSeekKey, isDeepSeekCredentialError, deepseekPromptErrorText } from "./deepseek-auth";
 import { locateDeepSeek, installManagedDeepSeek, DEEPSEEK_VERSION } from "./deepseek-managed-installer";
 import { MediaRef, adapterCompactSignal, adapterContextOccupancy, agentTimestampMsFromMeta, autoCompactStartedNote, childStreamFromRoute, commandOutputForToolCall, commandOutputFromLiveTerminal, contextUsedFromCompactNotification, enforceCompleteSessionCost, errorDetail, gateZeroTokenMeta, isAuthErrorText, isCredentialError, isIncompatibleAgentError, isResumeNotFound, isRateLimitError, isSubagentLifecycleUpdate, occupancyFromAdapterTurn, parseSessionInfoContext, permissionOutcomeFor, promptErrorText, rateLimitNoticeText, sessionInfoCacheFresh, sumUsage, summarizeBackgroundCommand, usageIsRealMeasurement, type UpdateRoute } from "./acp-dispatch";
@@ -18655,14 +18654,6 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // turn ended while another was focused). Only the focused session may spawn
     // a client on demand; a background target without one has nothing to talk to.
     const session = target ?? this.focused;
-    if (session.provider === "deepseek" && session.deepseekHarness !== "minimal") {
-      const notice = deepseekPromptNotice(text);
-      if (notice) {
-        this.emit(session, { type: "planNotice", text: notice });
-        if (!this.turnInFlight(session) && !session.priming) this.emit(session, { type: "agentEnd" });
-        return;
-      }
-    }
     // A model or effort change committed when the picker closed has started
     // handling (message ordering), but its RPC or its restart can still be
     // mid-flight. Settle the in-flight set BEFORE anything reads this session's

@@ -21,6 +21,12 @@ adapters/**
 node_modules/**
 !node_modules/ws/**
 !node_modules/jpeg-js/**
+# DeepSeek skill frontmatter (deepseek-commands.ts). The library only: its CLI
+# in bin/ is the one file that needs argparse, which stays out.
+!node_modules/js-yaml/package.json
+!node_modules/js-yaml/index.js
+!node_modules/js-yaml/lib/**
+!node_modules/js-yaml/LICENSE
 !node_modules/qrcode-generator/package.json
 !node_modules/qrcode-generator/dist/qrcode.js
 # Adapter files only. `!…/codex-acp/**` would also pack its nested

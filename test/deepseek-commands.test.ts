@@ -104,8 +104,18 @@ describe("DeepSeek instruction shortcuts", () => {
   ])("rewrites %s using verified tool names", (text, expected) => {
     expect(rewriteDeepSeekPrompt(text, commands)).toContain(expected);
   });
-  it.each(["/goal", "/goal \n\t"])("refuses an empty objective (%s)", text => {
-    expect(() => rewriteDeepSeekPrompt(text, commands)).toThrow("Add an objective");
+  it.each(["/goal", "/goal \n\t"])("asks for the objective of an empty goal rather than refusing it (%s)", text => {
+    expect(rewriteDeepSeekPrompt(text, commands)).toBe(
+      "I want to set a session goal. Ask me what its objective should be, then set it with create_goal. Do nothing else until I answer.");
+  });
+  it.each([
+    ["/goal-status and say what is blocking it", "Call get_goal and tell me the current goal and its status. and say what is blocking it"],
+    ["/goal-pause until the review lands", 'action "pause". until the review lands'],
+    ["/goal-done we shipped it", 'action "complete". we shipped it'],
+  ])("keeps the words after %s", (text, expected) => {
+    const out = rewriteDeepSeekPrompt(text, commands);
+    expect(out).toContain(expected);
+    expect(out).not.toContain("Do nothing else");
   });
   it.each(["/unknown hello", "Please /goal work", "/goal/path", "docs/review", "/review-more", "/compact"])("preserves ordinary text (%s)", text => {
     expect(rewriteDeepSeekPrompt(text, commands)).toBe(text);

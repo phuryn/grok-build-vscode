@@ -163,9 +163,8 @@ describe("DeepSeek official ACP contract (fake subprocess only)", () => {
     await client.prompt(blocks, [typed]);
     expect(blocks).toEqual([{ type: "text", text }]);
     expect(received().at(-1).params.prompt[0].text).toBe("Set a session goal with create_goal. Objective: fix the build. Then start working on it.\n\n<attached_context>\nAttached file: build.ts\n</attached_context>");
-    const count = received().filter(v => v.method === "session/prompt").length;
-    await expect(client.prompt("/goal \n")).rejects.toThrow("Add an objective");
-    expect(received().filter(v => v.method === "session/prompt")).toHaveLength(count);
+    await client.prompt("/goal \n");
+    expect(received().at(-1).params.prompt[0].text).toContain("Ask me what its objective should be");
     for (const [command, action] of [["goal-pause", "pause"], ["goal-resume", "resume"], ["goal-done", "complete"]]) {
       await client.prompt("/" + command);
       expect(received().at(-1).params.prompt[0].text).toContain(`update_goal using those values and action "${action}"`);

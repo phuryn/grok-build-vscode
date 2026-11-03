@@ -72,6 +72,7 @@ const problems = checkEsmPackageGraph(root, packed, ["out/muse-adapter/main.mjs"
 const ALLOWED_PACKED_DEPS = new Set([
   "ws",
   "jpeg-js",
+  "js-yaml",
   "qrcode-generator",
   "@agentclientprotocol/codex-acp",
   "@agentclientprotocol/claude-agent-acp",
