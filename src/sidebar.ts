@@ -85,7 +85,7 @@ import {
 } from "./routines";
 import { RoutineRunStore } from "./routine-store";
 import { routinesMessageForRemote } from "./remote-policy";
-import { PersistedState } from "./persisted-state";
+import { PersistedState, mementoWithout } from "./persisted-state";
 import {
   Session,
   SessionStartIntent,
@@ -1313,7 +1313,9 @@ export class GrokSidebar {
       () => this.host.getConfiguration("grok").inspect("defaultMode"),
     );
     this.state = new PersistedState(
-      context.globalState,
+      // A home of its own keeps its own routines: never seeded from, nor
+      // written into, the globalState every other window shares.
+      workspaceGrokHome() ? mementoWithout(context.globalState, new Set([ROUTINES_KEY])) : context.globalState,
       path.join(resolveGrokHome(process.env), "client-state"),
       fs,
       (line) => this.host.appendLine(line),

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { PersistedState, DISK_KEYS, type StateFs, type MementoLike } from "../src/persisted-state";
+import { PersistedState, DISK_KEYS, mementoWithout, type StateFs, type MementoLike } from "../src/persisted-state";
 import { AUTO_NAME_MAX_CHARS, capAutoName } from "../src/sessions";
 
 const DIR = "/home/.grok/client-state";
@@ -442,5 +442,40 @@ describe("PersistedState and routines", () => {
     expect(Object.keys(state.get<Record<string, unknown>>("grok.routines", {})).sort()).toEqual(["a", "b"]);
     await state.update("grok.routines", { a: routine("a") });
     expect(Object.keys(JSON.parse(fs.files.get(routinesFile)!))).toEqual(["a"]);
+  });
+});
+
+describe("a Grok home of its own (grok.homeDirectory)", () => {
+  const routinesFile = `${DIR}/${DISK_KEYS["grok.routines"]}`;
+  const ownHome = (seed: (m: FakeMemento) => void) => {
+    const fs = new FakeFs();
+    const shared = new FakeMemento();
+    seed(shared);
+    const state = new PersistedState(mementoWithout(shared, new Set(["grok.routines"])), DIR, fs);
+    return { fs, shared, state };
+  };
+
+  it("does not inherit the other home's routines, so they cannot run twice", async () => {
+    const { state, fs } = ownHome((m) => m.store.set("grok.routines", { daily: { id: "daily" } }));
+    expect(state.get("grok.routines", {})).toEqual({});
+    await state.flush();
+    expect(fs.files.has(routinesFile)).toBe(false);
+  });
+
+  it("keeps its own routines out of the copy every other window reads", async () => {
+    const theirs = { daily: { id: "daily" } };
+    const { state, shared, fs } = ownHome((m) => m.store.set("grok.routines", theirs));
+    await state.update("grok.routines", { mine: { id: "mine" } });
+    expect(JSON.parse(fs.files.get(routinesFile)!)).toEqual({ mine: { id: "mine" } });
+    expect(shared.store.get("grok.routines")).toEqual(theirs);
+  });
+
+  it("still carries the install id and the rest across", async () => {
+    const { state } = ownHome((m) => {
+      m.store.set("grok.installId", "install-1");
+      m.store.set("grok.repoPins", { "/repo": { pinned: true } });
+    });
+    expect(state.get("grok.installId")).toBe("install-1");
+    expect(state.get("grok.repoPins", {})).toEqual({ "/repo": { pinned: true } });
   });
 });
