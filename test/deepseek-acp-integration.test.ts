@@ -1,11 +1,14 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AcpClient, type PermissionRequest } from "../src/acp";
 import { DeepSeekBackend, deepseekModelName, normalizeDeepSeekSession } from "../src/deepseek-backend";
 import { deepseekRuntimePaths } from "../src/deepseek-managed-installer";
 import { supportsCompaction } from "../src/acp-backend";
+import { DEEPSEEK_GOAL_COMMANDS } from "../src/deepseek-commands";
+import { GrokSidebar } from "../src/sidebar";
+import { Session } from "../src/session";
 
 describe("DeepSeek official ACP contract (fake subprocess only)", () => {
   it("cleans catalog labels and preserves supplied release tags, descriptions and opaque values", () => {
@@ -31,7 +34,7 @@ describe("DeepSeek official ACP contract (fake subprocess only)", () => {
   function make(harness: "default" | "minimal" = "default", key = "") {
     const client = new AcpClient({ cliPath: root, cwd: root,
       backend: new DeepSeekBackend({ storageRoot: root, harness, nodePath: process.execPath }),
-      env: { ...process.env, FAKE_DSH_SINK: sink(), DEEPSEEK_API_KEY: key }, log: () => {},
+      env: { ...process.env, DSH_AGENTS_HOME: path.join(root, "agents"), FAKE_DSH_SINK: sink(), DEEPSEEK_API_KEY: key }, log: () => {},
       timeouts: { requestTimeoutMs: 5000, promptIdleTimeoutMs: 5000 },
     });
     clients.push(client); return client;
@@ -115,10 +118,10 @@ describe("DeepSeek official ACP contract (fake subprocess only)", () => {
     expect(client.isCredentialError(error)).toBe(true);
     expect(error.message).toContain("Internal error");
   });
-  it.each(["default", "minimal"] as const)("does not advertise commands or claim native compaction in %s", async harness => {
+  it.each(["default", "minimal"] as const)("offers only supported instruction shortcuts, without claiming native compaction in %s", async harness => {
     const client = make(harness);
     await client.start(); await client.newSession();
-    expect(client.availableCommands).toEqual([]);
+    expect(client.availableCommands).toEqual(harness === "default" ? DEEPSEEK_GOAL_COMMANDS : []);
     expect(supportsCompaction(client.provider)).toBe(false);
     const chunks: string[] = [], occupancy: number[] = [];
     client.on("messageChunk", text => chunks.push(text));
@@ -130,5 +133,74 @@ describe("DeepSeek official ACP contract (fake subprocess only)", () => {
     expect(received().at(-1).params.prompt).toEqual([{ type: "text", text: "/compact" }]);
     expect(chunks).toEqual(["done"]); // Ordinary prompt; no command execution in the fake bridge.
     expect(occupancy.at(-1)).toBe(before);
+  });
+  it("advertises and refreshes skills through commandsUpdate on new, send and resume", async () => {
+    const client = make(), updates: any[] = [];
+    client.on("commandsUpdate", commands => updates.push(commands));
+    await client.start(); const { sessionId } = await client.newSession();
+    expect(updates.at(-1)).toEqual(DEEPSEEK_GOAL_COMMANDS);
+    const file = path.join(root, ".agents/skills/review.md");
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, "---\nname: review\ndescription: Review this code\n---\nInstructions");
+    const blocks = [{ type: "text" as const, text: "Please /review this patch" }];
+    await client.prompt(blocks);
+    expect(blocks[0].text).toBe("Please /review this patch");
+    expect(updates.at(-1).at(-1)).toMatchObject({ name: "review", description: "Review this code", _meta: { path: fs.realpathSync(file), scope: "project-agents" } });
+    expect(received().at(-1).params.prompt[0].text).toBe("Please Use the `review` skill: load it with the skill tool and follow it. this patch");
+    fs.unlinkSync(file);
+    await client.refreshCommands(); // Warm conversation reopen uses this same method.
+    expect(client.availableCommands).toEqual(DEEPSEEK_GOAL_COMMANDS);
+    await client.dispose();
+    fs.writeFileSync(file, "---\nname: replacement\ndescription: New skill\n---\nInstructions");
+    const next = make(); await next.start(); await next.loadSession(sessionId);
+    expect(next.availableCommands.at(-1)?.name).toBe("replacement");
+  });
+  it("rewrites goals at the transport boundary, preserving blocks and excluding attached context from the objective", async () => {
+    const client = make(); await client.start(); await client.newSession();
+    const typed = "/goal fix the build";
+    const text = typed + "\n\n<attached_context>\nAttached file: build.ts\n</attached_context>";
+    const blocks = [{ type: "text" as const, text }];
+    await client.prompt(blocks, [typed]);
+    expect(blocks).toEqual([{ type: "text", text }]);
+    expect(received().at(-1).params.prompt[0].text).toBe("Set a session goal with create_goal. Objective: fix the build. Then start working on it.\n\n<attached_context>\nAttached file: build.ts\n</attached_context>");
+    const count = received().filter(v => v.method === "session/prompt").length;
+    await expect(client.prompt("/goal \n")).rejects.toThrow("Add an objective");
+    expect(received().filter(v => v.method === "session/prompt")).toHaveLength(count);
+    for (const [command, action] of [["goal-pause", "pause"], ["goal-resume", "resume"], ["goal-done", "complete"]]) {
+      await client.prompt("/" + command);
+      expect(received().at(-1).params.prompt[0].text).toContain(`update_goal using those values and action "${action}"`);
+    }
+  });
+  it("rewrites authored skills but leaves file snippets and queued goal-like prose intact", async () => {
+    const file = path.join(root, ".agents/skills/review.md");
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, "---\nname: review\ndescription: Review\n---\nInstructions");
+    const client = make(); await client.start(); await client.newSession();
+    const snippet = "```md\n/review file example\n```\n\n";
+    await client.prompt([{ type: "text", text: snippet + "Please /review patch\n\n/goal later" }], ["Please /review patch", "/goal later"]);
+    expect(received().at(-1).params.prompt[0].text).toBe(snippet + "Please Use the `review` skill: load it with the skill tool and follow it. patch\n\n/goal later");
+  });
+  it("retains the typed host userMessage and title while only the expanded instruction reaches dsh", async () => {
+    const client = make(); await client.start(); await client.newSession();
+    const sidebar: any = Object.create(GrokSidebar.prototype);
+    const session = new Session();
+    session.provider = "deepseek"; session.client = client; session.activeSessionId = client.sessionId;
+    sidebar.focused = session; sidebar.pendingAttach = new Set();
+    sidebar.sessionCwd = () => root;
+    sidebar.modelsForSession = () => [];
+    sidebar.setStatus = (_session: Session, status: Session["status"]) => { session.status = status; };
+    for (const method of ["waitForSessionStart", "retainUploadedFilesForSession", "rememberProjectProvider",
+      "refreshImplicitChip", "postChips", "reportSessionStart", "reportRemoteMessage", "startTurnDiffBaseline",
+      "noteSessionActivity", "maybeAskToAddProject", "noteLiveTurnEnded", "setProviderNeedsLogin",
+      "maybeGenerateTitle", "postSessionName", "mirrorToProjectsRail", "sendRemoteSession"]) sidebar[method] = vi.fn();
+    const typed = "/goal fix the build";
+    await sidebar.handleSend(typed, false, session, "remote");
+    expect(received().at(-1).params.prompt[0].text).toBe("Set a session goal with create_goal. Objective: fix the build. Then start working on it.");
+    const bubbles = session.buffer.filter(message => message.type === "userMessage");
+    expect(bubbles).toEqual([expect.objectContaining({ text: typed })]);
+    expect(session.firstUserMessageForTitle).toBe(typed);
+    expect(sidebar.sendRemoteSession).toHaveBeenCalledWith(session, expect.objectContaining({ type: "userMessage", text: typed }));
+    // Warm replay and reconnect snapshots use this same buffer, not the ACP payload.
+    expect(JSON.stringify(session.buffer)).not.toContain("Set a session goal with create_goal");
   });
 });

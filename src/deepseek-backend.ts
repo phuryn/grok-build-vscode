@@ -1,8 +1,11 @@
 import * as path from "node:path";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import type { AcpBackend, BackendConfigState, BackendSpawnOptions } from "./acp-backend";
 import { isDeepSeekCredentialError } from "./deepseek-auth";
 import { deepseekRuntimePaths } from "./deepseek-managed-installer";
+import { DEEPSEEK_GOAL_COMMANDS, discoverDeepSeekSkills, rewriteDeepSeekPrompt } from "./deepseek-commands";
+import type { SlashCommand } from "./acp";
 
 export type DeepSeekHarness = "default" | "minimal";
 export const DEEPSEEK_COLD_REOPEN = "Conversation resumed. DeepSeek retains its context, but earlier messages are unavailable in this view.";
@@ -48,14 +51,25 @@ export class DeepSeekBackend implements AcpBackend<"deepseek"> {
   readonly processName = "DeepSeek harness";
   readonly usesClientPlanGate = false;
   constructor(private readonly options: { storageRoot: string; harness?: DeepSeekHarness; assets?: string; nodePath?: string; platform?: NodeJS.Platform }) {}
+  private agentsHome = path.join(os.homedir(), ".agents");
+  private get dshHome() { return path.join(this.options.storageRoot, "deepseek-home", this.options.harness ?? "default"); }
+  private skills: SlashCommand[] = [];
+  async availableCommands(cwd: string, log: (message: string) => void) {
+    if (this.options.harness === "minimal") return [];
+    try { this.skills = await discoverDeepSeekSkills(cwd, this.dshHome, this.agentsHome); }
+    catch (error) { log(`[deepseek] Could not refresh skills; keeping the last catalog: ${(error as Error).message}`); }
+    return [...DEEPSEEK_GOAL_COMMANDS, ...this.skills];
+  }
+  rewritePrompt = rewriteDeepSeekPrompt;
   spawn(options: BackendSpawnOptions) {
     const harness = this.options.harness ?? "default";
     const runtime = deepseekRuntimePaths(options.cliPath);
-    const env: NodeJS.ProcessEnv = { ...options.env, DSH_HOME: path.join(this.options.storageRoot, "deepseek-home", harness) };
+    const env: NodeJS.ProcessEnv = { ...options.env, DSH_HOME: this.dshHome };
     delete env.ELECTRON_RUN_AS_NODE;
     delete env.NODE_OPTIONS;
     // The managed profile must not inherit persona/permission/composition overrides.
-    for (const key of Object.keys(env)) if (key.startsWith("DSH_") && key !== "DSH_HOME") delete env[key];
+    for (const key of Object.keys(env)) if (key.startsWith("DSH_") && key !== "DSH_HOME" && key !== "DSH_AGENTS_HOME") delete env[key];
+    this.agentsHome = env.DSH_AGENTS_HOME ? path.resolve(options.cwd, env.DSH_AGENTS_HOME) : path.join(os.homedir(), ".agents");
     // Nor the editor's own plumbing: with VSCODE_IPC_HOOK inherited, dsh 0.2.1-rc.5
     // never answers initialize (measured: >90s, vs ~15s without it).
     for (const key of Object.keys(env)) if (key.startsWith("VSCODE_")) delete env[key];

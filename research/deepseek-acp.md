@@ -213,7 +213,7 @@ without inventing a version or parsing opaque values for display.
 The [ACP contract](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.5/packages/acp/acp/README.md#L70)
 omits commands. Its [prompt path](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.5/packages/acp/acp/src/session.ts#L266)
 queues a user message through `agent.followup`, without human-command dispatch.
-No commands are advertised. A `/compact` prompt therefore does not establish
+No native commands are advertised. A `/compact` prompt therefore does not establish
 native compaction or fresh compacted occupancy. Compact stays disabled and the
 popup explains why; the fake also treats slash text as ordinary prompt text.
 The [compact plugin contract](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.5/packages/compaction/command-compact/README.md#L56)
@@ -274,3 +274,49 @@ After rebuilding and installing this working tree:
 
 No elapsed install clock was added: the shared animation needs no timer lifecycle,
 and npm supplies no honest install percentage. No live DeepSeek request was run.
+
+## Goal and skill instruction shortcuts
+
+Default advertises the five goal commands and discovered skills as best-effort
+model instructions, not native ACP dispatch. Minimal's shipped composition has
+neither tool family and advertises none; its tool tree is unchanged.
+
+The pinned [`dsh-tool-goal`](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.5/packages/goal/tool-goal/src/index.ts)
+registers `create_goal(objective, max_goal_rounds?)`, `get_goal()` and
+`update_goal(goal_id, revision, action)`. Updates request the current id/revision
+first; pause/resume explicitly state the person's direct request. The pinned
+[`dsh-tool-skill`](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.5/packages/skill/tool-skill/src/index.ts)
+registers `skill(name)`. AFK Pilot maintains no goal state.
+
+`deepseek-commands.ts` mirrors the default roots and top-level file layouts in
+[`dsh-skill-filesystem`](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.5/packages/skill/skill-filesystem/README.md):
+nearest git ancestor (else cwd) `.dsh/skills`, its `.agents/skills`, the active
+harness's managed `DSH_HOME/skills`, then `DSH_AGENTS_HOME/skills` (else
+`~/.agents/skills`). Spawn preserves `DSH_AGENTS_HOME`. YAML frontmatter supplies
+the kebab-case name and description; lower ranks win before visibility filtering,
+and goal names are reserved. Invalid metadata, `user-invocable: false`, and
+`disable-model-invocation: true` are omitted: the latter cannot use the model's
+loader. The managed home's `.system` child is skipped. Resolved `_meta.path`
+and `_meta.scope` identify skills to the shared anywhere-in-prompt menu.
+`js-yaml` is an explicit dependency, using YAML's core schema.
+
+`AcpClient.refreshCommands` feeds `availableCommands` and `commandsUpdate` through
+the existing ACP update route. Scans run on new/resumed sessions, warm desk/remote
+focus, webview rehydration, remote snapshots and before sends; concurrent scans
+coalesce. There is no watcher. Unexpected I/O failures log and retain the last
+complete skill catalog; missing paths are empty, and malformed files are skipped.
+
+`AcpClient.prompt` rewrites a copied outbound payload. The host passes authored
+contributions separately to preserve file/editor context and exact goal objectives.
+Typed text stays in the host echo, transcript buffer, titles and retry input;
+live provider user-message echoes are already ignored, and cold dsh resume has no
+replay. Bare `/goal` uses `planNotice` without a prompt or user-message record,
+plus `agentEnd` only when idle. DeepSeek bypasses the existing `/context-window`
+interceptors so that name can be a skill. Other providers and remote send policy
+are unchanged; no new relay frame or renderer command channel is needed.
+
+Tests use the fake ACP process and temporary skill roots. Owner-run live checks:
+verify goal tool calls, automatic continuation and each goal action; skill loading
+at the start and mid-prompt; add/remove skills then reopen on desk and phone;
+exact typed bubbles after sends, warm reopen and browser reload; the empty-objective
+notice; and no shortcuts in Minimal. No real DeepSeek request was run for this work.

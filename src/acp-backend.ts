@@ -1,4 +1,4 @@
-import type { EffortLevel, PromptContentBlock } from "./acp";
+import type { EffortLevel, PromptContentBlock, SlashCommand } from "./acp";
 
 export const ACP_PROVIDERS = ["grok", "codex", "claude"] as const;
 // The legacy wire vocabulary above stays frozen for older receivers.
@@ -179,6 +179,9 @@ export interface AcpBackend<Provider extends string = AcpProvider> {
   spawn(options: BackendSpawnOptions): BackendSpawnSpec;
   normalizeSessionResponse(response: any): any;
   normalizePromptResult(result: any): any;
+  /** Host-supplied instruction shortcuts for a bridge without native commands. */
+  availableCommands?(cwd: string, log: (message: string) => void): Promise<SlashCommand[]>;
+  rewritePrompt?(text: string, commands: readonly SlashCommand[]): string;
   normalizeUpdate(update: any, meta: any): BackendUpdate;
   normalizePermissionParams(params: any): any;
   setModel(sessionId: string, modelId: string, reasoningEffort?: string): { method: string; params: any };

@@ -119,6 +119,7 @@ import { OPENAI_STT_MODEL } from "./openai-voice";
 import { summarizeForSpeech } from "./speech-summary";
 import type { PromptResultMeta, PromptUsage, SessionInfoContext } from "./acp-dispatch";
 import { DeepSeekBackend, DEEPSEEK_COLD_REOPEN, type DeepSeekHarness } from "./deepseek-backend";
+import { deepseekPromptNotice } from "./deepseek-commands";
 import { DEEPSEEK_API_KEY_SECRET, deepseekKey, validDeepSeekKey, isDeepSeekCredentialError, deepseekPromptErrorText } from "./deepseek-auth";
 import { locateDeepSeek, installManagedDeepSeek, DEEPSEEK_VERSION } from "./deepseek-managed-installer";
 import { MediaRef, adapterCompactSignal, adapterContextOccupancy, agentTimestampMsFromMeta, autoCompactStartedNote, childStreamFromRoute, commandOutputForToolCall, commandOutputFromLiveTerminal, contextUsedFromCompactNotification, enforceCompleteSessionCost, errorDetail, gateZeroTokenMeta, isAuthErrorText, isCredentialError, isIncompatibleAgentError, isResumeNotFound, isRateLimitError, isSubagentLifecycleUpdate, occupancyFromAdapterTurn, parseSessionInfoContext, permissionOutcomeFor, promptErrorText, rateLimitNoticeText, sessionInfoCacheFresh, sumUsage, summarizeBackgroundCommand, usageIsRealMeasurement, type UpdateRoute } from "./acp-dispatch";
@@ -12614,7 +12615,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       case "send":
         // A bare `/context-window` never arrives: the webview opens its context
         // popup for that. Here it is just a size that does not parse.
-        if (/^\/context-window(?:\s|$)/i.test(msg.text.trim())) {
+        if (session.provider !== "deepseek" && /^\/context-window(?:\s|$)/i.test(msg.text.trim())) {
           const size = parseContextWindowSize(msg.text.trim().replace(/^\/context-window/i, ""));
           if (size === undefined) this.emit(session, { type: "error", text: "Use /context-window 500k or a whole token count offered by the model." });
           else await this.changeContextWindow(session, size);
@@ -18652,6 +18653,14 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // turn ended while another was focused). Only the focused session may spawn
     // a client on demand; a background target without one has nothing to talk to.
     const session = target ?? this.focused;
+    if (session.provider === "deepseek" && session.deepseekHarness !== "minimal") {
+      const notice = deepseekPromptNotice(text);
+      if (notice) {
+        this.emit(session, { type: "planNotice", text: notice });
+        if (!this.turnInFlight(session) && !session.priming) this.emit(session, { type: "agentEnd" });
+        return;
+      }
+    }
     // A model or effort change committed when the picker closed has started
     // handling (message ordering), but its RPC or its restart can still be
     // mid-flight. Settle the in-flight set BEFORE anything reads this session's
@@ -18880,7 +18889,9 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           this.rememberAdapterContext(session, { compacted: true });
         }
       }
-      const meta = await client.prompt(promptBlocks);
+      const meta = session.provider === "deepseek"
+        ? await client.prompt(promptBlocks, contributions?.map(item => item.text) ?? [text])
+        : await client.prompt(promptBlocks);
       if (gen !== session.gen) {
         this.emitAbandonedSend(session);
         return;
@@ -19387,6 +19398,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     this.touch(session);
     this.markRead(session);
     this.refreshWorkflowCompletions(session);
+    if (session.provider === "deepseek") void session.client?.refreshCommands?.();
     void wv.postMessage({ type: "clearMessages" });
     void wv.postMessage({ type: "historyReplay", active: true });
     for (const m of session.buffer) {
@@ -20544,6 +20556,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     this.touch(session);
     this.markRead(session); // opening it clears any unread (green/red) badge
     this.refreshWorkflowCompletions(session);
+    if (session.provider === "deepseek") void session.client?.refreshCommands?.();
     const wv = this.view?.webview;
     // Both surfaces need it, and the desk has the same gap the browser does —
     // re-focusing a live conversation never said which agent it belongs to.
@@ -21751,6 +21764,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     const identity = this.sessionIdentityFrame(session);
     if (identity) this.sendRemoteClient(clientId, identity);
     this.refreshWorkflowCompletions(session);
+    if (session.provider === "deepseek") void session.client?.refreshCommands?.();
     for (const msg of bracketRemoteSnapshot(session.buffer)) this.sendRemoteClient(clientId, msg);
     for (const msg of sessionUiSnapshot(session, this.displayMode(session))) this.sendRemoteClient(clientId, msg);
     if (notifyCatalog) this.postRepoCatalog();
@@ -23396,6 +23410,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     const initial = this.messageForRemote({ ...this.buildInitialStateMsg(session), cwd: listCwd ?? "" });
     const sessionCwd = session ? this.sessionCwd(session) : "";
     const sessionCwdOk = !!session && !!authorizedListCwd(sessionCwd, authorized, pathsEqual);
+    if (sessionCwdOk && session?.provider === "deepseek") void session.client?.refreshCommands?.();
     const snap: HostMsg[] = [];
     snap.push(initial);
     if (this.cloudHostUpdate) snap.push(this.cloudHostUpdate.snapshot);

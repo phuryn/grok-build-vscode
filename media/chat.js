@@ -19094,7 +19094,7 @@ ${fullText}`
     // the CLI kept the old one. Committed first, the size meets the host's
     // `pickerChange` and is refused with its visible wait message.
     flushPicker();
-    if (/^\/context-window(?:\s|$)/i.test(input.value.trim())) {
+    if (state.activeProvider !== "deepseek" && /^\/context-window(?:\s|$)/i.test(input.value.trim())) {
       sendContextWindowCommand(input.value.trim());
       // A bare command opens the context popup; the Send click that did it
       // must not close it again on its way to the document's closer.
@@ -19638,7 +19638,7 @@ ${fullText}`
   // ("grok send"), whose composer is cleared separately so the mic can keep
   // listening for the next utterance.
   function submitMessage(text) {
-    if (/^\/context-window(?:\s|$)/i.test((text || "").trim())) {
+    if (state.activeProvider !== "deepseek" && /^\/context-window(?:\s|$)/i.test((text || "").trim())) {
       sendContextWindowCommand((text || "").trim());
       return;
     }

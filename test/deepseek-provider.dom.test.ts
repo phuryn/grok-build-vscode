@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { bootWebview, click, dispatch, type Harness } from "./webview-harness";
+import { DEEPSEEK_GOAL_COMMANDS } from "../src/deepseek-commands";
 
 const modelId = '["deepseek-official","deepseek-v4-flash"]';
 const identity = { sessionId: "s", modelId, generation: 2 };
@@ -17,6 +18,35 @@ function select(h: Harness) {
   return h.doc.querySelector("#context-popover #deepseek-harness") as HTMLSelectElement;
 }
 describe("DeepSeek renderer capabilities", () => {
+  it.each([false, true])("sends a context-window skill as ordinary authored text (remote=%s)", remote => {
+    const h = setup(remote);
+    dispatch(h.window, { type: "commandsUpdate", commands: [{ name: "context-window", description: "A skill", _meta: { path: "/skill.md", scope: "project-dsh" } }] });
+    const input = h.doc.getElementById("input") as HTMLTextAreaElement;
+    input.value = "/context-window review";
+    click(h.window, h.doc.getElementById("send-btn")!);
+    expect(h.posted.some(message => message.type === "send" && message.text === "/context-window review")).toBe(true);
+    expect(h.posted.some(message => message.type === "setContextWindow")).toBe(false);
+  });
+  it.each([false, true])("offers goals only at the start and skills anywhere via commandsUpdate (remote=%s)", remote => {
+    const h = setup(remote);
+    dispatch(h.window, { type: "commandsUpdate", commands: [...DEEPSEEK_GOAL_COMMANDS,
+      { name: "review", description: "Review the patch", _meta: { path: "/review.md", scope: "project-dsh" } }] });
+    const input = h.doc.getElementById("input") as HTMLTextAreaElement;
+    for (const [text, expected] of [["/", ["/goal", "/goal-status", "/goal-pause", "/goal-resume", "/goal-done", "/review"]], ["Please /", ["/review"]]] as const) {
+      input.value = text; input.selectionStart = text.length; input.selectionEnd = text.length;
+      input.dispatchEvent(new h.window.Event("input", { bubbles: true }));
+      expect([...h.doc.querySelectorAll(".slash-name")].map(el => el.textContent)).toEqual(expected);
+    }
+    dispatch(h.window, { type: "userMessage", text: "/goal fix the build", chips: [] });
+    expect(h.doc.querySelector(".user-message")?.textContent ?? h.doc.body.textContent).toContain("/goal fix the build");
+    expect(h.doc.body.textContent).not.toContain("Set a session goal with create_goal");
+    dispatch(h.window, { type: "clearMessages" });
+    dispatch(h.window, { type: "historyReplay", active: true });
+    dispatch(h.window, { type: "userMessage", text: "/goal fix the build", chips: [] });
+    dispatch(h.window, { type: "historyReplay", active: false });
+    expect(h.doc.body.textContent).toContain("/goal fix the build");
+    expect(h.doc.body.textContent).not.toContain("Set a session goal with create_goal");
+  });
   it.each([false, true])("uses the context popup before the first turn and preserves the draft (remote=%s)", remote => {
     const h = setup(remote);
     const input = h.doc.getElementById("input") as HTMLTextAreaElement;

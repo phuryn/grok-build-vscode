@@ -111,7 +111,7 @@ describe("pinned private DeepSeek runtime", () => {
     expect(() => nodeChecksum("", "node.zip")).toThrow();
     const sum = `${"a".repeat(64)}  node.zip\n`; expect(() => nodeChecksum(sum + sum, "node.zip")).toThrow();
     const storageRoot = root();
-    const args = { cliPath: storageRoot, cwd: storageRoot, env: { ELECTRON_RUN_AS_NODE: "1", DSH_HOME: "/foreign", DSH_SYSTEM_PROMPT: "override",
+    const args = { cliPath: storageRoot, cwd: storageRoot, env: { ELECTRON_RUN_AS_NODE: "1", DSH_HOME: "/foreign", DSH_SYSTEM_PROMPT: "override", DSH_AGENTS_HOME: "/shared-agents",
       VSCODE_IPC_HOOK: "\\\\.\\pipe\\vscode-ipc", VSCODE_PID: "1", PATH: "/bin" } };
     const full = new DeepSeekBackend({ storageRoot }).spawn(args);
     const minimal = new DeepSeekBackend({ storageRoot, harness: "minimal" }).spawn(args);
@@ -123,6 +123,7 @@ describe("pinned private DeepSeek runtime", () => {
     for (const spawned of [full, minimal]) {
       expect(Object.keys(spawned.env).filter(k => k.startsWith("VSCODE_"))).toEqual([]);
       expect(spawned.env.PATH).toBe("/bin");
+      expect(spawned.env.DSH_AGENTS_HOME).toBe("/shared-agents");
     }
     expect(fs.readFileSync(minimal.args.at(-1)!, "utf8")).toContain("@deepseek-ai/dsh-acp");
   });

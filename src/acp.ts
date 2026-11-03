@@ -609,6 +609,7 @@ export class AcpClient extends EventEmitter {
     });
     const res = this.backend.normalizeSessionResponse(raw);
     this.sessionId = res.sessionId;
+    await this.refreshCommands();
     this.resetContextSelection();
     this.availableModels = (res.models?.availableModels ?? []).map((m: any) => ({
       modelId: m.modelId,
@@ -705,6 +706,7 @@ export class AcpClient extends EventEmitter {
     }
     const res = this.backend.normalizeSessionResponse(raw);
     this.sessionId = sessionId;
+    await this.refreshCommands();
     this.resetContextSelection();
     if (res?.models?.availableModels) {
       this.availableModels = res.models.availableModels.map((m: any) => ({
@@ -865,18 +867,62 @@ export class AcpClient extends EventEmitter {
     }
   }
 
-  async prompt(textOrBlocks: string | PromptContentBlock[]): Promise<PromptResultMeta> {
+  private commandsRefresh?: Promise<void>;
+  refreshCommands(): Promise<void> {
+    if (!this.backend.availableCommands || !this.sessionId) return Promise.resolve();
+    if (this.commandsRefresh) return this.commandsRefresh;
+    const pending = this.refreshBackendCommands();
+    this.commandsRefresh = pending;
+    void pending.finally(() => { if (this.commandsRefresh === pending) this.commandsRefresh = undefined; });
+    return pending;
+  }
+
+  private async refreshBackendCommands(): Promise<void> {
+    const sessionId = this.sessionId;
+    try {
+      const commands = await this.backend.availableCommands!(this.opts.cwd, this.opts.log);
+      if (this.sessionId !== sessionId) return;
+      this.routeUpdate({ sessionUpdate: "available_commands_update", availableCommands: commands }, undefined);
+    } catch (error) {
+      this.opts.log(`[acp] Could not refresh commands: ${(error as Error).message}`);
+    }
+  }
+
+  async prompt(textOrBlocks: string | PromptContentBlock[], authoredTexts?: readonly string[]): Promise<PromptResultMeta> {
     if (this.contextWindowChanging) throw new Error("Wait for the context-window change to finish.");
     const firstText = typeof textOrBlocks === "string" ? textOrBlocks : textOrBlocks[0]?.type === "text" ? textOrBlocks[0].text : "";
-    if (/^\/context-window(?:\s|$)/i.test(firstText) && !this.availableCommands.some(c => c.name === "context-window"))
+    if (this.provider !== "deepseek" && /^\/context-window(?:\s|$)/i.test(firstText) && !this.availableCommands.some(c => c.name === "context-window"))
       throw new Error("Use the native context-window selection; this CLI does not advertise the slash command over ACP.");
     if (!this.sessionId) throw new Error("no session");
-    const prompt: PromptContentBlock[] =
+    let prompt: PromptContentBlock[] =
       typeof textOrBlocks === "string"
         ? [{ type: "text", text: textOrBlocks }]
         : textOrBlocks;
     if (this.provider === "deepseek" && prompt.some(block => block.type === "image"))
       throw new Error("DeepSeek does not accept image attachments on this ACP route.");
+    if (this.backend.rewritePrompt) {
+      await this.refreshCommands();
+      // Copy at the transport boundary: callers retain the authored message for
+      // their transcript, retries, title, and the desk/remote user-message echo.
+      prompt = prompt.map((block, index) => {
+        if (block.type !== "text") return block;
+        if (!authoredTexts || index !== 0) return { ...block, text: this.backend.rewritePrompt!(block.text, this.availableCommands) };
+        // The host supplies authored contributions separately from file/editor
+        // context. Rewrite those spans only, from the end so offsets stay valid.
+        let text = block.text, before = text.length;
+        for (let i = authoredTexts.length - 1; i >= 0; i--) {
+          const authored = authoredTexts[i];
+          if (!authored) continue;
+          const start = i === 0 && text.startsWith(authored) ? 0 : text.lastIndexOf(authored, before - authored.length);
+          if (start < 0) continue;
+          const prefix = start === 0 ? "" : " "; // Goal commands apply only at prompt position 0.
+          const rewritten = this.backend.rewritePrompt!(prefix + authored, this.availableCommands).slice(prefix.length);
+          text = text.slice(0, start) + rewritten + text.slice(start + authored.length);
+          before = start;
+        }
+        return { ...block, text };
+      });
+    }
     let raw: any;
     try {
       raw = await this.request("session/prompt", {
@@ -1724,7 +1770,8 @@ export class AcpClient extends EventEmitter {
     if (r.event === "commandsUpdate") {
       // Hide config-mutating no-op commands (`/always-approve`) from both the
       // autocomplete and the dispatch gate at the single ingestion point (#31).
-      this.availableCommands = filterAdvertisedCommands(r.commands);
+      // DeepSeek has no native commands; those names can be real filesystem skills.
+      this.availableCommands = this.provider === "deepseek" ? r.commands : filterAdvertisedCommands(r.commands);
       this.emit("commandsUpdate", this.availableCommands);
       this.publishContextWindowSelection();
       return;
