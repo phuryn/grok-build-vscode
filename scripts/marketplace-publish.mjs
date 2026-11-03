@@ -1,3 +1,7 @@
+// FALLBACK. Releases publish to the Marketplace through Trusted Publishing
+// (.github/workflows/marketplace-publish.yml, dispatched by release.ps1). Use
+// this only when that workflow cannot run.
+//
 // Publishes the built .vsix through the Marketplace publisher page, using the
 // browser session saved by `npm run marketplace:login`.
 //

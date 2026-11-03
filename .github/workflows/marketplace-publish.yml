@@ -1,0 +1,66 @@
+# Publishes a released .vsix to the VS Code Marketplace with Trusted Publishing.
+#
+# No Personal Access Token exists anywhere. The Marketplace publisher has a
+# Trusted Publishing policy naming this repository, THIS FILE NAME and the
+# `marketplace` environment; GitHub hands the job a short-lived OIDC token,
+# vsce exchanges it for a 15-minute Marketplace credential, and that is the only
+# credential involved. Renaming this file or the environment breaks publishing
+# until the policy on the publisher page is edited to match.
+#
+# What it publishes is the .vsix already attached to the GitHub Release, never
+# a rebuild: the Marketplace gets byte-for-byte what GitHub and Open VSX got.
+#
+# Manual by design, like the installers: release.ps1 dispatches it with
+# `--ref <tag>` once the release exists, so it never fires on a push. The
+# `marketplace` environment only admits `main` and `v*` tags, and a fork's pull
+# request is never issued an OIDC token for this repository.
+#
+# Before this, publishing drove the publisher page in a browser
+# (scripts/marketplace-publish.mjs), where an invisible reCAPTCHA could demand a
+# puzzle only a person can solve. That script stays as the fallback.
+name: Marketplace publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Existing release tag whose .vsix to publish (e.g. v4.15.9)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: marketplace-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: marketplace
+    timeout-minutes: 15
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # The tag arrives through env, never interpolated into the script, so an
+      # input cannot become shell code. It must also name the .vsix it carries.
+      - name: Download the released .vsix
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.release_tag }}
+        run: |
+          case "$TAG" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "release_tag must look like v1.2.3, got: $TAG" >&2; exit 1 ;;
+          esac
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "grok-vscode-phuryn-${TAG#v}.vsix" --dir dist
+          ls -l dist
+
+      - name: Publish with OIDC
+        env:
+          TAG: ${{ inputs.release_tag }}
+        run: npx --yes @vscode/vsce@4.1.0 publish --oidc --packagePath "dist/grok-vscode-phuryn-${TAG#v}.vsix"

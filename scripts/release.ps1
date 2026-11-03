@@ -23,6 +23,9 @@
     8. gh release create vX.Y.Z       with the changelog section as notes
                                        AND the .vsix attached as a release asset
     9. npm run publish:ovsx           publish that .vsix to Open VSX
+    9b. VS Code Marketplace           dispatch marketplace-publish.yml against the
+                                       TAG (Trusted Publishing, no token); its run
+                                       must succeed (skip with -SkipMarketplace)
    10. desktop installers             dispatch desktop-release.yml against the
                                        TAG, wait, and assert the .exe/.dmg/.AppImage/.deb are
                                        actually on the release (skip with
@@ -31,10 +34,10 @@
                                        detected local editor (skip with
                                        -NoInstall; never fails the release)
 
-  Missing installers fail the release after the local install attempt.
+  Missing installers or a failed Marketplace run fail the release after the
+  local install attempt; everything before them is already published.
 
-  Open VSX is part of the release. The VS Code Marketplace is deliberately NOT —
-  that one is the owner's, a separate explicit step (`npm run publish`).
+  Open VSX and the VS Code Marketplace are both part of the release.
 
 .EXAMPLE
   pwsh scripts\release.ps1
@@ -55,6 +58,7 @@ param(
   [int]$CiTimeoutMinutes = 20,
   [switch]$NoInstall,
   [switch]$SkipInstallers,
+  [switch]$SkipMarketplace,
   [int]$InstallerTimeoutMinutes = 25,
   [switch]$DryRun
 )
@@ -153,6 +157,9 @@ if ($DryRun) {
   Write-Host "`n[dry-run] would commit, tag $tag, push main + tag, and run:" -ForegroundColor Yellow
   Write-Host "  gh release create $tag --title `"Release $tag`" --notes-file <notes> $vsix"
   Write-Host "  npm run publish:ovsx"
+  if (-not $SkipMarketplace) {
+    Write-Host "  gh workflow run marketplace-publish.yml --ref $tag -f release_tag=$tag   (then check the run)"
+  }
   if (-not $SkipInstallers) {
     Write-Host "  gh workflow run desktop-release.yml --ref $tag -f release_tag=$tag   (then wait for the assets)"
   }
@@ -222,10 +229,23 @@ Run "gh release create $tag" { gh release create $tag --title "Release $tag" --n
 # Open VSX silently stays a release behind. It runs LAST on purpose — everything
 # above is already durable, so a missing token costs a re-run of this one
 # command rather than a half-made release.
-#
-# The VS Code Marketplace is deliberately still NOT here. That one is the
-# owner's to run (`npm run publish`).
 Run "npm run publish:ovsx" { npm run publish:ovsx }
+
+# 9b. The VS Code Marketplace, through Trusted Publishing: the publisher's
+# policy trusts .github/workflows/marketplace-publish.yml in the `marketplace`
+# environment, so no token exists on this machine or in the repository. It
+# publishes the .vsix attached above, dispatched at the tag like the installers
+# below, and runs while they build. Its outcome is checked after them.
+# The browser route (npm run marketplace:publish) remains the fallback.
+$marketplaceDispatched = $false
+if ($SkipMarketplace) {
+  Step "skipping the Marketplace (-SkipMarketplace)"
+} else {
+  Run "gh workflow run marketplace-publish.yml (release_tag=$tag)" {
+    gh workflow run marketplace-publish.yml --ref $tag -f release_tag=$tag
+  }
+  $marketplaceDispatched = $true
+}
 
 # 10. The desktop installers, attached to the release that now exists.
 #
@@ -302,6 +322,41 @@ if ($SkipInstallers) {
   }
 }
 
+# 10b. The Marketplace run dispatched in 9b. What is asserted is the run's
+# conclusion; the listing itself shows the version ~10 minutes later, after
+# Microsoft's verification, which the playbook polls.
+$marketplaceFailure = $null
+if ($marketplaceDispatched) {
+  Step "waiting for the Marketplace publish run on $tag (up to 15 min)"
+  $deadline = (Get-Date).AddMinutes(15)
+  $run = $null
+  while ((Get-Date) -lt $deadline) {
+    $raw = $null
+    try {
+      $ErrorActionPreference = "Continue"
+      $raw = gh run list --workflow=marketplace-publish.yml --branch $tag --event workflow_dispatch --limit 1 --json databaseId,status,conclusion,url
+    } catch {
+      $raw = $null
+    } finally {
+      $ErrorActionPreference = "Stop"
+    }
+    if ($raw) { $run = @($raw | ConvertFrom-Json) | Select-Object -First 1 }
+    if ($run -and $run.status -eq "completed") { break }
+    Start-Sleep -Seconds 15
+  }
+  if ($run -and $run.status -eq "completed" -and $run.conclusion -eq "success") {
+    Step "Marketplace publish succeeded ($($run.url)); the listing updates after verification"
+  } else {
+    $state = if ($run) { "$($run.status)/$($run.conclusion)" } else { "no run found" }
+    $marketplaceFailure = "Marketplace publish for $tag did not succeed ($state)."
+    Write-Host "  $marketplaceFailure" -ForegroundColor Yellow
+    Write-Host "  The GitHub Release, Open VSX and installers already exist. Check the run, then re-run:" -ForegroundColor Yellow
+    Write-Host "    gh run list --workflow=marketplace-publish.yml --limit 3" -ForegroundColor Yellow
+    Write-Host "    gh workflow run marketplace-publish.yml --ref $tag -f release_tag=$tag" -ForegroundColor Yellow
+    Write-Host "  Fallback without GitHub Actions: npm run marketplace:publish" -ForegroundColor Yellow
+  }
+}
+
 # 11. Install what was just released into this machine's editors. The released
 # .vsix is passed by path on purpose, so install.ps1 skips its own build AND its
 # staging-relay swap — the editors end up running the exact artifact users get,
@@ -332,5 +387,8 @@ if ($SkipInstallers) {
 } else {
   Write-Host "`nReleased $tag with $vsix and .exe/.dmg/.AppImage/.deb installers attached, and published to Open VSX." -ForegroundColor Green
 }
-Write-Host "Marketplace publish is the owner's: npm run publish" -ForegroundColor DarkGray
+if ($marketplaceFailure) { Write-Host $marketplaceFailure -ForegroundColor Yellow }
+elseif ($SkipMarketplace) { Write-Host "Marketplace skipped (-SkipMarketplace): gh workflow run marketplace-publish.yml --ref $tag -f release_tag=$tag" -ForegroundColor DarkGray }
+else { Write-Host "Published to the VS Code Marketplace through Trusted Publishing; the listing updates after verification." -ForegroundColor Green }
 if ($installerFailure) { throw $installerFailure }
+if ($marketplaceFailure) { throw $marketplaceFailure }

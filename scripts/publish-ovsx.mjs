@@ -8,8 +8,9 @@
  * — which in a non-interactive shell fails with "User force closed the prompt",
  * a message that says nothing about the actual problem.
  *
- * Marketplace publishing is deliberately NOT here. That is `npm run publish`
- * (vsce), and it is the owner's to run.
+ * Marketplace publishing is deliberately NOT here. It is
+ * .github/workflows/marketplace-publish.yml (Trusted Publishing, no token),
+ * which release.ps1 dispatches after this.
  */
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";

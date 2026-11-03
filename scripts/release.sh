@@ -22,8 +22,9 @@
 #        annotated tag -> push tag -> gh release create (changelog section as
 #        notes, .vsix attached) -> npm run publish:ovsx -> install locally.
 #
-# Open VSX is part of the release. The VS Code Marketplace is deliberately NOT —
-# that one is the owner's, a separate explicit step (npm run publish).
+# Open VSX is part of the release. The VS Code Marketplace is too, through
+# .github/workflows/marketplace-publish.yml (Trusted Publishing); this script
+# prints that dispatch rather than running it, like the installers.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -203,4 +204,5 @@ fi
 
 printf '\033[33mPublished %s with %s attached, and published to Open VSX.\033[0m\n' "$tag" "$vsix"
 installer_handoff
-echo "Marketplace publish is separate: npm run publish"
+echo "VS Code Marketplace (Trusted Publishing, no token):"
+echo "  gh workflow run marketplace-publish.yml --ref $tag -f release_tag=$tag"

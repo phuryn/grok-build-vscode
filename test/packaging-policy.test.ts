@@ -419,3 +419,40 @@ describe("desktop release workflow signing credentials", () => {
     expect(workflow).not.toMatch(/CSC_IDENTITY_AUTO_DISCOVERY/);
   });
 });
+
+describe("VS Code Marketplace Trusted Publishing", () => {
+  // The publisher's Trusted Publishing policy names this file, this repository
+  // and the `marketplace` environment. Renaming either silently breaks
+  // publishing until the policy on the Marketplace page is edited to match.
+  const wf = read(".github/workflows/marketplace-publish.yml");
+  const release = read("scripts/release.ps1");
+
+  it("keeps the file name and environment the policy trusts", () => {
+    expect(fs.existsSync(path.join(root, ".github/workflows/marketplace-publish.yml"))).toBe(true);
+    expect(wf).toMatch(/^\s+environment: marketplace\s*$/m);
+  });
+
+  it("runs only on dispatch, with an OIDC token and read-only contents", () => {
+    expect(wf).toMatch(/^on:\s*\n\s+workflow_dispatch:/m);
+    expect(wf).not.toMatch(/^\s+(push|pull_request|pull_request_target|release):/m);
+    expect(wf).toMatch(/^\s+id-token: write\s*$/m);
+    expect(wf).toMatch(/^\s+contents: read\s*$/m);
+  });
+
+  it("publishes the release's own .vsix with --oidc, never a token or a rebuild", () => {
+    expect(wf).toMatch(/gh release download "\$TAG"/);
+    expect(wf).toMatch(/@vscode\/vsce@\d+\.\d+\.\d+ publish --oidc --packagePath/);
+    expect(wf).not.toMatch(/VSCE_PAT|secrets\./);
+    expect(wf).not.toMatch(/npm run package|vsce package/);
+  });
+
+  it("never interpolates the tag input into a script", () => {
+    for (const line of wf.split("\n").filter(l => l.includes("inputs.release_tag"))) {
+      expect(line).toMatch(/^\s+TAG: \$\{\{ inputs\.release_tag \}\}\s*$/);
+    }
+  });
+
+  it("is dispatched by release.ps1 at the tag", () => {
+    expect(release).toMatch(/gh workflow run marketplace-publish\.yml --ref \$tag -f release_tag=\$tag/);
+  });
+});
