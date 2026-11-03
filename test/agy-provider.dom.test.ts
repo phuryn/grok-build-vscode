@@ -144,7 +144,8 @@ describe("Antigravity in the chat renderer", () => {
     dispatch(h.window, { type: "session", sessionId: "s", provider: "agy", models: [] });
     expect((h.doc.getElementById("input") as HTMLTextAreaElement).placeholder).toBe("Ask Antigravity…");
     const chat = readFileSync(path.join(__dirname, "..", "media", "chat.js"), "utf8");
-    expect(chat).toContain('startup.provider === "agy" ? 60 : 20');
+    // Behaviour (60 s before "slow") is pinned in startup-status.dom.test.ts.
+    expect(chat).toContain("{ agy: 60, deepseek: 45 }[startup.provider] || 20");
   });
 });
 

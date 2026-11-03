@@ -470,6 +470,20 @@ describe("a Grok home of its own (grok.homeDirectory)", () => {
     expect(shared.store.get("grok.routines")).toEqual(theirs);
   });
 
+  it("keeps its routines readable, and deletable correctly, after a failed write", async () => {
+    const { state, fs } = ownHome(() => {});
+    await state.update("grok.routines", { a: { id: "a" }, b: { id: "b" } });
+    fs.failWrites = true;
+    await state.update("grok.routines", { a: { id: "a" }, b: { id: "b" }, c: { id: "c" } });
+    // The degraded read comes from this window's own copy, not an empty one…
+    const shown = state.get<Record<string, unknown>>("grok.routines", {});
+    expect(Object.keys(shown).sort()).toEqual(["a", "b", "c"]);
+    // …so the next save, built from what the list showed, deletes nothing on disk.
+    fs.failWrites = false;
+    await state.update("grok.routines", { ...shown, x: { id: "x" } });
+    expect(Object.keys(JSON.parse(fs.files.get(routinesFile)!))).toEqual(expect.arrayContaining(["a", "b", "x"]));
+  });
+
   it("still carries the install id and the rest across", async () => {
     const { state } = ownHome((m) => {
       m.store.set("grok.installId", "install-1");

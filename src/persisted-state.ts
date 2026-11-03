@@ -59,16 +59,22 @@ export interface MementoLike {
   update(key: string, value: unknown): PromiseLike<void>;
 }
 
-/** A memento that neither seeds nor shadows `hidden`. VS Code's globalState is
+/** A memento that keeps `hidden` keys to this window. VS Code's globalState is
  *  shared by every window, so a window on its own Grok home (grok.homeDirectory)
  *  would otherwise seed that home with the default home's routines, and each
  *  home would then run them under its own claim directory (routine-store.ts):
- *  every routine twice. Reads of a hidden key see nothing; writes are dropped. */
+ *  every routine twice. A hidden key starts empty and lives in process memory,
+ *  which still serves as the shadow when a disk write fails. */
 export function mementoWithout(memento: MementoLike, hidden: ReadonlySet<string>): MementoLike {
+  const local = new Map<string, unknown>();
   const scoped: MementoLike = {
-    get: ((key: string, defaultValue?: unknown) =>
-      hidden.has(key) ? defaultValue : memento.get(key, defaultValue)) as MementoLike["get"],
-    update: (key, value) => hidden.has(key) ? Promise.resolve() : memento.update(key, value),
+    get: ((key: string, defaultValue?: unknown) => !hidden.has(key) ? memento.get(key, defaultValue)
+      : local.has(key) ? local.get(key) : defaultValue) as MementoLike["get"],
+    update: (key, value) => {
+      if (!hidden.has(key)) return memento.update(key, value);
+      local.set(key, value);
+      return Promise.resolve();
+    },
   };
   const keys = memento.keys;
   if (keys) scoped.keys = () => keys.call(memento).filter((k) => !hidden.has(k));
