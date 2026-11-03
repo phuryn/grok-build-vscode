@@ -76,6 +76,12 @@ describe("session startup composer strip", () => {
     expect(strip(h).hidden).toBe(true); expect(send(h).disabled).toBe(false);
     expect(strip(h).textContent).not.toContain("Connected");
   });
+  it.each([["deepseek", 45], ["agy", 60], ["grok", 20]])("calls %s's start slow only after %ss", (provider, after) => {
+    const h = boot(); status(h, "starting", { provider, elapsedMs: (Number(after) - 1) * 1000 });
+    expect(strip(h).textContent).not.toContain("taking longer than usual");
+    vi.advanceTimersByTime(1000);
+    expect(strip(h).textContent).toContain("taking longer than usual");
+  });
   it.each([[true, true], [false, false], [false, undefined]])("omits output on remote=%s / capability=%s", (remote, capability) => {
     const h = boot(remote, capability); status(h, "starting", { elapsedMs: 20000 });
     expect(strip(h).textContent).toContain("taking longer than usual");

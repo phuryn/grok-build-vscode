@@ -64,13 +64,42 @@ describe("dsh generic ACP tools", () => {
     ["write", { file_path: "/work/a.ts", content: "new" }, "Write a.ts"],
     ["grep", { pattern: "needle", path: "." }, "Search needle"],
     ["glob", { pattern: "*.ts" }, "Search *.ts"],
-    ["web_search", { query: "ACP protocol" }, "Web search ACP protocol"],
+    // dsh sends a list (dsh-tool-web), never a single `query`.
+    ["web_search", { queries: ["ACP protocol"] }, "Web search ACP protocol"],
+    ["web_search", { queries: ["ACP protocol", "ACP tools"] }, "Web search ACP protocol, ACP tools"],
     ["todo_write", { todos: [{ content: "Check tests", status: "pending" }] }, "Update 1 task"],
+    ["job_output", { job_id: "job-1", wait: true }, "Check background job"],
+    ["job_list", {}, "List background jobs"],
+    ["job_kill", { job_id: "job-1" }, "Stop background job"],
+    ["create_goal", { objective: "Ship the parser" }, "Set goal Ship the parser"],
+    ["get_goal", {}, "Check goal"],
+    ["update_goal", { action: "pause" }, "Update goal"],
+    ["skill", { name: "release-notes" }, "Use skill release-notes"],
   ])("labels %s from title and rawInput when kind is other", (title, rawInput, label) => {
     const h = bootWebview();
     dispatch(h.window, { type: "toolCall", call: { toolCallId: "tool", title, kind: "other", status: "completed", rawInput } });
     dispatch(h.window, { type: "messageChunk", text: "done" });
     expect(h.doc.querySelector(".tool-label, .tool-item-label")!.textContent).toBe(label);
+  });
+  it.each([
+    ["web_search", { queries: ["ACP spec", "ACP tools"] }, 'Searching web for "ACP spec, ACP tools"'],
+    ["job_output", { job_id: "job-1", wait: true }, "Checking background job"],
+    ["skill", { name: "release-notes" }, "Loading skill release-notes"],
+  ])("names a running %s in the header", (title, rawInput, label) => {
+    const h = bootWebview();
+    dispatch(h.window, { type: "toolCall", call: { toolCallId: "tool", title, kind: "other", status: "in_progress", rawInput } });
+    expect(h.doc.querySelector(".tool-group-label")!.textContent!.trim()).toBe(label);
+  });
+  it.each([
+    ["Search for 'web_search' in /repo/src", "search", {}, "Search web_search in"],
+    ["Read web_search.ts", "read", { file_path: "/repo/web_search.ts" }, "Read web_search.ts"],
+  ])("does not call %s a web search", (title, kind, rawInput, start) => {
+    const h = bootWebview();
+    dispatch(h.window, { type: "toolCall", call: { toolCallId: "tool", title, kind, status: "completed", rawInput } });
+    dispatch(h.window, { type: "messageChunk", text: "done" });
+    const label = h.doc.querySelector(".tool-label, .tool-item-label")!.textContent!;
+    expect(label.startsWith(start)).toBe(true);
+    expect(label).not.toContain("Web search");
   });
   it("uses the existing subagent card and the supplied task description", () => {
     const h = bootWebview();

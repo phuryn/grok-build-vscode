@@ -12802,13 +12802,54 @@
     delete: "Delete", execute: "Run", fetch: "Generate",
   };
 
+  // Tools whose raw name would otherwise be the row (DeepSeek titles every call
+  // with its bare tool name and kind "other"): [settled verb, running label].
+  // A settled verb takes a target where one exists (a skill's name, a goal's
+  // objective); the rest stand alone.
+  const NAMED_TOOL_LABELS = {
+    job_output: ["Check background job", "Checking background job"],
+    job_list: ["List background jobs", "Listing background jobs"],
+    job_kill: ["Stop background job", "Stopping background job"],
+    create_goal: ["Set goal", "Setting goal"],
+    get_goal: ["Check goal", "Checking goal"],
+    update_goal: ["Update goal", "Updating goal"],
+    skill: ["Use skill", "Loading skill"],
+    read_image: ["Read image", "Reading image"],
+    send_message: ["Message agent", "Messaging agent"],
+    interrupt_agent: ["Interrupt agent", "Interrupting agent"],
+    list_subagent_models: ["List models", "Listing models"],
+    terminal_open: ["Open terminal", "Opening terminal"],
+    terminal_send: ["Send to terminal", "Sending to terminal"],
+    terminal_read: ["Read terminal", "Reading terminal"],
+    terminal_signal: ["Signal terminal", "Signalling terminal"],
+    terminal_close: ["Close terminal", "Closing terminal"],
+    terminal_list: ["List terminals", "Listing terminals"],
+    schedule_create: ["Schedule a task", "Scheduling a task"],
+    schedule_list: ["List scheduled tasks", "Listing scheduled tasks"],
+    schedule_update: ["Update scheduled task", "Updating scheduled task"],
+    schedule_delete: ["Delete scheduled task", "Deleting scheduled task"],
+    working_directory: ["Change folder", "Changing folder"],
+  };
+  function namedToolTarget(name, r) {
+    if (name === "skill") return typeof r.name === "string" ? r.name.trim() : "";
+    if (name === "create_goal") return typeof r.objective === "string" ? clampToolTarget(r.objective.trim()) : "";
+    if (name === "read_image") return prettyPath(r.file_path || r.path || "");
+    return "";
+  }
+
   function toolName(call) {
     return call._meta?.["x.ai/tool"]?.name || call.tool || call.name || call.title || "";
   }
+  // The tool's own name, exactly, or Grok's "Web search: …" title. Never a
+  // substring of an arbitrary title: a file search FOR "web_search", or a read
+  // of web_search.ts, is not a web search.
+  const WEB_SEARCH_TOOL = /^(web[ _-]?search|search[ _-]?web)$/i;
   function isWebSearch(call) {
     // Grok also titles a grep with its pattern; stable metadata wins over that.
-    const identity = call._meta?.["x.ai/tool"]?.name;
-    return /web.?search|search_web/i.test(identity || `${toolName(call)} ${call.title || ""}`);
+    const identity = call._meta?.["x.ai/tool"]?.name || call.tool || call.name;
+    if (identity) return WEB_SEARCH_TOOL.test(identity);
+    const title = String(call.title || "").trim();
+    return WEB_SEARCH_TOOL.test(title) || /^web search\b/i.test(title);
   }
   function pathFromToolTitle(call) {
     const title = String(call && call.title || "").trim();
@@ -12979,7 +13020,7 @@
     // Web search/fetch first: grok ships these with a "Web search: …" title and no
     // `kind`, so they'd otherwise fall through to the command catch-all (the exact
     // "ran N commands" miscount the user saw).
-    if (/web.?search|web.?fetch|search_web/i.test(n)) return "web";
+    if (isWebSearch(call) || /^(web[ _-]?fetch|webfetch)\b/i.test(n)) return "web";
     switch (toolKind(call)) {
       case "read": case "search": return "explore";
       case "edit": case "write": return "edit";
@@ -13065,7 +13106,9 @@
    */
   const MATCH_ALL = new Set(["", "^", "$", ".", ".*", ".+", "^.*", "^.*$"]);
   function searchPattern(r) {
-    const p = r.glob_pattern || r.pattern || r.query || r.regex || r.search;
+    // DeepSeek's web_search sends a list: `{queries: ["…", "…"]}`.
+    const queries = Array.isArray(r.queries) ? r.queries.filter((q) => typeof q === "string" && q.trim()).join(", ") : "";
+    const p = r.glob_pattern || r.pattern || r.query || queries || r.regex || r.search;
     const globs = (Array.isArray(r.glob) ? r.glob : [r.glob]).filter((g) => typeof g === "string" && g.trim());
     if (globs.length && (typeof p !== "string" || MATCH_ALL.has(p.trim()))) return globs.join(", ");
     return p;
@@ -13118,6 +13161,10 @@
     }
     if (name === "todo_write") return "Updating tasks";
     if (name === "get_command_or_subagent_output") return "Waiting for output";
+    if (Object.prototype.hasOwnProperty.call(NAMED_TOOL_LABELS, name)) {
+      const target = namedToolTarget(name, call.rawInput || call.input || {});
+      return NAMED_TOOL_LABELS[name][1] + (target ? ` ${target}` : "");
+    }
     if (kind === "delete") return filePath ? `Deleting ${prettyPath(filePath)}` : "Deleting file";
     if (kind === "fetch") return "Generating";
     if (/^(bash|execute|run_command|run_terminal_command|shell|run_bash|powershell|pwsh)$/.test(name) || kind === "execute") {
@@ -13135,6 +13182,10 @@
     const filePath = toolFilePath(call);
     const command = r.command || r.cmd;
     if (name === "todo_write") return Array.isArray(r.todos) ? `Update ${r.todos.length} task${r.todos.length === 1 ? "" : "s"}` : "Update tasks";
+    if (Object.prototype.hasOwnProperty.call(NAMED_TOOL_LABELS, name)) {
+      const target = namedToolTarget(name, r);
+      return NAMED_TOOL_LABELS[name][0] + (target ? ` ${target}` : "");
+    }
     const failure = state.toolFailuresById.get(call.toolCallId) || toolFailureText(call);
     if (isMissingPathRead(call, failure)) return `${filePath ? prettyPath(filePath) : isDirectoryListTool(call) ? "Directory" : "File"} — doesn't exist yet`;
     const pattern = searchPatternText(call);
@@ -18751,8 +18802,10 @@ ${fullText}`
     const seconds = Math.floor(Math.max(0, Date.now() - startup.startedAt) / 1000);
     // A CLI update routinely takes minutes; only a stalled start is "slow".
     // Antigravity's Windows server unpacks itself on every start: 15-25 s is
-    // its ordinary start, not a stall.
-    const slow = seconds >= (startup.provider === "agy" ? 60 : 20) && startup.stage !== "updating";
+    // its ordinary start, not a stall. DeepSeek's harness boots ~15 s warm and
+    // well past 20 s on a busy machine, so it gets the same latitude.
+    const slowAfter = { agy: 60, deepseek: 45 }[startup.provider] || 20;
+    const slow = seconds >= slowAfter && startup.stage !== "updating";
     const provider = { grok: "Grok", codex: "Codex", claude: "Claude", muse: "Muse", agy: "Antigravity", deepseek: "DeepSeek" }[startup.provider] || "Grok";
     const count = Number.isInteger(startup.messageCount) && startup.messageCount >= 0 ? startup.messageCount + " " : "";
     const label = { updating: "Updating the " + provider + " CLI", starting: "Starting " + provider,
