@@ -1,4 +1,5 @@
 import { decideDefaultModeCohort } from "./default-mode-cohort";
+import { workspaceGrokHome } from "./workspace-grok-home";
 import { parseContextWindowSize, type ContextWindowSelection } from "./context-selection";
 import { remoteHandoffUrl, remoteHandoffQr, type HandoffSession } from "./remote-handoff";
 import type { RemoteHandoffSource } from "./protocol";
@@ -22625,6 +22626,9 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   private buildEnv(cwd: string): NodeJS.ProcessEnv {
     const dotEnv = this.readDotEnv(cwd);
     const env: NodeJS.ProcessEnv = { ...process.env, ...dotEnv };
+    // Account selection must agree with the host's history/config readers.
+    const accountHome = workspaceGrokHome();
+    if (accountHome) env.GROK_HOME = accountHome;
 
     // XAI_API_KEY is the generic xAI key name; grok CLI needs GROK_CODE_XAI_API_KEY.
     // Map from either source (workspace .env or the user's shell environment).

@@ -3,6 +3,7 @@ import type { AcpBackend, BackendConfigState, BackendSessionListResult, BackendS
 import type { EffortLevel, PromptContentBlock } from "./acp";
 import { grokCliNeedsShell } from "./cli-process";
 import { compareVersionTuple, parseGrokVersion } from "./cli-locator";
+import { workspaceGrokHome } from "./workspace-grok-home";
 
 /** Grok 0.2.x ignores interject content. Only a live-verified 1.x accepts images. */
 export const GROK_INTERJECT_CONTENT_MIN_VERSION: [number, number, number] = [1, 0, 0];
@@ -22,8 +23,9 @@ export function buildInterjectParams(sessionId: string, text: string, content?: 
   };
 }
 
-export function buildGrokAgentArgs(effort?: EffortLevel): string[] {
-  return effort ? ["agent", "--reasoning-effort", effort, "stdio"] : ["agent", "stdio"];
+export function buildGrokAgentArgs(effort?: EffortLevel, isolateLeader = false): string[] {
+  return ["agent", ...(isolateLeader ? ["--no-leader"] : []),
+    ...(effort ? ["--reasoning-effort", effort] : []), "stdio"];
 }
 
 export function grokSetupDetail(phase: unknown): string | undefined {
@@ -42,7 +44,7 @@ export const grokBackend: AcpBackend = {
   spawn(options: BackendSpawnOptions) {
     return {
       command: options.cliPath,
-      args: buildGrokAgentArgs(options.effort),
+      args: buildGrokAgentArgs(options.effort, !!workspaceGrokHome()),
       env: options.env,
       shell: grokCliNeedsShell(options.cliPath),
     };

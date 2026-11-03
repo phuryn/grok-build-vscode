@@ -311,6 +311,12 @@
     "configuration": {
       "title": "AFK Pilot",
       "properties": {
+        "grok.homeDirectory": {
+          "type": "string",
+          "default": "",
+          "scope": "window",
+          "description": "Grok account home for this VS Code window. Set in Workspace settings (.vscode/settings.json) to use a separate account per repo. Requires an absolute path; ~ is expanded. Empty keeps the inherited GROK_HOME or Grok's default. Sign in from AFK Pilot after choosing a new folder. Changes require Reload Window. The extension stays disabled in untrusted workspaces; workspace settings take effect only after you trust the folder."
+        },
         "grok.cliPath": {
           "type": "string",
           "default": "",

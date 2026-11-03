@@ -7,6 +7,7 @@
  * implements Host without this file existing at all).
  */
 import * as vscode from "vscode";
+import { workspaceGrokHome } from "./workspace-grok-home";
 import {
   ensureConfigToml,
   globalConfigPath,
@@ -392,6 +393,8 @@ export function createVsCodeHost(
           shellPath: nameOrOptions.shellPath,
           shellArgs: nameOrOptions.shellArgs,
           cwd: nameOrOptions.cwd,
+          // Terminals are spawned by VS Code, outside this extension host.
+          env: workspaceGrokHome() ? { GROK_HOME: workspaceGrokHome() } : undefined,
         }),
       );
     },

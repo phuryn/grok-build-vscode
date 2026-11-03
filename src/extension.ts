@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { configureWorkspaceGrokHome } from "./workspace-grok-home";
 import { GrokSidebar } from "./sidebar";
 import { createVsCodeHost, createVsCodeHostContext, fromVsCodeUri, wrapWebviewView } from "./vscode-host";
 import {
@@ -156,6 +157,13 @@ export interface GrokExtensionApi {
 }
 
 export function activate(context: vscode.ExtensionContext): GrokExtensionApi {
+  context.subscriptions.push(configureWorkspaceGrokHome({
+    read: () => vscode.workspace.getConfiguration("grok").get("homeDirectory"),
+    onChange: (listener) => vscode.workspace.onDidChangeConfiguration(listener),
+    warn: (message) => vscode.window.showWarningMessage(message),
+    prompt: (message, action) => vscode.window.showInformationMessage(message, action),
+    reload: () => vscode.commands.executeCommand("workbench.action.reloadWindow"),
+  }));
   // Read FIRST, before anything below can persist anything. An install with no
   // stored state has never been interacted with, so wherever the editor put the
   // view, nobody chose it — that is the entire licence the placement correction

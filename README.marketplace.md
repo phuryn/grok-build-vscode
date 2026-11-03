@@ -285,6 +285,7 @@ AFK Pilot defaults to the **Secondary Side Bar** (right side, next to other AI t
 | Setting | Default | Notes |
 |---|---|---|
 | `grok.cliPath` | `""` | Path to the `grok` binary. Empty = auto-discover (`~/.grok/bin/grok` → PATH). |
+| `grok.homeDirectory` | `""` | VS Code only: set an absolute Grok account folder in Workspace settings for each repo, reload, then sign in from AFK Pilot. |
 | `grok.experimentalAntigravity` | `false` | Offer Google's Antigravity as an agent on this computer (not on cloud machines). Also the switch in Settings → Advanced. |
 | `grok.agyServerPath` | `""` | Path to Google's Antigravity ACP server (`agy_acp_server`). Empty = the copy this app installs. |
 | `grok.askToAddProjects` | `true` | The first time you send in a conversation whose folder is not one of your projects, offer to add it to Projects. Another conversation in that folder asks again; "Never for this folder" stops it for that folder. |
