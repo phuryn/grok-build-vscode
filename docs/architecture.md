@@ -12,8 +12,9 @@ they deliberately stop being "thin." For day-to-day usage see the
 The host is a UI shell over `grok agent stdio`, the pinned
 `@agentclientprotocol/codex-acp` and `@agentclientprotocol/claude-agent-acp` adapters,
 the bundled Muse adapter (`adapters/muse/`) driving the installed Muse CLI
-through the pinned official SDK, or Google's Antigravity ACP server, spawned
-directly (experimental, desk only). It speaks JSON-RPC over the
+through the pinned official SDK, Google's Antigravity ACP server, spawned
+directly, or DeepSeek's official dsh harness on a private Node (both
+experimental, desk only). It speaks JSON-RPC over the
 [Agent Client Protocol (ACP)](https://agentclientprotocol.com) on the selected
 backend's stdin/stdout and renders one internal event vocabulary. Conversation
 state remains in the selected CLI; provider identity and presentation state live
@@ -43,8 +44,10 @@ sidebar host ──► AcpClient ──► GrokBackend   ──► grok agent st
                                                    (CLAUDE_CODE_EXECUTABLE=claude)
                          ├────► MuseBackend   ──► node muse-adapter/main.mjs
                                                    ──► muse serve (MSP via SDK)
-                         └────► AgyBackend    ──► agy_acp_server (Google's ACP
+                         ├────► AgyBackend    ──► agy_acp_server (Google's ACP
                                                    server, pinned managed download)
+                         └────► DeepSeekBackend ──► dsh, profile acp or sdk-minimal (private Node,
+                                                   pinned managed npm ci)
        ▲                         │
        └── established internal events ◄── Codex wire normalization
 ```
@@ -88,7 +91,7 @@ in Anthropic's own `claude` CLI — this host never implements, proxies, holds,
 or forwards Claude credentials. Muse also owns its credentials: after a successful
 `muse login`, the host observes credential-file presence without reading its contents.
 Muse exposes no credential-status probe; later authentication failures set `needsLogin`.
-`INTERNAL_PROVIDERS` includes all five identities (Antigravity's `agy` too); `ACP_PROVIDERS` retains the legacy
+`INTERNAL_PROVIDERS` includes all six identities (Antigravity's `agy` and `deepseek` too); `ACP_PROVIDERS` retains the legacy
 three-id vocabulary. Muse UI requires its `providerState` advertisement, with
 actions separately gated by capabilities: no CLI mode command (`supportsModeSwitching`
 stays false), steering, compaction, history deletion or host-injected MCP servers.

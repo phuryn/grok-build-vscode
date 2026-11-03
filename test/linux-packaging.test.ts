@@ -126,7 +126,9 @@ describe("Debian install path and branding", () => {
     expect(overridden).not.toHaveProperty("productName");
     expect(overridden.name).toBe("grok-build-desktop");
     expect(overridden.description).toBe("Grok Build Desktop (Community)");
-  });
+    // Alone this takes ~1 s; cold-loading app-builder-lib beside 350 parallel
+    // test files took over 30 s twice on 2026-11-03, once in the release gate.
+  }, 120_000);
 
   it.each(["-c.productName=other", "-c.directories.output=other", "--publish=always"])(
     "rejects external build overrides: %s", async arg => {

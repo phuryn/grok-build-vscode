@@ -1,5 +1,21 @@
 # Changelog
 
+## 4.15.7 — 2026-11-03
+
+**DeepSeek joins as an experimental agent, a sound when a conversation needs you, and search rows that say what they searched.**
+
+### Added
+
+- **DeepSeek, experimentally, through DeepSeek's own harness.** Turn on **Settings → Advanced → Experimental: DeepSeek**, then connect it in **Settings → Providers** with a DeepSeek API key. It runs on your own computer, not on cloud machines; the app installs a pinned copy of DeepSeek's official dsh harness with its own Node. Choose the harness in the context popup before the first message: **Default** asks before the actions dsh flags, and **Minimal** has full access and no approval prompts. In Default, **/** offers `/goal` shortcuts and the skills dsh loads from the project's `.dsh/skills` and `.agents/skills`, then `~/.agents/skills`. DeepSeek has no manual compaction or image attachments yet. How it works: [research/deepseek-acp.md](research/deepseek-acp.md).
+- **A sound when a conversation needs your input (#228).** A new switch under **Settings → Notifications**, *Sound when input is needed*, plays a short chime when a conversation stops to ask for a permission, an answer or a plan approval while the panel is not focused. It is off by default and separate from the other two sounds. On a phone or in a browser it is that device's own choice. Thanks to ttetlov.
+- **A Grok home per VS Code window (#219).** The new `grok.homeDirectory` setting gives a window its own Grok home, so a repository can use a different Grok account from the others. Its sign-in, conversations and routines stay in that home. VS Code only; the desktop app and cloud machines keep the default home. Thanks to JamesFieldist.
+
+### Fixed
+
+- **Search rows say what they searched (#229),** for every agent. A Grok web search read "Searching the web" with no subject, and some rows changed to "Running tool" after they finished. Thanks to padixa.
+- **Effort levels are listed in one order** (Off, None, Minimal, Low, Medium, High, Extra high, Max, Ultra), whatever order a model sends them in, and Codex shows "Thinking…" while it works.
+- **An unanswered approval card closes when you press Stop or its agent restarts,** instead of staying clickable for a request that no longer exists.
+
 ## 4.15.6 — 2026-10-29
 
 **A Debian package that launches on Ubuntu 24.04, and long commands you can read before you approve them.**

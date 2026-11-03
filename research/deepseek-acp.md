@@ -28,7 +28,8 @@ The two profiles have separate persistent `deepseek-home/default` and
 there before launch so external Node can read it even from packaged Electron.
 Default on Windows uses `windows-shell.patch.yml` to select the official
 `dsh-pwsh-local` executor. The file-tool policy and approval services stay
-composed; clients show that shell commands run without a sandbox. Minimal
+composed; its shell commands run without a sandbox, and no client notice says so
+(removed at the owner's request in `a136ee9`; only Minimal shows a banner). Minimal
 retains its persistent full-access terminal. Inherited DSH composition overrides
 are removed. The homes are separate from
 the person's normal `~/.dsh` configuration.
