@@ -523,8 +523,12 @@
   // Canonical low→high ORDER for known effort ids, and the FALLBACK ladder when a
   // model advertises no menu (`max` is not a real grok level — see #3/#4).
   const EFFORT_LEVELS = ["none", "minimal", "low", "medium", "high", "xhigh"];
+  // Sort order for ADVERTISED levels, wider than the fallback ladder: DeepSeek
+  // offers off/low/high/max and Codex max/ultra, which otherwise trailed the
+  // known ids in arrival order ("Low, High, Off, Max").
+  const EFFORT_ORDER = ["off", "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
   const GROK_ACTIVITY_VERB = "Grokking";
-  const CODEX_ACTIVITY_VERB = "Opening AI";
+  const THINKING_ACTIVITY_VERB = "Thinking";
   const CLAUDE_ACTIVITY_VERB = "Clauding";
   const COMPOSER_PLACEHOLDER = {
     grok: "Ask Grok\u2026",
@@ -564,8 +568,8 @@
       ? m.reasoningEfforts.filter((v) => typeof v === "string" && v)
       : [];
     if (!adv.length) return EFFORT_LEVELS.slice();
-    const known = EFFORT_LEVELS.filter((id) => adv.includes(id));
-    const extra = adv.filter((id) => !EFFORT_LEVELS.includes(id)); // unknown advertised → keep as given
+    const known = EFFORT_ORDER.filter((id) => adv.includes(id));
+    const extra = adv.filter((id) => !EFFORT_ORDER.includes(id)); // unknown advertised → keep as given
     return [...known, ...extra];
   }
 
@@ -11733,10 +11737,10 @@
       const composer = document.querySelector(".composer"); if (composer) composer.prepend(banner);
     }
     if (banner) {
-      banner.textContent = state.deepseekHarness === "minimal"
-        ? "Minimal runs with full access to files and shell commands, without approval prompts."
-        : "DeepSeek shell commands run without a sandbox on Windows.";
-      banner.hidden = !visible || state.deepseekHarness !== "minimal" && !state.deepseekShellUnsandboxed;
+      // Default's unsandboxed Windows shell is deliberately not announced here
+      // (owner, 2026-11-03); only Minimal's no-approval mode is.
+      banner.textContent = "Minimal runs with full access to files and shell commands, without approval prompts.";
+      banner.hidden = !visible || state.deepseekHarness !== "minimal";
     }
     if (!contextPopover.hidden) renderContextPopover();
   }
@@ -12788,6 +12792,7 @@
     search_replace: "Edit", edit_file: "Edit", str_replace: "Edit",
     web_search: "Web search", search_web: "Web search",
     web_fetch: "Fetch", webfetch: "Fetch",
+    get_command_or_subagent_output: "Wait for output",
   };
 
   // Verb by ACP kind — the fallback when the tool name isn't in TOOL_VERB (a tool
@@ -12798,7 +12803,12 @@
   };
 
   function toolName(call) {
-    return call.tool || call.name || call.title || "";
+    return call._meta?.["x.ai/tool"]?.name || call.tool || call.name || call.title || "";
+  }
+  function isWebSearch(call) {
+    // Grok also titles a grep with its pattern; stable metadata wins over that.
+    const identity = call._meta?.["x.ai/tool"]?.name;
+    return /web.?search|search_web/i.test(identity || `${toolName(call)} ${call.title || ""}`);
   }
   function pathFromToolTitle(call) {
     const title = String(call && call.title || "").trim();
@@ -13023,9 +13033,29 @@
    * would repeat this label and the OUT is the match list.
    */
   function searchPatternText(call) {
-    const r = (call && (call.rawInput || call.input)) || {};
-    const p = searchPattern(r);
-    return typeof p === "string" && p.trim() ? clampToolTarget(p.trim()) : "";
+    return clampToolTarget(searchTarget(call).pattern);
+  }
+
+  // Codex puts these two search shapes in the title, without input or locations.
+  function codexSearchTitle(call) {
+    const title = String(call.title || "");
+    const query = title.match(/^Search for '(.+)' in (.+)$/);
+    if (query) return { pattern: query[1], path: query[2] };
+    const folder = title.match(/^Search in '(.+)'$/);
+    return folder ? { pattern: "", path: folder[1] } : {};
+  }
+  function searchTarget(call) {
+    const r = call.rawInput || call.input || {};
+    const output = call.rawOutput?.action || {};
+    const title = codexSearchTitle(call);
+    const candidates = [searchPattern(r), r.action?.query, output.query,
+      Array.isArray(output.queries) ? output.queries.filter((q) => typeof q === "string" && q.trim()).join(", ") : "",
+      title.pattern];
+    const pattern = candidates.find((p) => typeof p === "string" && p.trim());
+    return {
+      pattern: pattern ? pattern.trim() : "",
+      path: r.path || r.target_directory || r.directory || r.dir || (Array.isArray(r.paths) ? r.paths[0] : "") || title.path,
+    };
   }
 
   /**
@@ -13048,8 +13078,7 @@
    * the workspace shows its own name, never a machine path.
    */
   function searchDirText(call) {
-    const r = (call && (call.rawInput || call.input)) || {};
-    const p = r.path || r.target_directory || r.directory || r.dir || (Array.isArray(r.paths) ? r.paths[0] : "");
+    const p = searchTarget(call).path;
     if (typeof p !== "string") return "";
     const s = p.trim().replace(/\\/g, "/").replace(/\/+$/, "").replace(/^\.\//, "");
     if (!s || s === ".") return "";
@@ -13072,7 +13101,7 @@
     if (/^(read_file|file_read)$/.test(name) || kind === "read") {
       return filePath ? `Reading ${prettyPath(filePath)}` : "Reading file";
     }
-    if (/^(web_search|search_web)$/.test(name)) {
+    if (isWebSearch(call)) {
       const q = searchPatternText(call);
       return q ? `Searching web for "${q}"` : "Searching web";
     }
@@ -13088,6 +13117,7 @@
       return filePath ? `Editing ${prettyPath(filePath)}` : "Editing file";
     }
     if (name === "todo_write") return "Updating tasks";
+    if (name === "get_command_or_subagent_output") return "Waiting for output";
     if (kind === "delete") return filePath ? `Deleting ${prettyPath(filePath)}` : "Deleting file";
     if (kind === "fetch") return "Generating";
     if (/^(bash|execute|run_command|run_terminal_command|shell|run_bash|powershell|pwsh)$/.test(name) || kind === "execute") {
@@ -13100,14 +13130,14 @@
   function toolLabel(call, opts) {
     const name = toolName(call);
     const kind = toolKind(call);
-    const verb = TOOL_VERB[name] || KIND_VERB[kind] || null;
+    const verb = isWebSearch(call) ? "Web search" : TOOL_VERB[name] || KIND_VERB[kind] || null;
     const r = call.rawInput || call.input || {};
     const filePath = toolFilePath(call);
     const command = r.command || r.cmd;
     if (name === "todo_write") return Array.isArray(r.todos) ? `Update ${r.todos.length} task${r.todos.length === 1 ? "" : "s"}` : "Update tasks";
     const failure = state.toolFailuresById.get(call.toolCallId) || toolFailureText(call);
     if (isMissingPathRead(call, failure)) return `${filePath ? prettyPath(filePath) : isDirectoryListTool(call) ? "Directory" : "File"} — doesn't exist yet`;
-    const pattern = searchPattern(r);
+    const pattern = searchPatternText(call);
     const url = r.url || r.uri;
     // Collapsed rows read as a scannable summary, not a wall of shell — the
     // full command lives one click away in the IN/OUT detail. (CSS still
@@ -13118,15 +13148,15 @@
     // render the unhelpful "root folder"). Match by kind OR name so it still wins
     // when the first tool_call arrives before grok finalizes `kind`.
     const isSearch =
-      kind === "search" || name === "search" || /\b(grep|glob|ripgrep|search_files|web_search|search_web)\b/i.test(name);
+      kind === "search" || isWebSearch(call) || name === "search" || /\b(grep|glob|ripgrep|search_files)\b/i.test(name);
 
     let target = "";
     const renamed = toolRenamePaths(call);
     if (renamed && (kind === "edit" || kind === "write" || kind === "delete" || verb === "Edit" || verb === "Write")) {
       target = `${prettyPath(renamed.from)} → ${prettyPath(renamed.to)}`;
-    } else if (isSearch && pattern) {
+    } else if (isSearch) {
       const dir = searchDirText(call);
-      target = clamp(pattern) + (dir ? ` in ${dir}` : "");
+      target = pattern + (dir ? `${pattern ? " in " : "in "}${dir}` : "");
     } else if (url) {
       target = clamp(url.replace(/^https?:\/\//i, ""));
     } else if (filePath) {
@@ -13801,13 +13831,9 @@ ${fullText}`
     return "";
   }
 
-  function refreshToolRowFromUpdate(update) {
-    const id = update && update.toolCallId;
-    if (!id) return;
-    const item = state.toolItemsByToolCallId.get(id);
-    if (!item || !item._call) return;
-    const merged = { ...item._call };
-    for (const key of ["title", "kind", "status", "locations", "rawOutput"]) {
+  function mergeToolCall(call, update) {
+    const merged = { ...call };
+    for (const key of ["title", "kind", "status", "locations", "rawOutput", "content"]) {
       if (update[key] !== undefined && update[key] !== null) merged[key] = update[key];
     }
     // Arguments accumulate across updates (`{}` → `{file_path}` → `{file_path,
@@ -13815,12 +13841,27 @@ ${fullText}`
     // drop the path.
     for (const key of ["rawInput", "input"]) {
       if (update[key] && typeof update[key] === "object") {
-        merged[key] = { ...(item._call[key] || {}), ...update[key] };
+        merged[key] = { ...(call[key] || {}), ...update[key] };
       }
     }
     if (Object.prototype.hasOwnProperty.call(update, "detailInput")) {
       merged.detailInput = update.detailInput;
     }
+    if (update._meta) {
+      merged._meta = { ...call._meta, ...update._meta };
+      if (update._meta["x.ai/tool"]) {
+        merged._meta["x.ai/tool"] = { ...call._meta?.["x.ai/tool"], ...update._meta["x.ai/tool"] };
+      }
+    }
+    return merged;
+  }
+
+  function refreshToolRowFromUpdate(update) {
+    const id = update && update.toolCallId;
+    if (!id) return;
+    const item = state.toolItemsByToolCallId.get(id);
+    if (!item || !item._call) return;
+    const merged = mergeToolCall(item._call, update);
     item._call = merged;
     if (item.classList.contains("workflow-tool-marker")) syncWorkflowToolMarkers();
     // Flatten / summarize read `_calls`, not `item._call`. Grok's first
@@ -15139,6 +15180,7 @@ ${fullText}`
     closeChildProseSegment(el);
     const row = document.createElement("div");
     row.className = "subagent-tool";
+    row._call = call;
     if (id) row.dataset.toolCallId = id;
     applyToolLabel(row, call);
     paintChildHook(row, call);
@@ -15149,6 +15191,7 @@ ${fullText}`
   function updateChildToolRow(el, stream, call) {
     const id = call && call.toolCallId;
     const row = id && el._childTools && el._childTools.get(id);
+    if (row) call = row._call = mergeToolCall(row._call, call);
     // A subagent's hook that succeeded leaves no line, like the parent's (#215).
     if (call?._meta?.afkPilotHook && call.status === "completed") {
       if (row) { row.remove(); el._childTools.delete(id); }
@@ -16977,7 +17020,7 @@ ${fullText}`
   }
 
   function activityVerb() {
-    if (state.activeProvider === "codex") return CODEX_ACTIVITY_VERB;
+    if (state.activeProvider === "codex" || state.activeProvider === "deepseek") return THINKING_ACTIVITY_VERB;
     if (state.activeProvider === "claude") return CLAUDE_ACTIVITY_VERB;
     if (state.activeProvider === "muse" || state.activeProvider === "agy") return "Working";
     return GROK_ACTIVITY_VERB;

@@ -127,14 +127,24 @@ describe("DeepSeek renderer capabilities", () => {
     expect(popup.textContent).toContain("Manual compaction is unavailable through DeepSeek's ACP connection.");
     expect(h.posted.some(m => m.type === "send" && m.text === "/compact")).toBe(false);
   });
-  it.each([false, true])("shows the host's Windows shell launch fact on desk and phone (remote=%s)", remote => {
+  it.each([false, true])("announces Minimal's full access but not Default's Windows shell (remote=%s)", remote => {
+    // Owner, 2026-11-03: the unsandboxed Default shell is not announced.
     const h = setup(remote);
     dispatch(h.window, { type: "modeChanged", modeId: "agent", deepseekHarness: "default", deepseekShellUnsandboxed: true });
     const banner = h.doc.getElementById("deepseek-full-access")!;
-    expect(banner.hidden).toBe(false);
-    expect(banner.textContent).toBe("DeepSeek shell commands run without a sandbox on Windows.");
-    dispatch(h.window, { type: "modeChanged", modeId: "agent", deepseekHarness: "default", deepseekShellUnsandboxed: false });
     expect(banner.hidden).toBe(true);
+    dispatch(h.window, { type: "modeChanged", modeId: "agent", deepseekHarness: "minimal", deepseekShellUnsandboxed: false });
+    expect(banner.hidden).toBe(false);
+    expect(banner.textContent).toBe("Minimal runs with full access to files and shell commands, without approval prompts.");
+  });
+  it("orders DeepSeek's advertised efforts Off, Low, High, Max", () => {
+    const h = setup(false);
+    const value = '["deepseek-official","deepseek-v4-flash"]';
+    dispatch(h.window, { type: "session", sessionId: "s-effort", provider: "deepseek", currentModelId: value,
+      models: [{ modelId: value, name: "DeepSeek V4 Flash", reasoningEfforts: ["low", "high", "off", "max"] }] });
+    click(h.window, h.doc.getElementById("gear-btn")!);
+    const stops = [...h.doc.querySelectorAll(".effort-strip-stop")] as HTMLElement[];
+    expect(stops.map(s => s.dataset.effort)).toEqual(["off", "low", "high", "max"]);
   });
   it.each([490, 250])("bounds the locked popup to a %spx panel and allows its copy to wrap", width => {
     const h = setup(false, "minimal", true);

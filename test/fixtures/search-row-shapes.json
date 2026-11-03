@@ -1,0 +1,92 @@
+[
+  {
+    "name": "Grok web search with output-only query",
+    "initial": {"toolCallId":"web","title":"Web search:","kind":"search","rawInput":{"variant":"WebSearch","backend":true}},
+    "updates": [{"toolCallId":"web","status":"completed","rawOutput":{"action":{"query":"ACP documentation"}}}],
+    "running": "Searching web",
+    "updated": "Searching web for \"ACP documentation\"",
+    "label": "Web search ACP documentation",
+    "summary": "Searched web"
+  },
+  {
+    "name": "Grok web search with multiple queries",
+    "initial": {"toolCallId":"queries","title":"Web search:","kind":"search","rawInput":{"variant":"WebSearch","backend":true}},
+    "updates": [{"toolCallId":"queries","status":"completed","rawOutput":{"action":{"queries":["ACP spec","ACP tools"]}}}],
+    "running": "Searching web",
+    "updated": "Searching web for \"ACP spec, ACP tools\"",
+    "label": "Web search ACP spec, ACP tools",
+    "summary": "Searched web"
+  },
+  {
+    "name": "Web input action query",
+    "initial": {"toolCallId":"action","title":"search_web","rawInput":{"action":{"query":"ACP spec"}}},
+    "updates": [{"toolCallId":"action","status":"completed"}],
+    "running": "Searching web for \"ACP spec\"",
+    "updated": "Searching web for \"ACP spec\"",
+    "label": "Web search ACP spec",
+    "summary": "Searched web"
+  },
+  {
+    "name": "Codex query and absolute folder",
+    "initial": {"toolCallId":"codex-query","title":"Search for 'handleClick' in /repo/src/components","kind":"search"},
+    "updates": [{"toolCallId":"codex-query","status":"completed"}],
+    "running": "Searching for \"handleClick\" in src/components",
+    "updated": "Searching for \"handleClick\" in src/components",
+    "label": "Search handleClick in src/components",
+    "summary": "Explored 1 item"
+  },
+  {
+    "name": "Codex folder only",
+    "initial": {"toolCallId":"codex-path","title":"Search in '/outside/documentation'","kind":"search"},
+    "updates": [{"toolCallId":"codex-path","status":"completed"}],
+    "running": "Searching in documentation",
+    "updated": "Searching in documentation",
+    "label": "Search in documentation",
+    "summary": "Explored 1 item"
+  },
+  {
+    "name": "Claude initially empty Grep",
+    "initial": {"toolCallId":"claude","title":"Grep","kind":"search","rawInput":{}},
+    "updates": [{"toolCallId":"claude","rawInput":{"pattern":"useState","path":"src"}},{"toolCallId":"claude","status":"completed","rawInput":{},"title":null}],
+    "running": "Searching",
+    "updated": "Searching for \"useState\" in src",
+    "label": "Search useState in src",
+    "summary": "Explored 1 item"
+  },
+  {
+    "name": "Grok renamed directory list",
+    "initial": {"toolCallId":"list","title":"list_dir","rawInput":{"target_directory":"/repo/src"},"_meta":{"x.ai/tool":{"name":"list_dir","kind":"read","namespace":"grok_build"}}},
+    "updates": [{"toolCallId":"list","title":"List `/repo/src`","kind":"other","_meta":{"x.ai/tool":{"input":{"target_directory":"/repo/src"}}}},{"toolCallId":"list","status":"completed"}],
+    "running": "Listing src/",
+    "updated": "Listing src/",
+    "label": "List src/",
+    "summary": "Explored 1 item"
+  },
+  {
+    "name": "Grok output poller",
+    "initial": {"toolCallId":"poll","title":"get_command_or_subagent_output","kind":"other","rawInput":{"task_id":"background-command"}},
+    "updates": [{"toolCallId":"poll","status":"completed"}],
+    "running": "Waiting for output",
+    "updated": "Waiting for output",
+    "label": "Wait for output",
+    "summary": "Ran 1 command"
+  },
+  {
+    "name": "Antigravity child read target",
+    "initial": {"toolCallId":"agy-read","title":"Read sub","kind":"read","rawInput":{"file_path":"sub"}},
+    "updates": [{"toolCallId":"agy-read","kind":"read","status":"completed"}],
+    "running": "Reading sub",
+    "updated": "Reading sub",
+    "label": "Read sub",
+    "summary": "Explored 1 item"
+  },
+  {
+    "name": "Antigravity child command target",
+    "initial": {"toolCallId":"agy-run","title":"Run Test-Path","kind":"execute","rawInput":{"command":"Test-Path -Path sub"}},
+    "updates": [{"toolCallId":"agy-run","kind":"execute","status":"completed"}],
+    "running": "Running command",
+    "updated": "Running command",
+    "label": "Run Test-Path",
+    "summary": "Ran 1 command"
+  }
+]
