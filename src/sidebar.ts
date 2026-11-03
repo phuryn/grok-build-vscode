@@ -2115,6 +2115,15 @@ export class GrokSidebar {
     await this.state.update(PROVIDER_MODEL_CACHE_KEY, rest);
   }
 
+  /** On a renderer boot, only a first-ever catalog needs a probe. A cached one
+   *  already fills the picker and every real session refreshes it; probing
+   *  anyway starts a second dsh beside the conversation's own, and two ~18 s
+   *  boots beside the other agents' starts measured 64 s on a desk (2026-11-03). */
+  private warmDeepSeekCatalogOnBoot(): void {
+    if (this.state.get<ProviderModelCache>(PROVIDER_MODEL_CACHE_KEY, {}).deepseek?.models?.length) return;
+    void this.warmConnectedDeepSeekModels();
+  }
+
   /** session/new discovers models without sending a prompt or proving the key. */
   private warmConnectedDeepSeekModels(): Promise<void> {
     if (!this.deepseekOffered() || !this.hasProviderConsent("deepseek")) return Promise.resolve();
@@ -19320,7 +19329,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     this.postProjectSetup();
     for (const provider of this.connectedProviders()) {
       if (provider === "deepseek") {
-        void this.warmConnectedDeepSeekModels();
+        this.warmDeepSeekCatalogOnBoot();
         continue;
       }
       const signal = this.providerRunSignal(provider);

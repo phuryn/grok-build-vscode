@@ -75,6 +75,17 @@ describe("DeepSeek catalog before a first message", () => {
     expect(create).toHaveBeenCalledTimes(2); expect(dispose).toHaveBeenCalledTimes(2);
     expect(prompt).not.toHaveBeenCalled();
   });
+  it("probes on a renderer boot only when no catalog is cached", async () => {
+    const { s, create } = catalogHost();
+    const cached = { deepseek: { models: [{ modelId: "flash", name: "DeepSeek V4 Flash" }], seenAt: 1 } };
+    s.state = { get: (key: string, fallback: unknown) => key === "grok.providerModelCache" ? cached : fallback, update: vi.fn(async () => {}) };
+    s.warmDeepSeekCatalogOnBoot();
+    await Promise.resolve();
+    expect(create).not.toHaveBeenCalled();
+    s.state = { get: (_key: string, fallback: unknown) => fallback, update: vi.fn(async () => {}) };
+    s.warmDeepSeekCatalogOnBoot();
+    await vi.waitFor(() => expect(create).toHaveBeenCalledOnce());
+  });
   it("does not launch without consent and never treats a catalog failure as a rejected key", async () => {
     const { s, create, dispose } = catalogHost();
     s.hasProviderConsent = () => false;
