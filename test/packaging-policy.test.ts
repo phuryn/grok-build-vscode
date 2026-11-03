@@ -42,7 +42,7 @@ describe("marketplace vs GitHub README", () => {
     // it names the two agents with no GUI of their own, and it is not VS Code only.
     // Renamed again 2026-10-15: the product is AFK Pilot, the GUI it was.
     // And 2026-10-16: more than a GUI, and the agents people search for by name.
-    expect(marketplace).toMatch(/^# AFK Pilot: Grok Build, Muse Code, Claude, Codex & more in one place$/m);
+    expect(marketplace).toMatch(/^# AFK Pilot: Grok Build, Muse Code, DeepSeek, Claude, Codex & more in one place$/m);
     // The non-affiliation line must be there; WHO it names moved when xAI
     // rebranded to SpaceXAI, so match the shape rather than the company. The
     // trademark attribution is asserted separately and deliberately still says
@@ -59,7 +59,7 @@ describe("marketplace vs GitHub README", () => {
     // Primacy, enforced mechanically: the extension must be established before
     // another product is named. "Later in the document" is the only
     // machine-checkable form of "not the headline".
-    const firstExtension = marketplace.search(/AFK Pilot: Grok Build, Muse Code, Claude, Codex & more in one place/);
+    const firstExtension = marketplace.search(/AFK Pilot: Grok Build, Muse Code, DeepSeek, Claude, Codex & more in one place/);
     const firstDesktop = marketplace.search(/Grok Build Desktop/i);
     expect(firstExtension).toBeGreaterThanOrEqual(0);
     if (firstDesktop >= 0) {

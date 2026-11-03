@@ -1,5 +1,13 @@
 # Changelog
 
+## 4.15.8 — 2026-11-03
+
+**DeepSeek in the extension's name and description.**
+
+### Changed
+
+- **The listing names DeepSeek.** The extension is now "AFK Pilot: Grok Build, Muse Code, DeepSeek, Claude, Codex & more in one place", and its description and README introduction name DeepSeek (V4 Pro, experimental) next to Grok Build and Muse Code. Nothing in the extension itself changed since 4.15.7.
+
 ## 4.15.7 — 2026-11-03
 
 **DeepSeek joins as an experimental agent, a sound when a conversation needs you, and search rows that say what they searched.**

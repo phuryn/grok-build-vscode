@@ -1,8 +1,8 @@
-# AFK Pilot: Grok Build, Muse Code, Claude, Codex & more in one place
+# AFK Pilot: Grok Build, Muse Code, DeepSeek, Claude, Codex & more in one place
 
 [![License: FSL-1.1-MIT](https://img.shields.io/badge/License-FSL--1.1--MIT-blue.svg)](LICENSE) ![Agents](https://img.shields.io/badge/Agents-Grok%20Build%20%C2%B7%20Codex%20%C2%B7%20Claude%20Code%20%C2%B7%20Muse%20Code%20%C2%B7%20Antigravity-000000) [![VS Code](https://img.shields.io/badge/VS%20Code-Extension-007ACC?logo=visualstudiocode&logoColor=white)](https://code.visualstudio.com) [![Cursor](https://badgen.net/badge/Cursor/Extension/007ACC)](https://cursor.com) [![The Product Compass](https://img.shields.io/badge/The%20Product%20Compass-productcompass.pm-FF6B35)](https://www.productcompass.pm)
 
-> **One place for Grok Build (Grok 4.7) & Muse Code (Muse Wonder)** — plus Codex (GPT-6 Astra), Claude Code (Opus 5.5) and Google Antigravity (Gemini 4 Argon, experimental). Not affiliated with or endorsed by SpaceXAI (formerly xAI), Meta, OpenAI, Anthropic or Google. *Grok*, *Grok Build* and *xAI* are trademarks of xAI; *Muse Code* of Meta; *Codex* of OpenAI; *Claude* and *Claude Code* of Anthropic. *Antigravity* and *Gemini* are trademarks of Google. This project uses those names only to describe what it is compatible with.
+> **One place for Grok Build (Grok 4.7), Muse Code (Muse Wonder) & DeepSeek (V4 Pro, experimental)** — plus Codex (GPT-6 Astra), Claude Code (Opus 5.5) and Google Antigravity (Gemini 4 Argon, experimental). Not affiliated with or endorsed by SpaceXAI (formerly xAI), Meta, OpenAI, Anthropic or Google. *Grok*, *Grok Build* and *xAI* are trademarks of xAI; *Muse Code* of Meta; *Codex* of OpenAI; *Claude* and *Claude Code* of Anthropic. *Antigravity* and *Gemini* are trademarks of Google. This project uses those names only to describe what it is compatible with.
 
 Two ways to use the same agent UI, on top of each agent's own CLI:
 
@@ -12,7 +12,7 @@ Two ways to use the same agent UI, on top of each agent's own CLI:
 | **Get it** | [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=PawelHuryn.grok-vscode-phuryn) · [Open VSX](https://open-vsx.org/extension/PawelHuryn/grok-vscode-phuryn) | [afkpilot.com/desktop](https://afkpilot.com/desktop) (see [Desktop install](#grok-build-desktop)) |
 | **Best when** | You already live in the editor | You want the agent as its own window |
 
-Both speak JSON-RPC to `grok agent stdio` (and to **Codex**, **Claude Code**, **Muse Code** and — experimental, on your own computer only, not on cloud machines — **Antigravity**), share each provider's CLI-owned chat history, and have **Remote Control** built in: pair your phone at **[afkpilot.com](https://afkpilot.com)** once and watch, approve, and steer from your phone or any browser. Drop files in as `@`-context, run **multiple sessions**, generate **images & video inline**, and dictate by **voice**.
+Both speak JSON-RPC to `grok agent stdio` (and to **Codex**, **Claude Code**, **Muse Code** and — experimental, on your own computer only, not on cloud machines — **Antigravity** and **DeepSeek**), share each provider's CLI-owned chat history, and have **Remote Control** built in: pair your phone at **[afkpilot.com](https://afkpilot.com)** once and watch, approve, and steer from your phone or any browser. Drop files in as `@`-context, run **multiple sessions**, generate **images & video inline**, and dictate by **voice**.
 
 No manual setup on either host: onboarding **walks you through installing the `grok` CLI and signing in** — with a **SuperGrok or X Premium+ subscription**, or an **xAI API key**. The other agents connect from **Settings → Providers**, each with its own account.
 
