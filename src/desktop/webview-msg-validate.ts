@@ -527,6 +527,9 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
     case "deepseekConnect":
       if (raw.key !== undefined && (typeof raw.key !== "string" || !raw.key || raw.key.length > 512 || /\s|[\x00-\x1f\x7f]/.test(raw.key))) return null;
       break;
+    case "disconnectProvider":
+      if (raw.provider !== "agy" && raw.provider !== "deepseek") return null;
+      break;
     case "agySignIn":
       if (raw.method !== "google" && raw.method !== "api-key") return null;
       if (raw.key !== undefined && (raw.method !== "api-key" || !isString(raw.key) || raw.key.length > MAX_AGY_API_KEY_CHARS)) return null;

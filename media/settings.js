@@ -1113,20 +1113,19 @@
       defaultValue: false, get: (s) => s.museSettings.trustWorkspaces,
       message: (value) => ({ type: "setMuseSetting", key: "museTrustWorkspaces", value }),
     },
-    // Antigravity is desk-only: Google's sign-in opens a browser on the
-    // machine running it. A remote gets a status row and never a Connect.
     {
       id: "providerAgy", category: "providers", logo: "agy", provider: "agy",
       title: "Antigravity", vendor: "Google", description: "", kind: "action", keepOpen: true,
-      visible: (s, env) => !!(env && !env.isRemote && env.providersKnown && agyAdvertised(s)),
+      visible: (s, env) => !!(env && (!env.isRemote || providerOf(s, "agy").remoteSetup === true) && env.providersKnown && agyAdvertised(s)),
       describe: (s) => providerDescription(providerOf(s, "agy")),
+      local: (s, env) => env && (env.isRemote || env.isDesktop) && !providerConnectedNow(s, "agy") ? "connectWizard:agy" : "",
       actionLabel: (s) => providerAction(providerOf(s, "agy")),
-      message: (s) => ({ type: providerConnectedNow(s, "agy") ? "logout" : "runGrokLogin", provider: "agy" }),
+      message: (s, env) => ({ type: providerConnectedNow(s, "agy") ? (env.isRemote && providerOf(s, "agy").keepsCliSignIn === true ? "disconnectProvider" : "logout") : "runGrokLogin", provider: "agy" }),
     },
     {
       id: "providerAgyStatus", category: "providers", logo: "agy", provider: "agy",
       title: "Antigravity", vendor: "Google", description: "", kind: "status",
-      visible: (s, env) => !!(env && env.isRemote && env.providersKnown && agyAdvertised(s)),
+      visible: (s, env) => !!(env && env.isRemote && providerOf(s, "agy").remoteSetup !== true && env.providersKnown && agyAdvertised(s)),
       describe: (s) => providerConnectedNow(s, "agy")
         ? providerDescription(providerOf(s, "agy"), true)
         : "Connect Antigravity on the computer running this workspace.",
@@ -1134,15 +1133,16 @@
     {
       id: "providerDeepseek", category: "providers", logo: "deepseek", provider: "deepseek",
       title: "DeepSeek", vendor: "DeepSeek", description: "", kind: "action", keepOpen: true,
-      visible: (s, env) => !!(env && !env.isRemote && env.providersKnown && deepseekAdvertised(s)),
+      visible: (s, env) => !!(env && (!env.isRemote || providerOf(s, "deepseek").remoteSetup === true) && env.providersKnown && deepseekAdvertised(s)),
       describe: (s) => providerDescription(providerOf(s, "deepseek")) + " Key source: " + (providerOf(s, "deepseek").keySource || "not configured") + ". Environment takes precedence.",
+      local: (s, env) => env && (env.isRemote || env.isDesktop) && !providerConnectedNow(s, "deepseek") ? "connectWizard:deepseek" : "",
       actionLabel: (s) => providerAction(providerOf(s, "deepseek")),
-      message: (s) => ({ type: providerConnectedNow(s, "deepseek") ? "logout" : "runGrokLogin", provider: "deepseek" }),
+      message: (s, env) => ({ type: providerConnectedNow(s, "deepseek") ? (env.isRemote && providerOf(s, "deepseek").keepsCliSignIn === true ? "disconnectProvider" : "logout") : "runGrokLogin", provider: "deepseek" }),
     },
     {
       id: "providerDeepSeekStatus", category: "providers", logo: "deepseek", provider: "deepseek",
       title: "DeepSeek", vendor: "DeepSeek", description: "", kind: "status",
-      visible: (s, env) => !!(env && env.isRemote && env.providersKnown && deepseekAdvertised(s)),
+      visible: (s, env) => !!(env && env.isRemote && providerOf(s, "deepseek").remoteSetup !== true && env.providersKnown && deepseekAdvertised(s)),
       describe: (s) => providerConnectedNow(s, "deepseek")
         ? providerDescription(providerOf(s, "deepseek"), true)
         : "Connect DeepSeek on the computer running this workspace.",
@@ -1341,34 +1341,6 @@
       hostLocal: true,
       visible: (s, env) => !!(env && env.hostCaps && env.hostCaps.toggleDevTools === true),
       message: () => ({ type: "toggleDevTools" }),
-    },
-    {
-      id: "experimentalAntigravity",
-      category: "advanced",
-      title: "Experimental: Antigravity",
-      description: "Offer Google's Antigravity as an agent on this computer. Connect it under Providers.",
-      kind: "toggle",
-      hostLocal: true,
-      defaultValue: false,
-      visible: (s, env) => !!(env && !env.isRemote && !hostIsCloud(env)),
-      // The host names Antigravity in providerState exactly when the setting is
-      // on (desk only), so that frame is the setting's state.
-      get: (s) => agyAdvertised(s),
-      message: (value) => ({ type: "setExperimentalAntigravity", value }),
-    },
-    {
-      id: "experimentalDeepSeek",
-      category: "advanced",
-      title: "Experimental: DeepSeek",
-      description: "Offer DeepSeek's official dsh harness as an agent on this computer. Connect it under Providers.",
-      kind: "toggle",
-      hostLocal: true,
-      defaultValue: false,
-      visible: (s, env) => !!(env && !env.isRemote && !hostIsCloud(env)),
-      // The host names DeepSeek in providerState exactly when the setting is
-      // on (desk only), so that frame is the setting's state.
-      get: (s) => deepseekAdvertised(s),
-      message: (value) => ({ type: "setExperimentalDeepSeek", value }),
     },
     {
       id: "openVsCodeSettings",
@@ -3631,7 +3603,7 @@
       // Sign-out is the one with nothing else to show for it: a sign-in opens
       // the wizard, and this page sits behind that.
       let marked = false;
-      if (message && message.type === "logout" && message.provider && env.isRemote) {
+      if (message && (message.type === "logout" || message.type === "disconnectProvider") && message.provider && env.isRemote) {
         PROVIDER_PENDING.id = message.provider;
         PROVIDER_PENDING.label = "Disconnecting…";
         PROVIDER_PENDING.wanted = false;

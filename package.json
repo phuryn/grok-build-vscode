@@ -1,7 +1,7 @@
 {
   "name": "grok-vscode-phuryn",
   "displayName": "AFK Pilot: Grok Build, Muse Code, DeepSeek, Claude, Codex & more in one place",
-  "description": "One place for Grok Build (Grok 4.7), Muse Code (Muse Wonder) and DeepSeek (V4 Pro, experimental), plus Codex (GPT-6 Astra), Claude Code (Opus 5.5) and Google Antigravity (Gemini 4 Argon, experimental). Previously Grok Build (Community). Remote Control from your phone, voice control, multiple sessions, images and videos, Mermaid diagrams, and LaTeX. Works with SuperGrok, X Premium+, and xAI API key. Fair Source (FSL-1.1-MIT). Not affiliated with or endorsed by SpaceXAI (formerly xAI), Meta, OpenAI, Anthropic or Google.",
+  "description": "One place for Grok Build (Grok 4.7), Muse Code (Muse Wonder) and DeepSeek (V4 Pro), plus Codex (GPT-6 Astra), Claude Code (Opus 5.5) and Google Antigravity (Gemini 4 Argon). Previously Grok Build (Community). Remote Control from your phone, voice control, multiple sessions, images and videos, Mermaid diagrams, and LaTeX. Works with SuperGrok, X Premium+, and xAI API key. Fair Source (FSL-1.1-MIT). Not affiliated with or endorsed by SpaceXAI (formerly xAI), Meta, OpenAI, Anthropic or Google.",
   "version": "4.15.8",
   "publisher": "PawelHuryn",
   "author": {
@@ -363,11 +363,6 @@
           "default": true,
           "description": "The first time you send a message in a conversation whose folder is not one of your projects, offer to add it to Projects. Turn off to stop asking; \"Never for this folder\" stops it for one folder."
         },
-        "grok.experimentalAntigravity": {
-          "type": "boolean",
-          "default": false,
-          "description": "Experimental: offer Google's Antigravity as an agent on this computer (not on cloud machines). Set it up in Settings → Providers: Install Antigravity downloads Google's ACP server into this app's storage, and Connect signs in with your Google account in the browser, or with a Gemini API key."
-        },
         "grok.agyServerPath": {
           "type": "string",
           "default": "",
@@ -605,11 +600,6 @@
           ],
           "default": "gpt-live-transcribe",
           "description": "OpenAI Realtime transcription model. Dictionary terms become model-specific vocabulary hints. The explicit batch mode uses gpt-4o-transcribe."
-        },
-        "grok.experimentalDeepSeek": {
-          "type": "boolean",
-          "default": false,
-          "description": "Show DeepSeek through its official dsh developer preview on this computer. Desktop hosts only."
         },
         "grok.deepseekPath": {
           "type": "string",

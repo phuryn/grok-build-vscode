@@ -550,7 +550,11 @@ export type HostMsg =
   | { type: "providerState"; providers: { id: AcpProvider; connected: boolean; unavailableReason?: string; needsLogin?: boolean; keepsCliSignIn?: boolean; cliVersion?: string; adapterVersion?: string; latestCliVersion?: string; updateAvailable?: boolean; cliUpdate?: { status: "idle" | "running" | "succeeded" | "failed"; message?: string };
       /** Antigravity only: how it is signed in, and which ways have something
        *  stored on the machine. Never the key itself. Additive. */
-      keySource?: "environment" | "saved"; signInMethod?: "google" | "api-key"; savedSignIns?: ("google" | "api-key")[] }[]; checking?: boolean }
+      keySource?: "environment" | "saved"; signInMethod?: "google" | "api-key"; savedSignIns?: ("google" | "api-key")[];
+      /** Supports remote managed install and write-only API-key setup. Absent on old hosts. */
+      remoteSetup?: boolean;
+      /** Antigravity: a local browser sign-in may be started on this host. */
+      googleSignIn?: boolean }[]; checking?: boolean }
   /** Grok's grok.com + user-level MCP inventory (`_x.ai/mcp/list`; project-file
    *  servers omitted). The desk keeps launch recipes and `configFile`; remotes
    *  receive `projectMcpServerForRemote` (page fields only — no `tag`).
@@ -1357,13 +1361,17 @@ export type WebviewMsg =
   | { type: "installAgy" }
   | { type: "cancelAgyInstall" }
   /** Sign Antigravity in the chosen way. `key` is a freshly pasted Gemini API
-   *  key, stored in HostSecrets; absent means the saved one. Host-local. */
+   *  key, stored in HostSecrets; absent means the saved one. Remote setup is
+   *  capability-gated. Google never starts a browser remotely or on cloud. */
   | { type: "agySignIn"; method: "google" | "api-key"; key?: string }
+  /** Retired controls accepted as no-ops for older clients. */
   | { type: "setExperimentalAntigravity"; value: boolean }
   | { type: "setExperimentalDeepSeek"; value: boolean }
   | { type: "installDeepSeek" }
   | { type: "cancelDeepSeekInstall" }
   | { type: "deepseekConnect"; key?: string }
+  /** Remote account action: desk Disconnect, cloud Sign out. */
+  | { type: "disconnectProvider"; provider: "agy" | "deepseek" }
   | { type: "setDeepSeekHarness"; harness: "default" | "minimal"; sessionId: string; modelId?: string; generation: number; draftId?: string }
   | { type: "runInstallCmd" }
   | { type: "runMuseInstallCmd" }
@@ -1654,7 +1662,7 @@ const WEBVIEW_MESSAGE_TYPE_MAP: Record<WebviewMsg["type"], true> = {
   setShowThinking: true, setAppPurpose: true, setExpandCommandOutputs: true, setSteerByDefault: true, setPromptNav: true, setPinLiveWorkflows: true, setExpandDiffCard: true,
   setSoundNotifications: true, setProcessingSound: true, setInputNeededSound: true, setReadRepliesAloud: true, setSummarizeRepliesAloud: true, setVoiceSendPhrase: true, setVoiceKeyterms: true, setTelemetryEnabled: true, setThumbsFeedback: true, setDesktopTray: true, summarizeSpeech: true, requestImageFull: true, requestImageOriginal: true, composerFocus: true,
   dropFile: true, permissionAnswer: true, exitPlanAnswer: true, questionAnswer: true,
-  questionCancel: true, setModel: true, installCodex: true, cancelCodexInstall: true, installAgy: true, cancelAgyInstall: true, agySignIn: true, setExperimentalAntigravity: true, setExperimentalDeepSeek: true, installDeepSeek: true, cancelDeepSeekInstall: true, deepseekConnect: true, setDeepSeekHarness: true, runInstallCmd: true, runMuseInstallCmd: true, runGrokLogin: true,
+  questionCancel: true, setModel: true, installCodex: true, cancelCodexInstall: true, installAgy: true, cancelAgyInstall: true, agySignIn: true, setExperimentalAntigravity: true, setExperimentalDeepSeek: true, installDeepSeek: true, cancelDeepSeekInstall: true, deepseekConnect: true, disconnectProvider: true, setDeepSeekHarness: true, runInstallCmd: true, runMuseInstallCmd: true, runGrokLogin: true,
   cancelDeviceLogin: true, submitDeviceLoginCode: true,
   logout: true, checkGrokUpdate: true, updateGrok: true, updateCodex: true, updateClaude: true, recheckConnection: true, refreshProviders: true, retryProviderSession: true,
   listSessions: true, listRepoSessions: true, selectRepo: true, toggleRepoPin: true, toggleSessionPin: true,

@@ -99,7 +99,6 @@ function loginSidebar(needsLogin: Record<string, boolean>) {
   sidebar.workspaceRoot = vi.fn(() => "/repo");
   sidebar.host = {
     appendLine: vi.fn(), createTerminal: vi.fn(() => ({ show: vi.fn() })),
-    // Antigravity is offered only with its experimental setting on.
     getConfiguration: () => ({ get: (key: string, fallback: unknown) => key === "experimentalAntigravity" ? true : fallback }),
   };
   // Connect is where consent is stated, so the real setProviderConnected runs
@@ -111,6 +110,8 @@ function loginSidebar(needsLogin: Record<string, boolean>) {
   sidebar.adapterHistory = vi.fn(() => undefined);
   sidebar.newFocusedSession = vi.fn(async () => {});
   sidebar.post = vi.fn();
+  sidebar.postLocal = vi.fn();
+  sidebar.refreshAgySaved = vi.fn();
   sidebar.startDeviceLogin = vi.fn(async () => {});
   sidebar.probeProviderVersion = vi.fn(async () => undefined);
   sidebar.deviceLoginCredentialReady = vi.fn(async () => false);
@@ -359,27 +360,26 @@ describe("Connect adopts the CLI's existing sign-in", () => {
     expect(sidebar.deviceLoginCredentialReady).not.toHaveBeenCalled();
   });
 
-  // Google's sign-in opens a browser on the machine running Antigravity; from
-  // a phone that is a desk nobody is at. Refused before consent is recorded.
-  it("refuses a remote Antigravity Connect before recording consent", async () => {
+  it("offers remote Antigravity setup without starting a browser or recording consent", async () => {
     const { sidebar } = loginSidebar({});
     sidebar.sendRemoteClient = vi.fn();
+    sidebar.sendRemoteRequester = vi.fn();
     sidebar.remoteClients = { ...sidebar.remoteClients, active: () => sidebar.focused, cwdIfPresent: () => "/repo", cwd: () => "/repo", tabToken: () => "tab" };
     await sidebar.onMessage({ type: "runGrokLogin", provider: "agy" }, "remote", "phone");
     expect(sidebar.startDeviceLogin).not.toHaveBeenCalled();
     expect(sidebar.deviceLoginCredentialReady).not.toHaveBeenCalled();
     expect(sidebar.providerConnectionState.agy).toBeUndefined();
-    expect(sidebar.sendRemoteClient).toHaveBeenCalledWith("phone", expect.objectContaining({
-      state: "agy-login", provider: "agy",
-      device: { status: "unavailable", message: "Connect Antigravity on the computer first." },
+    expect(sidebar.sendRemoteRequester).toHaveBeenCalledWith(expect.objectContaining({ clientId: "phone", tabToken: "tab" }), expect.objectContaining({
+      state: "agy-login", provider: "agy", agyChoice: true,
     }));
   });
 
-  it("does nothing for Antigravity where it is not offered", async () => {
+  it("offers Antigravity without the retired experimental setting", async () => {
     const { sidebar } = loginSidebar({});
     sidebar.host.getConfiguration = () => ({ get: (_key: string, fallback: unknown) => fallback });
     await sidebar.onMessage({ type: "runGrokLogin", provider: "agy" }, "local");
     expect(sidebar.providerConnectionState.agy).toBeUndefined();
     expect(sidebar.startDeviceLogin).not.toHaveBeenCalled();
+    expect(sidebar.postLocal).toHaveBeenCalledWith(expect.objectContaining({ agyChoice: true }));
   });
 });

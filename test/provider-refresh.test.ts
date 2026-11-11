@@ -36,6 +36,8 @@ function makeSidebar(connections: Record<string, boolean>): AnySidebar {
     sidebar.providerConnectionState = { ...sidebar.providerConnectionState, [id]: on };
   });
   sidebar.host = { appendLine: vi.fn() };
+  // GitHub's independent footer refresh must not invoke the real gh in this harness.
+  sidebar.refreshGithubState = vi.fn(async () => {});
   sidebar.settingsEditor = undefined;
   sidebar.post = vi.fn();
   sidebar.postedChecking = [] as boolean[];
@@ -49,6 +51,42 @@ const refresh = (sidebar: AnySidebar, opts?: { credentials?: boolean }): Promise
   (GrokSidebar.prototype as AnySidebar).refreshProviderStates.call(sidebar, opts);
 
 describe("Settings → Providers refresh", () => {
+  it.each([false, true])("does not inspect Antigravity credentials without consent, even when installed=%s", async installed => {
+    const sidebar = makeSidebar({ grok: true, agy: false });
+    sidebar.locatedProviders = vi.fn(() => ({ grok: true, agy: installed }));
+    sidebar.agyGoogleSignedIn = vi.fn(async () => false);
+    sidebar.agySavedKey = vi.fn(async () => undefined);
+    await refresh(sidebar, { credentials: true });
+    expect(sidebar.agyGoogleSignedIn).not.toHaveBeenCalled();
+    expect(sidebar.agySavedKey).not.toHaveBeenCalled();
+    expect(sidebar.reprobeProviderCredentials).toHaveBeenCalledTimes(1);
+    expect(sidebar.reprobeProviderCredentials).toHaveBeenCalledWith("grok");
+  });
+
+  it("does not inspect Antigravity credentials on a local-only refresh, even when connected", async () => {
+    const sidebar = makeSidebar({ agy: true });
+    sidebar.locatedProviders = vi.fn(() => ({ agy: true }));
+    sidebar.agyGoogleSignedIn = vi.fn(async () => false);
+    sidebar.agySavedKey = vi.fn(async () => undefined);
+    await refresh(sidebar, { credentials: false });
+    expect(sidebar.agyGoogleSignedIn).not.toHaveBeenCalled();
+    expect(sidebar.agySavedKey).not.toHaveBeenCalled();
+    expect(sidebar.reprobeProviderCredentials).not.toHaveBeenCalled();
+  });
+
+  it("starts other providers' explicit probes while connected Antigravity is still checking", async () => {
+    const sidebar = makeSidebar({ grok: true, agy: true });
+    sidebar.locatedProviders = vi.fn(() => ({ grok: true, agy: true }));
+    let release!: () => void;
+    sidebar.reprobeProviderCredentials = vi.fn((provider: string) => provider === "agy"
+      ? new Promise<boolean>(resolve => { release = () => resolve(true); }) : Promise.resolve(true));
+    const done = refresh(sidebar, { credentials: true });
+    expect(sidebar.reprobeProviderCredentials.mock.calls.map(([id]: [string]) => id)).toEqual(["grok", "agy"]);
+    expect(sidebar.providerRefreshInFlight).toBe(true);
+    release(); await done;
+    expect(sidebar.providerRefreshInFlight).toBe(false);
+  });
+
   it("does not probe installed agents without a saved connection", async () => {
     // The reported bug: approve Grok in a browser, press Refresh, nothing
     // happens — because the stale flag said "not connected" so it was skipped.

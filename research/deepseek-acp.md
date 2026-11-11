@@ -1,8 +1,19 @@
 # DeepSeek through the official dsh harness
 
-Experimental, desk only. Enable `grok.experimentalDeepSeek`, then connect under
-Settings > Providers. Install and key entry are host-local. A phone may chat
-with an already connected desk. Cloud hosts never advertise this provider.
+Offered on desktops and cloud machines, starting disconnected. Install and
+connect under Settings > Providers locally or from a phone/browser using an API
+key. There is no experimental setting. `remoteSetup: true` in the provider row
+advertises managed install, cancellation, write-only key entry and account actions;
+older hosts without it keep the computer-only instructions.
+
+**Decision:** make the harness available everywhere. A key submitted from the
+phone removes the need for a person at the host's screen. Every remote already
+has full host access; keys stay in host secret storage and are never read back.
+Setup responses and installer progress follow the requesting tab. Known offline
+key submissions never reach the transport, and key fields have no draft/retry
+storage. The relay client's external outbox still needs a separate exclusion
+check, including a socket-drop race. Real Linux/cloud runtime startup remains
+unverified here.
 
 `deepseek` belongs to `INTERNAL_PROVIDERS`, never the frozen `ACP_PROVIDERS`.
 Every renderer gates it on the host's `providerState`. Its action row enables
@@ -95,10 +106,10 @@ listing; it is not a credential check.
 
 Key priority: `DEEPSEEK_API_KEY`, then `HostSecrets`' `grok.deepseekApiKey`.
 Only source/presence is advertised; no key is read back by a remote. Connect
-records consent after local key submission/adoption. `authenticate` is a no-op,
+records consent after local or remote key submission/adoption. `authenticate` is a no-op,
 so it is never used to prove a credential. A rejected key stays attributed to
-DeepSeek and never triggers token recovery or an automatic resend. Disconnect
-keeps the saved key; explicit host logout removes it, and cannot unset a parent
+DeepSeek and never triggers token recovery or an automatic resend. Desk Disconnect
+keeps the saved key; cloud Sign out and explicit host logout remove it, and cannot unset a parent
 process's environment variable.
 
 ## Verification and the manual probe

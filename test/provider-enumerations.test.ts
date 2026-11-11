@@ -34,17 +34,16 @@ describe("provider registration across surfaces", () => {
     host.context = { globalStorageUri: { fsPath: "/storage" } };
     host.codexSessionCache = new Map(); host.claudeSessionCache = new Map();
     host.locateProvider = vi.fn(() => "/cli");
-    // Antigravity is advertised only where it is offered: the experimental
-    // setting on, and not a cloud machine.
+    // Retired experimental settings cannot hide a provider.
     let experimental = true;
     host.host = { getConfiguration: () => ({ get: (key: string, fallback: unknown) => ["experimentalAntigravity", "experimentalDeepSeek"].includes(key) ? experimental : fallback }) };
     expect(Object.keys(host.locatedProviders())).toEqual([...INTERNAL_PROVIDERS]);
     expect(host.providerStateMessage().providers.map((p: any) => p.id).sort()).toEqual([...INTERNAL_PROVIDERS].sort());
     experimental = false;
-    expect(host.providerStateMessage().providers.map((p: any) => p.id)).not.toContain("agy");
-    expect(host.locatedProviders().agy).toBe(false);
-    expect(host.locatedProviders().deepseek).toBe(false);
-    expect(host.providerStateMessage().providers.map((p: any) => p.id)).not.toContain("deepseek");
+    expect(host.providerStateMessage().providers.map((p: any) => p.id)).toContain("agy");
+    expect(host.locatedProviders().agy).toBe(true);
+    expect(host.locatedProviders().deepseek).toBe(true);
+    expect(host.providerStateMessage().providers.map((p: any) => p.id)).toContain("deepseek");
     experimental = true;
     for (const id of INTERNAL_PROVIDERS) {
       expect(isInternalProvider(id)).toBe(true);

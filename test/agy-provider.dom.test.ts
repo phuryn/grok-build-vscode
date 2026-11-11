@@ -194,21 +194,11 @@ describe("Antigravity in Settings", () => {
       .toContain("Connected with a Gemini API key on the computer running this workspace.");
   });
 
-  // The host names Antigravity in providerState exactly when the setting is
-  // on, so that frame is the switch's state on both hosts.
-  it("is a real switch in Advanced that reads the host's advertisement, at a desk only", () => {
-    const off = mount(desk, [], "advanced");
-    const offSwitch = off.container.querySelector('[data-id="experimentalAntigravity"] .settings-switch') as HTMLElement;
-    expect(offSwitch.getAttribute("aria-checked")).toBe("false");
-    offSwitch.dispatchEvent(new (off.window as any).MouseEvent("click", { bubbles: true }));
-    expect(off.posted).toEqual([{ type: "setExperimentalAntigravity", value: true }]);
-    const on = mount(desk, [{ id: "agy", connected: false }], "advanced");
-    const onSwitch = on.container.querySelector('[data-id="experimentalAntigravity"] .settings-switch') as HTMLElement;
-    expect(onSwitch.getAttribute("aria-checked")).toBe("true");
-    onSwitch.dispatchEvent(new (on.window as any).MouseEvent("click", { bubbles: true }));
-    expect(on.posted).toEqual([{ type: "setExperimentalAntigravity", value: false }]);
-    expect(mount({ isRemote: true, providersKnown: true }, [], "advanced").container.querySelector('[data-id="experimentalAntigravity"]')).toBeNull();
-    expect(mount({ isRemote: true, providersKnown: true, hostCaps: { remoteAgentSignOut: true } }, [], "advanced")
-      .container.querySelector('[data-id="experimentalAntigravity"]')).toBeNull();
+  it("has no experimental controls on any surface", () => {
+    for (const env of [desk, { ...desk, isDesktop: true }, { ...desk, isRemote: true }]) {
+      const view = mount(env, [{ id: "agy" }, { id: "deepseek" }], "advanced");
+      expect(view.container.textContent).not.toContain("Experimental:");
+      expect(view.container.querySelector('[data-id="experimentalAntigravity"], [data-id="experimentalDeepSeek"]')).toBeNull();
+    }
   });
 });

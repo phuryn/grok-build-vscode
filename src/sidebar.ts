@@ -1100,7 +1100,7 @@ export class GrokSidebar {
     "setRoutinePaused",
     "runRoutineNow",
     "setShowThinking",
-    "setExperimentalAntigravity", "setExperimentalDeepSeek", "installDeepSeek", "cancelDeepSeekInstall", "deepseekConnect",
+    "setExperimentalAntigravity", "setExperimentalDeepSeek", "installDeepSeek", "cancelDeepSeekInstall", "deepseekConnect", "disconnectProvider",
     "setAppPurpose",
     "setExpandCommandOutputs",
     "setSteerByDefault",
@@ -1849,9 +1849,9 @@ export class GrokSidebar {
       });
       return this.agyServerPath;
     }
-    if (provider === "deepseek") return this.deepseekOffered() ? locateDeepSeek({
+    if (provider === "deepseek") return locateDeepSeek({
       configuredPath: this.host.getConfiguration("grok").get<string>("deepseekPath", ""), storageRoot: this.context.globalStorageUri.fsPath,
-    }) : undefined;
+    });
     if (this.claudeCliPath && fs.existsSync(this.claudeCliPath)) return this.claudeCliPath;
     const located = locateClaudeCli({
       configuredPath: this.host.getConfiguration("grok").get<string>("claudeCliPath", ""),
@@ -1885,18 +1885,9 @@ export class GrokSidebar {
       codex: !!this.locateProvider("codex"),
       claude: !!this.locateProvider("claude"),
       muse: !!this.locateProvider("muse"),
-      // Not offered reads as not installed, so nothing can run it.
-      agy: this.agyOffered() && !!this.locateProvider("agy"),
-      deepseek: this.deepseekOffered() && !!this.locateProvider("deepseek"),
+      agy: !!this.locateProvider("agy"),
+      deepseek: !!this.locateProvider("deepseek"),
     };
-  }
-
-  /**
-   * Experimental providers are desk-only. Their providerState advertisement
-   * is the renderer gate; cloud hosts never advertise either one.
-   */
-  private deepseekOffered(): boolean {
-    return this.host?.getConfiguration?.("grok")?.get<boolean>("experimentalDeepSeek", false) === true && !isCloudEnvironment();
   }
 
   private async deepseekCredential() {
@@ -1905,23 +1896,14 @@ export class GrokSidebar {
     return credential;
   }
 
-  private agyOffered(): boolean {
-    return this.host?.getConfiguration?.("grok")?.get<boolean>("experimentalAntigravity", false) === true
-      && !isCloudEnvironment();
-  }
-
   /** The card a session gets when its provider cannot start. Usable, not
    *  connected: with only a lapsed provider left there is nothing to fall back
    *  to, so offer the choice rather than this one provider's missing-CLI copy.
-   *  An Antigravity conversation with the experiment switched off gets the
-   *  choice too, without naming `agy`: renderers draw no card for a provider
-   *  the host does not advertise, and a blank page would swallow what the
-   *  person types next. */
+   */
   private refusedStartOnboarding(provider: AcpProvider): {
     state: "connect-agent" | ReturnType<typeof missingProviderState>;
     provider?: AcpProvider;
   } {
-    if (provider === "agy" && !this.agyOffered() || provider === "deepseek" && !this.deepseekOffered()) return { state: "connect-agent" };
     return {
       state: this.usableProviders().length ? missingProviderState(provider) : "connect-agent",
       provider,
@@ -2126,7 +2108,7 @@ export class GrokSidebar {
 
   /** session/new discovers models without sending a prompt or proving the key. */
   private warmConnectedDeepSeekModels(): Promise<void> {
-    if (!this.deepseekOffered() || !this.hasProviderConsent("deepseek")) return Promise.resolve();
+    if (!this.hasProviderConsent("deepseek")) return Promise.resolve();
     if (this.deepseekModelProbe) return this.deepseekModelProbe;
     const signal = this.providerRunSignal("deepseek");
     const cliPath = this.locateProvider("deepseek");
@@ -2243,7 +2225,6 @@ export class GrokSidebar {
     if (!this.hasProviderConsent(provider)) return false;
     const signal = this.providerRunSignal(provider);
     if (provider === "deepseek") {
-      if (!this.deepseekOffered()) return false;
       await this.warmConnectedDeepSeekModels();
       return !!(await this.deepseekCredential()).key;
     }
@@ -2331,6 +2312,7 @@ export class GrokSidebar {
     opts: { remote: boolean } = { remote: true },
   ): Promise<void> {
     if (!this.hasProviderConsent(provider)) return;
+    if (provider === "agy" && (opts.remote || clientId || isCloudEnvironment())) return;
     const displayName = providerDisplayName(provider);
     // The entry is created before the runner so `send` reads the CURRENT
     // client off it: a phone that visits the vendor's code page and comes
@@ -2830,13 +2812,18 @@ export class GrokSidebar {
     });
   }
 
-  /** The choice of how to sign in, answering a press at the desk. */
-  private async postAgyChoice(reason = this.agySignInError): Promise<void> {
+  /** Setup replies follow the requesting tab; credentials never enter them. */
+  private postProviderSetup(message: HostMsg, requester?: RemoteRequester): void {
+    if (requester) this.sendRemoteRequester(requester, message);
+    else this.postLocal(message);
+  }
+
+  private async postAgyChoice(reason = this.agySignInError, requester?: RemoteRequester): Promise<void> {
     await this.refreshAgySaved();
-    this.postLocal({
+    this.postProviderSetup({
       type: "onboarding", state: "agy-login", provider: "agy", platform: process.platform,
       agyChoice: true, ...(reason ? { reason } : {}),
-    });
+    }, requester);
   }
 
   /**
@@ -2845,7 +2832,11 @@ export class GrokSidebar {
    * Antigravity process holds the credential it started with, so a renewal
    * restarts them; the next send respawns each with the new one.
    */
-  private async connectAgy(method: AgySignInMethod, cliPath: string, session: Session): Promise<void> {
+  private async connectAgy(method: AgySignInMethod, cliPath: string, session: Session, requester?: RemoteRequester, remote = false): Promise<void> {
+    if (method === "google" && (remote || isCloudEnvironment()) && !(await this.agyGoogleSignedIn())) {
+      await this.postAgyChoice("Use a Gemini API key on this device. Google sign-in requires a browser on the workspace computer.", requester);
+      return;
+    }
     await this.state.update(AGY_SIGN_IN_METHOD_KEY, method);
     this.agySignInError = undefined;
     for (const live of new Set([this.focused, ...this.pool, ...this.remoteClients.detachedActiveValues()])) {
@@ -2866,11 +2857,11 @@ export class GrokSidebar {
       this.setProviderNeedsLogin("agy", false);
       await this.adoptSessionsForConnectedProvider("agy", session);
       // Closes the connect dialog the choice was made in.
-      this.postLocal({ type: "onboarding", state: "provider-connected", provider: "agy", platform: process.platform });
+      this.postProviderSetup({ type: "onboarding", state: "provider-connected", provider: "agy", platform: process.platform }, requester);
       return;
     }
     // Google with nothing stored: the browser sign-in, through the card.
-    await this.startDeviceLogin("agy", cliPath, undefined, { remote: false });
+    if (!remote && !isCloudEnvironment()) await this.startDeviceLogin("agy", cliPath, undefined, { remote: false });
   }
 
   /** A refusal counts only when it is live. `session/load` replays the
@@ -2904,15 +2895,16 @@ export class GrokSidebar {
     });
   }
 
-  /** Shared desk installer UI and progress for Antigravity and DeepSeek. */
-  private async installManagedAgyServer(provider: "agy" | "deepseek" = "agy"): Promise<void> {
-    if (provider === "agy" ? this.agyInstallAbort || !this.agyOffered() : this.deepseekInstallAbort || !this.deepseekOffered()) return;
+  /** Shared installer UI and progress for Antigravity and DeepSeek. */
+  private async installManagedAgyServer(provider: "agy" | "deepseek" = "agy", requester?: RemoteRequester): Promise<void> {
+    if (provider === "agy" ? this.agyInstallAbort : this.deepseekInstallAbort) return;
+    const post = (message: HostMsg) => this.postProviderSetup(message, requester);
     if (this.locateProvider(provider)) {
-      this.postLocal({ type: "onboarding", state: providerLoginState(provider), provider, platform: process.platform });
+      post({ type: "onboarding", state: providerLoginState(provider), provider, platform: process.platform });
       return;
     }
     if (provider === "deepseek" && this.host.getConfiguration("grok").get<string>("deepseekPath", "").trim()) {
-      this.postLocal({ type: "onboarding", state: "missing-deepseek", provider, platform: process.platform,
+      post({ type: "onboarding", state: "missing-deepseek", provider, platform: process.platform,
         reason: "The configured DeepSeek installation is incomplete or uses a different version. Correct grok.deepseekPath, or clear it to use the managed install." });
       return;
     }
@@ -2929,20 +2921,20 @@ export class GrokSidebar {
           const step = `${phase}:${percent}`;
           if (step === lastStep) return;
           lastStep = step;
-          this.postLocal({ type: "agyInstallProgress", provider, phase, receivedBytes: value?.receivedBytes, totalBytes: value?.totalBytes });
+          post({ type: "agyInstallProgress", provider, phase, receivedBytes: value?.receivedBytes, totalBytes: value?.totalBytes });
         },
       });
       if (provider === "agy") this.agyServerPath = binary;
       this.postProviderState();
-      this.postLocal({ type: "agyInstallProgress", provider, phase: "idle" });
-      this.postLocal({ type: "onboarding", state: providerLoginState(provider), provider, platform: process.platform });
+      post({ type: "agyInstallProgress", provider, phase: "idle" });
+      post({ type: "onboarding", state: providerLoginState(provider), provider, platform: process.platform });
     } catch (error) {
       const reason = controller.signal.aborted
         ? providerDisplayName(provider) + " installation was cancelled."
         : `${providerDisplayName(provider)} installation failed: ${errorDetail(error)}`;
       this.host.appendLine(`[${provider}] managed install failed: ${reason}`);
-      this.postLocal({ type: "agyInstallProgress", provider, phase: "idle", reason });
-      this.postLocal({ type: "onboarding", state: missingProviderState(provider), platform: process.platform, reason, provider });
+      post({ type: "agyInstallProgress", provider, phase: "idle", reason });
+      post({ type: "onboarding", state: missingProviderState(provider), platform: process.platform, reason, provider });
     } finally {
       if (this.agyInstallAbort === controller) this.agyInstallAbort = undefined;
       if (this.deepseekInstallAbort === controller) this.deepseekInstallAbort = undefined;
@@ -3007,14 +2999,12 @@ export class GrokSidebar {
     return {
       type: "providerState",
       providers: [
-        ...(this.deepseekOffered() ? [{ id: "deepseek" as const, connected: connected.deepseek === true && located.deepseek === true, ...button,
-          keySource: this.deepseekKeySource, ...(needsLogin.deepseek ? { needsLogin: true } : {}), ...(located.deepseek ? { cliVersion: DEEPSEEK_VERSION } : {}) }] : []),
+        { id: "deepseek", connected: connected.deepseek === true && located.deepseek === true, ...button, remoteSetup: true,
+          keySource: this.deepseekKeySource, ...(needsLogin.deepseek ? { needsLogin: true } : {}), ...(located.deepseek ? { cliVersion: DEEPSEEK_VERSION } : {}) },
         { id: "muse", connected: museConnected, ...button,
           ...(museConnected && versions.muse ? { cliVersion: versions.muse } : {}),
           ...(needsLogin.muse ? { needsLogin: true } : {}) },
-        // Advertised only where it is offered; a renderer draws nothing for an
-        // agent its host did not name, so this is the whole on/off switch.
-        ...(this.agyOffered() ? [{ id: "agy" as const, connected: agyConnected, ...button,
+        { id: "agy", connected: agyConnected, ...button, remoteSetup: true, googleSignIn: !isCloudEnvironment(),
           ...(agyConnected && versions.agy ? { cliVersion: versions.agy } : {}),
           ...(agyConnected && needsLogin.agy ? { needsLogin: true } : {}),
           // The way last chosen, also after a Disconnect, so the choice can
@@ -3022,7 +3012,7 @@ export class GrokSidebar {
           ...(agyConnected || this.state?.get(AGY_SIGN_IN_METHOD_KEY) ? { signInMethod: this.agyMethod() } : {}),
           ...(this.agySaved && (this.agySaved.google || this.agySaved.apiKey) ? {
             savedSignIns: [...(this.agySaved.google ? ["google" as const] : []), ...(this.agySaved.apiKey ? ["api-key" as const] : [])],
-          } : {}) }] : []),
+          } : {}) },
         {
           id: "grok",
           connected: grokConnected,
@@ -3123,7 +3113,6 @@ export class GrokSidebar {
       this.claudeCliPath = undefined;
       this.museCliPath = undefined;
       this.agyServerPath = undefined;
-      if (this.agyOffered()) await this.refreshAgySaved();
       // Installation discovery is always local and remains available before Connect.
       const located = this.locatedProviders();
       await Promise.all(INTERNAL_PROVIDERS.map(async provider => {
@@ -3418,7 +3407,7 @@ export class GrokSidebar {
         this.codexCliPath = undefined;
         this.postProviderState();
       }
-      if (e.affectsConfiguration("grok.deepseekPath") || e.affectsConfiguration("grok.experimentalDeepSeek")) {
+      if (e.affectsConfiguration("grok.deepseekPath")) {
         this.deepseekInstallAbort?.abort();
         void this.invalidateDeepSeekModels().then(() => this.warmConnectedDeepSeekModels());
         for (const s of new Set([this.focused, ...this.pool, ...this.remoteClients.detachedActiveValues()])) {
@@ -3431,7 +3420,7 @@ export class GrokSidebar {
         this.deepseekSessionCache?.clear(); this.adapterHistoryStamps?.delete("deepseek");
         void this.deepseekCredential().then(() => this.postProviderState());
       }
-      if (e.affectsConfiguration("grok.agyServerPath") || e.affectsConfiguration("grok.experimentalAntigravity")) {
+      if (e.affectsConfiguration("grok.agyServerPath")) {
         this.agyServerPath = undefined;
         this.postProviderState();
       }
@@ -9517,15 +9506,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     provider: AcpProvider = "grok",
     opts: { fromRemote?: boolean; report?: (text: string) => void; signOutCli?: boolean } = {},
   ): Promise<void> {
-    if (provider === "deepseek" && opts.signOutCli) {
-      if (opts.fromRemote || !this.deepseekOffered()) return;
-      await this.context.secrets.delete(DEEPSEEK_API_KEY_SECRET);
-      await this.deepseekCredential();
-      await this.disconnectProvider(provider, opts.report);
-      return;
-    }
     if (!opts.signOutCli && !isCloudEnvironment()) {
-      await this.disconnectProvider(provider, opts.report);
+      await this.disconnectProvider(provider, opts.report, opts.fromRemote);
       return;
     }
     // Every failure below goes through here. A cloud environment has nobody at
@@ -9538,6 +9520,18 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       if (opts.report) opts.report(text);
       else void this.host.showErrorMessage(text);
     };
+    if (provider === "deepseek") {
+      if (opts.fromRemote && !isCloudEnvironment()) return;
+      try {
+        await this.context.secrets.delete(DEEPSEEK_API_KEY_SECRET);
+        await this.deepseekCredential();
+      } catch {
+        fail("DeepSeek sign-out failed. The account remains connected.");
+        return;
+      }
+      await this.disconnectProvider(provider, opts.report, opts.fromRemote || isCloudEnvironment());
+      return;
+    }
     if (provider === "agy") {
       await this.signOutAgy(opts, fail);
       return;
@@ -9633,8 +9627,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     opts: { fromRemote?: boolean; report?: (text: string) => void },
     fail: (text: string) => void,
   ): Promise<void> {
-    if (this.agyMethod() === "api-key") {
-      if (!opts.fromRemote) {
+    const clearAll = isCloudEnvironment();
+    const keyOnly = clearAll ? !(await this.agyGoogleSignedIn()) : this.agyMethod() === "api-key";
+    if (keyOnly) {
+      if (!opts.fromRemote && !clearAll) {
         const choice = await this.host.showWarningMessage(
           "Sign out of Antigravity? This deletes the Gemini API key saved in this app.",
           { modal: true },
@@ -9643,8 +9639,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         if (choice !== "Sign Out") return;
       }
       try { await this.context.secrets.delete(AGY_API_KEY_SECRET); }
-      catch (error) {
-        fail(`Antigravity sign-out failed: ${errorDetail(error)}. The account remains connected.`);
+      catch {
+        fail("Antigravity sign-out failed. The account remains connected.");
         return;
       }
       await this.refreshAgySaved();
@@ -9656,7 +9652,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       fail("Antigravity sign-out could not run because the Antigravity server is not installed. The account remains connected.");
       return;
     }
-    if (!opts.fromRemote) {
+    if (!opts.fromRemote && !clearAll) {
       const choice = await this.host.showWarningMessage(
         "Sign out of Antigravity? This clears the Google sign-in Antigravity stored on this machine.",
         { modal: true },
@@ -9675,6 +9671,13 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     } finally {
       await client.dispose();
     }
+    if (clearAll) {
+      try { await this.context.secrets.delete(AGY_API_KEY_SECRET); }
+      catch {
+        fail("Antigravity sign-out failed. The account remains connected.");
+        return;
+      }
+    }
     await this.refreshAgySaved();
     await this.finishProviderLogout("agy", opts.report);
   }
@@ -9684,14 +9687,14 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
    * everything this takes away except a reply still being written, so that is
    * the only case worth a question.
    */
-  private async disconnectProvider(provider: AcpProvider, report?: (text: string) => void): Promise<void> {
+  private async disconnectProvider(provider: AcpProvider, report?: (text: string) => void, fromRemote = false): Promise<void> {
     const live = new Set<Session | undefined>([
       this.focused,
       ...this.pool,
       ...this.remoteClients.clients().map((clientId) => this.remoteClients.active(clientId)),
     ]);
     const working = [...live].filter((s) => s?.provider === provider && turnIsInFlight(s)).length;
-    if (working) {
+    if (working && !fromRemote) {
       const name = providerDisplayName(provider);
       const choice = await this.host.showWarningMessage(
         `Disconnect ${name}? ${working > 1 ? `${working} replies` : "A reply"} in progress will stop. The ${name} CLI stays signed in.`,
@@ -12485,7 +12488,16 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       else this.post(refusal);
       return;
     }
-    await this.withCloudHostWork(() => this.onAdmittedMessage(msg, origin, clientId));
+    try {
+      await this.withCloudHostWork(() => this.onAdmittedMessage(msg, origin, clientId));
+    } catch (error) {
+      if (msg.type !== "agySignIn" && msg.type !== "deepseekConnect") throw error;
+      // Secret-store/provider errors can contain their input. Never forward them.
+      this.host.appendLine(`[providers] ${msg.type} failed`);
+      const reply: HostMsg = { type: "error", text: "Could not connect the agent. Try connecting again." };
+      if (clientId) this.sendRemoteClient(clientId, reply);
+      else this.postLocal(reply);
+    }
   }
 
   private async onAdmittedMessage(msg: WebviewMsg, origin: MsgOrigin, clientId?: string): Promise<void> {
@@ -12534,6 +12546,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           this.postLocal(this.pendingRemoteHandoff);
           this.pendingRemoteHandoff = undefined;
         }
+        if (this.pendingProviderSetup) await this.flushProviderSetup();
         // Rehydrate already posts catalog + sessions. Cold start needs an early
         // disk list so the rail is not empty while startSession runs — but the
         // catalog scan is deferred so ready returns and the UI paints first
@@ -13180,14 +13193,13 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         await this.installManagedCodexCli();
         break;
       case "installDeepSeek":
-        if (origin === "local") await this.installManagedAgyServer("deepseek");
+        await this.installManagedAgyServer("deepseek", requester);
         break;
       case "cancelDeepSeekInstall":
-        if (origin === "local") this.deepseekInstallAbort?.abort(new Error("Installation cancelled."));
+        this.deepseekInstallAbort?.abort(new Error("Installation cancelled."));
         break;
       case "installAgy":
-        if (origin !== "local") break;
-        await this.installManagedAgyServer();
+        await this.installManagedAgyServer("agy", requester);
         break;
       case "cancelAgyInstall":
         this.agyInstallAbort?.abort(new Error("Installation cancelled."));
@@ -13329,15 +13341,9 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         );
         break;
       }
+      // Retired controls from older clients have no effect.
       case "setExperimentalDeepSeek":
-        if (origin === "local" && !isCloudEnvironment()) await this.host.getConfiguration("grok").update("experimentalDeepSeek", !!msg.value, "global");
-        this.postProviderState();
-        break;
       case "setExperimentalAntigravity":
-        // The config watcher re-posts providerState, which is what the
-        // toggle reads back.
-        await this.host.getConfiguration("grok")
-          .update("experimentalAntigravity", !!msg.value, "global");
         break;
       case "setShowThinking":
         // Persist globally (like the other display prefs); the config watcher
@@ -13490,19 +13496,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       case "runGrokLogin": {
         const provider: AcpProvider = isInternalProvider(msg.provider) ? msg.provider : "grok";
         if (provider === "deepseek") {
-          if (origin !== "local" || !this.deepseekOffered()) break;
           await this.deepseekCredential(); this.postProviderState();
-          this.postLocal({ type: "onboarding", state: this.locateProvider(provider) ? "deepseek-login" : "missing-deepseek", provider, platform: process.platform });
-          break;
-        }
-        if (provider === "agy" && (origin === "remote" || !this.agyOffered())) {
-          // Google's sign-in opens a browser on THIS machine, which from a
-          // phone would be a desk nobody is sitting at. Refused before any
-          // consent is recorded; chatting with a connected desk still works.
-          if (clientId) this.sendRemoteClient(clientId, {
-            type: "onboarding", state: "agy-login", platform: process.platform, provider,
-            device: { status: "unavailable", message: "Connect Antigravity on the computer first." },
-          });
+          this.postProviderSetup({ type: "onboarding", state: this.locateProvider(provider) ? "deepseek-login" : "missing-deepseek", provider, platform: process.platform }, requester);
           break;
         }
         const cliPath = this.locateProvider(provider);
@@ -13524,7 +13519,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         // otherwise a Disconnect and Connect could never switch. The choice
         // itself (`agySignIn`) records consent.
         if (provider === "agy") {
-          await this.postAgyChoice();
+          await this.postAgyChoice(undefined, requester);
           break;
         }
         // A press that lands while a first Connect is still checking is the
@@ -13663,11 +13658,20 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         });
         break;
       }
+      case "disconnectProvider":
+        if (msg.provider === "agy" || msg.provider === "deepseek") {
+          await this.logout(msg.provider, { fromRemote: origin === "remote", report: (text) => this.reportRequester(requester, "error", text) });
+        }
+        break;
       case "deepseekConnect": {
-        if (origin !== "local" || !this.deepseekOffered() || !this.locateProvider("deepseek")) break;
+        if (!this.locateProvider("deepseek")) break;
         if (msg.key !== undefined) {
           if (!validDeepSeekKey(msg.key)) break;
-          await this.context.secrets.store(DEEPSEEK_API_KEY_SECRET, msg.key);
+          try { await this.context.secrets.store(DEEPSEEK_API_KEY_SECRET, msg.key); }
+          catch {
+            this.postProviderSetup({ type: "onboarding", state: "deepseek-login", provider: "deepseek", reason: "The key could not be saved on this machine." }, requester);
+            break;
+          }
         }
         const credential = await this.deepseekCredential();
         if (!credential.key) break;
@@ -13685,12 +13689,12 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         await this.warmConnectedDeepSeekModels();
         await this.adoptSessionsForConnectedProvider("deepseek", session);
         this.postProviderState();
-        this.postLocal({ type: "onboarding", state: "provider-connected", provider: "deepseek", platform: process.platform });
+        this.postProviderSetup({ type: "onboarding", state: "provider-connected", provider: "deepseek", platform: process.platform }, requester);
         break;
       }
       case "setDeepSeekHarness": {
         const reply = this.composerDraftReply(msg.draftId, requester);
-        if (!this.deepseekOffered() || session.provider !== "deepseek") { reply?.(msg.sessionId); break; }
+        if (session.provider !== "deepseek") { reply?.(msg.sessionId); break; }
         const matches = () => session.client?.sessionId === msg.sessionId && session.gen === msg.generation
           && session.client?.currentModelId === msg.modelId && !session.priming && !turnIsInFlight(session) && !this.pickerChange;
         if (!matches() || (msg.harness !== "minimal" && msg.harness !== "default") || (session.deepseekHarness ?? "default") === msg.harness) {
@@ -13716,31 +13720,29 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         break;
       }
       case "agySignIn": {
-        // Desk only: the key never crosses the relay, and Google's page would
-        // open at the desk. Host-local in remote-policy.ts as well.
-        if (origin !== "local" || !this.agyOffered()) break;
+        if (!isAgySignInMethod(msg.method)) break;
         const cliPath = this.locateProvider("agy");
         if (!cliPath) {
-          this.postLocal({ type: "onboarding", state: "missing-agy", platform: process.platform, provider: "agy",
-            device: { status: "failed", message: "Antigravity is not installed on this machine." } });
+          this.postProviderSetup({ type: "onboarding", state: "missing-agy", platform: process.platform, provider: "agy",
+            device: { status: "failed", message: "Antigravity is not installed on this machine." } }, requester);
           break;
         }
         if (msg.method === "api-key") {
           if (msg.key !== undefined) {
             const parsed = normalizeAgyApiKey(msg.key);
-            if ("error" in parsed) { await this.postAgyChoice(parsed.error); break; }
+            if ("error" in parsed) { await this.postAgyChoice(parsed.error, requester); break; }
             try { await this.context.secrets.store(AGY_API_KEY_SECRET, parsed.key); }
-            catch (error) {
-              this.host.appendLine(`[agy] saving the API key failed: ${errorDetail(error)}`);
-              await this.postAgyChoice("The key could not be saved on this machine.");
+            catch {
+              this.host.appendLine("[agy] saving the API key failed");
+              await this.postAgyChoice("The key could not be saved on this machine.", requester);
               break;
             }
           } else if (!(await this.agySavedKey())) {
-            await this.postAgyChoice("Paste a Gemini API key.");
+            await this.postAgyChoice("Paste a Gemini API key.", requester);
             break;
           }
         }
-        await this.connectAgy(msg.method === "api-key" ? "api-key" : "google", cliPath, session);
+        await this.connectAgy(msg.method, cliPath, session, requester, origin === "remote");
         break;
       }
       case "submitDeviceLoginCode": {
@@ -13789,7 +13791,6 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       }
       case "recheckConnection": {
         const provider: AcpProvider = isInternalProvider(msg.provider) ? msg.provider : session.provider;
-        if (provider === "agy" && !this.agyOffered()) break;
         if (!this.locateProvider(provider)) {
           const message: HostMsg = {
             type: "onboarding",
@@ -13838,7 +13839,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         if (!this.connectedProviders().includes(provider)) {
           if (requester) this.sendRemoteRequester(requester, {
             type: "error",
-            text: `${providerDisplayName(provider)} must be connected at the desk before a remote session can be retried.`,
+            text: `${providerDisplayName(provider)} must be connected before a remote session can be retried.`,
           });
           break;
         }
@@ -23347,6 +23348,14 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
 
   private pendingRemoteHandoff?: Extract<HostMsg, { type: "showRemoteHandoff" }>;
   private chatReadyForHandoff = false;
+  private pendingProviderSetup?: "agy" | "deepseek";
+
+  private async flushProviderSetup(): Promise<void> {
+    if (!this.chatReadyForHandoff || !this.pendingProviderSetup) return;
+    const provider = this.pendingProviderSetup;
+    this.pendingProviderSetup = undefined;
+    await this.onMessage({ type: "runGrokLogin", provider }, "local");
+  }
 
   async continueOnPhone(source: RemoteHandoffSource = "palette", sessionId?: string, repoCwd?: string, explain?: boolean): Promise<void> {
     const msg: Extract<HostMsg, { type: "showRemoteHandoff" }> = { type: "showRemoteHandoff", source, sessionId, repoCwd, explain };
@@ -23603,6 +23612,13 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     }
     if (!GrokSidebar.SETTINGS_PANEL_TYPES.has(msg.type)) {
       this.host.appendLine(`[settings] ignored ${msg.type}`);
+      return;
+    }
+    // Setup dialogs live in chat.js, not in this separate VS Code webview.
+    if (msg.type === "runGrokLogin" && (msg.provider === "agy" || msg.provider === "deepseek")) {
+      this.pendingProviderSetup = msg.provider;
+      await this.host.revealChatView();
+      await this.flushProviderSetup();
       return;
     }
     await this.onMessage(msg, "local");

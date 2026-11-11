@@ -1,9 +1,9 @@
 # Signing agents in
 
-Grok Build drives three command-line agents, and it never holds their
-credentials. Each one signs you in itself, stores its own token in its own
-directory, and talks to its own vendor. The extension's job is to start the
-right command in the right place.
+The host drives six agents. Grok, Codex, Claude Code and Muse sign you in
+through their own CLIs and store their own credentials. Antigravity also offers
+Google sign-in; Antigravity and DeepSeek can use API keys saved in the host's
+secret storage. Each agent talks to its own vendor.
 
 That matters more than it sounds, because it decides what is possible from a
 phone and on a machine with no screen.
@@ -55,6 +55,8 @@ behind a credential that would not be used.
 
 **Signing out stays `host-local`.** The asymmetry is intentional — connecting
 adds an option, disconnecting takes one away from every other surface at once.
+Cloud hosts permit sign-out from their only surface. Antigravity and DeepSeek
+also offer remote Disconnect on desk hosts; it keeps their saved credentials.
 
 Not every agent can do this, and the app tells you which:
 
@@ -63,6 +65,17 @@ Not every agent can do this, and the app tells you which:
 | Grok Build | yes | `grok login --device-auth` prints a URL and a code and polls |
 | Codex | if your CLI and account allow it | needs `--device-auth` in your build **and** "Allow device code login" on the account |
 | Claude Code | yes | `claude auth login` prints a URL on a plain pipe; you paste the code Anthropic shows you back into the page |
+| Muse Code | yes | its CLI prints a URL and a device code |
+| Antigravity | yes, with host support | paste a Gemini API key, or reuse an existing Google sign-in on the host without opening a browser |
+| DeepSeek | yes, with host support | paste a DeepSeek API key; a host environment key takes precedence |
+
+Antigravity and DeepSeek advertise remote setup through `remoteSetup` on their
+`providerState` rows. Only then does the phone offer managed installation and
+API-key entry; older hosts keep the computer-only copy. A pasted key crosses
+the relay to host secret storage, is never read back, and has no browser draft
+or retry storage. Antigravity's Google browser sign-in can start only locally
+on a desktop. Cloud and remote requests can adopt an existing sign-in, or use
+the key route. Linux server startup still needs a real cloud-machine check.
 
 The app does not decide this from a version number. It runs the command and
 reports what came back, so a CLI that gains the flow starts working with no
@@ -215,6 +228,7 @@ command, which runs the same command for the agent you pick. **Settings →
 Providers → Disconnect** does not sign the CLI out: it turns the agent off in
 this extension and leaves the CLI signed in, so a terminal or another editor
 keeps working and Connect turns it back on without a login. On a cloud
-environment the same button reads **Sign out** and does run the CLI's logout,
+environment the same button reads **Sign out** and runs the vendor logout or
+deletes the stored API key (both stored ways for Antigravity),
 because nobody else will clear that machine. Signing out of Grok is also the fix
 for a cached OAuth session shadowing an `XAI_API_KEY` you would rather use.

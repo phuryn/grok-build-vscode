@@ -129,7 +129,7 @@ describe("Settings → Providers at a desk disconnects (#203)", () => {
     vi.stubEnv(CLOUD_ENVIRONMENT_ENV, "");
     const sidebar = makeSidebar(["codex"]);
     const { providers } = sidebar.providerStateMessage();
-    expect(providers.map((p: { keepsCliSignIn?: boolean }) => p.keepsCliSignIn)).toEqual([true, true, true, true]);
+    expect(providers.map((p: { keepsCliSignIn?: boolean }) => p.keepsCliSignIn)).toEqual([true, true, true, true, true, true]);
   });
 });
 

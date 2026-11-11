@@ -287,7 +287,9 @@ describe("multi-provider review regressions", () => {
       type: "providerState",
       // keepsCliSignIn: a desk host's account button disconnects (#203).
       providers: [
+        { id: "deepseek", connected: false, keepsCliSignIn: true, remoteSetup: true, keySource: undefined },
         { id: "muse", connected: false, keepsCliSignIn: true },
+        { id: "agy", connected: false, keepsCliSignIn: true, remoteSetup: true, googleSignIn: true },
         { id: "grok", connected: true, keepsCliSignIn: true },
         { id: "codex", connected: false, keepsCliSignIn: true },
         { id: "claude", connected: false, keepsCliSignIn: true },

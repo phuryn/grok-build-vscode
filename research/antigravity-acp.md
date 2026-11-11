@@ -1,13 +1,11 @@
 # Antigravity over ACP
 
 Google's Antigravity is the fifth provider (`agy` internally; "Antigravity" on
-screen). It is **experimental and desk-only**: offered only with
-`grok.experimentalAntigravity` on, never on a cloud machine
-(`GrokSidebar.agyOffered`), and every renderer surface keys off the host naming
-`agy` in `providerState`, the way Muse is gated. The setting is a switch in
-Settings -> Advanced (`setExperimentalAntigravity`, host-local, written
-globally); the switch reads its state from that same `providerState`, so it
-needs no frame of its own and is hidden on a remote.
+screen). Offered on desktops and cloud machines, starting disconnected.
+Every renderer surface keys off `agy` in `providerState`; `remoteSetup: true`
+enables remote managed installation and API-key setup. An older host without
+that capability keeps the computer-only instructions. There is no experimental
+setting.
 
 Measured against `agy_acp_server` **1.4.0** on Windows 11, 2026-10-14 and -15.
 The server's Python source (unpacked from the Linux bundle) was read rather than
@@ -91,8 +89,8 @@ aistudio.google.com/apikey). Vertex AI and Enterprise sign-in are not offered.
   The host keeps the key in HostSecrets (`grok.agy.geminiApiKey`: VS Code
   SecretStorage, or the desktop's safe storage) and in the relay's memory while
   a key's server runs -- not settings, state, logs, telemetry or
-  `providerState`, which carries only which ways are saved. `agySignIn` is
-  host-local and refused from a remote. Gateway auth is per connection and,
+  `providerState`, which carries only which ways are saved. `agySignIn` accepts
+  write-only key submission from local and remote clients. Gateway auth is per connection and,
   unlike the other methods, never written to the shared `settings.json`.
 - **Never put the key in the server's environment.** The server's environment
   reaches the agent's shell commands: a marker variable set on the spawn was
@@ -111,7 +109,7 @@ aistudio.google.com/apikey). Vertex AI and Enterprise sign-in are not offered.
   the same error from someone's code mid-reply is not a refusal of ours -- and
   the client emits `credentialRejected`; the host marks the account as needing
   sign-in and opens the choice again with "Google rejected this API key."
-- **Disconnect** keeps both the Google sign-in and the saved key; Connect then
+- **Disconnect at a desk** keeps both the Google sign-in and the saved key; Connect then
   offers the choice again, marking which way was last used and which are
   saved. **Sign out** (`AFK Pilot: Log Out`) clears only the current method's
   credential: for Google, ACP **`logout`** (the method name, measured against a
@@ -119,9 +117,19 @@ aistudio.google.com/apikey). Vertex AI and Enterprise sign-in are not offered.
   -32601), which clears the token and the saved method; for a key, the saved
   key is deleted. Settings' button only disconnects, as for every desk provider
   (#203).
-- Remote sign-in is refused before consent is recorded ("Connect Antigravity on
-  the computer first."): it would open a browser, or take a key, on an
-  unattended desk.
+- Remotes and cloud hosts may paste a key or adopt an existing Google sign-in
+  (`agyGoogleSignInPresent`), without starting `authenticate`. They never start
+  Google's browser/loopback flow. A local desktop still offers that flow;
+  `googleSignIn` in the provider row tells the client whether it may offer it.
+- Installation and cancellation are `full` remote actions. Setup replies and
+  `agyInstallProgress` go to the requesting tab, including after reconnect.
+  Desk Disconnect preserves both credentials. Cloud Sign out removes the
+  saved API key and any stored Google sign-in through ACP `logout`, regardless
+  of the method last used. It never starts a browser or asks a host modal.
+- Key fields clear on submission and have no draft or retry storage. Known
+  offline submissions are refused before reaching the transport. The relay
+  client's outbox is outside this checkout: its exclusion of key messages,
+  including a socket-drop race, still requires verification.
 
 ## Sessions
 
@@ -257,8 +265,8 @@ excepted.
 
 ## Not in v1
 
-Cloud machines, MCP connectors, Plan mode, Vertex AI and Enterprise sign-in,
-signing in from a phone, a usage meter, effort control on a key, and a
+MCP connectors, Plan mode, Vertex AI and Enterprise sign-in,
+a usage meter, effort control on a key, and a
 subagent card that shows its child's own words or result (its tool calls do
 show, see [Subagents](#subagents)).
 
@@ -363,19 +371,22 @@ observable change that should make us look again.
 - **Revisit when:** Google fixes the workspace ordering (the smoke passes
   without the append), or the server lets a client name its working root.
 
-### Desk only, no MCP connectors, no Plan
+### Desktop and cloud setup; no MCP connectors or Plan
 
-- **Decision:** Antigravity is offered at a desk only, never on a cloud
-  machine or signed in from a phone; it gets `mcpServers: []`; it has no Plan
-  mode.
-- **Why:** signing in opens a browser or takes a key at the computer, which an
-  unattended desk cannot do; the server swaps its file tools for ours when a
-  client advertises fs, which is not the server measured here, and MCP through
-  it was not measured at all; `/plan` waits for a "Proceed" click ACP cannot
-  deliver.
-- **Risk:** the provider is narrower than the others.
-- **Revisit when:** a cloud machine has a way to sign in without a desk; the
-  server's MCP path is measured; ACP can deliver a plan approval.
+- **Decision:** offer Antigravity to everyone. Install and key entry work
+  locally or remotely; a remote/cloud machine can also adopt an existing
+  Google sign-in, but cannot start Google's browser flow. Gate new remote
+  controls on the host's `remoteSetup` advertisement for older-host compatibility.
+- **Why:** a phone can supply a key to host secret storage, removing the need
+  for a person at the host's screen. Every remote already has full host access;
+  no key is read back to any client.
+- **Verification limit:** Linux's existing `--uid=` launch and the real managed
+  server still need a cloud-machine run; unit tests cover routing and policy.
+- **Unchanged:** `mcpServers: []`, no Plan mode. Advertising client fs swaps
+  the server's file tools for ours; MCP through it is unmeasured; `/plan` waits
+  for a "Proceed" click ACP cannot deliver.
+- **Revisit when:** the server's MCP path is measured; ACP can deliver a plan
+  approval.
 
 ### How subagents are shown
 

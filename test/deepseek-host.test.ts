@@ -23,7 +23,7 @@ function host(enabled = true): any {
   s.remoteClients = { detachedActiveValues: () => [], clients: () => [], active: () => s.focused, cwd: () => "/workspace" };
   s.captureRemoteRequester = () => undefined;
   s.locateProvider = vi.fn(() => "/managed"); s.locatedProviders = () => ({ deepseek: true });
-  s.postLocal = vi.fn(); s.postProviderState = vi.fn(); s.setProviderNeedsLogin = vi.fn();
+  s.post = vi.fn(); s.postLocal = vi.fn(); s.sendRemoteClient = vi.fn(); s.sendRemoteRequester = vi.fn(); s.postProviderState = vi.fn(); s.setProviderNeedsLogin = vi.fn();
   s.setProviderConnected = vi.fn(async () => {}); s.adoptSessionsForConnectedProvider = vi.fn(async () => {});
   s.startSession = vi.fn(); s.installManagedAgyServer = vi.fn();
   s.emit = vi.fn(); s.displayMode = () => "agent"; s.sessionCwd = () => "/workspace";
@@ -188,20 +188,32 @@ describe("DeepSeek desk boundary and credentials", () => {
     expect(session.chips).toHaveLength(1);
     expect(session.client.prompt).not.toHaveBeenCalled();
   });
-  it("advertises only at an opted-in desk", () => {
+  it("advertises on desks and cloud without an experimental setting", () => {
     expect(host().providerStateMessage().providers.some((p: any) => p.id === "deepseek")).toBe(true);
-    expect(host(false).providerStateMessage().providers.some((p: any) => p.id === "deepseek")).toBe(false);
+    expect(host(false).providerStateMessage().providers.some((p: any) => p.id === "deepseek")).toBe(true);
     vi.stubEnv(CLOUD_ENVIRONMENT_ENV, "1");
-    expect(host().providerStateMessage().providers.some((p: any) => p.id === "deepseek")).toBe(false);
+    expect(host().providerStateMessage().providers.some((p: any) => p.id === "deepseek")).toBe(true);
   });
-  it("refuses remote install, connect and key writes before consent", async () => {
-    const s = host();
-    for (const msg of [{ type: "runGrokLogin", provider: "deepseek" }, { type: "installDeepSeek" }, { type: "deepseekConnect", key: "secret" }]) await s.onMessage(msg, "remote");
-    expect(s.context.secrets.store).not.toHaveBeenCalled(); expect(s.setProviderConnected).not.toHaveBeenCalled();
-    expect(s.installManagedAgyServer).not.toHaveBeenCalled();
-    for (const type of ["installDeepSeek", "cancelDeepSeekInstall", "deepseekConnect", "setExperimentalDeepSeek"] as const) {
-      expect(INBOUND_DISPOSITION[type]).toBe("host-local"); expect(allowFromRemote(type, "full", { isCloud: true })).toBe(false);
-    }
+  it.each([false, true])("accepts remote install and key writes, including cloud=%s", async cloud => {
+    vi.stubEnv(CLOUD_ENVIRONMENT_ENV, cloud ? "1" : "");
+    const s = host(); s.warmConnectedDeepSeekModels = vi.fn();
+    s.captureRemoteRequester = () => ({ clientId: "phone" });
+    await s.onMessage({ type: "runGrokLogin", provider: "deepseek" }, "remote", "phone");
+    await s.onMessage({ type: "installDeepSeek" }, "remote", "phone");
+    await s.onMessage({ type: "deepseekConnect", key: "sentinel-secret" }, "remote", "phone");
+    expect(s.context.secrets.store).toHaveBeenCalledWith(DEEPSEEK_API_KEY_SECRET, "sentinel-secret");
+    expect(s.setProviderConnected).toHaveBeenCalledWith("deepseek", true);
+    expect(s.installManagedAgyServer).toHaveBeenCalledWith("deepseek", { clientId: "phone" });
+    expect(s.sendRemoteRequester).toHaveBeenLastCalledWith({ clientId: "phone" }, expect.objectContaining({ state: "provider-connected" }));
+    expect(s.providerStateMessage().providers.find((p: any) => p.id === "deepseek")).toMatchObject({ remoteSetup: true });
+    expect(s.providerStateMessage().providers.find((p: any) => p.id === "deepseek").keepsCliSignIn).toBe(cloud ? undefined : true);
+    expect(JSON.stringify([s.post.mock.calls, s.postLocal.mock.calls, s.sendRemoteRequester.mock.calls, s.host.appendLine.mock.calls, s.providerStateMessage()])).not.toContain("sentinel-secret");
+  });
+  it("never echoes a secret-storage exception", async () => {
+    const s = host(); s.context.secrets.store.mockRejectedValue(new Error("sentinel-secret"));
+    await s.onMessage({ type: "deepseekConnect", key: "sentinel-secret" }, "remote", "phone");
+    expect(s.setProviderConnected).not.toHaveBeenCalled();
+    expect(JSON.stringify([s.sendRemoteRequester.mock.calls, s.host.appendLine.mock.calls, s.postLocal.mock.calls])).not.toContain("sentinel-secret");
   });
   it("adopts the environment first, saves locally and never publishes a key", async () => {
     const s = host(); vi.stubEnv("DEEPSEEK_API_KEY", "environment-secret");

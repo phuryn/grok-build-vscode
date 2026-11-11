@@ -2,8 +2,7 @@
   const hostApi = acquireVsCodeApi();
   let museAdvertised = false;
   let museAvailable = false;
-  // Antigravity exists only where the host names it in providerState: desk
-  // hosts with the experimental setting on. Nothing else draws or sends it.
+  // Provider advertisements keep this client compatible with older hosts.
   let agyAdvertised = false;
   let deepseekAdvertised = false;
   function namesProvider(value, id) {
@@ -16,8 +15,24 @@
       if (namesProvider(message, "muse") && !museAvailable) return false;
       if ((namesProvider(message, "deepseek") || ["installDeepSeek", "cancelDeepSeekInstall", "deepseekConnect", "setDeepSeekHarness"].includes(message.type)) && !deepseekAdvertised) return false;
       if (namesProvider(message, "agy") && !agyAdvertised) return false;
+      if (IS_REMOTE && (message.type === "agySignIn" || message.type === "deepseekConnect")) {
+        if (!hostWait.available()) {
+          addError("The machine is disconnected. Paste the key again when it is connected.");
+          return false;
+        }
+      }
       return hostApi.postMessage(message);
     } };
+  function providerRemoteSetup(id) {
+    return (state.providers || []).some(p => p.id === id && p.remoteSetup === true);
+  }
+  function providerSetupAvailable(id) {
+    return !IS_REMOTE || providerRemoteSetup(id);
+  }
+  function agyGoogleAvailable() {
+    const provider = (state.providers || []).find(p => p.id === "agy") || {};
+    return (provider.savedSignIns || []).includes("google") || !IS_REMOTE && provider.googleSignIn !== false;
+  }
   function offeredProviders() {
     return Object.keys(globalThis.GrokWebviewHelpers.PROVIDER_ACTIONS)
       .filter(id => (id !== "muse" || museAvailable) && (id !== "agy" || agyAdvertised) && (id !== "deepseek" || deepseekAdvertised));
@@ -11371,7 +11386,7 @@
     const nothingConnected = !((state.providers || []).some((p) => p && p.connected));
     const cloudFresh = !!(state.hostCaps && state.hostCaps.remoteAgentSignOut) && nothingConnected;
     const offer = (provider && !cloudFresh ? [provider] : offeredProviders())
-      .filter(id => (id !== "muse" || museAvailable) && (id !== "agy" || !IS_REMOTE));
+      .filter(id => (id !== "muse" || museAvailable) && ((id !== "agy" && id !== "deepseek") || providerSetupAvailable(id)));
     // A cloud machine's three agents are not equal offers: Grok is the native
     // one. Ranking is the cloud-only part; every agent that has a headless
     // flow is offered, including Claude Code's paste-code sign-in.
@@ -11534,16 +11549,16 @@
         return;
       }
     }
-    if (provider === "deepseek" && deepseekAdvertised && !IS_REMOTE) {
+    if (provider === "deepseek" && deepseekAdvertised && providerSetupAvailable(provider)) {
       if (mode === "provider-connected") { closeConnectWizard(); return; }
       openConnectWizard(provider); connectWizard.deepseekMode = mode; renderConnectWizard(); return;
     }
     if (!IS_REMOTE && provider !== "muse" && provider !== "agy") return;
-    // Antigravity's install and sign-in panels, at the desk. A missing server
+    // Antigravity's install and sign-in panels. A missing server
     // answers with a `failed` device, as Muse's does, so the wizard opens on
     // the Install button wherever Connect was pressed. Its sign-in itself is a
     // device flow, handled below like every other one.
-    if (provider === "agy" && agyAdvertised && !IS_REMOTE) {
+    if (provider === "agy" && agyAdvertised && providerSetupAvailable(provider)) {
       const ownsWizard = !!connectWizard && connectWizard.provider === provider;
       // A Connect press answers with the choice of how to sign in, wherever
       // it was pressed: Settings, the card, the composer's sign-in prompt.
@@ -11702,7 +11717,7 @@
         : install.phase === "installing" ? (provider === "agy" ? "Unpacking Antigravity..." : "Installing DeepSeek...") : "";
       const reason = (info && info.reason) || install.reason;
       return `<div class="onb"><p class="onb-heading">Install ${name}</p>`
-        + `<p class="onb-desc">${provider === "deepseek" ? "Install the pinned official dsh harness and its private Node runtime into this app's storage. Your system Node is unchanged." : "Download Google's Antigravity agent server into this app's storage. It is a large download: about 125 MB, and more on Linux."}</p>`
+        + `<p class="onb-desc">${provider === "deepseek" ? "Install the pinned official dsh harness and its private Node runtime into this app's storage. Your system Node is unchanged." : "Download Google's Antigravity agent server into this app's storage. It is a large download: about 125 MB, or 336 MB on Linux."}</p>`
         + (reason ? `<p class="onb-install-error" role="alert">${escapeHtml(reason)}</p>` : "")
         + (installing
           ? `<div class="onb-install-progress" role="status"><span>${provider === "deepseek" ? escapeHtml(progressLabel.replace(/\.\.\.$/, "")) + BLINK_DOTS : escapeHtml(progressLabel)}</span>`
@@ -11717,14 +11732,14 @@
     onb.innerHTML = deepseekPanel(mode, info); return true;
   }
   function deepseekPanel(mode, info) {
-    if (IS_REMOTE) return '<div class="onb"><p class="onb-heading">Connect DeepSeek at the computer</p><p class="onb-desc">Install dsh and enter its API key on the computer running this workspace.</p></div>';
+    if (!providerSetupAvailable("deepseek")) return '<div class="onb"><p class="onb-heading">Connect DeepSeek at the computer</p><p class="onb-desc">Install dsh and enter its API key on the computer running this workspace.</p></div>';
     if (mode === "missing-deepseek") return managedAgentInstallPanel("deepseek", info);
     const provider = state.providers.find(p => p.id === "deepseek") || {};
     if (provider.keySource === "environment") {
       return '<div class="onb"><p class="onb-heading">Connect DeepSeek</p><p class="onb-desc">Uses the key from the DEEPSEEK_API_KEY environment variable.</p><button class="onb-action" data-act="deepseekConnect">Connect</button></div>';
     }
     const source = provider.keySource === "environment" ? "DEEPSEEK_API_KEY environment variable" : provider.keySource === "saved" ? "saved key" : "no key configured";
-    return `<div class="onb"><p class="onb-heading">Connect DeepSeek</p><p class="onb-desc">Key source: ${source}. Environment takes precedence. A saved key stays in secure storage on this computer.</p>
+    return `<div class="onb"><p class="onb-heading">Connect DeepSeek</p><p class="onb-desc">Key source: ${source}. Environment takes precedence. A saved key stays in secure storage on the workspace machine.</p>
       <input class="onb-code-input onb-deepseek-key" type="password" maxlength="512" autocomplete="off" spellcheck="false" placeholder="Paste API key" aria-label="DeepSeek API key">
       <button class="onb-action" data-act="deepseekConnect">${provider.keySource ? "Connect (or replace saved key)" : "Save key and connect"}</button></div>`;
   }
@@ -11746,11 +11761,12 @@
   }
 
   function agyOnboardingPanel(mode, info) {
-    if (IS_REMOTE) {
+    if (!providerSetupAvailable("agy")) {
       return `<div class="onb"><p class="onb-heading">Connect Antigravity at the computer</p>`
         + `<p class="onb-desc">Antigravity signs in with Google in a browser on the computer running this workspace. Connect it there, then use it from here.</p></div>`;
     }
     if (mode === "missing-agy") return managedAgentInstallPanel("agy", info);
+    if (IS_REMOTE || info && info.agyChoice || !agyGoogleAvailable()) return agyChoicePanel(info);
     const provider = (state.providers || []).find(p => p.id === "agy");
     const connected = !!(provider && provider.connected);
     const reason = info && info.reason;
@@ -11775,14 +11791,14 @@
     return `<div class="onb onb-agy-choice"><p class="onb-heading">Connect Antigravity</p>`
       + (reason ? `<p class="onb-install-error" role="alert">${escapeHtml(reason)}</p>` : "")
       + `<p class="onb-desc">Choose how Antigravity signs in on this computer.</p>`
-      + `<button class="onb-action" type="button" data-act="agySignInGoogle">Sign in with Google${lastUsed("google")}</button>`
+      + (agyGoogleAvailable() ? `<button class="onb-action" type="button" data-act="agySignInGoogle">Sign in with Google${lastUsed("google")}</button>`
       + `<p class="onb-desc">${saved.includes("google")
         ? "Already signed in on this computer, so no browser is needed."
         : "Opens Google's sign-in page in your browser."}</p>`
-      + `<p class="onb-or">or</p>`
+      + `<p class="onb-or">or</p>` : "")
       + `<p class="onb-desc"><strong>Gemini API key${lastUsed("api-key")}</strong> &mdash; get one at `
       + `<a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">aistudio.google.com/apikey</a>. `
-      + `It is kept in this app's secure storage on this computer.</p>`
+      + `It is kept in this app's secure storage on the workspace machine.</p>`
       + (saved.includes("api-key")
         ? `<button class="onb-action onb-secondary" type="button" data-act="agySignInSavedKey">Use the saved key</button>`
           + `<p class="onb-desc">Or replace it:</p>`
@@ -14709,8 +14725,8 @@ ${fullText}`
     // Capability, never a version check: a host built before remote sign-in
     // drops `runGrokLogin` silently, and a button that does nothing is worse
     // than the honest dead end. Same rule the connect panel already follows.
-    // Antigravity signs in only at the desk: Google's page opens there.
-    const canSignIn = !IS_REMOTE || !!(state.hostCaps && state.hostCaps.remoteAgentSignIn) && provider !== "agy" && provider !== "deepseek";
+    // Key setup has its own per-provider capability on newer hosts.
+    const canSignIn = !IS_REMOTE || (provider === "agy" || provider === "deepseek" ? providerRemoteSetup(provider) : !!(state.hostCaps && state.hostCaps.remoteAgentSignIn));
     // A sign-in already running is not an offer to make one. The code entry
     // closes the moment the code is submitted, but verifying it takes a second
     // or two -- and the card underneath went straight back to "Sign in", which
@@ -20991,7 +21007,7 @@ ${fullText}`
         // sends no frame at all, and a locally-set flag would spin forever.
         // Absent means idle, which is also what every pre-refresh host means.
         state.providersChecking = msg.checking === true;
-        if (!IS_REMOTE && connectWizard && state.providers.some(p => p.id === connectWizard.provider && p.connected && p.needsLogin !== true)) {
+        if (connectWizard && (!IS_REMOTE || providerRemoteSetup(connectWizard.provider)) && state.providers.some(p => p.id === connectWizard.provider && p.connected && p.needsLogin !== true)) {
           closeConnectWizard();
         }
         renderCodexUpdateNudge();
@@ -21080,7 +21096,7 @@ ${fullText}`
         break;
       case "agyInstallProgress":
         if (msg.provider === "deepseek") {
-          if (!deepseekAdvertised || IS_REMOTE) break;
+          if (!deepseekAdvertised || !providerSetupAvailable("deepseek")) break;
           state.deepseekInstall = { phase: msg.phase || "idle", receivedBytes: msg.receivedBytes || 0, totalBytes: msg.totalBytes || 0, reason: msg.reason || "" };
           if (state.onboardingMode === "missing-deepseek") showOnboarding("missing-deepseek", { ...state.onboardingInfo, reason: msg.reason });
           if (connectWizard && connectWizard.provider === "deepseek") renderConnectWizard();
@@ -23940,18 +23956,18 @@ ${fullText}`
       }
       else if (act === "installCodex") vscode.postMessage({ type: "installCodex" });
       else if (act === "cancelCodexInstall") vscode.postMessage({ type: "cancelCodexInstall" });
-      else if (act === "installDeepSeek" && !IS_REMOTE && deepseekAdvertised) vscode.postMessage({ type: "installDeepSeek" });
-      else if (act === "cancelDeepSeekInstall" && !IS_REMOTE && deepseekAdvertised) vscode.postMessage({ type: "cancelDeepSeekInstall" });
-      else if (act === "deepseekConnect" && !IS_REMOTE && deepseekAdvertised) {
+      else if (act === "installDeepSeek" && providerSetupAvailable("deepseek") && deepseekAdvertised) vscode.postMessage({ type: "installDeepSeek" });
+      else if (act === "cancelDeepSeekInstall" && providerSetupAvailable("deepseek") && deepseekAdvertised) vscode.postMessage({ type: "cancelDeepSeekInstall" });
+      else if (act === "deepseekConnect" && providerSetupAvailable("deepseek") && deepseekAdvertised) {
         const field = onbAction.closest(".onb").querySelector(".onb-deepseek-key");
         const key = field && field.value.trim();
         if (field) field.value = "";
         vscode.postMessage({ type: "deepseekConnect", ...(key ? { key } : {}) });
       }
-      else if (act === "installAgy" && !IS_REMOTE && agyAdvertised) vscode.postMessage({ type: "installAgy" });
-      else if (act === "agySignInGoogle" && !IS_REMOTE && agyAdvertised) vscode.postMessage({ type: "agySignIn", method: "google" });
-      else if (act === "agySignInSavedKey" && !IS_REMOTE && agyAdvertised) vscode.postMessage({ type: "agySignIn", method: "api-key" });
-      else if (act === "agySignInKey" && !IS_REMOTE && agyAdvertised) {
+      else if (act === "installAgy" && providerSetupAvailable("agy") && agyAdvertised) vscode.postMessage({ type: "installAgy" });
+      else if (act === "agySignInGoogle" && providerSetupAvailable("agy") && agyAdvertised && agyGoogleAvailable()) vscode.postMessage({ type: "agySignIn", method: "google" });
+      else if (act === "agySignInSavedKey" && providerSetupAvailable("agy") && agyAdvertised) vscode.postMessage({ type: "agySignIn", method: "api-key" });
+      else if (act === "agySignInKey" && providerSetupAvailable("agy") && agyAdvertised) {
         const input = onbAction.closest(".onb") && onbAction.closest(".onb").querySelector(".onb-agy-key");
         const key = input ? String(input.value || "").trim() : "";
         if (!key) return;
@@ -23959,7 +23975,7 @@ ${fullText}`
         input.value = "";
         vscode.postMessage({ type: "agySignIn", method: "api-key", key });
       }
-      else if (act === "cancelAgyInstall" && !IS_REMOTE) vscode.postMessage({ type: "cancelAgyInstall" });
+      else if (act === "cancelAgyInstall" && providerSetupAvailable("agy")) vscode.postMessage({ type: "cancelAgyInstall" });
       else if (act === "runLogin") vscode.postMessage({ type: "runGrokLogin" });
       else if (act === "recheck") vscode.postMessage({ type: "recheckConnection", provider: onbAction.dataset.provider });
       else if (act === "connectProvider") vscode.postMessage({ type: "runGrokLogin", provider: onbAction.dataset.provider });
