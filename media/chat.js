@@ -11904,7 +11904,7 @@
       const done = id === "codex"
         ? "You can start working with OpenAI!"
         : id === "claude" ? "You can start clauding!" : id === "muse" ? "Muse Code is connected."
-        : id === "agy" ? "Antigravity is connected." : "You can start grokking!";
+        : id === "agy" ? "Antigravity is connected." : id === "deepseek" ? "DeepSeek is connected." : "You can start grokking!";
       if (ver) setWelcomeStatus("Connected", false);
       onb.innerHTML =
         `<div class="onb onb-connected">` +
@@ -11939,9 +11939,11 @@
             (museAvailable ? `<button class="onb-agent-tile onb-action" type="button" data-act="connectProvider" data-provider="muse">` +
               `<span class="onb-agent-mark">${providerLogoMarkup("muse")}</span><span><strong>Muse Code</strong><small>Meta Muse CLI</small></span>` +
             `</button>` : "") +
-            (deepseekAdvertised && !IS_REMOTE ? `<button class="onb-agent-tile onb-action" type="button" data-act="connectProvider" data-provider="deepseek"><span class="onb-agent-mark">${providerLogoMarkup("deepseek")}</span><span><strong>DeepSeek</strong><small>Official dsh (experimental)</small></span></button>` : "") +
+            // DeepSeek's tile on a remote needs the host's remoteSetup: an older
+            // host drops a remote's DeepSeek connect without any reply.
+            (deepseekAdvertised && providerSetupAvailable("deepseek") ? `<button class="onb-agent-tile onb-action" type="button" data-act="connectProvider" data-provider="deepseek"><span class="onb-agent-mark">${providerLogoMarkup("deepseek")}</span><span><strong>DeepSeek</strong><small>Official dsh</small></span></button>` : "") +
             (agyAdvertised ? `<button class="onb-agent-tile onb-action" type="button" data-act="connectProvider" data-provider="agy">` +
-              `<span class="onb-agent-mark">${providerLogoMarkup("agy")}</span><span><strong>Antigravity</strong><small>Google Antigravity (experimental)</small></span>` +
+              `<span class="onb-agent-mark">${providerLogoMarkup("agy")}</span><span><strong>Antigravity</strong><small>Google Antigravity</small></span>` +
             `</button>` : "") +
           `</div>` +
         `</div>`;

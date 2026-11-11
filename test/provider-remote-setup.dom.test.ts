@@ -42,6 +42,23 @@ describe.each(cases)("$name setup surfaces", provider => {
     expect(posted).toContainEqual({ type: "logout", provider: provider.id });
   });
 
+  it("lists the agent in Connect an agent at the desk, without the word experimental", () => {
+    const h = bootWebview({ remote: false });
+    dispatch(h.window, { type: "providerState", providers: [{ id: "grok", connected: false }, { id: provider.id, connected: false, remoteSetup: true }] });
+    dispatch(h.window, { type: "onboarding", state: "connect-agent" });
+    const tile = h.doc.querySelector(`.onb-agent-tile[data-provider="${provider.id}"]`);
+    expect(tile).not.toBeNull();
+    expect(tile!.textContent).not.toMatch(/experimental/i);
+  });
+
+  it("lists the agent in Connect an agent on a remote whose host takes remote setup", () => {
+    const h = bootWebview({ remote: true });
+    dispatch(h.window, { type: "initialState", capabilities: { remoteAgentSignIn: true } });
+    dispatch(h.window, { type: "providerState", providers: [{ id: "grok", connected: false }, { id: provider.id, connected: false, remoteSetup: true }] });
+    dispatch(h.window, { type: "onboarding", state: "connect-agent" });
+    expect(h.doc.querySelector(`[data-act="connectRemote"][data-provider="${provider.id}"]`)).not.toBeNull();
+  });
+
   it("keeps the old status copy and omits keys/install without the capability", () => {
     const h = bootWebview({ remote: true });
     dispatch(h.window, { type: "providerState", providers: [{ id: provider.id, connected: false }] });
