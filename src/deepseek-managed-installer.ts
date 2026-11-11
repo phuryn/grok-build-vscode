@@ -8,6 +8,8 @@ import { extractZipFile } from "./agy-managed-installer";
 
 export const DEEPSEEK_VERSION = "0.2.1-rc.5";
 export const DEEPSEEK_NODE_VERSION = "22.23.4";
+/** The pinned tree's npm lock, as shipped in resources/deepseek. */
+export const DEEPSEEK_SHIPPED_LOCK = "runtime-lock.json";
 export function deepseekManagedDir(storageRoot: string): string {
   return path.join(storageRoot, "deepseek-managed", `${DEEPSEEK_VERSION}-node-${DEEPSEEK_NODE_VERSION}`);
 }
@@ -115,7 +117,11 @@ export async function installManagedDeepSeek(options: {
     }
     await fs.promises.mkdir(path.join(stage, "runtime"));
     const assets = options.assets ?? path.join(__dirname, "../resources/deepseek");
-    for (const file of ["package.json", "package-lock.json"]) await fs.promises.copyFile(path.join(assets, file), path.join(stage, "runtime", file));
+    // The lock ships as runtime-lock.json: electron-builder leaves every
+    // package-lock.json out of app.asar, so under its real name the desktop
+    // app (and so every cloud machine) had no lock to install from.
+    await fs.promises.copyFile(path.join(assets, "package.json"), path.join(stage, "runtime", "package.json"));
+    await fs.promises.copyFile(path.join(assets, DEEPSEEK_SHIPPED_LOCK), path.join(stage, "runtime", "package-lock.json"));
     await (options.runNpm ?? npmCi)(stage, options.signal);
     options.signal.throwIfAborted();
     if (!locateDeepSeek({ configuredPath: stage, platform })) throw new Error("DeepSeek installation is incomplete.");

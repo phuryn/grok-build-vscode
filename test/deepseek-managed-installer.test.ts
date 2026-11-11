@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { deepseekManagedDir, deepseekNodeAsset, deepseekRuntimePaths, installManagedDeepSeek, locateDeepSeek, nodeChecksum, DEEPSEEK_VERSION } from "../src/deepseek-managed-installer";
+import { deepseekManagedDir, deepseekNodeAsset, deepseekRuntimePaths, installManagedDeepSeek, locateDeepSeek, nodeChecksum, DEEPSEEK_SHIPPED_LOCK, DEEPSEEK_VERSION } from "../src/deepseek-managed-installer";
 import { DeepSeekBackend } from "../src/deepseek-backend";
 
 const roots: string[] = [];
@@ -41,7 +41,7 @@ describe("pinned private DeepSeek runtime", () => {
   it("locks the entire public dependency tree, including native addons", () => {
     const assets = path.join(__dirname, "../resources/deepseek");
     const manifest = JSON.parse(fs.readFileSync(path.join(assets, "package.json"), "utf8"));
-    const lock = JSON.parse(fs.readFileSync(path.join(assets, "package-lock.json"), "utf8"));
+    const lock = JSON.parse(fs.readFileSync(path.join(assets, DEEPSEEK_SHIPPED_LOCK), "utf8"));
     expect(manifest.dependencies["@deepseek-ai/dsh"]).toBe(DEEPSEEK_VERSION);
     expect(lock.packages[""].dependencies).toEqual(manifest.dependencies);
     expect(lock.packages["node_modules/@deepseek-ai/dsh"].version).toBe(DEEPSEEK_VERSION);
@@ -49,6 +49,14 @@ describe("pinned private DeepSeek runtime", () => {
       expect(entry.resolved).toMatch(/^https:\/\/registry\.npmjs\.org\//); expect(entry.integrity).toMatch(/^sha512-/);
     }
     expect(Object.keys(lock.packages).some(v => v.endsWith("/node-pty"))).toBe(true);
+  });
+  // electron-builder leaves every package-lock.json out of app.asar, so a lock
+  // shipped under that name reached the vsix but never the desktop app or a
+  // cloud machine, where the install then failed with ENOENT (4.15.8).
+  it("ships the lock under a name the desktop package keeps", () => {
+    const assets = path.join(__dirname, "../resources/deepseek");
+    expect(fs.existsSync(path.join(assets, "package-lock.json"))).toBe(false);
+    expect(DEEPSEEK_SHIPPED_LOCK).not.toMatch(/^(package-lock\.json|npm-shrinkwrap\.json|yarn\.lock)$/);
   });
   it("configured root wins without PATH or old-version adoption", () => {
     const storageRoot = root(); const pin = deepseekManagedDir(storageRoot);
@@ -65,6 +73,9 @@ describe("pinned private DeepSeek runtime", () => {
     const runNpm = vi.fn(async (stage: string) => {
       expect(fs.existsSync(deepseekManagedDir(storageRoot))).toBe(false);
       expect(fs.readFileSync(deepseekRuntimePaths(stage, "win32").node, "utf8")).toBe("fake node");
+      // npm ci reads the lock under its real name.
+      expect(fs.readFileSync(path.join(stage, "runtime/package-lock.json"), "utf8"))
+        .toBe(fs.readFileSync(path.join(__dirname, "../resources/deepseek", DEEPSEEK_SHIPPED_LOCK), "utf8"));
       const cli = deepseekRuntimePaths(stage, "win32").cli; fs.mkdirSync(path.dirname(cli), { recursive: true }); fs.writeFileSync(cli, "fake dsh");
       fs.writeFileSync(path.join(path.dirname(cli), "../package.json"), JSON.stringify({ version: DEEPSEEK_VERSION }));
     });
