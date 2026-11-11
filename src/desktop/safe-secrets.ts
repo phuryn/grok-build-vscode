@@ -19,6 +19,26 @@ export interface SafeStorageLike {
   decryptString(encrypted: Buffer): string;
   /** Linux only in Electron: the password store it picked. */
   getSelectedStorageBackend?(): string;
+  /** Linux only in Electron: encrypt with its built-in key when no keychain exists. */
+  setUsePlainTextEncryption?(usePlainText: boolean): void;
+}
+
+/**
+ * A cloud machine has no OS keychain: no desktop session, no D-Bus, so Electron
+ * settles on `basic_text` and every secret store refuses. A Gemini or DeepSeek
+ * key pasted from the phone then cannot be saved at all. The machine has one
+ * user, and its agents' own sign-ins already sit in plain files in that home,
+ * so Electron's built-in key exposes nothing new there. A desk keeps the strict
+ * rule (#209): no keychain, no stored secret. Returns whether it switched.
+ */
+export function useBuiltInKeyOnCloudMachine(
+  safeStorage: SafeStorageLike,
+  where: { platform?: NodeJS.Platform; cloud: boolean },
+): boolean {
+  if ((where.platform ?? process.platform) !== "linux" || !where.cloud) return false;
+  if (safeStorage.isEncryptionAvailable() || !safeStorage.setUsePlainTextEncryption) return false;
+  safeStorage.setUsePlainTextEncryption(true);
+  return true;
 }
 
 const ENCRYPTION_UNAVAILABLE =

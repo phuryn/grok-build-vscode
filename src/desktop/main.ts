@@ -76,11 +76,12 @@ import {
   resolveExtensionRoot,
   resolveUserDataDir,
 } from "./paths";
-import { createSafeStorageSecrets } from "./safe-secrets";
+import { createSafeStorageSecrets, useBuiltInKeyOnCloudMachine } from "./safe-secrets";
 import {
   RELAY_DEVICE_TOKEN_ENV,
   RELAY_DEVICE_TOKEN_SECRET,
   consumeInjectedDeviceToken,
+  isCloudEnvironment,
   withInjectedSecret,
 } from "../remote-frames";
 import {
@@ -479,6 +480,11 @@ async function createApp(): Promise<void> {
   const extensionRoot = resolveExtensionRoot();
   const pkg = readPackageMeta(extensionRoot);
   const configPath = path.join(userData, "config.json");
+  // Before anything touches safeStorage: on a cloud machine, Electron's
+  // built-in key stands in for the keychain it does not have.
+  if (useBuiltInKeyOnCloudMachine(safeStorage, { cloud: isCloudEnvironment() })) {
+    log("cloud machine without an OS keychain: secrets use Electron's built-in key");
+  }
   // Construct first, then attach encryption — same production sequence tests pin.
   // Never delete a legacy plaintext credential when encrypt is unavailable.
   const config = new ConfigStore(configPath);

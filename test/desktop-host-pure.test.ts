@@ -626,16 +626,22 @@ describe("createSafeStorageSecrets", () => {
     );
   });
 
-  it("never forces a password store or turns on plaintext encryption", () => {
+  it("never forces a password store, and turns on plaintext encryption only on a cloud machine", () => {
     // A forced --password-store breaks KDE and orphans ciphertext stored under
     // the other backend; setUsePlainTextEncryption is the plaintext fallback by
-    // another name. #209 is diagnostics only.
-    const sources = ["main.ts", "safe-secrets.ts", "config-store.ts"].map((name) => fs.readFileSync(
+    // another name. On a desk #209 is diagnostics only. The one exception is a
+    // cloud machine, which has no keychain at all (cloud-secret-storage.test.ts):
+    // the call lives in useBuiltInKeyOnCloudMachine and nowhere else.
+    const read = (name: string) => fs.readFileSync(
       path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "src", "desktop", name),
       "utf8",
-    )).join("\n");
+    );
+    const sources = ["main.ts", "safe-secrets.ts", "config-store.ts"].map(read).join("\n");
     expect(sources).not.toMatch(/appendSwitch\(\s*["']password-store/);
-    expect(sources).not.toContain("setUsePlainTextEncryption");
+    expect(read("main.ts")).not.toContain("setUsePlainTextEncryption");
+    expect(read("config-store.ts")).not.toContain("setUsePlainTextEncryption");
+    const calls = read("safe-secrets.ts").match(/\.setUsePlainTextEncryption\(/g) ?? [];
+    expect(calls).toHaveLength(1);
   });
 
   it("writes secrets via temp file then rename (crash-safe)", async () => {
