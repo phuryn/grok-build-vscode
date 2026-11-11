@@ -17,7 +17,7 @@ import {
   normalizeAgyUpdate,
   stopAgyServerTree,
 } from "../src/agy-backend";
-import { acpClientCapabilities } from "../src/acp";
+import { AcpClient, acpClientCapabilities } from "../src/acp";
 import { pickAutoAcceptOption } from "../src/session";
 import { sessionModes } from "../src/mode-prefs";
 
@@ -29,6 +29,52 @@ const configOptions = [
 ];
 
 describe("Antigravity models and effort", () => {
+  it("applies the default and live key effort through AcpClient without an ACP thinking_level RPC, including after resume", async () => {
+    let level: "low" | "medium" | "high" = "high";
+    const backend = new AgyBackend({ keyRelay: {
+      baseUrl: "http://127.0.0.1/relay/lease", release: () => {}, supportsThinking: () => true,
+      get thinkingLevel() { return level; }, setThinkingLevel: (value) => { level = value; },
+    } });
+    const client = new AcpClient({ backend, cliPath: "unused", cwd: "/repo", env: {}, effort: "low", log: () => {} });
+    const rpc = vi.spyOn(client as any, "request").mockResolvedValue({ sessionId: "s", configOptions: [{ id: "model", currentValue: "gemini-4-argon", options: [{ value: "gemini-4-argon" }] }] });
+    await client.newSession();
+    expect(level).toBe("low");
+    expect(client.currentReasoningEffort).toBe("low");
+    const before = rpc.mock.calls.length;
+    await expect(client.setReasoningEffort("xhigh")).resolves.toBe(true);
+    expect(rpc.mock.calls).toHaveLength(before);
+    expect(level).toBe("high");
+    expect(client.currentReasoningEffort).toBe("high");
+    await client.loadSession("s");
+    expect(client.currentReasoningEffort).toBe("high");
+    await expect(client.setReasoningEffort("medium")).resolves.toBe(true);
+    expect(level).toBe("medium");
+    expect(rpc.mock.calls.some(([, params]) => (params as any)?.configId === "thinking_level")).toBe(false);
+  });
+
+  it("offers exactly Low/Medium/High from relay thinking metadata and applies key effort locally", () => {
+    let level: "low" | "medium" | "high" = "low";
+    const backend = new AgyBackend({ keyRelay: {
+      baseUrl: "http://127.0.0.1/relay/lease", release: () => {},
+      supportsThinking: (id) => id === "gemini-4-carbon",
+      get thinkingLevel() { return level; },
+      setThinkingLevel: (value) => { level = value; },
+    } });
+    const response = { configOptions: [{ id: "model", currentValue: "gemini-4-carbon", options: ["gemini-4-carbon", "gemini-3.8-flash"].map((value) => ({ value })) }] };
+    const [thinking, plain] = backend.normalizeSessionResponse(response).models.availableModels;
+    expect(thinking._meta).toMatchObject({ supportsReasoningEffort: true, reasoningEfforts: [{ value: "low" }, { value: "medium" }, { value: "high" }], reasoningEffort: "low" });
+    expect(plain._meta).toMatchObject({ supportsReasoningEffort: false, reasoningEfforts: [] });
+    for (const [requested, expected] of [["none", "low"], ["minimal", "low"], ["medium", "medium"], ["high", "high"], ["xhigh", "high"]]) {
+      expect(backend.setReasoningEffort("s", "gemini-4-carbon", requested)).toEqual({ local: true });
+      expect(level).toBe(expected);
+      expect(backend.configState({}, { modelId: "gemini-4-carbon", modeId: "agent", reasoningEffort: requested }).reasoningEffort).toBe(expected);
+    }
+    expect(backend.setReasoningEffort("s", "gemini-3.8-flash", "low")).toBeNull();
+    expect(backend.setReasoningEffort("s", "gemini-4-carbon", "max")).toBeNull();
+    expect(level).toBe("high");
+    expect(backend.configState({}, { modelId: "gemini-3.8-flash", modeId: "agent" }).reasoningEffort).toBeUndefined();
+  });
+
   it("shows one model with thinking_level as its effort ladder", () => {
     expect(modelsFromAgyConfigOptions(configOptions)).toEqual({
       currentModelId: "gemini-3.8-flash",

@@ -3,10 +3,33 @@ import * as path from "node:path";
 import { Window } from "happy-dom";
 import { describe, expect, it } from "vitest";
 import { bootWebview, click, dispatch } from "./webview-harness";
+import { AgyBackend } from "../src/agy-backend";
 
 const onboarding = (doc: Document) => doc.getElementById("welcome-onboarding")!;
 
 describe("Antigravity in the chat renderer", () => {
+  it.each([false, true])("offers Low/Medium/High only for a key model that thinks (remote=%s)", (remote) => {
+    const backend = new AgyBackend({ keyRelay: {
+      baseUrl: "http://127.0.0.1/relay/lease", release: () => {}, thinkingLevel: "medium", setThinkingLevel: () => {},
+      supportsThinking: (id) => id === "gemini-4-carbon",
+    } });
+    const normalized = backend.normalizeSessionResponse({ configOptions: [{ id: "model", currentValue: "gemini-4-carbon", options: ["gemini-4-carbon", "gemini-3.8-flash"].map((value) => ({ value, name: value })) }] });
+    const models = normalized.models.availableModels.map((model: any) => ({ provider: "agy", modelId: model.modelId, name: model.name,
+      ...model._meta, reasoningEfforts: model._meta.reasoningEfforts.map((effort: any) => effort.value) }));
+    const h = bootWebview({ remote });
+    dispatch(h.window, { type: "providerState", providers: [{ id: "agy", connected: true }] });
+    dispatch(h.window, { type: "session", sessionId: "s", provider: "agy", currentModelId: "gemini-4-carbon", models });
+    click(h.window, h.doc.getElementById("gear-btn"));
+    expect([...h.doc.querySelectorAll(".effort-strip-stop")].map((el) => el.getAttribute("aria-label"))).toEqual(["Low", "Medium", "High"]);
+    click(h.window, h.doc.querySelector('[data-effort="high"]'));
+    click(h.window, h.doc.getElementById("gear-btn"));
+    expect(h.posted).toContainEqual({ type: "setEffort", level: "high" });
+    dispatch(h.window, { type: "session", sessionId: "s", provider: "agy", currentModelId: "gemini-3.8-flash", models });
+    click(h.window, h.doc.getElementById("gear-btn"));
+    expect(h.doc.querySelector(".model-picker-row")).not.toBeNull();
+    expect(h.doc.querySelector(".model-effort-strip")).toBeNull();
+  });
+
   it("draws and sends nothing for Antigravity until the host names it", () => {
     const h = bootWebview();
     dispatch(h.window, { type: "providerState", providers: [{ id: "grok", connected: false }] });

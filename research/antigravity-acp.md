@@ -85,7 +85,7 @@ aistudio.google.com/apikey). Vertex AI and Enterprise sign-in are not offered.
   a relay the host runs on 127.0.0.1 (`agy-key-relay.ts`), and the relay alone
   holds the key. The server is spawned with `AGY_ACP_ENABLE_GATEWAY_AUTH=1` and
   authenticates `{methodId: "gateway", _meta: {gateway: {baseUrl:
-  "http://127.0.0.1:<port>/<prefix>"}}}`; no key reaches it. Why gateway mode
+  "http://127.0.0.1:<port>/<prefix>/<lease>"}}}`; no key reaches it. Why gateway mode
   and why a relay are under [Decisions to revisit](#decisions-to-revisit).
   The host keeps the key in HostSecrets (`grok.agy.geminiApiKey`: VS Code
   SecretStorage, or the desktop's safe storage) and in the relay's memory while
@@ -159,8 +159,12 @@ aistudio.google.com/apikey). Vertex AI and Enterprise sign-in are not offered.
   the key -- 40 models for the key measured, Gemini 4 Argon among them -- with
   **no `thinking_level`** (a gateway's models are listed exactly as declared,
   `server.py` `_thinking_variants`), and a turn's generate call carries no
-  thinking config. So key mode has no effort control: `AgyBackend` sends none
-  and the picker shows none. The picker keeps the Gemini chat models (see the
+  thinking config. `AgyBackend` therefore offers Low / Medium / High only for
+  models whose API listing carries `thinking: true`; `agyThinkingLevel` maps
+  the person's default or live choice onto those three levels. Each server's
+  relay lease holds its own level, and the relay pins
+  `generationConfig.thinkingConfig.thinkingLevel` on generate calls without
+  an ACP `thinking_level` RPC or a restart. The picker keeps the Gemini chat models (see the
   model filter below), newest first, and a conversation with no remembered
   model starts on `gemini-4-argon`, else on the newest model offered
   (`AgyBackend.defaultModelId`).
@@ -277,7 +281,7 @@ excepted.
 ## Not in v1
 
 MCP connectors, Plan mode, Vertex AI and Enterprise sign-in,
-a usage meter, effort control on a key, and a
+a usage meter, and a
 subagent card that shows its child's own words or result (its tool calls do
 show, see [Subagents](#subagents)).
 
@@ -331,7 +335,8 @@ observable change that should make us look again.
   spawned and closed when none remains. It replaces whatever credential arrives
   with the key and forwards only to `generativelanguage.googleapis.com`;
   anything without the prefix is 403. Its log names status, method and path,
-  never the key, the prefix, a query or a body, and the server's own output is
+  plus the applied thinking level on generate calls, never the key, the prefix,
+  a query or a body, and the server's own output is
   redacted for the prefix (it logs its gateway address).
 - **Why:** gateway mode cannot carry the key itself. The harness sends its own
   `x-goog-api-key: dummy_api_key` on every generate call (`server.py`
@@ -343,6 +348,18 @@ observable change that should make us look again.
   (`gateway/model_discovery.py` `_discovery_endpoints`) and for generate calls
   (measured against a local stand-in, with and without a trailing slash); the
   generate call is `POST <baseUrl>/v1beta/models/<model>:streamGenerateContent?alt=sse`.
+- **Key effort:** each lease adds its own path segment beneath the prefix;
+  its mutable level isolates concurrent conversations. Only generate bodies
+  with an explicit choice for a thinking model are buffered and rewritten;
+  other requests and generate responses stream. An existing thinking config
+  is replaced only by an explicit choice. A 400 whose JSON error message says
+  the thinking level is not supported retries once without `thinkingConfig`;
+  that model/level is skipped for later requests during this relay's life.
+  Other errors pass through. The owner's Gemini API benchmark accepted
+  low/medium/high for Carbon (2026-11-10) and Argon (2026-10-13), omitted ==
+  medium; Carbon refused minimal and silently mapped xhigh/max to its default.
+  The relay therefore never invents those extra tiers. Malformed JSON passes
+  through unchanged so the relay cannot discard a conversation's contents.
 - **Risk, including quota:** any process of the same user that learns the port
   and prefix can spend the key's quota while a key's server runs; the prefix
   is never written to our logs, and the agent's commands can already spend it

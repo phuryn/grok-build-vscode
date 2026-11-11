@@ -882,3 +882,12 @@ Existing Windows On request histories are durably changed to Prompt unmatched
 before approvals or turns; cloud histories still receive a pre-attach refusal.
 See [Muse modes](../../research/muse-modes.md#windows-rule-muse-serve-cannot-enforce-its-sandbox)
 for the full measurement and removal condition.
+
+### Antigravity key-mode effort
+
+Server 1.4.0 gateway mode lists API models without `thinking_level` and sends
+no thinking config. The host relay supplies Low / Medium / High for API models
+marked `thinking: true`, pins each conversation's chosen tier on generate calls,
+and retries an unsupported model/tier once at the API default. Google sign-in
+keeps the server's own config option. Evidence and removal conditions:
+[Antigravity key relay](../../research/antigravity-acp.md#the-key-relay).

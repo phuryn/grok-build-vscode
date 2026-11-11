@@ -21,9 +21,10 @@ import type { AddressInfo } from "node:net";
  *
  * Requests must carry an unguessable path prefix (the server keeps a baseUrl's
  * path for model discovery and generate calls alike; measured), are forwarded
- * only to {@link AGY_RELAY_UPSTREAM}, and stream both ways with no timeout on
- * the body: a turn is one long SSE response. The log names status, method and
- * path after the prefix -- never the key, the prefix, a query, a body or a
+ * only to {@link AGY_RELAY_UPSTREAM}. Generate bodies are rewritten to pin a
+ * lease's effort; responses stream with no timeout (a turn is one long SSE
+ * response). The log names status, method, path after the prefix and applied
+ * level -- never the key, the prefix, a query, a body or a
  * response.
  */
 export const AGY_RELAY_UPSTREAM = "https://generativelanguage.googleapis.com";
@@ -54,7 +55,7 @@ const LISTING_PATH = "/v1beta/models";
 /** Far above a real listing (~40 models, tens of KB); anything bigger is not remembered. */
 const MAX_LISTING_BYTES = 4 * 1024 * 1024;
 
-/** The last model listing Google served one key. Model names only: no key. */
+/** The last model listing Google served one key. Public model metadata, no key. */
 export interface AgyModelListing {
   /** A one-way fingerprint, so a replaced key never sees the old key's models. */
   keyId: string;
@@ -100,15 +101,22 @@ export interface AgyKeyRelayOptions {
 export interface AgyRelayLease {
   /** The `_meta.gateway.baseUrl` a server authenticates with. */
   readonly baseUrl: string;
+  /** An explicit choice; undefined leaves the model's API default alone. */
+  readonly thinkingLevel: AgyThinkingLevel | undefined;
+  setThinkingLevel(level: AgyThinkingLevel): void;
+  supportsThinking(modelId: string): boolean;
   /** Idempotent. The relay closes when the last lease is released. */
   release(): void;
 }
+
+export type AgyThinkingLevel = "low" | "medium" | "high";
 
 export class AgyKeyRelay {
   private server?: http.Server;
   private listening?: Promise<string>;
   private key?: string;
-  private leases = 0;
+  private readonly leases = new Map<string, { level?: AgyThinkingLevel }>();
+  private readonly unsupportedLevels = new Set<string>();
   private readonly secret: string;
   private readonly upstream: AgyUpstreamRequest;
   private readonly log: (line: string) => void;
@@ -126,18 +134,23 @@ export class AgyKeyRelay {
    * A lease on a listening relay that presents `key`. The newest key wins for
    * every live server, so replacing a saved key needs no restart.
    */
-  async acquire(key: string): Promise<AgyRelayLease> {
+  async acquire(key: string, level?: AgyThinkingLevel): Promise<AgyRelayLease> {
     this.key = key;
-    this.leases += 1;
-    let released = false;
+    const id = randomBytes(12).toString("base64url");
+    const state = { level };
+    this.leases.set(id, state);
     const release = () => {
-      if (released) return;
-      released = true;
-      this.leases -= 1;
-      if (this.leases <= 0) void this.close();
+      if (!this.leases.delete(id)) return;
+      if (!this.leases.size) void this.close();
     };
     try {
-      return { baseUrl: await this.listen(), release };
+      return {
+        baseUrl: `${await this.listen()}/${id}`,
+        get thinkingLevel() { return state.level; },
+        setThinkingLevel: (next) => { state.level = next; },
+        supportsThinking: (modelId) => this.supportsThinking(modelId),
+        release,
+      };
     } catch (error) {
       release();
       throw error;
@@ -149,10 +162,11 @@ export class AgyKeyRelay {
     return text.split(this.secret).join("<relay>");
   }
 
-  get active(): boolean { return this.leases > 0; }
+  get active(): boolean { return this.leases.size > 0; }
 
   async close(): Promise<void> {
-    this.leases = 0;
+    this.leases.clear();
+    this.unsupportedLevels.clear();
     this.key = undefined;
     const server = this.server;
     this.server = undefined;
@@ -188,13 +202,15 @@ export class AgyKeyRelay {
     const raw = req.url ?? "/";
     const prefix = `/${this.secret}/`;
     const key = this.key;
-    if (!raw.startsWith(prefix) || !key) {
+    const leaseEnd = raw.indexOf("/", prefix.length);
+    const lease = this.leases.get(raw.slice(prefix.length, leaseEnd));
+    if (!raw.startsWith(prefix) || !key || leaseEnd < 0 || !lease) {
       this.log(`[agy-relay] 403 ${method}`);
       res.writeHead(403, { "content-type": "text/plain" });
       res.end("Forbidden");
       return;
     }
-    const rest = raw.slice(prefix.length - 1);
+    const rest = raw.slice(leaseEnd);
     const queryAt = rest.indexOf("?");
     const pathname = queryAt < 0 ? rest : rest.slice(0, queryAt);
     const query = new URLSearchParams(queryAt < 0 ? "" : rest.slice(queryAt + 1));
@@ -223,16 +239,12 @@ export class AgyKeyRelay {
       this.refreshListing(target, headers, listing, shown);
       return;
     }
-    let upstream: http.ClientRequest;
-    try {
-      upstream = this.upstream(target, { method, headers });
-    } catch (error) {
-      this.fail(res, shown, error);
-      return;
-    }
-    upstream.on("response", (answer) => {
+    const model = method === "POST" ? /^\/v1beta\/models\/([^/:]+):(?:streamGenerateContent|generateContent)$/.exec(target.pathname)?.[1] : undefined;
+    const choice = model && this.supportsThinking(model) ? lease.level : undefined;
+    let upstream: http.ClientRequest | undefined;
+    const respond = (answer: http.IncomingMessage, level?: AgyThinkingLevel, body?: Buffer) => {
       const status = answer.statusCode ?? 502;
-      this.log(`[agy-relay] ${status} ${shown}`);
+      this.log(`[agy-relay] ${status} ${shown}${model ? ` level=${level ?? "default"}` : ""}`);
       const out: http.OutgoingHttpHeaders = {};
       for (const [name, value] of Object.entries(answer.headers)) {
         if (value !== undefined && !HOP_BY_HOP.has(name.toLowerCase())) out[name] = value;
@@ -240,14 +252,86 @@ export class AgyKeyRelay {
       if (listing && status === 200) this.remember(answer, listing);
       if (res.destroyed) { answer.resume(); return; }
       res.writeHead(status, out);
-      answer.pipe(res);
-    });
-    upstream.on("error", (error) => this.fail(res, shown, error));
+      if (body) res.end(body);
+      else answer.pipe(res);
+    };
+    const forward = (body?: Buffer, level?: AgyThinkingLevel, fallback?: Buffer) => {
+      if (res.destroyed) return;
+      const applied = `${shown}${model ? ` level=${level ?? "default"}` : ""}`;
+      if (body) {
+        headers["content-length"] = body.length;
+        delete headers["transfer-encoding"];
+      }
+      try {
+        upstream = this.upstream(target, { method, headers: { ...headers } });
+      } catch (error) {
+        this.fail(res, applied, error);
+        return;
+      }
+      upstream.on("response", (answer) => {
+        answer.on("error", (error) => this.fail(res, applied, error));
+        if (answer.statusCode !== 400 || !level || !fallback) { respond(answer, level); return; }
+        const chunks: Buffer[] = [];
+        let size = 0;
+        const collect = (chunk: Buffer) => {
+          chunks.push(chunk);
+          size += chunk.length;
+          // Only a small JSON error needs inspection; larger errors stream as-is.
+          if (size > 64 * 1024) {
+            answer.off("data", collect);
+            answer.off("end", retry);
+            respond(answer, level);
+            for (const part of chunks) res.write(part);
+          }
+        };
+        const retry = () => {
+          const errorBody = Buffer.concat(chunks);
+          let message: unknown;
+          try { message = JSON.parse(errorBody.toString("utf8"))?.error?.message; } catch { /* pass through */ }
+          if (typeof message === "string" && /\bthinking[_ ]level\b.*\bnot supported\b/is.test(message)) {
+            this.unsupportedLevels.add(`${model}:${level}`);
+            this.log(`[agy-relay] 400 ${shown} level=${level} (retry without thinkingConfig)`);
+            forward(fallback);
+          } else respond(answer, level, errorBody);
+        };
+        answer.on("data", collect);
+        answer.on("end", retry);
+      });
+      upstream.on("error", (error) => this.fail(res, applied, error));
+      if (body) upstream.end(body);
+      else req.pipe(upstream);
+    };
     // The harness hung up mid-stream (a cancelled turn): stop the upstream too.
     // Not for the listing: a discovery that gave up still leaves a listing
     // worth keeping for the next start.
-    res.on("close", () => { if (!res.writableFinished && !listing) upstream.destroy(); });
-    req.pipe(upstream);
+    res.on("close", () => { if (!res.writableFinished && !listing) upstream?.destroy(); });
+    req.on("error", (error) => { upstream?.destroy(); this.fail(res, shown, error); });
+    if (!choice) { forward(); return; }
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk: Buffer) => chunks.push(chunk));
+    req.on("end", () => {
+      const original = Buffer.concat(chunks);
+      let body: any;
+      try { body = JSON.parse(original.toString("utf8")); } catch { forward(original); return; }
+      if (!body || typeof body !== "object" || Array.isArray(body)) { forward(original); return; }
+      const config = body.generationConfig;
+      body.generationConfig = config && typeof config === "object" && !Array.isArray(config) ? config : {};
+      delete body.generationConfig.thinkingConfig;
+      const fallback = Buffer.from(JSON.stringify(body));
+      if (this.unsupportedLevels.has(`${model}:${choice}`)) { forward(fallback); return; }
+      body.generationConfig.thinkingConfig = { thinkingLevel: choice };
+      // Error inspection requires JSON, even if the harness accepts compression.
+      headers["accept-encoding"] = "identity";
+      forward(Buffer.from(JSON.stringify(body)), choice, fallback);
+    });
+  }
+
+  private supportsThinking(modelId: string): boolean {
+    const listing = this.listings.get();
+    if (!this.key || listing?.keyId !== keyId(this.key)) return false;
+    try {
+      return JSON.parse(listing.body).models.some((model: any) => model?.name === `models/${modelId}` && model.thinking === true);
+    } catch { return false; }
   }
 
   /** Keeps a 200 listing as it streams past, if it is one worth replaying. */
@@ -299,6 +383,7 @@ export class AgyKeyRelay {
   }
 
   private fail(res: http.ServerResponse, shown: string, error: unknown): void {
+    if (res.destroyed) return;
     const code = (error as NodeJS.ErrnoException)?.code ?? "error";
     this.log(`[agy-relay] 502 ${shown} (${code})`);
     if (res.headersSent) { res.destroy(); return; }

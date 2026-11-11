@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import type { AgyRelayLease } from "./agy-key-relay";
 import type {
   AcpBackend,
   BackendConfigState,
@@ -696,6 +697,7 @@ export function agySessionsFor(
 export interface AgyBackendOptions {
   /** Signed in with a Gemini API key: the server runs in gateway mode. */
   keyMode?: boolean;
+  keyRelay?: AgyRelayLease;
   platform?: NodeJS.Platform;
   env?: NodeJS.ProcessEnv;
   home?: string;
@@ -731,7 +733,19 @@ export class AgyBackend implements AcpBackend<"agy"> {
   }
   normalizeSessionResponse(response: any): any {
     if (Array.isArray(response?.configOptions)) this.thinkingLevels = !!configOption(response.configOptions, "thinking_level");
-    return normalizeAgySessionResponse(response, this.options.keyMode === true);
+    const relay = this.options.keyRelay;
+    const normalized = normalizeAgySessionResponse(response, this.options.keyMode === true || !!relay);
+    if (relay && normalized?.models?.availableModels) {
+      normalized.models.availableModels = normalized.models.availableModels.map((model: any) => {
+        const thinking = relay.supportsThinking(model.modelId);
+        return { ...model, _meta: { ...model._meta,
+          supportsReasoningEffort: thinking,
+          reasoningEfforts: thinking ? ["low", "medium", "high"].map((value) => ({ value })) : [],
+          reasoningEffort: thinking ? relay.thinkingLevel : undefined,
+        } };
+      });
+    }
+    return normalized;
   }
   normalizePromptResult(result: any): any { return result; }
   normalizeUpdate(update: any, meta: any): BackendUpdate { return normalizeAgyUpdate(update, meta, this.toolCalls, this.shapes); }
@@ -742,7 +756,7 @@ export class AgyBackend implements AcpBackend<"agy"> {
    *  else on the newest model offered: the gateway's own start can be a Gemini
    *  2 model (the first it lists), which the picker never shows. */
   defaultModelId(modelIds: readonly string[]): string | undefined {
-    if (!this.options.keyMode) return undefined;
+    if (!this.options.keyMode && !this.options.keyRelay) return undefined;
     return modelIds.includes(AGY_KEY_DEFAULT_MODEL) ? AGY_KEY_DEFAULT_MODEL : modelIds.find((id) => !isAgyGemini2(id));
   }
 
@@ -750,11 +764,15 @@ export class AgyBackend implements AcpBackend<"agy"> {
     return { method: "session/set_config_option", params: { sessionId, configId: "model", value: modelId } };
   }
 
-  setReasoningEffort(sessionId: string, _modelId: string | undefined, level: string): { method: string; params: any } | null {
-    // Gateway mode lists each model as the gateway declares it and offers no
-    // thinking_level (server.py `_thinking_variants`): no effort control.
-    if (!this.thinkingLevels) return null;
+  setReasoningEffort(sessionId: string, modelId: string | undefined, level: string): { method: string; params: any } | { local: true } | null {
     const value = agyThinkingLevel(level);
+    const relay = this.options.keyRelay;
+    if (relay) {
+      if (!value || !modelId || !relay.supportsThinking(modelId)) return null;
+      relay.setThinkingLevel(value);
+      return { local: true };
+    }
+    if (this.options.keyMode || !this.thinkingLevels) return null;
     return value ? { method: "session/set_config_option", params: { sessionId, configId: "thinking_level", value } } : null;
   }
 
@@ -766,7 +784,12 @@ export class AgyBackend implements AcpBackend<"agy"> {
   steeringCapabilities() { return { supported: false, acceptsContent: false }; }
   interject(): null { return null; }
   steerDelivered(): boolean { return false; }
-  configState(response: any, fallback: BackendConfigState): BackendConfigState { return configStateFromAgyOptions(response, fallback); }
+  configState(response: any, fallback: BackendConfigState): BackendConfigState {
+    const state = configStateFromAgyOptions(response, fallback);
+    const relay = this.options.keyRelay;
+    if (relay) state.reasoningEffort = state.modelId && relay.supportsThinking(state.modelId) ? relay.thinkingLevel : undefined;
+    return state;
+  }
   modelSetSucceeded(): boolean { return true; }
 
   /** From disk, never through the server; see {@link listAgySessions}. */

@@ -1062,7 +1062,8 @@ describe("startSession bounded spawn retry", () => {
     startControl.startEnvs = [];
     const client = await sidebar.startSession(undefined, sidebar.focused);
     expect(client?.provider).toBe("agy");
-    expect(sidebar.agyRelay.acquire).toHaveBeenCalledWith("AIza-session-key");
+    // No default effort here, so the lease leaves the model's own default alone.
+    expect(sidebar.agyRelay.acquire).toHaveBeenCalledWith("AIza-session-key", undefined);
     expect(startControl.startupAuths).toEqual([{ methodId: "gateway", meta: { gateway: { baseUrl: "http://127.0.0.1:4321/prefix" } } }]);
     expect(startControl.startEnvs[0]?.AGY_ACP_ENABLE_GATEWAY_AUTH).toBe("1");
     expect(JSON.stringify(startControl.startupAuths)).not.toContain("AIza-session-key");

@@ -185,7 +185,8 @@ export interface AcpBackend<Provider extends string = AcpProvider> {
   normalizeUpdate(update: any, meta: any): BackendUpdate;
   normalizePermissionParams(params: any): any;
   setModel(sessionId: string, modelId: string, reasoningEffort?: string): { method: string; params: any };
-  setReasoningEffort(sessionId: string, modelId: string | undefined, level: string): { method: string; params: any } | null;
+  /** A relay-backed provider can apply effort locally without an ACP call. */
+  setReasoningEffort(sessionId: string, modelId: string | undefined, level: string): { method: string; params: any } | { local: true } | null;
   setMode(sessionId: string, modeId: string): { method: string; params: any };
   steeringCapabilities(initializeResult: any, options: BackendSteeringOptions): BackendSteeringCapabilities;
   interject(sessionId: string, text: string, content?: readonly PromptContentBlock[]): { method: string; params: any } | null;

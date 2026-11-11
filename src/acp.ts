@@ -821,7 +821,7 @@ export class AcpClient extends EventEmitter {
     if (!level) return false; // "" = unset → cannot be expressed as an override
     const call = this.backend.setReasoningEffort(this.sessionId, this.currentModelId, level);
     if (!call) return false;
-    const res = await this.request(call.method, call.params);
+    const res = "local" in call ? {} : await this.request(call.method, call.params);
     const accepted = this.backend.modelSetSucceeded(res);
     if (accepted && this.provider !== "grok") {
       const state = this.backend.configState(res, {

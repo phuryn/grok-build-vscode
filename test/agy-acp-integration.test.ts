@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AcpClient, type PermissionRequest } from "../src/acp";
 import { AgyBackend, agyWorkingFolderPrompt } from "../src/agy-backend";
 import { agyGatewayAuth, agyGatewayEnv, agyGoogleAuth, agyGoogleSignInPresent, runAgySignIn } from "../src/agy-auth";
-import { AgyKeyRelay } from "../src/agy-key-relay";
+import { AgyKeyRelay, type AgyRelayLease } from "../src/agy-key-relay";
 
 const FAKE = path.join(__dirname, "fixtures", "fake-agy-acp.cjs");
 
@@ -24,11 +24,12 @@ describe("Antigravity over ACP (real subprocess, fake server)", () => {
   let sink: string;
   const clients: AcpClient[] = [];
 
-  function client(extraEnv: NodeJS.ProcessEnv = {}, startupAuth?: { methodId: string; meta?: Record<string, unknown> }, keyMode = false): AcpClient {
+  function client(extraEnv: NodeJS.ProcessEnv = {}, startupAuth?: { methodId: string; meta?: Record<string, unknown> }, keyMode = false, keyRelay?: AgyRelayLease, effort?: "low" | "high" | "xhigh"): AcpClient {
     const made = new AcpClient({
       cliPath: FAKE,
       cwd,
-      backend: new AgyBackend({ env: { GEMINI_HOME: home }, keyMode }),
+      backend: new AgyBackend({ env: { GEMINI_HOME: home }, keyMode, keyRelay }),
+      effort,
       env: { ...process.env, GEMINI_HOME: home, FAKE_AGY_SINK: sink, ...extraEnv },
       log: () => {},
       ...(startupAuth ? { startupAuth } : {}),
@@ -176,18 +177,19 @@ describe("Antigravity over ACP (real subprocess, fake server)", () => {
   // Key sign-in end to end: the real relay between the server and a local
   // stand-in for Google, which records what reached it.
   async function fakeGoogle() {
-    const seen: { method: string; path: string; key: unknown }[] = [];
+    const seen: { method: string; path: string; key: unknown; body: string }[] = [];
     const server = http.createServer((req, res) => {
-      req.resume();
+      let body = "";
+      req.on("data", (chunk) => { body += chunk; });
       req.on("end", () => {
-        seen.push({ method: req.method ?? "", path: (req.url ?? "").split("?")[0], key: req.headers["x-goog-api-key"] });
+        seen.push({ method: req.method ?? "", path: (req.url ?? "").split("?")[0], key: req.headers["x-goog-api-key"], body });
         if (req.method === "GET") {
           res.writeHead(200, { "content-type": "application/json" });
           return res.end(JSON.stringify({ models: [
             "gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.5-flash-preview-tts", "gemma-4-31b-it", "gemini-flash-latest",
             "nano-banana-pro-preview", "gemini-3.8-flash", "gemini-4-argon",
-          ].map((id) => ({ name: `models/${id}`, supportedGenerationMethods: ["generateContent"] }))
-            .concat([{ name: "models/gemini-embedding-001", supportedGenerationMethods: ["embedContent"] }]) }));
+          ].map((id) => ({ name: `models/${id}`, supportedGenerationMethods: ["generateContent"], thinking: id === "gemini-4-argon" }))
+            .concat([{ name: "models/gemini-embedding-001", supportedGenerationMethods: ["embedContent"], thinking: false }]) }));
         }
         if (req.headers["x-goog-api-key"] !== "AIza-good") {
           res.writeHead(400, { "content-type": "application/json" });
@@ -211,8 +213,8 @@ describe("Antigravity over ACP (real subprocess, fake server)", () => {
 
   it("signs a key in as a gateway at the relay, which alone presents the key, and starts on Gemini 4 Argon", async () => {
     const { seen, relay } = await fakeGoogle();
-    const lease = await relay.acquire("AIza-good");
-    const agy = client(agyGatewayEnv({}), agyGatewayAuth(lease.baseUrl), true);
+    const lease = await relay.acquire("AIza-good", "low");
+    const agy = client(agyGatewayEnv({}), agyGatewayAuth(lease.baseUrl), true, lease, "low");
     await agy.start();
     await agy.newSession();
     const methods = received().map((entry) => entry.method);
@@ -222,17 +224,32 @@ describe("Antigravity over ACP (real subprocess, fake server)", () => {
     // gemini-2.5-flash, the first it lists); the start moved to Argon by itself.
     expect(agy.availableModels.map((model) => model.modelId)).toEqual(["gemini-4-argon", "gemini-3.8-flash"]);
     expect(agy.currentModelId).toBe("gemini-4-argon");
-    expect(agy.availableModels.every((model) => !model.supportsReasoningEffort)).toBe(true);
-    // Gateway mode has no thinking_level: effort is not offered, nothing is sent.
-    await expect(agy.setReasoningEffort("high")).resolves.toBe(false);
+    expect(agy.availableModels[0]).toMatchObject({ supportsReasoningEffort: true, reasoningEfforts: ["low", "medium", "high"], reasoningEffort: "low" });
+    expect(agy.availableModels[1]).toMatchObject({ supportsReasoningEffort: false, reasoningEfforts: [] });
+    expect(agy.currentReasoningEffort).toBe("low");
+    await agy.prompt("first, at the person's default");
+    expect(JSON.parse(seen.at(-1)!.body).generationConfig.thinkingConfig.thinkingLevel).toBe("low");
+    // Key effort is local: no unsupported ACP config option is sent, and the
+    // host's broader effort ladder is mapped onto the three real API levels.
+    await expect(agy.setReasoningEffort("xhigh")).resolves.toBe(true);
+    expect(agy.currentReasoningEffort).toBe("high");
     expect(received().filter((entry) => entry.params?.configId === "thinking_level")).toEqual([]);
     const chunks: string[] = [];
     agy.on("messageChunk", (text) => chunks.push(text));
     await agy.prompt("hello");
     expect(chunks.join("")).toBe("Hello from gemini-4-argon");
+    expect(JSON.parse(seen.at(-1)!.body).generationConfig.thinkingConfig.thinkingLevel).toBe("high");
     expect(seen.map(({ method, path: route }) => `${method} ${route}`)).toEqual([
       "GET /v1beta/models", "POST /v1beta/models/gemini-4-argon:streamGenerateContent",
+      "POST /v1beta/models/gemini-4-argon:streamGenerateContent",
     ]);
+    await agy.setModel("gemini-3.8-flash");
+    expect(agy.currentModelSupportsEffort()).toBe(false);
+    await expect(agy.setReasoningEffort("medium")).resolves.toBe(false);
+    await agy.prompt("a model without thinking");
+    expect(JSON.parse(seen.at(-1)!.body).generationConfig?.thinkingConfig).toBeUndefined();
+    await agy.setModel("gemini-4-argon");
+    expect(agy.currentReasoningEffort).toBe("high");
     // The harness's own credential never reached Google; the key went only there.
     expect(seen.every((request) => request.key === "AIza-good")).toBe(true);
     expect(fs.readFileSync(sink, "utf8")).not.toContain("AIza-good");

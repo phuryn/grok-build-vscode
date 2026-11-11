@@ -7,7 +7,7 @@ import { CloudHostUpdate, cloudHostIsIdle, cloudHostBootSupportsUpdate, cloudLiv
 import { MuseBackend, withMuseCredentialBackend } from "./muse-backend";
 import { locateMuseCli, parseMuseVersionOutput } from "./muse-cli-locator";
 import { museInstallCommand } from "./muse-install";
-import { AgyBackend, agyAcpDir, agySessionsFor, listAgyCatalog } from "./agy-backend";
+import { AgyBackend, agyAcpDir, agySessionsFor, agyThinkingLevel, listAgyCatalog } from "./agy-backend";
 import { agyGatewayAuth, agyGatewayEnv, agyGoogleAuth, agyGoogleSignInPresent, isAgySignInMethod, normalizeAgyApiKey, runAgySignIn, type AgySignInMethod } from "./agy-auth";
 import { AgyKeyRelay, type AgyModelListing, type AgyRelayLease } from "./agy-key-relay";
 import { installManagedAgy, locateAgyServer } from "./agy-managed-installer";
@@ -11489,7 +11489,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       ...(session.provider === "grok"
         ? { grokVersion: grokHandshakeVersion, grokVersionVerified }
         : { backend: session.provider === "muse" ? new MuseBackend(session.musePosture, session.museSandboxUnavailable)
-          : session.provider === "agy" ? new AgyBackend({ keyMode: !!relay }) : this.createProviderBackend(session.provider, session.deepseekHarness) }),
+          : session.provider === "agy" ? new AgyBackend({ keyMode: !!relay, keyRelay: relay }) : this.createProviderBackend(session.provider, session.deepseekHarness) }),
     });
     if (relay) client.once("exit", () => relay.release());
     session.client = client;
@@ -12106,7 +12106,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       if (gen !== session.gen) return undefined;
       this.setStartupStage(session, "starting");
       const client = createBoundClient(agyCredential?.method === "api-key"
-        ? await this.agyKeyRelay().acquire(agyCredential.key)
+        ? await this.agyKeyRelay().acquire(agyCredential.key, agyThinkingLevel(effortStr))
         : undefined);
       // Version probe done to the first spawn attempt: resolving the
       // environment (which on Windows can shell out to locate a shell) AND
