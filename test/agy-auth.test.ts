@@ -1,10 +1,13 @@
 import { EventEmitter } from "node:events";
 import * as path from "node:path";
+import * as http from "node:http";
 import { describe, expect, it, vi } from "vitest";
 import {
-  AGY_SIGN_IN_METHOD, AGY_SIGN_IN_TIMEOUT_MS, MAX_AGY_API_KEY_CHARS, agyGatewayAuth, agyGatewayEnv, agyGoogleAuth,
-  agyGoogleSignInPresent, agySignInUrl, isAgySignInMethod, normalizeAgyApiKey, runAgySignIn,
+  AGY_SIGN_IN_METHOD, AGY_SIGN_IN_TIMEOUT_MS, AGY_PASTE_ADDRESS_ERROR, AGY_REDIRECT_TIMEOUT_MS, MAX_AGY_API_KEY_CHARS, agyGatewayAuth, agyGatewayEnv, agyGoogleAuth,
+  agyGoogleSignInPresent, agySignInCallback, agySignInUrl, isAgySignInMethod, normalizeAgyApiKey, runAgySignIn,
 } from "../src/agy-auth";
+
+import { deviceLoginFailureText } from "../src/device-login";
 
 const home = "/home/me";
 const acp = path.join(home, ".gemini", "antigravity-acp");
@@ -117,5 +120,157 @@ describe("Antigravity sign-in runner", () => {
     reject(new Error("server exited"));
     await new Promise((r) => setTimeout(r, 10));
     expect(onDone).toHaveBeenCalledTimes(1);
+  });
+
+  const oauthUrl = (port = 43210) => "https://accounts.google.com/o/oauth2/v2/auth?" + new URLSearchParams({
+    redirect_uri: `http://127.0.0.1:${port}/`, state: "this-run", code_challenge: "pkce",
+  });
+  const pasted = "http://127.0.0.1:43210/?state=this-run&code=sentinel-auth-code&scope=email";
+
+  it.each([
+    pasted.replace(":43210", ":43211"),
+    pasted.replace("127.0.0.1", "example.com"),
+    pasted.replace("http:", "https:"),
+    pasted.replace("&code=sentinel-auth-code", ""),
+    pasted.replace("this-run", "another-run"),
+    pasted.replace("state=this-run&", ""),
+    pasted + "&state=this-run",
+    pasted + "&code=another-code",
+    pasted.replace("127.0.0.1", "user:pass@127.0.0.1"),
+    "not an address",
+  ])("rejects a mismatched paste without ending the run (%s)", async invalid => {
+    const client = fakeClient(() => new Promise(() => {}));
+    const onDone = vi.fn(), onPrompt = vi.fn(), onInputRejected = vi.fn();
+    const requestCallback = vi.fn(async () => {});
+    const handle = runAgySignIn(client, { onPrompt, onDone, onInputRejected }, { pasteRedirect: true, requestCallback });
+    await vi.waitFor(() => expect(client.authenticate).toHaveBeenCalled());
+    client.emit("stderr", `Open the following link to authenticate the ACP server: ${oauthUrl()}\n`);
+    expect(onPrompt).toHaveBeenCalledWith({ url: oauthUrl(), needsCode: true });
+    expect(handle.submitCode(invalid)).toBe(false);
+    expect(onInputRejected.mock.calls).toEqual([[AGY_PASTE_ADDRESS_ERROR]]);
+    expect(onDone).not.toHaveBeenCalled();
+    expect(requestCallback).not.toHaveBeenCalled();
+    expect(handle.submitCode(pasted)).toBe(true);
+    expect(requestCallback).toHaveBeenCalledTimes(1);
+    handle.cancel();
+  });
+
+  it("takes localhost but sends only the path and query to the printed port, exactly once", async () => {
+    const client = fakeClient(() => new Promise(() => {}));
+    const requestCallback = vi.fn(async (_target: { port: number; path: string }, _signal: AbortSignal) => {});
+    const handle = runAgySignIn(client, { onPrompt: vi.fn(), onDone: vi.fn() }, { pasteRedirect: true, requestCallback });
+    await vi.waitFor(() => expect(client.authenticate).toHaveBeenCalled());
+    client.emit("stderr", `Open the following link to authenticate the ACP server: ${oauthUrl()}\n`);
+    const address = pasted.replace("127.0.0.1", "localhost").replace("/?", "/callback?");
+    expect(handle.submitCode(address)).toBe(true);
+    expect(handle.submitCode(address)).toBe(false);
+    expect(requestCallback.mock.calls).toEqual([[{ port: 43210, path: new URL(address).pathname + new URL(address).search }, expect.any(AbortSignal)]]);
+    const signal = requestCallback.mock.calls[0][1];
+    handle.cancel();
+    expect(signal.aborted).toBe(true);
+  });
+
+  it("makes one real HTTP request to 127.0.0.1 on the printed port and completes authentication", async () => {
+    let authenticate!: () => void;
+    const client = fakeClient(() => new Promise<void>(resolve => { authenticate = resolve; }));
+    const onDone = vi.fn();
+    const requests: string[] = [];
+    const server = http.createServer((req, res) => {
+      requests.push(req.url!);
+      expect(req.headers.host).toBe(`127.0.0.1:${(server.address() as any).port}`);
+      res.end("Signed in");
+      authenticate();
+    });
+    await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
+    const handle = runAgySignIn(client, { onPrompt: vi.fn(), onDone }, { pasteRedirect: true });
+    try {
+      await vi.waitFor(() => expect(client.authenticate).toHaveBeenCalled());
+      const port = (server.address() as any).port;
+      client.emit("stderr", `Open the following link to authenticate the ACP server: ${oauthUrl(port)}\n`);
+      const address = pasted.replace(":43210", `:${port}`).replace("127.0.0.1", "localhost");
+      expect(handle.submitCode(address)).toBe(true);
+      expect(handle.submitCode(address)).toBe(false);
+      await vi.waitFor(() => expect(onDone.mock.calls).toEqual([[{ ok: true, output: "" }]]));
+      expect(requests).toEqual([new URL(address).pathname + new URL(address).search]);
+    } finally {
+      handle.cancel();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  });
+
+  it("does not follow a callback response redirect", async () => {
+    const redirected = vi.fn((_req, res: http.ServerResponse) => res.end());
+    const other = http.createServer(redirected);
+    const server = http.createServer((_req, res) => {
+      res.writeHead(302, { Location: `http://127.0.0.1:${(other.address() as any).port}/?code=sentinel-auth-code` });
+      res.end();
+    });
+    for (const listener of [other, server]) await new Promise<void>(resolve => listener.listen(0, "127.0.0.1", resolve));
+    const client = fakeClient(() => new Promise(() => {}));
+    const onInputRejected = vi.fn();
+    const handle = runAgySignIn(client, { onPrompt: vi.fn(), onDone: vi.fn(), onInputRejected }, { pasteRedirect: true });
+    try {
+      await vi.waitFor(() => expect(client.authenticate).toHaveBeenCalled());
+      const port = (server.address() as any).port;
+      client.emit("stderr", `Open the following link to authenticate the ACP server: ${oauthUrl(port)}\n`);
+      handle.submitCode(pasted.replace(":43210", `:${port}`));
+      await new Promise(resolve => setTimeout(resolve, 50));
+      expect(redirected).not.toHaveBeenCalled();
+      expect(onInputRejected).not.toHaveBeenCalled();
+    } finally {
+      handle.cancel();
+      for (const listener of [server, other]) await new Promise<void>(resolve => listener.close(() => resolve()));
+    }
+  });
+
+  it("never echoes callback or server errors containing the pasted code, and allows retry", async () => {
+    let reject!: (error: Error) => void;
+    const client = fakeClient(() => new Promise((_resolve, fail) => { reject = fail; }));
+    const onDone = vi.fn(), onInputRejected = vi.fn();
+    const requestCallback = vi.fn(async () => { throw new Error(pasted); });
+    const handle = runAgySignIn(client, { onPrompt: vi.fn(), onDone, onInputRejected }, { pasteRedirect: true, requestCallback });
+    await vi.waitFor(() => expect(client.authenticate).toHaveBeenCalled());
+    client.emit("stderr", `Open the following link to authenticate the ACP server: ${oauthUrl()}\n`);
+    handle.submitCode(pasted);
+    await vi.waitFor(() => expect(onInputRejected).toHaveBeenCalled());
+    expect(JSON.stringify(onInputRejected.mock.calls)).not.toContain("sentinel-auth-code");
+    expect(onDone).not.toHaveBeenCalled();
+    expect(handle.submitCode(pasted)).toBe(true);
+    reject(new Error(pasted));
+    await vi.waitFor(() => expect(onDone).toHaveBeenCalledWith({ ok: false, failure: "failed", output: "" }));
+    expect(handle.submitCode(pasted)).toBe(false);
+  });
+
+  it("expires after the server's five-minute window and rejects late pastes", async () => {
+    vi.useFakeTimers();
+    const client = fakeClient(() => new Promise(() => {}));
+    const onDone = vi.fn(), requestCallback = vi.fn(async () => {});
+    const handle = runAgySignIn(client, { onPrompt: vi.fn(), onDone }, { pasteRedirect: true, requestCallback });
+    try {
+      await Promise.resolve();
+      client.emit("stderr", `Open the following link to authenticate the ACP server: ${oauthUrl()}\n`);
+      await vi.advanceTimersByTimeAsync(AGY_REDIRECT_TIMEOUT_MS - 1);
+      expect(onDone).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(onDone.mock.calls).toEqual([[{ ok: false, failure: "expired", output: "" }]]);
+      expect(client.dispose).toHaveBeenCalled();
+      expect(deviceLoginFailureText("agy", "expired", "Antigravity")).toBe("This sign-in expired after five minutes. Start again.");
+      expect(handle.submitCode(pasted)).toBe(false);
+      expect(requestCallback).not.toHaveBeenCalled();
+    } finally { handle.cancel(); vi.useRealTimers(); }
+  });
+
+  it("reports a server timeout as expired without returning its error text", async () => {
+    const client = fakeClient(async () => { throw new Error(`Onboarding timed out: ${pasted}`); });
+    const onDone = vi.fn();
+    runAgySignIn(client, { onPrompt: vi.fn(), onDone }, { pasteRedirect: true });
+    await vi.waitFor(() => expect(onDone.mock.calls).toEqual([[{ ok: false, failure: "expired", output: "" }]]));
+  });
+
+  it("rejects a printed redirect that is not a loopback port", () => {
+    for (const redirect_uri of ["http://example.com:43210/", "https://127.0.0.1:43210/", "http://127.0.0.1/"]) {
+      const url = new URL(oauthUrl()); url.searchParams.set("redirect_uri", redirect_uri);
+      expect(agySignInCallback(pasted, url.href)).toBeUndefined();
+    }
   });
 });

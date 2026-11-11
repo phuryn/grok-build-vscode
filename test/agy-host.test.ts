@@ -6,12 +6,15 @@
  * files. The key lives only in a fake HostSecrets.
  */
 import * as fs from "node:fs";
+import * as http from "node:http";
+import { EventEmitter } from "node:events";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GrokSidebar } from "../src/sidebar";
 import { Session } from "../src/session";
 import { CLOUD_ENVIRONMENT_ENV } from "../src/remote-frames";
+import { AGY_PASTE_ADDRESS_ERROR } from "../src/agy-auth";
 
 const FAKE = path.join(__dirname, "fixtures", "fake-agy-acp.cjs");
 const KEY = "AIza-host-test-key";
@@ -208,13 +211,13 @@ describe("Connect offers the choice of how to sign in", () => {
 });
 
 describe("Sign in with Google", () => {
-  it.each([false, true])("never launches a browser remotely, including cloud=%s", async cloud => {
-    vi.stubEnv(CLOUD_ENVIRONMENT_ENV, cloud ? "1" : "");
+  it("refuses browser sign-in from a remote desk but may adopt an existing token", async () => {
     const sidebar = host();
     sidebar.startDeviceLogin = vi.fn();
     await sidebar.onMessage({ type: "agySignIn", method: "google" }, "remote", "phone");
     expect(sidebar.startDeviceLogin).not.toHaveBeenCalled();
     expect(sidebar.providerConnectionState.agy).toBeUndefined();
+    expect(row(sidebar)).not.toHaveProperty("googleSignInPaste");
     expect(sidebar.sendRemoteRequester).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ agyChoice: true, reason: expect.stringContaining("API key") }));
     signIn();
     await sidebar.onMessage({ type: "agySignIn", method: "google" }, "remote", "phone");
@@ -223,13 +226,92 @@ describe("Sign in with Google", () => {
     expect(sidebar.sendRemoteRequester).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ state: "provider-connected" }));
   });
 
-  it("refuses a fresh Google sign-in locally on cloud too", async () => {
+  it.each(["local", "remote"])("a cloud host starts paste sign-in from %s and advertises it", async origin => {
     vi.stubEnv(CLOUD_ENVIRONMENT_ENV, "1");
     const sidebar = host(); sidebar.startDeviceLogin = vi.fn();
-    await sidebar.onMessage({ type: "agySignIn", method: "google" }, "local");
+    await sidebar.onMessage({ type: "agySignIn", method: "google" }, origin, origin === "remote" ? "phone" : undefined);
+    expect(sidebar.startDeviceLogin).toHaveBeenCalledWith("agy", FAKE, origin === "remote" ? "phone" : undefined, { remote: origin === "remote" });
+    expect(row(sidebar)).toMatchObject({ remoteSetup: true, googleSignIn: false, googleSignInPaste: true });
+    sidebar.startDeviceLogin.mockClear();
+    signIn();
+    await sidebar.onMessage({ type: "agySignIn", method: "google" }, origin, origin === "remote" ? "phone" : undefined);
     expect(sidebar.startDeviceLogin).not.toHaveBeenCalled();
-    expect(sidebar.providerConnectionState.agy).toBeUndefined();
-    expect(row(sidebar)).toMatchObject({ remoteSetup: true, googleSignIn: false });
+    expect(sidebar.providerConnectionState.agy).toBe(true);
+  });
+
+  it("the device runner also refuses a direct remote desk request", async () => {
+    const sidebar = host({ connected: true });
+    sidebar.agySignInClient = vi.fn();
+    await sidebar.startDeviceLogin("agy", FAKE, "phone", { remote: true });
+    expect(sidebar.agySignInClient).not.toHaveBeenCalled();
+    expect(sidebar.deviceLogins.size).toBe(0);
+  });
+
+  it.each([false, true])("keeps callback codes out of the ACP log on cloud=%s", cloud => {
+    vi.stubEnv(CLOUD_ENVIRONMENT_ENV, cloud ? "1" : "");
+    const sidebar = host();
+    const client = sidebar.agySignInClient(FAKE, new AbortController().signal);
+    client.opts.log("[stderr] GET /?code=sentinel-callback-code");
+    if (cloud) expect(sidebar.host.appendLine).not.toHaveBeenCalled();
+    else expect(sidebar.host.appendLine).toHaveBeenCalledWith("[stderr] GET /?code=sentinel-callback-code");
+  });
+
+  it("sanitizes an unexpected callback submission exception before the remote error handler", async () => {
+    const sidebar = host({ connected: true });
+    sidebar.deviceLogins.set("agy", { handle: { submitCode: () => { throw new Error("sentinel-callback-code"); } } });
+    await sidebar.onMessage({ type: "submitDeviceLoginCode", provider: "agy", code: "http://127.0.0.1:43210/?code=sentinel-callback-code" }, "remote", "phone");
+    expect(JSON.stringify(sidebar.sendRemoteClient.mock.calls)).not.toContain("sentinel-callback-code");
+    expect(JSON.stringify(sidebar.host.appendLine.mock.calls)).not.toContain("sentinel-callback-code");
+    expect(sidebar.sendRemoteClient).toHaveBeenCalledWith("phone", expect.objectContaining({ type: "error" }));
+  });
+
+  it("a phone's invalid paste stays waiting, then a valid callback adopts the stored Google token without echoing it", async () => {
+    vi.stubEnv(CLOUD_ENVIRONMENT_ENV, "1");
+    const sidebar = host();
+    let approve!: () => void;
+    const client = Object.assign(new EventEmitter(), {
+      start: vi.fn(async () => {}),
+      authenticate: vi.fn(() => new Promise<void>(resolve => { approve = resolve; })),
+      dispose: vi.fn(async () => {}),
+    });
+    sidebar.agySignInClient = () => client;
+    // Credential verification still uses the host's token-file check.
+    sidebar.reprobeProviderCredentials = vi.fn(async () => sidebar.agyGoogleSignedIn());
+    const callbacks: string[] = [];
+    const server = http.createServer((req, res) => {
+      callbacks.push(req.url!);
+      signIn();
+      res.end("Signed in");
+      approve();
+    });
+    await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
+    try {
+      await sidebar.onMessage({ type: "agySignIn", method: "google" }, "remote", "phone");
+      await vi.waitFor(() => expect(client.authenticate).toHaveBeenCalled());
+      const port = (server.address() as any).port;
+      const url = "https://accounts.google.com/o/oauth2/v2/auth?" + new URLSearchParams({ redirect_uri: `http://127.0.0.1:${port}/`, state: "this-run" });
+      client.emit("stderr", `Open the following link to authenticate the ACP server: ${url}\n`);
+      const device = () => sidebar.sendRemoteClient.mock.calls.map((c: any[]) => c[1].device).filter(Boolean).at(-1);
+      expect(device()).toMatchObject({ status: "waiting", needsCode: true, url });
+      const address = `http://127.0.0.1:${port}/?state=this-run&code=sentinel-callback-code&scope=email`;
+      await sidebar.onMessage({ type: "submitDeviceLoginCode", provider: "agy", code: address.replace("this-run", "wrong-run") }, "remote", "phone");
+      expect(device()).toMatchObject({ status: "waiting", submitted: false, message: AGY_PASTE_ADDRESS_ERROR });
+      expect(sidebar.deviceLogins.size).toBe(1);
+      expect(callbacks).toEqual([]);
+      await sidebar.onMessage({ type: "submitDeviceLoginCode", provider: "agy", code: address }, "remote", "phone");
+      expect(device()).toMatchObject({ status: "waiting", submitted: true });
+      await vi.waitFor(() => expect(device()).toEqual({ status: "done" }));
+      await vi.waitFor(() => expect(sidebar.adoptSessionsForConnectedProvider).toHaveBeenCalledWith("agy", sidebar.focused));
+      expect(callbacks).toEqual([new URL(address).pathname + new URL(address).search]);
+      expect(sidebar.providerNeedsLogin.agy).toBe(false);
+      const outbound = [...frames(sidebar.post), ...frames(sidebar.postLocal), ...sidebar.sendRemoteClient.mock.calls.map((c: any[]) => c[1]), ...sidebar.sendRemoteRequester.mock.calls.map((c: any[]) => c[1]), sidebar.providerStateMessage()];
+      expect(JSON.stringify(outbound)).not.toContain("sentinel-callback-code");
+      expect(JSON.stringify(sidebar.host.appendLine.mock.calls)).not.toContain("sentinel-callback-code");
+      expect(sidebar.host.createTerminal).not.toHaveBeenCalled();
+    } finally {
+      sidebar.deviceLogins.get("agy")?.handle.cancel();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
   });
 
   it("adopts a stored Google sign-in without starting a server", async () => {

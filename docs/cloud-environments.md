@@ -147,7 +147,10 @@ advertised in `providerState`, a phone can install the managed runtime on demand
 paste an API key into host secret storage, and Sign out to remove credentials.
 Antigravity Sign out clears both its stored key and any stored Google sign-in;
 DeepSeek Sign out deletes its stored key.
-No runtime is added to machine startup. Antigravity never opens a Google sign-in
-browser on cloud or for a remote request: only an existing Google sign-in may be
-adopted there; otherwise use a Gemini API key. Linux server startup remains to be
-verified on a real cloud machine.
+No runtime is added to machine startup. A cloud host advertising
+`googleSignInPaste: true` also offers Google sign-in from a phone. Open the link
+and sign in; the loopback page will not load on the phone. Copy its whole address
+into the card within five minutes. The host validates the state and port against
+this run's link, then forwards the path and query only to its own 127.0.0.1 port.
+The one-time code is neither logged nor saved by the client. Older cloud hosts
+keep the key and stored-sign-in routes. Remote desks cannot start this flow.

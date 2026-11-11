@@ -15,9 +15,12 @@
       if (namesProvider(message, "muse") && !museAvailable) return false;
       if ((namesProvider(message, "deepseek") || ["installDeepSeek", "cancelDeepSeekInstall", "deepseekConnect", "setDeepSeekHarness"].includes(message.type)) && !deepseekAdvertised) return false;
       if (namesProvider(message, "agy") && !agyAdvertised) return false;
-      if (IS_REMOTE && (message.type === "agySignIn" || message.type === "deepseekConnect")) {
+      if (IS_REMOTE && (message.type === "agySignIn" || message.type === "deepseekConnect"
+        || message.type === "submitDeviceLoginCode" && message.provider === "agy")) {
         if (!hostWait.available()) {
-          addError("The machine is disconnected. Paste the key again when it is connected.");
+          addError(message.type === "submitDeviceLoginCode"
+            ? "The machine is disconnected. Paste the address again when it is connected."
+            : "The machine is disconnected. Paste the key again when it is connected.");
           return false;
         }
       }
@@ -31,7 +34,8 @@
   }
   function agyGoogleAvailable() {
     const provider = (state.providers || []).find(p => p.id === "agy") || {};
-    return (provider.savedSignIns || []).includes("google") || !IS_REMOTE && provider.googleSignIn !== false;
+    return (provider.savedSignIns || []).includes("google") || provider.googleSignInPaste === true
+      || !IS_REMOTE && provider.googleSignIn !== false;
   }
   function offeredProviders() {
     return Object.keys(globalThis.GrokWebviewHelpers.PROVIDER_ACTIONS)
@@ -11228,6 +11232,7 @@
     // with the button beneath it reads as two different things to connect.
     const NAMES = { grok: "Grok Build", codex: "Codex", claude: "Claude Code", muse: "Muse Code", agy: "Antigravity", deepseek: "DeepSeek" };
     const name = NAMES[provider] || "an agent";
+    const googlePaste = provider === "agy" && (state.providers || []).some(p => p.id === "agy" && p.googleSignInPaste === true);
     const status = (text) => { if (ver) setWelcomeStatus(text, false); };
 
     // The relay serves this page, so it is always as new as the last deploy
@@ -11247,8 +11252,9 @@
       + `data-provider="${escapeHtml(provider)}">Cancel</button>`;
 
     if (device && device.status === "waiting" && device.url) {
-      status(device.needsCode ? (device.submitted ? "Confirming sign-in" : "Paste the code") : "Confirm the code");
       const paste = !!device.needsCode;
+      const pasteAddress = provider === "agy" && paste;
+      status(paste ? (device.submitted ? "Confirming sign-in" : pasteAddress ? "Paste the address" : "Paste the code") : "Confirm the code");
       const codeChip = !paste && device.code
         ? `<p class="onb-desc">Open the link, then confirm this code:</p>` +
           // Same markup as every other copyable value in this panel, so it
@@ -11264,11 +11270,11 @@
       // thing on screen was somewhere to paste a code you had no way to have
       // yet (owner, 2026-09-01).
       const pasteIntro = paste && !device.submitted
-        ? `<p class="onb-desc">Open the sign-in page, sign in, then paste the code it shows you:</p>`
+        ? `<p class="onb-desc">${pasteAddress ? "Open the sign-in page and sign in with Google." : "Open the sign-in page, sign in, then paste the code it shows you:"}</p>`
         : "";
       const pasteEntry = paste && !device.submitted
         ? `<div class="onb-cmd onb-code-entry">` +
-            `<input class="onb-code-input" type="text" inputmode="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Paste code" aria-label="Paste sign-in code">` +
+            `<input class="onb-code-input" type="text" inputmode="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="${pasteAddress ? "Paste full address" : "Paste code"}" aria-label="${pasteAddress ? "Paste Google sign-in address" : "Paste sign-in code"}">` +
             `<button class="onb-action" type="button" data-act="submitDeviceLoginCode" data-provider="${escapeHtml(provider)}">Submit</button>` +
           `</div>`
         : "";
@@ -11282,7 +11288,11 @@
         codeChip +
         pasteIntro +
         `<a class="onb-action" href="${escapeHtml(device.url)}" target="_blank" rel="noopener noreferrer">Open the sign-in page</a>` +
-        // AFTER the link: you cannot have a code until you have been there.
+        // This field is deliberately neither .confirm-input nor .settings-text:
+        // the remote client's authored-text capture must never retain an auth code.
+        (pasteAddress && !device.submitted
+          ? `<p class="onb-desc">The page you land on will not load; this is expected. Copy the whole address from the address bar and paste it here.</p>` : "") +
+        (device.message ? `<p class="onb-install-error" role="alert">${escapeHtml(device.message)}</p>` : "") +
         pasteEntry +
         // The setting to check, beside the code it gates — not on a screen
         // before it that cost an extra click to get past.
@@ -11297,8 +11307,8 @@
         // the code has been written back.
         `<p class="onb-desc">${paste
           ? (device.submitted
-            ? "Code sent &mdash; keep this page open, it finishes on its own."
-            : "This page stays open so you can paste the code back.")
+            ? `${pasteAddress ? "Address" : "Code"} sent &mdash; keep this page open, it finishes on its own.`
+            : `This page stays open so you can paste the ${pasteAddress ? "address" : "code"} back.`)
           : "Keep this page open &mdash; it finishes on its own."}</p>` +
       `</div>`;
     }
@@ -11308,7 +11318,9 @@
       return `<div class="onb">` +
         `<p class="onb-heading">Connecting ${escapeHtml(name)}</p>` +
         `<p class="onb-desc">${provider === "agy"
-          ? "Starting Antigravity&hellip; Google's sign-in opens in your browser in a moment."
+          ? (googlePaste
+            ? "Starting Antigravity&hellip; the Google sign-in link will appear here."
+            : "Starting Antigravity&hellip; Google's sign-in opens in your browser in a moment.")
           : `Asking the ${escapeHtml(name)} CLI for a sign-in code&hellip;`}</p>` +
         cancel +
       `</div>`;
@@ -11369,7 +11381,7 @@
         `<p class="onb-desc">${escapeHtml(device.message || "")}</p>` +
         (stuck
           ? ""
-          : `<button class="onb-action" type="button" data-act="connectRemote" data-provider="${escapeHtml(provider)}">Try again</button>`) +
+          : `<button class="onb-action" type="button" data-act="${googlePaste ? "agySignInGoogle" : "connectRemote"}" data-provider="${escapeHtml(provider)}">${googlePaste ? "Start again" : "Try again"}</button>`) +
       `</div>`;
     }
 
@@ -11794,7 +11806,9 @@
       + (agyGoogleAvailable() ? `<button class="onb-action" type="button" data-act="agySignInGoogle">Sign in with Google${lastUsed("google")}</button>`
       + `<p class="onb-desc">${saved.includes("google")
         ? "Already signed in on this computer, so no browser is needed."
-        : "Opens Google's sign-in page in your browser."}</p>`
+        : provider.googleSignInPaste === true
+          ? "Open Google's sign-in page, then paste the full address from the page that does not load."
+          : "Opens Google's sign-in page in your browser."}</p>`
       + `<p class="onb-or">or</p>` : "")
       + `<p class="onb-desc"><strong>Gemini API key${lastUsed("api-key")}</strong> &mdash; get one at `
       + `<a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">aistudio.google.com/apikey</a>. `
@@ -23992,6 +24006,7 @@ ${fullText}`
         const input = root && root.querySelector(".onb-code-input");
         const code = input ? String(input.value || "").trim() : "";
         if (!code) return;
+        if (onbAction.dataset.provider === "agy") input.value = "";
         vscode.postMessage({ type: "submitDeviceLoginCode", provider: onbAction.dataset.provider, code: code });
         // Deliberately NOT disabled here. This message can be dropped: the
         // relay client's outbox keeps queue releases and authored input across

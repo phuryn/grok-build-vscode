@@ -1224,11 +1224,19 @@ account action: desk Disconnect preserves credentials; cloud Sign out deletes
 the stored key and any stored Antigravity Google sign-in. Cloud Settings sends
 `logout`; stale `disconnectProvider` requests still sign out on cloud. No protocol version changes.
 
-Antigravity Google authentication may start only from a local desktop. Remotes
-and cloud hosts can adopt `agyGoogleSignInPresent`, without `authenticate`, or
-use a key. `googleSignIn` reports local browser eligibility; the host independently
-enforces it. Keys go to the same HostSecrets entries as desktop setup, and setup
-errors suppress exception contents. Chat clears pasted key fields, refuses key
+Antigravity `googleSignIn` retains local desktop browser eligibility; a remote
+desk can only adopt `agyGoogleSignInPresent`, without `authenticate`. Cloud hosts
+advertise `googleSignInPaste` and run `runAgySignIn` through `startDeviceLogin`.
+The existing `device.needsCode` card submits the phone's failed callback URL via
+`submitDeviceLoginCode`. `agySignInCallback` requires HTTP loopback, this run's
+printed redirect port, a code and the matching state. The request uses fixed
+127.0.0.1 and that port, with only the pasted path/query; redirects are not
+followed. Invalid pastes produce a static message and keep waiting. Five minutes
+expires the run; successful authentication uses the existing token adoption.
+Cloud sign-in suppresses ACP logs and server error output, which can contain
+callback codes. The input clears on submit, matches neither authored-text capture
+selector, and has no draft or retry storage. Keys go to the same HostSecrets
+entries as desktop setup, and setup errors suppress exception contents. Chat clears pasted key fields, refuses key
 submission while the host is unavailable, and keeps no key draft or retry.
 The relay client's durable outbox is outside this checkout and requires separate
 verification of its exclusion of these key message types.

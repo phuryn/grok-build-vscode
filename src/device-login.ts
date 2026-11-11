@@ -255,6 +255,8 @@ export function parseClaudeAuthStatus(raw: string): boolean | undefined {
 }
 
 export type DeviceLoginFailure =
+  /** The provider's sign-in window elapsed. */
+  | "expired"
   /** The CLI rejected the flag — an older build that predates the flow. */
   | "unsupported"
   /** The account or workspace has device-code login switched off. */
@@ -293,7 +295,8 @@ export function deviceLoginFailureText(
   failure: DeviceLoginFailure,
   displayName: string,
 ): string {
-  // Antigravity signs in through Google's page in the browser, not a code.
+  if (failure === "expired") return "This sign-in expired after five minutes. Start again.";
+  // Antigravity signs in through Google's page.
   if (provider === "agy" && failure === "failed") {
     return "Google sign-in for Antigravity did not finish. If the browser window was closed or the page timed out, try again.";
   }

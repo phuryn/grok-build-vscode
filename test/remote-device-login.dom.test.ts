@@ -488,3 +488,95 @@ describe("the desk is untouched", () => {
     expect(text(h)).not.toContain("AAAA-BBBB");
   });
 });
+
+
+describe("Antigravity Google sign-in on a cloud host", () => {
+  function cloud(h = boot({ remote: true })) {
+    dispatch(h.window, { type: "providerState", providers: [{ id: "agy", connected: false, remoteSetup: true, googleSignIn: false, googleSignInPaste: true }] });
+    onboarding(h, { state: "agy-login", provider: "agy", agyChoice: true });
+    return h;
+  }
+  const waiting = (h: Harness, extra: Record<string, unknown> = {}) => onboarding(h, {
+    state: "agy-login", provider: "agy",
+    device: { status: "waiting", url: "https://accounts.google.com/auth?state=this-run", needsCode: true, ...extra },
+  });
+
+  it("shows Google only when the cloud host advertises the paste route", () => {
+    const h = cloud();
+    click(h.window, byAct(h, "agySignInGoogle")!);
+    expect(h.posted).toContainEqual({ type: "agySignIn", method: "google" });
+    onboarding(h, { state: "agy-login", provider: "agy", device: { status: "starting" } });
+    expect(text(h)).toContain("Google sign-in link will appear here");
+    expect(text(h)).not.toContain("opens in your browser");
+  });
+
+  it("puts the link before the failed-page instructions and field, and shows a rejected paste inline", () => {
+    const h = cloud();
+    waiting(h);
+    const panel = onb(h);
+    const description = text(h);
+    expect(description).toContain("sign in with Google");
+    expect(description).toContain("The page you land on will not load; this is expected");
+    expect(description).toContain("Copy the whole address from the address bar and paste it here");
+    const link = panel.querySelector("a.onb-action")!;
+    const field = panel.querySelector("input")!;
+    expect(link.compareDocumentPosition(field) & h.window.Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(field.getAttribute("placeholder")).toBe("Paste full address");
+    waiting(h, { message: "That is not the address from this sign-in. Copy the full address from the page that did not load.", submitted: false });
+    expect(onb(h).querySelector('[role="alert"]')?.textContent).toContain("That is not the address from this sign-in.");
+    expect(byAct(h, "submitDeviceLoginCode")).not.toBeNull();
+  });
+
+  it("sends once, clears the address, and excludes the input from authored-text capture and persistence", () => {
+    const saved: unknown[] = [];
+    const h = bootWebview({ remote: true, beforeScripts: window => {
+      const acquire = (window as any).acquireVsCodeApi;
+      (window as any).acquireVsCodeApi = () => ({ ...acquire(), setState: (state: unknown) => saved.push(state) });
+    } });
+    dispatch(h.window, { type: "initialState", capabilities: { remoteAgentSignIn: true } });
+    cloud(h); waiting(h);
+    const address = "http://127.0.0.1:43210/?state=this-run&code=sentinel-phone-callback";
+    const input = onb(h).querySelector("input") as HTMLInputElement;
+    input.value = address;
+    input.dispatchEvent(new h.window.Event("input", { bubbles: true }));
+    // These are the relay web client's authored-text capture selectors.
+    expect(input.matches(".confirm-overlay .confirm-input, .settings-text")).toBe(false);
+    click(h.window, byAct(h, "submitDeviceLoginCode")!);
+    expect(h.posted.filter(m => m.type === "submitDeviceLoginCode")).toEqual([{ type: "submitDeviceLoginCode", provider: "agy", code: address }]);
+    expect(input.value).toBe("");
+    expect(JSON.stringify(saved)).not.toContain("sentinel-phone-callback");
+    for (const storage of [h.window.localStorage, h.window.sessionStorage]) {
+      expect(Array.from({ length: storage.length }, (_, i) => storage.getItem(storage.key(i)!)).join("")).not.toContain("sentinel-phone-callback");
+    }
+    for (const connected of [false, true]) {
+      (h.window as any).afkpilotHostLink = { reachable: connected, restored: connected };
+      dispatch(h.window, { type: "hostLink", link: { reachable: connected, restored: connected } });
+    }
+    expect(h.posted.filter(m => m.type === "submitDeviceLoginCode")).toHaveLength(1);
+  });
+
+  it("does not send an offline paste into the outbox or replay it on reconnect", () => {
+    const h = cloud(); waiting(h);
+    (h.window as any).afkpilotHostLink = { reachable: false, restored: false };
+    dispatch(h.window, { type: "hostLink", link: { reachable: false, restored: false } });
+    const input = onb(h).querySelector("input") as HTMLInputElement;
+    input.value = "http://127.0.0.1:43210/?state=this-run&code=sentinel-offline-callback";
+    click(h.window, byAct(h, "submitDeviceLoginCode")!);
+    expect(input.value).toBe("");
+    expect(h.posted.some(m => m.type === "submitDeviceLoginCode")).toBe(false);
+    (h.window as any).afkpilotHostLink = { reachable: true, restored: true };
+    dispatch(h.window, { type: "hostLink", link: { reachable: true, restored: true } });
+    expect(h.posted.some(m => m.type === "submitDeviceLoginCode")).toBe(false);
+  });
+
+  it("shows expiry and can start a fresh Google sign-in", () => {
+    const h = cloud();
+    waiting(h);
+    onboarding(h, { state: "agy-login", provider: "agy", device: { status: "failed", message: "This sign-in expired after five minutes. Start again." } });
+    expect(text(h)).toContain("expired after five minutes");
+    expect(byAct(h, "agySignInGoogle")?.textContent).toBe("Start again");
+    h.posted.length = 0;
+    click(h.window, byAct(h, "agySignInGoogle")!);
+    expect(h.posted).toEqual([{ type: "agySignIn", method: "google" }]);
+  });
+});

@@ -140,7 +140,15 @@ describe("Google browser eligibility", () => {
     }
   });
 
-  it("a cloud host omits browser sign-in on its local surface too", () => {
+  it.each([false, true])("a remote offers Google only if the cloud host accepts pasted redirects=%s", acceptsPaste => {
+    const h = bootWebview({ remote: true });
+    dispatch(h.window, { type: "providerState", providers: [{ id: "agy", remoteSetup: true, googleSignIn: false, ...(acceptsPaste ? { googleSignInPaste: true } : {}) }] });
+    dispatch(h.window, { type: "onboarding", state: "agy-login", provider: "agy", agyChoice: true });
+    expect(!!h.doc.querySelector('.connect-wizard-body [data-act="agySignInGoogle"]')).toBe(acceptsPaste);
+    expect(h.doc.querySelector(".onb-agy-key")).not.toBeNull();
+  });
+
+  it("an older cloud host omits Google on its local surface too", () => {
     const h = bootWebview();
     dispatch(h.window, { type: "providerState", providers: [{ id: "agy", remoteSetup: true, googleSignIn: false }] });
     dispatch(h.window, { type: "onboarding", state: "agy-login", provider: "agy", agyChoice: true });

@@ -42,16 +42,17 @@ export interface DeviceLoginCallbacks {
   onPrompt(prompt: DeviceLoginPrompt): void;
   /** Called exactly once. */
   onDone(result: DeviceLoginResult): void;
+  /** Invalid paste; the current sign-in continues waiting. Never includes the input. */
+  onInputRejected?(message: string): void;
 }
 
 export interface DeviceLoginHandle {
   /** Stop the child and settle as cancelled. Safe to call twice, and safe to
    *  call after the run already finished. */
   cancel(): void;
-  /** Write a paste-code to stdin and a newline. No-op when this run does not
-   *  need one, after a code was already written, or after the run settled.
-   *  The string is the vendor's user-facing code, not a credential. */
-  submitCode(code: string): void;
+  /** Submit a code or loopback address. False means rejected without ending
+   *  the run. The input can contain an auth code: never retain or log it. */
+  submitCode(code: string): boolean | void;
 }
 
 export interface DeviceLoginRunOptions {

@@ -7,7 +7,8 @@ enables remote managed installation and API-key setup. An older host without
 that capability keeps the computer-only instructions. There is no experimental
 setting.
 
-Measured against `agy_acp_server` **1.4.0** on Windows 11, 2026-10-14 and -15.
+Measured against `agy_acp_server` **1.4.0** on Windows 11, 2026-10-14 and -15,
+and Google sign-in on a Linux cloud host, 2026-11-11.
 The server's Python source (unpacked from the Linux bundle) was read rather than
 guessed at; handler names below are its own. The choices that rest on 1.4.0's
 behaviour, and what should make us look again, are collected at the end under
@@ -117,10 +118,20 @@ aistudio.google.com/apikey). Vertex AI and Enterprise sign-in are not offered.
   -32601), which clears the token and the saved method; for a key, the saved
   key is deleted. Settings' button only disconnects, as for every desk provider
   (#203).
-- Remotes and cloud hosts may paste a key or adopt an existing Google sign-in
-  (`agyGoogleSignInPresent`), without starting `authenticate`. They never start
-  Google's browser/loopback flow. A local desktop still offers that flow;
-  `googleSignIn` in the provider row tells the client whether it may offer it.
+- A remote desk may paste a key or adopt an existing Google sign-in
+  (`agyGoogleSignInPresent`), without starting `authenticate`. A local desk
+  still offers browser sign-in (`googleSignIn`). Cloud hosts additionally
+  advertise `googleSignInPaste`: `authenticate` prints the Google OAuth URL
+  with a random loopback redirect port, state and PKCE challenge, then waits
+  300 seconds. After signing in on the phone, its loopback page cannot load;
+  the person copies the whole address into the existing paste-code card.
+  `agySignInCallback` validates HTTP loopback, the printed port, code and state
+  before requesting the path/query at fixed 127.0.0.1. The server retains its
+  PKCE verifier and exchanges the code; Linux stores `acp_token.json`. Invalid
+  addresses keep waiting with a static message, expiry offers a fresh run.
+  Pasted addresses are never echoed or persisted; cloud sign-in ACP logs and
+  error output are suppressed because the server can print callback codes.
+  Absent `googleSignInPaste`, older cloud hosts keep their existing routes.
 - Installation and cancellation are `full` remote actions. Setup replies and
   `agyInstallProgress` go to the requesting tab, including after reconnect.
   Desk Disconnect preserves both credentials. Cloud Sign out removes the
@@ -374,14 +385,19 @@ observable change that should make us look again.
 ### Desktop and cloud setup; no MCP connectors or Plan
 
 - **Decision:** offer Antigravity to everyone. Install and key entry work
-  locally or remotely; a remote/cloud machine can also adopt an existing
-  Google sign-in, but cannot start Google's browser flow. Gate new remote
-  controls on the host's `remoteSetup` advertisement for older-host compatibility.
-- **Why:** a phone can supply a key to host secret storage, removing the need
-  for a person at the host's screen. Every remote already has full host access;
-  no key is read back to any client.
-- **Verification limit:** Linux's existing `--uid=` launch and the real managed
-  server still need a cloud-machine run; unit tests cover routing and policy.
+  locally or remotely. Cloud Google sign-in uses a pasted loopback address
+  (`googleSignInPaste`); remote desks may adopt only an existing sign-in.
+  `remoteSetup` gates install/key controls; each capability is additive so
+  older hosts keep their existing routes.
+- **Why:** a phone can supply a key or return Google's callback to the host,
+  removing the need for a person at its screen. The measured Linux OAuth flow
+  retains its PKCE verifier in the ACP process, so forwarding the validated
+  callback completes that same sign-in. Every remote already has full host
+  access; no key or callback is read back to any client.
+- **Verification limit:** the Linux server's Google OAuth URL, five-minute wait
+  and token path were measured on a cloud host. The complete phone paste flow
+  still needs a live run; unit tests cover validation, local HTTP, adoption,
+  routing, expiry and client persistence.
 - **Unchanged:** `mcpServers: []`, no Plan mode. Advertising client fs swaps
   the server's file tools for ours; MCP through it is unmeasured; `/plan` waits
   for a "Proceed" click ACP cannot deliver.

@@ -2312,7 +2312,7 @@ export class GrokSidebar {
     opts: { remote: boolean } = { remote: true },
   ): Promise<void> {
     if (!this.hasProviderConsent(provider)) return;
-    if (provider === "agy" && (opts.remote || clientId || isCloudEnvironment())) return;
+    if (provider === "agy" && !isCloudEnvironment() && (opts.remote || clientId)) return;
     const displayName = providerDisplayName(provider);
     // The entry is created before the runner so `send` reads the CURRENT
     // client off it: a phone that visits the vendor's code page and comes
@@ -2458,6 +2458,10 @@ export class GrokSidebar {
           ...(prompt.needsCode ? { needsCode: true } : {}),
         });
       },
+      onInputRejected: (message) => {
+        if (signal.aborted || !this.hasProviderConsent(provider) || entry.last?.status !== "waiting") return;
+        send({ ...entry.last, submitted: false, message });
+      },
       onDone: (result) => {
         settled = true;
         if (this.deviceLogins.get(provider)?.handle === handle) {
@@ -2503,7 +2507,7 @@ export class GrokSidebar {
       },
     };
     handle = provider === "agy"
-      ? runAgySignIn(this.agySignInClient(cliPath, signal), callbacks)
+      ? runAgySignIn(this.agySignInClient(cliPath, signal), callbacks, { pasteRedirect: isCloud })
       : runDeviceLogin(cliPath, plan.args, callbacks, undefined,
         provider === "muse" ? withMuseCredentialBackend(process.env) : undefined,
         { needsCode: !!plan.needsCode });
@@ -2833,7 +2837,7 @@ export class GrokSidebar {
    * restarts them; the next send respawns each with the new one.
    */
   private async connectAgy(method: AgySignInMethod, cliPath: string, session: Session, requester?: RemoteRequester, remote = false): Promise<void> {
-    if (method === "google" && (remote || isCloudEnvironment()) && !(await this.agyGoogleSignedIn())) {
+    if (method === "google" && remote && !isCloudEnvironment() && !(await this.agyGoogleSignedIn())) {
       await this.postAgyChoice("Use a Gemini API key on this device. Google sign-in requires a browser on the workspace computer.", requester);
       return;
     }
@@ -2860,8 +2864,8 @@ export class GrokSidebar {
       this.postProviderSetup({ type: "onboarding", state: "provider-connected", provider: "agy", platform: process.platform }, requester);
       return;
     }
-    // Google with nothing stored: the browser sign-in, through the card.
-    if (!remote && !isCloudEnvironment()) await this.startDeviceLogin("agy", cliPath, undefined, { remote: false });
+    // Cloud uses a pasted loopback address; a desk may open its own browser.
+    if (!remote || isCloudEnvironment()) await this.startDeviceLogin("agy", cliPath, requester?.clientId, { remote });
   }
 
   /** A refusal counts only when it is live. `session/load` replays the
@@ -2891,7 +2895,8 @@ export class GrokSidebar {
       cwd: this.projectHomeDir(),
       env: { ...process.env },
       backend: new AgyBackend(),
-      log: (message) => this.host.appendLine(message),
+      // The server can print the loopback request (including its code) to stderr.
+      log: isCloudEnvironment() ? () => {} : (message) => this.host.appendLine(message),
     });
   }
 
@@ -3005,6 +3010,7 @@ export class GrokSidebar {
           ...(museConnected && versions.muse ? { cliVersion: versions.muse } : {}),
           ...(needsLogin.muse ? { needsLogin: true } : {}) },
         { id: "agy", connected: agyConnected, ...button, remoteSetup: true, googleSignIn: !isCloudEnvironment(),
+          ...(isCloudEnvironment() ? { googleSignInPaste: true } : {}),
           ...(agyConnected && versions.agy ? { cliVersion: versions.agy } : {}),
           ...(agyConnected && needsLogin.agy ? { needsLogin: true } : {}),
           // The way last chosen, also after a Disconnect, so the choice can
@@ -12491,7 +12497,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     try {
       await this.withCloudHostWork(() => this.onAdmittedMessage(msg, origin, clientId));
     } catch (error) {
-      if (msg.type !== "agySignIn" && msg.type !== "deepseekConnect") throw error;
+      if (msg.type !== "agySignIn" && msg.type !== "deepseekConnect"
+        && !(msg.type === "submitDeviceLoginCode" && msg.provider === "agy")) throw error;
       // Secret-store/provider errors can contain their input. Never forward them.
       this.host.appendLine(`[providers] ${msg.type} failed`);
       const reply: HostMsg = { type: "error", text: "Could not connect the agent. Try connecting again." };
@@ -13757,9 +13764,9 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           running.clientId = clientId;
           running.tabToken = this.remoteClients.tabToken(clientId) ?? running.tabToken;
         }
-        running.handle.submitCode(code);
-        if (running.last && running.last.status === "waiting") {
-          running.send({ ...running.last, submitted: true });
+        const accepted = running.handle.submitCode(code);
+        if (accepted !== false && running.last && running.last.status === "waiting") {
+          running.send({ ...running.last, submitted: true, message: undefined });
         }
         break;
       }

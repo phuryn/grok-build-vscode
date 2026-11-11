@@ -554,7 +554,9 @@ export type HostMsg =
       /** Supports remote managed install and write-only API-key setup. Absent on old hosts. */
       remoteSetup?: boolean;
       /** Antigravity: a local browser sign-in may be started on this host. */
-      googleSignIn?: boolean }[]; checking?: boolean }
+      googleSignIn?: boolean;
+      /** Cloud Antigravity: accepts the phone's loopback address through paste-code login. */
+      googleSignInPaste?: boolean }[]; checking?: boolean }
   /** Grok's grok.com + user-level MCP inventory (`_x.ai/mcp/list`; project-file
    *  servers omitted). The desk keeps launch recipes and `configFile`; remotes
    *  receive `projectMcpServerForRemote` (page fields only — no `tag`).
@@ -936,10 +938,10 @@ export type HostMsg =
         status: "starting" | "waiting" | "verifying" | "done" | "failed" | "unavailable";
         url?: string;
         code?: string;
-        /** Paste-code flow: the person must type a code into the card. Set from
+        /** Paste-code flow: submit a code or cloud Google callback address. Set from
          *  the plan, not inferred from a missing printed code. Additive. */
         needsCode?: boolean;
-        /** The paste was written to the CLI; the card can stop offering input. */
+        /** The paste was accepted by the sign-in runner; stop offering input. */
         submitted?: boolean;
         /** Said to the person, not logged — a failure or an explanation. */
         message?: string;
@@ -1362,7 +1364,8 @@ export type WebviewMsg =
   | { type: "cancelAgyInstall" }
   /** Sign Antigravity in the chosen way. `key` is a freshly pasted Gemini API
    *  key, stored in HostSecrets; absent means the saved one. Remote setup is
-   *  capability-gated. Google never starts a browser remotely or on cloud. */
+   *  capability-gated. Cloud Google uses a pasted callback; a remote desk can
+   *  only adopt an existing Google sign-in. */
   | { type: "agySignIn"; method: "google" | "api-key"; key?: string }
   /** Retired controls accepted as no-ops for older clients. */
   | { type: "setExperimentalAntigravity"; value: boolean }

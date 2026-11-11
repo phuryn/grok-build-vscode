@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import * as fs from "node:fs";
+import * as http from "node:http";
 import * as path from "node:path";
 import { agyAcpDir } from "./agy-backend";
 import type { DeviceLoginCallbacks, DeviceLoginHandle } from "./device-login-run";
@@ -114,22 +115,63 @@ function errorText(error: unknown): string {
   return String(value?.data?.message ?? value?.message ?? value ?? "");
 }
 
+export const AGY_PASTE_ADDRESS_ERROR = "That is not the address from this sign-in. Copy the full address from the page that did not load.";
+export const AGY_REDIRECT_TIMEOUT_MS = 300_000;
+
+/** Only the printed OAuth link chooses where the host may send the callback. */
+export function agySignInCallback(pasted: string, signInUrl: string): { port: number; path: string } | undefined {
+  try {
+    const auth = new URL(signInUrl);
+    const redirect = new URL(auth.searchParams.get("redirect_uri") ?? "");
+    const callback = new URL(pasted);
+    const loopback = (url: URL) => url.protocol === "http:" && ["127.0.0.1", "localhost"].includes(url.hostname)
+      && !url.username && !url.password;
+    const state = auth.searchParams.get("state");
+    if (!loopback(redirect) || !redirect.port || Number(redirect.port) === 0 || !loopback(callback)
+      || callback.port !== redirect.port || !callback.searchParams.get("code")?.trim()
+      || callback.searchParams.getAll("code").length !== 1 || !state
+      || callback.searchParams.get("state") !== state || callback.searchParams.getAll("state").length !== 1) return undefined;
+    return { port: Number(redirect.port), path: callback.pathname + callback.search };
+  } catch { return undefined; }
+}
+
+function requestAgyCallback(target: { port: number; path: string }, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    // No redirects, proxy or DNS lookup: neither the pasted host nor a response
+    // Location can turn this into a request away from the server's loopback port.
+    const request = http.get({ hostname: "127.0.0.1", port: target.port, path: target.path, signal, agent: false }, response => {
+      response.resume();
+      if (response.statusCode && response.statusCode >= 200 && response.statusCode < 400) resolve();
+      else reject(new Error("Antigravity did not accept the callback."));
+    });
+    request.setTimeout(5_000, () => request.destroy(new Error("Antigravity callback timed out.")));
+    request.on("error", reject);
+  });
+}
+
 /**
- * Google sign-in through the server's own `authenticate`, shaped as a device
- * login so the host's existing flow -- the waiting card with its link, Cancel,
- * the credential check, adopting the agent afterwards -- carries it unchanged.
- *
- * The server opens the browser itself; the link it prints is offered on the
- * card for when no browser opened. A stored token makes this return without a
- * browser at all. The process exists only for this sign-in.
+ * Google sign-in through the server's own `authenticate`. A cloud host accepts
+ * the phone's failed loopback address; the server keeps its PKCE verifier and
+ * exchanges the code itself. Desk browser sign-in retains its existing flow.
  */
-export function runAgySignIn(client: AgySignInClient, callbacks: DeviceLoginCallbacks): DeviceLoginHandle {
+export function runAgySignIn(client: AgySignInClient, callbacks: DeviceLoginCallbacks, opts: {
+  pasteRedirect?: boolean;
+  requestCallback?: typeof requestAgyCallback;
+} = {}): DeviceLoginHandle {
   let settled = false;
   let prompted = false;
+  let submitted = false;
   let stderr = "";
+  let signInUrl: string | undefined;
+  let redirectTimer: ReturnType<typeof setTimeout> | undefined;
+  const controller = new AbortController();
   const settle = (result: Parameters<DeviceLoginCallbacks["onDone"]>[0]) => {
     if (settled) return;
     settled = true;
+    if (redirectTimer) clearTimeout(redirectTimer);
+    controller.abort();
+    signInUrl = undefined;
+    stderr = "";
     callbacks.onDone(result);
   };
   client.on("stderr", (text) => {
@@ -138,7 +180,15 @@ export function runAgySignIn(client: AgySignInClient, callbacks: DeviceLoginCall
     const url = agySignInUrl(stderr);
     if (!url) return;
     prompted = true;
-    callbacks.onPrompt({ url });
+    signInUrl = url;
+    if (opts.pasteRedirect) {
+      redirectTimer = setTimeout(() => {
+        settle({ ok: false, failure: "expired", output: "" });
+        void client.dispose().catch(() => undefined);
+      }, AGY_REDIRECT_TIMEOUT_MS);
+      redirectTimer.unref?.();
+    }
+    callbacks.onPrompt({ url, ...(opts.pasteRedirect ? { needsCode: true } : {}) });
   });
   void (async () => {
     try {
@@ -147,7 +197,8 @@ export function runAgySignIn(client: AgySignInClient, callbacks: DeviceLoginCall
       await client.authenticate(AGY_SIGN_IN_METHOD, AGY_SIGN_IN_TIMEOUT_MS);
       settle({ ok: true, output: "" });
     } catch (error) {
-      settle({ ok: false, failure: "failed", output: errorText(error) });
+      const expired = opts.pasteRedirect && /timed?\s*out|timeout|expired/i.test(errorText(error));
+      settle({ ok: false, failure: expired ? "expired" : "failed", output: opts.pasteRedirect ? "" : errorText(error) });
     } finally {
       await client.dispose().catch(() => undefined);
     }
@@ -158,6 +209,20 @@ export function runAgySignIn(client: AgySignInClient, callbacks: DeviceLoginCall
       settle({ ok: false, cancelled: true, output: "" });
       void client.dispose().catch(() => undefined);
     },
-    submitCode: () => {},
+    submitCode: (pasted) => {
+      if (settled || submitted || !opts.pasteRedirect) return false;
+      const target = signInUrl ? agySignInCallback(pasted, signInUrl) : undefined;
+      if (!target) {
+        callbacks.onInputRejected?.(AGY_PASTE_ADDRESS_ERROR);
+        return false;
+      }
+      submitted = true;
+      void (opts.requestCallback ?? requestAgyCallback)(target, controller.signal).catch(() => {
+        if (settled) return;
+        submitted = false;
+        callbacks.onInputRejected?.("Could not send the address to Antigravity. Paste it again while this sign-in is still waiting.");
+      });
+      return true;
+    },
   };
 }

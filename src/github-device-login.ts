@@ -91,6 +91,7 @@ export function githubDeviceLoginFailureText(
       return "The GitHub CLI (gh) is not installed.";
     case "not-permitted":
       return "That GitHub account cannot complete this sign-in.";
+    case "expired":
     case "failed":
       return "GitHub sign-in did not complete. The code may have expired — try again.";
     case "unsupported":

@@ -66,22 +66,27 @@ Not every agent can do this, and the app tells you which:
 | Codex | if your CLI and account allow it | needs `--device-auth` in your build **and** "Allow device code login" on the account |
 | Claude Code | yes | `claude auth login` prints a URL on a plain pipe; you paste the code Anthropic shows you back into the page |
 | Muse Code | yes | its CLI prints a URL and a device code |
-| Antigravity | yes, with host support | paste a Gemini API key, or reuse an existing Google sign-in on the host without opening a browser |
+| Antigravity | yes, with host support | paste a Gemini API key; cloud hosts also accept the full failed callback address after Google sign-in; remote desks may reuse a stored sign-in |
 | DeepSeek | yes, with host support | paste a DeepSeek API key; a host environment key takes precedence |
 
 Antigravity and DeepSeek advertise remote setup through `remoteSetup` on their
 `providerState` rows. Only then does the phone offer managed installation and
 API-key entry; older hosts keep the computer-only copy. A pasted key crosses
 the relay to host secret storage, is never read back, and has no browser draft
-or retry storage. Antigravity's Google browser sign-in can start only locally
-on a desktop. Cloud and remote requests can adopt an existing sign-in, or use
-the key route. Linux server startup still needs a real cloud-machine check.
+or retry storage. `googleSignIn` retains local desktop browser eligibility.
+Cloud hosts additionally advertise `googleSignInPaste`: open the Google link,
+sign in, then paste the whole address from the page that does not load into
+the existing paste-code card. The host validates this run's state and port and
+requests only its own loopback server. The five-minute window ends with a
+restart option; the pasted address is never logged, echoed or saved as a draft.
+An older cloud host without the capability hides this route. Remote desks
+can still only adopt an existing Google sign-in, or use the key route.
 
 The app does not decide this from a version number. It runs the command and
 reports what came back, so a CLI that gains the flow starts working with no
 update here. Two shapes, not one: Grok and Codex are **device-code** (the CLI
 polls); Claude Code is **paste-code** (the page writes the code to the CLI's
-stdin). The plan names that shape (`needsCode`); it is not inferred from a
+stdin), and cloud Antigravity uses that card for the full callback address. The plan names that shape (`needsCode`); it is not inferred from a
 missing printed code.
 
 ## Signing in without a browser on that machine
