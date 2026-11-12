@@ -1,5 +1,23 @@
 # Changelog
 
+## 4.15.9 — 2026-11-12
+
+**Antigravity and DeepSeek for everyone, on every machine, set up from your phone.**
+
+### Changed
+
+- **Antigravity and DeepSeek are no longer experimental.** Both appear in **Connect an agent** and **Settings → Providers** on your computer, in the desktop app and on cloud machines, with no switch to turn on first. The two Experimental settings are gone. Signing a cloud machine out also removes the Antigravity and DeepSeek keys saved there.
+
+### Added
+
+- **Set them up from your phone.** From a phone or browser you can install Antigravity or DeepSeek on the machine and paste a Gemini or DeepSeek API key (it is kept on that machine and never shown again). On a cloud machine you can also sign Antigravity in with your Google account: Google's sign-in ends on an address your phone cannot open, so paste that address back into the page and the sign-in finishes on the machine. On your own computer a Google sign-in still happens at the computer; the phone can use one that is already there.
+- **Effort for Antigravity on a Gemini API key.** Gemini models that think, such as Gemini 4 Carbon and Argon, offer Low, Medium and High, and a change applies to your next message without a restart. With a Google sign-in, Antigravity keeps the levels Google offers.
+
+### Fixed
+
+- **An API key can be saved on a cloud machine.** It failed with "The key could not be saved on this machine", because a cloud machine has no system keychain. The desktop app now keeps keys there under Electron's built-in key. A desktop without a keychain still refuses, as before.
+- **DeepSeek installs from Grok Build Desktop.** The install stopped on a missing file on Windows, macOS and Linux, and so on every cloud machine. VS Code was not affected.
+
 ## 4.15.8 — 2026-11-03
 
 **DeepSeek in the extension's name and description.**

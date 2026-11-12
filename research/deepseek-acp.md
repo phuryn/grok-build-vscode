@@ -274,7 +274,7 @@ After rebuilding and installing this working tree:
 3. Select DeepSeek, type a draft, switch Minimal then Default before sending.
    Check that the draft and model survive. After a send, check the disabled
    selector and exact new-session note, with no new-conversation button.
-4. In Default on Windows, check the shell notice, ask for `Get-ChildItem -Force`
+4. In Default on Windows, ask for `Get-ChildItem -Force`
    in the project, then Stop a long command and run a short command again. Repeat
    a short command in Minimal. Keep any full Win32 error, including its path.
 5. After a turn, open the context popup on desk and phone: manual Compact is
