@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import { configureWorkspaceGrokHome } from "./workspace-grok-home";
 import { GrokSidebar } from "./sidebar";
 import { createVsCodeHost, createVsCodeHostContext, fromVsCodeUri, wrapWebviewView } from "./vscode-host";
+import { withLineTimestamps } from "./output-timestamps";
 import {
   GROK_VIEW_ID,
   GROK_PROJECTS_VIEW_ID,
@@ -169,7 +170,7 @@ export function activate(context: vscode.ExtensionContext): GrokExtensionApi {
   // view, nobody chose it — that is the entire licence the placement correction
   // has to move it, and it evaporates the moment any other subsystem writes.
   const firstEverRun = isFirstEverRun(context.globalState.keys());
-  const output = vscode.window.createOutputChannel("AFK Pilot");
+  const output = withLineTimestamps(vscode.window.createOutputChannel("AFK Pilot"));
   const host = createVsCodeHost(output, context);
   const hostContext = createVsCodeHostContext(context);
   const sidebar = new GrokSidebar(hostContext, host);

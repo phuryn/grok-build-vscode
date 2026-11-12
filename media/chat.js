@@ -24152,7 +24152,18 @@ ${fullText}`
       // dropped there, which is why the gear's repository link already opens
       // its own window. Same rule for a link in the transcript.
       if (IS_REMOTE) window.open(href, "_blank", "noopener");
-      else vscode.postMessage({ type: "openUrl", url: href });
+      else {
+        // VS Code's webview script also listens for this click, on the window,
+        // ignores preventDefault, and opens the link itself as coming from the
+        // workspace, which in a trusted workspace skips "Do you want Code to
+        // open the external website?". Our openUrl goes through
+        // env.openExternal, which asks for any untrusted domain, so the
+        // question appeared while the page had already opened (#231). Keep the
+        // click from reaching the window so ours, and its question, is the
+        // only opener. The desktop app has no such script.
+        e.stopPropagation();
+        vscode.postMessage({ type: "openUrl", url: href });
+      }
     } else if (/^[a-zA-Z]:[\\/]/.test(href) || href.startsWith("\\\\") || !/^[a-z][a-z0-9+.-]*:/i.test(href)) {
       vscode.postMessage({ type: "openFile", path: href });
     }

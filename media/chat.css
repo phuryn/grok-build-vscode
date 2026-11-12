@@ -5109,9 +5109,15 @@ body.dragging { outline: 2px dashed var(--vscode-focusBorder); outline-offset: -
   display: block;
   -webkit-line-clamp: unset;
   line-clamp: unset;
-  /* At most ten line-heights or a fifth of the viewport, leaving room for
-     the action row and composer even on short phone windows. */
-  max-height: min(calc(var(--command-preview-lines) * 1lh), 20dvh);
+  /* At most ten line-heights, and only as tall as still leaves the whole card
+     (title, caption, actions: about 200px) above the composer: 380px is that
+     plus the phone's top bar and composer. Never below the old fifth of the
+     viewport, which showed only 5-6 lines in an ordinary sidebar at 150%
+     scaling (#208). Whole pixels: ten lines come to 175.5px, and the half
+     pixel of scroll left at the end kept a touch drag in the box instead of
+     the conversation. The first line is the fallback without round(). */
+  max-height: min(calc(var(--command-preview-lines) * 1lh), max(20dvh, calc(100dvh - 380px)));
+  max-height: round(down, min(calc(var(--command-preview-lines) * 1lh), max(20dvh, calc(100dvh - 380px))), 1px);
   overflow: hidden;
 }
 .card.permission .permission-command-scroll {

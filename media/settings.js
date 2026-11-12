@@ -4332,6 +4332,9 @@
       body.querySelectorAll(".settings-connector-oauth-link").forEach((link) => {
         link.addEventListener("click", (e) => {
           e.preventDefault();
+          // Keep VS Code's own webview link handler (on the window) from
+          // opening it a second time, as the key-docs link above does (#231).
+          e.stopPropagation();
           openExternalHref(link.href);
         });
       });

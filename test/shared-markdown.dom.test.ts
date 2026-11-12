@@ -551,3 +551,46 @@ describe("all six ATX heading levels (#198)", () => {
     }
   });
 });
+
+/**
+ * #231: in VS Code a link click showed "Do you want Code to open the external
+ * website?" and opened the page anyway. Two openers ran: ours (openUrl, then
+ * env.openExternal, which asks for an untrusted domain) and VS Code's webview
+ * script, which listens on the WINDOW, ignores preventDefault, and in a trusted
+ * workspace opens without asking. So the click must stop before the window and
+ * post exactly one openUrl. A remote opens its own tab. Every surface prevents
+ * the default, so the webview itself never navigates.
+ */
+describe("one opener for a web link in the transcript (#231)", () => {
+  const url = "https://example.com/docs";
+  it.each(["vscode", "desktop", "remote"] as const)("%s", (surface) => {
+    const opened: unknown[][] = [];
+    let reachedWindow = 0;
+    const h = bootWebview({
+      ready: true,
+      remote: surface === "remote",
+      beforeScripts: (w) => {
+        (w as any).grokDesktopShell = surface === "desktop";
+        (w as any).open = (...args: unknown[]) => { opened.push(args); return null; };
+      },
+    });
+    // Stands in for VS Code's webview script, registered the way it is: on the window.
+    h.window.addEventListener("click", () => { reachedWindow++; });
+    const body = h.doc.createElement("div");
+    body.className = "msg agent";
+    body.innerHTML = String((h.window as any).__grokRenderMarkdown(`See [the docs](${url}).\n`));
+    h.doc.getElementById("messages")!.appendChild(body);
+    const link = body.querySelector(`a[href="${url}"]`)!;
+    h.posted.length = 0;
+    const notPrevented = link.dispatchEvent(new (h.window as any).MouseEvent("click", { bubbles: true, cancelable: true }));
+    expect(notPrevented).toBe(false);
+    if (surface === "remote") {
+      expect(opened).toEqual([[url, "_blank", "noopener"]]);
+      expect(h.posted.filter((m: any) => m.type === "openUrl")).toEqual([]);
+    } else {
+      expect(h.posted.filter((m: any) => m.type === "openUrl")).toEqual([{ type: "openUrl", url }]);
+      expect(reachedWindow).toBe(0);
+      expect(opened).toEqual([]);
+    }
+  });
+});

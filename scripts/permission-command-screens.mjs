@@ -31,6 +31,8 @@ try {
     ["desktop", { width: 900, height: 720 }],
     ["phone", { width: 390, height: 844 }],
     ["editor", { width: 480, height: 640 }],
+    // #208 follow-up: the reporter's 822px sidebar at 150% display scaling.
+    ["sidebar-150", { width: 483, height: 548 }],
     ["phone-short", { width: 390, height: 500 }],
   ]) {
     const remote = surface.startsWith("phone");
@@ -194,7 +196,7 @@ try {
         const beforeBottomTouch = await page.locator("#messages").evaluate((el) => el.scrollTop);
         await drag(false);
         assert.ok(await page.locator("#messages").evaluate((el) => el.scrollTop) > beforeBottomTouch,
-          "touch at the command's bottom continues into the conversation");
+          `touch at the command's bottom continues into the conversation: ${JSON.stringify({ surface, beforeBottomTouch, geometry: await geometry() })}`);
         await cdp.detach();
       }
       await page.locator("#messages").evaluate((el) => { el.scrollTop = el.scrollHeight; });
@@ -204,7 +206,7 @@ try {
         assert.equal(await page.evaluate(() => window.__posted.some((m) => m.type === "openText")), false);
       } else {
         await page.locator(".command-view-all").click();
-        if (surface === "editor") {
+        if (surface !== "desktop") {
           assert.ok(await page.evaluate(() => window.__posted.some((m) => m.type === "openText")));
         } else {
           assert.ok((await page.locator("#preview-overlay .preview-body").textContent()).includes("npm test"));
