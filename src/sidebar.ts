@@ -543,6 +543,9 @@ import { authorizeMcpConnectorOAuth, ownedMcpOAuthClient, writeOAuthClientInfoFi
 // imported above. See that file for why.
 
 const SESSION_META_KEY = "grok.sessionMeta";
+/** The conversation each window's panel last showed, keyed by the window's
+ *  normalized workspace root (#233). See rememberLocalConversation. */
+const LAST_CONVERSATION_KEY = "grok.lastConversation";
 // Older booleans included silent credential-probe promotions. Never import them.
 const PROVIDER_CONNECTIONS_KEY = "grok.providerConnections.v2";
 const PROVIDER_MODEL_CACHE_KEY = "grok.providerModelCache";
@@ -15202,6 +15205,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     this.postLocal(local);
     this.postSessionName(this.focused);
     if (opts) return;
+    this.rememberLocalConversation();
     // Pins ride along with every catalog mutation rather than being refreshed at
     // each site that can invalidate one. Deleting a session, clearing a repo and
     // removing a worktree all land here; hanging the pinned refresh off the same
@@ -19390,10 +19394,61 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     if (!this.focused.hasHistory && !this.focused.client) {
       this.focused.provider = this.defaultProviderForProject(this.sessionCwd(this.focused));
     }
-    void this.startSession(undefined, this.focused, "ensure").then(() => {
+    // A cold start (window reload, extension-host restart, a new window) opens
+    // the conversation this window last showed, not a blank one (#233). Only
+    // here: a live client means the view was rebuilt under a running session,
+    // which the ensure start below keeps.
+    const reopen = !this.focused.client && !this.focused.hasHistory ? this.conversationToReopen() : undefined;
+    const start = reopen
+      ? this.openSession(reopen).catch((error) => {
+          this.host.appendLine(`[sessions] could not reopen the last conversation: ${errorDetail(error)}`);
+          return this.startSession(undefined, this.focused, "ensure");
+        })
+      : this.startSession(undefined, this.focused, "ensure");
+    void start.then(() => {
       this.postSessionsList();
       this.sweepEmptySessions();
     });
+  }
+
+  /**
+   * Remember the conversation the local panel shows, so the next cold start
+   * reopens it (#233). Before this a reload or an extension-host restart opened
+   * a blank "New session" and the person had to find their conversation in
+   * history. Runs on every history-list refresh (postSessionsListNow), which
+   * every send, open, new session and delete already goes through.
+   *
+   * A conversation with history is remembered. A live empty one (New session)
+   * clears the entry, so someone who started a new conversation is still in a
+   * new one after the reload. Anything else, such as the panel's own startup
+   * state before an agent runs, or the gap while an open is still loading,
+   * leaves the entry alone.
+   */
+  private rememberLocalConversation(): void {
+    const root = this.workspaceRoot();
+    if (!root) return;
+    const session = this.focused;
+    const id = session.hasHistory && !session.deleted ? session.activeSessionId : undefined;
+    if (!id && (session.hasHistory || !session.client)) return;
+    const key = normalizeRepoPath(root);
+    const remembered = this.state.get<Record<string, string>>(LAST_CONVERSATION_KEY, {});
+    if (remembered[key] === id) return;
+    const next = { ...remembered };
+    if (id) next[key] = id;
+    else delete next[key];
+    void this.state.update(LAST_CONVERSATION_KEY, next);
+  }
+
+  /** The conversation a cold start reopens for this window, if any: the one
+   *  rememberLocalConversation last saved for its root, provided its agent can
+   *  answer now. Otherwise the panel starts blank, as before. */
+  private conversationToReopen(): string | undefined {
+    const root = this.workspaceRoot();
+    if (!root) return undefined;
+    const id = this.state.get<Record<string, string>>(LAST_CONVERSATION_KEY, {})[normalizeRepoPath(root)];
+    if (!id) return undefined;
+    const provider = this.state.get<SessionMetaOverrides>(SESSION_META_KEY, {})[id]?.provider ?? "grok";
+    return this.usableProviders().includes(provider) ? id : undefined;
   }
 
   /**

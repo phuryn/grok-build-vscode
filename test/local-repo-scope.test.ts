@@ -180,7 +180,9 @@ describe("the very first conversation", () => {
     // ever revealed was ignored by the first conversation: rail and history said
     // B while the agent ran in A, and the first prompt could read or write A.
     // Every other entry point sets this; the one that starts by itself did not.
-    const at = sidebar.indexOf('void this.startSession(undefined, this.focused, "ensure").then(');
+    // The start is a blank session or a reopen of the last conversation (#233);
+    // the cwd is set before either.
+    const at = sidebar.indexOf("const reopen = !this.focused.client");
     expect(at).toBeGreaterThan(-1);
     const before = sidebar.slice(Math.max(0, at - 700), at);
     expect(before).toMatch(/if \(!this\.focused\.cwd\)/);

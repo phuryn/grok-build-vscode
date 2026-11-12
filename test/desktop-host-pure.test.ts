@@ -4740,7 +4740,9 @@ describe("openFile / openDiff session roots (P2-4 / P2-5)", () => {
     expect(initialBody).toContain("postSessionsList()");
     expect(initialBody).toContain("sweepEmptySessions()");
     // postSessionsList must run on the startSession success path (not only on ready).
-    const thenIdx = initialBody.indexOf('startSession(undefined, this.focused, "ensure").then');
+    // The start is either that blank session or a reopen of the last
+    // conversation (#233); the list follows whichever ran.
+    const thenIdx = initialBody.indexOf("void start.then(");
     expect(thenIdx).toBeGreaterThan(0);
     expect(initialBody.indexOf("postSessionsList()", thenIdx)).toBeGreaterThan(thenIdx);
   });
