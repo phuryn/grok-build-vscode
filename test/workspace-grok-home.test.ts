@@ -5,6 +5,7 @@ import { buildGrokAgentArgs, grokBackend } from "../src/grok-backend";
 import { resolveGrokHome } from "../src/sessions";
 import { globalConfigPath } from "../src/grok-config";
 import { GrokSidebar } from "../src/sidebar";
+import { manifestLabel } from "../test-support/manifest-nls";
 
 function fixture(initial: unknown = "", env: NodeJS.ProcessEnv = {}) {
   let value = initial;
@@ -126,6 +127,6 @@ describe("application and reload", () => {
     expect(manifest.capabilities?.untrustedWorkspaces).toBeUndefined();
     const setting = manifest.contributes.configuration.properties["grok.homeDirectory"];
     expect(setting.scope).toBe("window");
-    expect(setting.description).toContain("disabled in untrusted workspaces");
+    expect(manifestLabel(setting.description)).toContain("disabled in untrusted workspaces");
   });
 });
