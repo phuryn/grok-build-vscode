@@ -40,16 +40,23 @@ export type SlashQuery = { query: string; atStart: boolean };
  * Slash commands the extension hides from both the autocomplete list and the
  * dispatch gate. `/always-approve` (#31) only mutates grok's *global*
  * config.toml — a surprising, sticky side effect that then silences permission
- * cards in every grok session — and is a no-op over ACP anyway. `/context`
- * (#39) renders only in the CLI's own TUI: over ACP stdio it streams nothing
- * back, so selecting it silently does nothing (`/session-info` is the working
- * equivalent). Filtered at ingestion (see `filterAdvertisedCommands`).
+ * cards in every grok session — and is a no-op over ACP anyway. Grok's
+ * `/context` (#39) renders only in the CLI's own TUI: over ACP stdio it streams
+ * nothing back, so selecting it silently does nothing (`/session-info` is the
+ * working equivalent). Filtered at ingestion (see `filterAdvertisedCommands`).
  */
 export const HIDDEN_SLASH_COMMANDS: ReadonlySet<string> = new Set(["always-approve", "context"]);
 
+/**
+ * Agents whose adapter answers a hidden command in the chat, so it stays.
+ * Claude's adapter runs `/context` locally and sends its table back as reply text.
+ */
+const SHOWN_FOR: Readonly<Record<string, ReadonlySet<string>>> = { claude: new Set(["context"]) };
+
 /** Drop hidden commands from an advertised `available_commands_update` list. */
-export function filterAdvertisedCommands<T extends { name: string }>(commands: T[]): T[] {
-  return commands.filter((c) => !HIDDEN_SLASH_COMMANDS.has(c.name));
+export function filterAdvertisedCommands<T extends { name: string }>(commands: T[], provider?: string): T[] {
+  const shown = (provider && SHOWN_FOR[provider]) || undefined;
+  return commands.filter((c) => !HIDDEN_SLASH_COMMANDS.has(c.name) || shown?.has(c.name) === true);
 }
 
 /**

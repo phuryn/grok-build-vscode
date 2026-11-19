@@ -203,6 +203,15 @@ describe("filterAdvertisedCommands", () => {
     expect(filterAdvertisedCommands(cmds).map((c) => c.name)).toEqual(["compact", "session-info"]);
   });
 
+  it("keeps /context for Claude, whose adapter answers it in the chat, and still drops /always-approve", () => {
+    const cmds = [{ name: "compact" }, { name: "always-approve" }, { name: "context" }];
+    expect(filterAdvertisedCommands(cmds, "claude").map((c) => c.name)).toEqual(["compact", "context"]);
+    for (const provider of ["grok", "codex", "muse", undefined]) {
+      expect(filterAdvertisedCommands(cmds, provider).map((c) => c.name)).toEqual(["compact"]);
+    }
+    expect(matchSlashCommand("/context", filterAdvertisedCommands(cmds, "claude").map((c) => c.name))).toBe("context");
+  });
+
   it("leaves a list without hidden commands untouched", () => {
     const cmds = [{ name: "compact" }, { name: "session-info" }];
     expect(filterAdvertisedCommands(cmds)).toEqual(cmds);

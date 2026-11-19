@@ -1771,7 +1771,7 @@ export class AcpClient extends EventEmitter {
       // Hide config-mutating no-op commands (`/always-approve`) from both the
       // autocomplete and the dispatch gate at the single ingestion point (#31).
       // DeepSeek has no native commands; those names can be real filesystem skills.
-      this.availableCommands = this.provider === "deepseek" ? r.commands : filterAdvertisedCommands(r.commands);
+      this.availableCommands = this.provider === "deepseek" ? r.commands : filterAdvertisedCommands(r.commands, this.provider);
       this.emit("commandsUpdate", this.availableCommands);
       this.publishContextWindowSelection();
       return;
