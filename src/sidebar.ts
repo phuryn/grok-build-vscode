@@ -86,10 +86,12 @@ import {
 import { RoutineRunStore } from "./routine-store";
 import { routinesMessageForRemote } from "./remote-policy";
 import { PersistedState, mementoWithout } from "./persisted-state";
+import { DESK_ALERT_TITLES, deskApprovalCommand, type DeskAlert, type DeskAlertKind } from "./desk-alerts";
 import {
   Session,
   SessionStartIntent,
   SessionStatus,
+  type SessionTurnToken,
   INTERRUPTED_SEND_TEXT,
   beginQueuedSendCommit,
   beginTurn,
@@ -1114,6 +1116,7 @@ export class GrokSidebar {
     "setSoundNotifications",
     "setProcessingSound",
     "setInputNeededSound",
+    "setDeskAlerts",
     "setReadRepliesAloud",
     "setSummarizeRepliesAloud",
     "setVoiceSendPhrase",
@@ -3497,6 +3500,11 @@ export class GrokSidebar {
           value: this.host.getConfiguration("grok").get<boolean>("inputNeededSound", false),
         });
       }
+      if (this.host.deskAlerts && !isCloudEnvironment() && e.affectsConfiguration("grok.deskAlerts")) {
+        const message = { type: "deskAlerts" as const, value: this.host.getConfiguration("grok").get("deskAlerts", true) };
+        this.postLocal(message);
+        void this.settingsEditor?.webview.postMessage(message);
+      }
       if (e.affectsConfiguration("grok.readRepliesAloud")) {
         this.post({
           type: "readRepliesAloud",
@@ -4538,6 +4546,7 @@ Only continue if you trust this code.`,
       // continuation to preserve. Cancel it and wait for client.prompt() to
       // settle; a set_mode acknowledgement alone cannot authorize writes.
       const cancelled = session.turnToken;
+      if (cancelled) cancelled.stopRequested = true;
       void client.cancel("unavailable Plan recovery");
       // "Wait for client.prompt() to settle" is the assumption that wedged
       // sessions in the first place — a cancel is a request, not an outcome.
@@ -4922,14 +4931,15 @@ Only continue if you trust this code.`,
     const plan = isPlanReviewPermission(req.toolCall?.kind)
       ? planTextFromPermissionToolCall(req.toolCall)
       : undefined;
-    session.pendingPermissions.set(req.id, createPendingPermission({
+    const pending = createPendingPermission({
       title: req.toolCall?.title || `permission: ${req.toolCall?.kind || "tool"}`,
       toolCallId: req.toolCall?.toolCallId,
       toolKind: req.toolCall?.kind,
       plan,
       options,
       commandGrant,
-    }));
+    });
+    session.pendingPermissions.set(req.id, pending);
     this.syncHumanWait(session);
     this.emit(session, {
       type: "permissionRequest",
@@ -4940,6 +4950,89 @@ Only continue if you trust this code.`,
       },
     });
     this.setStatus(session, "needs-you");
+    this.showDeskAlert(session, isPlanReviewPermission(pending.toolKind) ? "plan" : "permission", () => {
+      if (planActive) return;
+      // Some agents use allow_once for both once and session-scoped choices.
+      const onceOptions = visibleOptions.filter((o) => o.kind === "allow_once"
+        && (o._meta?.scope === undefined || o._meta.scope === "once"));
+      if (onceOptions.length !== 1) return;
+      const { optionId } = onceOptions[0];
+      if (visibleOptions.filter((o) => o.optionId === optionId).length !== 1) return;
+      const command = deskApprovalCommand(req.toolCall, resolvedTerminalShellDialect());
+      if (!command) return;
+      const gen = session.gen;
+      return {
+        command,
+        agent: providerDisplayName(session.provider),
+        approve: () => session.gen === gen && session.client === client
+          && session.pendingPermissions.get(req.id) === pending
+          && !session.turnToken?.stopRequested
+          && !effectivePlanActive(client.usesClientPlanGate, client.planActive, session.planActive)
+          && this.answerPermission(session, req.id, optionId),
+      };
+    });
+  }
+
+  private answerPermission(session: Session, requestId: number | string, optionId: string): boolean {
+    const pending = session.pendingPermissions.get(requestId);
+    if (!pending || !permissionAnswerAllowed(
+      pendingPermissionOptions(pending, session.planActive), optionId, session.planActive, pending.toolKind,
+    )) return false;
+    const grant = pending.commandGrant?.optionId === optionId ? pending.commandGrant : undefined;
+    if (!session.client?.respondPermission(requestId, grant?.allowOnceId ?? optionId)) return false;
+    if (grant) for (const program of grant.programs) session.allowedCommandPrograms.add(program);
+    this.emit(session, { type: "permissionResolved", requestId, optionId });
+    const chosen = pending.options.find((option) => option.optionId === optionId);
+    if (isPlanReviewPermission(pending.toolKind) && pending.plan?.trim()) {
+      this.persistPlanVerdict(session, planReviewVerdictForOption(chosen?.kind), pending.plan);
+      session.pendingPermissions.delete(requestId);
+      this.syncHumanWait(session);
+    } else {
+      this.persistPermissionAnswer(session, requestId, optionId);
+    }
+    this.closeDiffForRequest(session, requestId);
+    this.noteAnswered(session);
+    return true;
+  }
+
+  private showDeskAlert(session: Session, kind: DeskAlertKind, approval?: () => DeskAlert["approval"]): void {
+    const alerts = this.host?.deskAlerts;
+    const id = session.activeSessionId;
+    if (!alerts || !id || session.replaying || session.suppressContent || session.priming
+      || session.turnToken?.stopRequested || isCloudEnvironment()) return;
+    try {
+      if (!this.host.getConfiguration("grok").get("deskAlerts", true)
+        || !alerts.isAway(session === this.focused && this.view?.visible === true)) return;
+      const cwd = this.sessionCwd(session);
+      const label = (text: string) => text.replace(/[\p{Cc}\p{Cf}\[\]]/gu, " ").trim().slice(0, 90);
+      const project = label(this.resolveLocalRepoTarget(cwd)?.label || path.basename(cwd)) || "No project";
+      alerts.show({
+        kind,
+        title: DESK_ALERT_TITLES[kind],
+        body: `${project} · ${label(this.sessionDisplayName(session)) || "Conversation"}`,
+        open: async () => {
+          if (this.focused.activeSessionId !== id) await this.openSession(id, cwd);
+          else this.markRead(this.focused);
+          await this.host.revealChatView();
+          if (this.focused.activeSessionId === id) this.postLocal({ type: "focusInput", closeSettings: true });
+        },
+        approval: alerts.canApproveOnce ? approval?.() : undefined,
+      });
+    } catch {
+      this.host.appendLine("[desk alerts] Could not show the alert.");
+    }
+  }
+
+  private showDeskTurnAlert(session: Session, turn: SessionTurnToken, kind: "done" | "error"): void {
+    if (!turn.stopRequested) this.showDeskAlert(session, kind);
+  }
+
+  private postQuestionRequest(session: Session, req: QuestionRequest): void {
+    session.pendingQuestions.set(req.id, req.toolCallId);
+    this.syncHumanWait(session);
+    this.emit(session, { type: "questionRequest", req });
+    this.setStatus(session, "needs-you");
+    this.showDeskAlert(session, "question");
   }
 
   /** Auto-approve routine permission cards currently awaiting the user (#64).
@@ -5302,7 +5395,7 @@ Only continue if you trust this code.`,
    * A live (non-replay) prompt settled in this process. Thumbs may rate that
    * turn and no earlier one; a cold `session/load` never sets this.
    */
-  private noteLiveTurnEnded(session: Session): void {
+  private noteLiveTurnEnded(session: Session, turn?: SessionTurnToken, kind?: "done" | "error"): void {
     // The turn is over, so nothing it asked is outstanding any more — whether
     // it ended by finishing or by being cancelled. Without this, a question
     // card left on screen after Stop still passes the "is it outstanding" check
@@ -5326,6 +5419,7 @@ Only continue if you trust this code.`,
     // that agent blocked with no way back short of restarting the session.
     if (!turnIsInFlight(session)) {
       this.clearPendingHumanRequests(session);
+      if (turn && kind) this.showDeskTurnAlert(session, turn, kind);
     }
     if (session.replaying || session.suppressContent) return;
     session.liveFeedbackEligible = true;
@@ -12081,10 +12175,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       if (gen !== session.gen) return;
       // Questions are read-only and need a human — surface them in every mode
       // (plan/YOLO included); there's no sensible auto-answer.
-      session.pendingQuestions.set(req.id, req.toolCallId);
-      this.syncHumanWait(session);
-      this.emit(session, { type: "questionRequest", req });
-      this.setStatus(session, "needs-you");
+      this.postQuestionRequest(session, req);
     });
     client.on("exit", (code) => {
       if (gen !== session.gen) return; // suppress exit events from disposed/replaced clients
@@ -12115,6 +12206,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         this.emitQueuedSends(session);
       }
       this.setStatus(session, "error");
+      if (session.turnToken) this.showDeskTurnAlert(session, session.turnToken, "error");
       this.pool.delete(session); // the process is gone; it's no longer a live pool member
       // Drop the dead client too (and bump gen so its other in-flight handlers
       // bail): `handleSend`/`ensureClient` prefer `session.client`, so leaving
@@ -12731,6 +12823,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       }
       case "cancel": {
         const cancelled = session.turnToken;
+        if (cancelled) cancelled.stopRequested = true;
         this.clearPendingHumanRequests(session);
         await session.client?.cancel("user Stop click");
         if (cancelled) this.armCancelRecovery(session, cancelled);
@@ -13044,46 +13137,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         ));
         break;
       case "permissionAnswer":
-        {
-          const pending = session.pendingPermissions.get(msg.requestId);
-          if (!pending || !permissionAnswerAllowed(
-            pendingPermissionOptions(pending, session.planActive),
-            msg.optionId,
-            session.planActive,
-            pending.toolKind,
-          )) break;
-          const grant = pending.commandGrant?.optionId === msg.optionId ? pending.commandGrant : undefined;
-          if (!session.client?.respondPermission(msg.requestId, grant?.allowOnceId ?? msg.optionId)) break;
-          if (grant) for (const program of grant.programs) session.allowedCommandPrograms.add(program);
-          // Record the resolution in the session buffer so re-focusing this session
-          // replays the card collapsed instead of active (the live collapse is a
-          // webview-only DOM mutation that the buffer never captured).
-          this.emit(session, { type: "permissionResolved", requestId: msg.requestId, optionId: msg.optionId });
-          const chosen = pending.options.find((option) => option.optionId === msg.optionId);
-          if (isPlanReviewPermission(pending.toolKind) && pending.plan?.trim()) {
-            this.persistPlanVerdict(
-              session,
-              planReviewVerdictForOption(chosen?.kind),
-              pending.plan,
-            );
-            session.pendingPermissions.delete(msg.requestId);
-            this.syncHumanWait(session);
-          } else {
-            // Persist it (title + outcome) so a cold reload replays a collapsed card —
-            // the CLI doesn't replay request_permission on session/load.
-            this.persistPermissionAnswer(session, msg.requestId, msg.optionId);
-          }
-          this.closeDiffForRequest(session, msg.requestId); // tidy up the auto-opened diff (#21)
-          // Only once EVERY card is answered. Two tools can ask at the same
-          // time, and answering one leaves the agent blocked on the other — so
-          // saying "working" here was a lie that the auto-approval path (which
-          // checks the same thing) never told. On a cloud machine the lie also
-          // costs money: `working` is what holds the machine awake, so a
-          // half-answered pair would hold it open indefinitely while nothing
-          // ran.
-          this.noteAnswered(session);
-          break;
-        }
+        this.answerPermission(session, msg.requestId, msg.optionId);
+        break;
       case "exitPlanAnswer":
         this.handleExitPlan(msg.requestId, msg.verdict, msg.comment, session);
         break;
@@ -13429,6 +13484,9 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       case "setInputNeededSound":
         await this.host.getConfiguration("grok")
           .update("inputNeededSound", !!msg.value, "global");
+        break;
+      case "setDeskAlerts":
+        await this.host.getConfiguration("grok").update("deskAlerts", !!msg.value, "global");
         break;
       case "setReadRepliesAloud":
         await this.host.getConfiguration("grok")
@@ -18086,6 +18144,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       req: { ...req, plan, planPath: snapshot?.path, planName: snapshot?.name },
     });
     this.setStatus(session, "needs-you");
+    this.showDeskAlert(session, "plan");
   }
 
   private async withPlanReviewPaths<T extends { text: string }>(
@@ -18966,7 +19025,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       // needs no guard: nothing awaits between its endTurn check and its
       // emit.)
       if (!turnIsInFlight(session)) this.emit(session, { type: "agentEnd", meta });
-      this.noteLiveTurnEnded(session);
+      this.noteLiveTurnEnded(session, turn, "done");
       // "done" only if this is still the LAST word. /compact releases its turn
       // token before awaiting the context refresh, so a send from another tab
       // can start a turn while this handler is suspended — and marking the
@@ -19002,7 +19061,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       // notice instead (#57).
       if (isRateLimitError(e)) {
         this.emit(session, { type: "agentError", text: rateLimitNoticeText(e) });
-        this.noteLiveTurnEnded(session);
+        this.noteLiveTurnEnded(session, turn, "error");
         this.setStatus(session, "error");
         return;
       }
@@ -19026,7 +19085,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         + `: ${session.provider === "deepseek" ? deepseekPromptErrorText(e) : errorDetail(e)}`,
       );
       this.emit(session, { type: "agentError", text: session.provider === "deepseek" ? deepseekPromptErrorText(e) : promptErrorText(e) });
-      this.noteLiveTurnEnded(session);
+      this.noteLiveTurnEnded(session, turn, "error");
       this.setStatus(session, "error");
     } finally {
       // Belt to the braces above: however this turn left — an early return on a
@@ -19131,7 +19190,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       }
       if (!endTurn(session, turn)) return true;
       this.emit(session, { type: "agentEnd", meta });
-      this.noteLiveTurnEnded(session);
+      this.noteLiveTurnEnded(session, turn, "done");
       this.setStatus(session, "done");
       session.authRecoveryTried = false; // recovered — re-arm for a future expiry
       this.setProviderNeedsLogin(session.provider, false); // and the token really is good
@@ -19148,7 +19207,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       // (#57): a fresh process with a fresh token hit the same wall.
       if (isRateLimitError(e2)) {
         this.emit(session, { type: "agentError", text: rateLimitNoticeText(e2) });
-        this.noteLiveTurnEnded(session);
+        this.noteLiveTurnEnded(session, turn, "error");
         this.setStatus(session, "error");
         return true;
       }
@@ -19161,7 +19220,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         // from the replay buffer on a later focus switch after the user has
         // already re-authed.
         this.emit(session, { type: "agentError", text: errorDetail(e2) });
-        this.noteLiveTurnEnded(session);
+        this.noteLiveTurnEnded(session, turn, "error");
         this.setStatus(session, "error");
         // The account flag, not only the overlay. The overlay is the empty-state
         // card, and the renderer deliberately refuses to paint it over a live
@@ -19183,7 +19242,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           + `: ${errorDetail(e2)}`,
         );
         this.emit(session, { type: "agentError", text: promptErrorText(e2) });
-        this.noteLiveTurnEnded(session);
+        this.noteLiveTurnEnded(session, turn, "error");
         this.setStatus(session, "error");
       }
     } finally {
@@ -19275,6 +19334,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       soundNotifications: cfg.get("soundNotifications", false),
       processingSound: cfg.get("processingSound", false),
       inputNeededSound: cfg.get("inputNeededSound", false),
+      ...(this.host.deskAlerts && !isCloudEnvironment() ? { deskAlerts: cfg.get("deskAlerts", true) } : {}),
       readRepliesAloud: cfg.get("readRepliesAloud", false),
       telemetryEnabled: cfg.get("telemetry.enabled", true),
       // Desktop-only and platform-gated; the row hides itself on everything
@@ -23736,6 +23796,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         soundNotifications: cfg.get("soundNotifications", false),
         processingSound: cfg.get("processingSound", false),
         inputNeededSound: cfg.get("inputNeededSound", false),
+        ...(this.host.deskAlerts && !isCloudEnvironment() ? { deskAlerts: cfg.get("deskAlerts", true) } : {}),
         readRepliesAloud: cfg.get("readRepliesAloud", false),
         summarizeRepliesAloud: cfg.get("summarizeRepliesAloud", true),
         voiceConfigured: !!this.voiceBackendState(this.sessionCwd(this.focused), this.focused.provider).backend,
@@ -23834,6 +23895,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
             remoteHandoffSupported: typeof msg.handoffReady === "boolean" });
         }
         if (msg.type === "museSettings") surface.update({ museSettings: msg.value });
+        if (msg.type === "deskAlerts") surface.update({ deskAlerts: msg.value });
         if (msg.type === "voiceConfigured") {
           surface.update({ voiceConfigured: !!msg.value, voiceBackendState: msg.backendState,
             voiceSendPhrase: msg.sendPhrase, voiceKeyterms: msg.keyterms });

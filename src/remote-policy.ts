@@ -527,6 +527,7 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
   setSoundNotifications: "host-local",
   setProcessingSound: "host-local",
   setInputNeededSound: "host-local",
+  setDeskAlerts: "host-local",
   setReadRepliesAloud: "host-local",
   setSummarizeRepliesAloud: "host-local",
   // Phone dictation is first-class: the send phrase and dictionary are the
@@ -725,6 +726,7 @@ export const REMOTE_REQUIRES_BOUND_SESSION: Record<WebviewMsg["type"], boolean> 
   setSoundNotifications: false,
   setProcessingSound: false,
   setInputNeededSound: false,
+  setDeskAlerts: false,
   setReadRepliesAloud: false,
   setSummarizeRepliesAloud: false,
   setVoiceSendPhrase: false,
@@ -1111,6 +1113,7 @@ export const OUTBOUND_DISPOSITION: Record<HostMsg["type"], OutboundDisposition> 
   soundNotifications: "mirror",
   processingSound: "host-local",
   inputNeededSound: "host-local",
+  deskAlerts: "host-local",
   readRepliesAloud: "host-local",
   summarizeRepliesAloud: "host-local",
   // Only the shortened text is returned; sidebar targets it to the requester.
@@ -1215,6 +1218,7 @@ export const OUTBOUND_PROJECT_AUTH: Record<HostMsg["type"], OutboundProjectAuth>
   soundNotifications: "none",
   processingSound: "none",
   inputNeededSound: "none",
+  deskAlerts: "none",
   readRepliesAloud: "none",
   summarizeRepliesAloud: "none",
   moveComposerCaret: "none",
@@ -1615,6 +1619,10 @@ function inlineHistoryImageForRemote(image: HistoryImage, deps: MediaInlineDeps)
 /** The single outbound choke point: what (if anything) crosses to a remote for
  *  this HostMsg. Returns the message to send, or null to suppress. */
 export function transformHostMsgForRemote(msg: HostMsg, deps: MediaInlineDeps): HostMsg | null {
+  if (msg.type === "initialState" && msg.deskAlerts !== undefined) {
+    const { deskAlerts, ...rest } = msg;
+    return rest;
+  }
   if (msg.type === "historyBatch") {
     return {
       ...msg,

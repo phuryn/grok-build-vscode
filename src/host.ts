@@ -323,6 +323,7 @@ export interface HostWebview {
 
 export interface HostWebviewView {
   webview: HostWebview;
+  readonly visible?: boolean;
   show?(preserveFocus?: boolean): void;
 }
 
@@ -487,6 +488,11 @@ export interface HostFileSystem {
  */
 export interface Host {
   // ── Notifications ──────────────────────────────────────────────────────
+  deskAlerts?: {
+    readonly canApproveOnce: boolean;
+    isAway(showingConversation: boolean): boolean;
+    show(alert: import("./desk-alerts").DeskAlert): void;
+  };
   showInformationMessage(message: string, ...items: string[]): Thenable<string | undefined>;
   showWarningMessage(
     message: string,

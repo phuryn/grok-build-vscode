@@ -701,6 +701,54 @@ describe("settings overlay (chat.js)", () => {
     expect(posted).toContainEqual({ type: "setInputNeededSound", value: true });
   });
 
+  it("shows Desk alerts in desktop Notifications and keeps it independent of sounds", () => {
+    const h = bootWebview({ beforeScripts(w) { (w as any).grokDesktopShell = true; } });
+    seedChat(h, { deskAlerts: true });
+    openSettings(h);
+    clickSettingsNav(h, "Notifications");
+    const notice = () => h.doc.querySelector('[data-id="deskAlerts"] .settings-switch')!;
+    expect(notice().getAttribute("aria-checked")).toBe("true");
+    click(h.window, notice());
+    expect(h.posted).toContainEqual({ type: "setDeskAlerts", value: false });
+    expect(notice().getAttribute("aria-checked")).toBe("false");
+    expect(h.doc.querySelector('[data-id="inputNeededSound"] .settings-switch')?.getAttribute("aria-checked")).toBe("false");
+    dispatch(h.window, { type: "deskAlerts", value: true });
+    expect(notice().getAttribute("aria-checked")).toBe("true");
+    dispatch(h.window, { type: "focusInput", closeSettings: true });
+    expect(h.doc.querySelector("#settings-overlay")).toBeNull();
+    expect(h.doc.activeElement?.id).toBe("input");
+  });
+
+  it("posts Desk alerts from the editor's separate Settings page", () => {
+    const window = new Window({ url: "https://localhost/" });
+    (window as any).eval(settingsSrc);
+    const api = (window as any).GrokSettings;
+    const root = window.document.createElement("div");
+    window.document.body.append(root);
+    const posted: unknown[] = [];
+    api.mount(root, {
+      snapshot: api.defaultSnapshot({ deskAlerts: true }),
+      env: api.defaultEnv(),
+      standalone: true,
+      category: "notifications",
+      post: (msg: unknown) => posted.push(msg),
+    });
+    const toggle = root.querySelector('[data-id="deskAlerts"] .settings-switch')!;
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
+    toggle.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    expect(posted).toContainEqual({ type: "setDeskAlerts", value: false });
+  });
+
+  it.each(["phone", "older host"])("hides Desk alerts from %s", (surface) => {
+    const remote = surface === "phone";
+    const h = bootWebview({ remote });
+    seedChat(h, remote ? { deskAlerts: true } : {});
+    openSettings(h);
+    clickSettingsNav(h, "Notifications");
+    expect(h.doc.querySelector('[data-id="deskAlerts"]')).toBeNull();
+    expect(h.doc.querySelector('[data-id="inputNeededSound"]')).toBeTruthy();
+  });
+
   it("omits host-local rows under the remote capability profile", () => {
     const h = bootWebview({ remote: true });
     seedChat(h);

@@ -3657,6 +3657,7 @@
       steerByDefault: !!state.steerByDefault,
       fontScale: CLIENT_OWNS_FONT_SCALE ? state.remoteFontScale : state.hostFontScale,
       soundNotifications: !!state.soundNotifications,
+      deskAlerts: state.deskAlerts,
       processingSound: !!state.processingSound,
       inputNeededSound: !!state.inputNeededSound,
       readRepliesAloud: IS_REMOTE ? !!state.remoteTts : !!state.readRepliesAloud,
@@ -3762,6 +3763,9 @@
       case "soundNotifications":
         state.soundNotifications = !!value;
         unlockAudio();
+        break;
+      case "deskAlerts":
+        state.deskAlerts = !!value;
         break;
       case "inputNeededSound":
         state.inputNeededSound = !!value;
@@ -20813,7 +20817,7 @@ ${fullText}`
   const SETTINGS_LIVE_MSGS = new Set([
     "museSettings",
     "cloudHostUpdateState", "initialState", "showThinking", "appPurpose", "expandCommandOutputs",
-    "steerByDefault", "promptNav", "expandDiffCard", "steerUnavailable", "soundNotifications", "processingSound", "inputNeededSound",
+    "steerByDefault", "promptNav", "expandDiffCard", "steerUnavailable", "soundNotifications", "processingSound", "inputNeededSound", "deskAlerts",
     "readRepliesAloud", "summarizeRepliesAloud", "fontScale", "voiceConfigured",
     "providerState", "githubState", "mcpServers", "mcpConnectors", "remoteStatus", "telemetryEnabled", "thumbsFeedback", "grokUpdateStatus", "initialized",
   ]);
@@ -20886,6 +20890,7 @@ ${fullText}`
         if (typeof msg.soundNotifications === "boolean") state.soundNotifications = msg.soundNotifications;
         if (typeof msg.processingSound === "boolean") state.processingSound = msg.processingSound;
         if (!IS_REMOTE && typeof msg.inputNeededSound === "boolean") state.inputNeededSound = msg.inputNeededSound;
+        if (!IS_REMOTE) state.deskAlerts = msg.deskAlerts;
         releaseAudioIfSilent();
         // Absent appPurpose (older host) → Knowledge work — smaller surface.
         state.appPurpose = msg.appPurpose === "coding" ? "coding" : "knowledge";
@@ -21232,6 +21237,9 @@ ${fullText}`
         state.inputNeededSound = !!msg.value;
         releaseAudioIfSilent();
         break;
+      case "deskAlerts":
+        if (!IS_REMOTE) state.deskAlerts = msg.value;
+        break;
       case "readRepliesAloud": {
         const wasEnabled = state.readRepliesAloud;
         state.readRepliesAloud = !!msg.value;
@@ -21300,6 +21308,7 @@ ${fullText}`
         if (!CLIENT_OWNS_FONT_SCALE) applyChatZoom();
         break;
       case "focusInput":
+        if (!IS_REMOTE && msg.closeSettings) closeSettingsOverlay();
         // Send Selection / Send File / @-mention (#43): the host revealed the
         // panel taking focus; land the caret in the composer so the user can
         // type a prompt immediately. preventScroll: the composer lives in the

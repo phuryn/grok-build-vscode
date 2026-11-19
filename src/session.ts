@@ -113,6 +113,10 @@ export function preferredPermissionAllowOption(
   return pickAutoAcceptOption(options, provider, pending.commandGrant?.optionId);
 }
 
+export interface SessionTurnToken {
+  stopRequested?: boolean;
+}
+
 /**
  * All state that belongs to a single grok session — extracted from GrokSidebar so
  * the sidebar can hold a *pool* of these (one live `grok agent stdio` process per
@@ -397,7 +401,7 @@ export class Session {
    * nothing on disk to show for it and only a window reload as a cure. Status
    * now describes the dot; this describes the turn.
    */
-  turnToken: object | undefined = undefined;
+  turnToken: SessionTurnToken | undefined = undefined;
 
   /**
    * ms-epoch of the last time this session was made the focus, created, or put to
@@ -487,8 +491,8 @@ export class Session {
 
 /** Mark a prompt as in flight. The returned token is the only thing that can
  *  later end THIS turn. */
-export function beginTurn(session: Session): object {
-  const token = {};
+export function beginTurn(session: Session): SessionTurnToken {
+  const token: SessionTurnToken = {};
   session.turnToken = token;
   session.staleSendReported = false;
   return token;

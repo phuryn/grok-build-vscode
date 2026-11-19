@@ -490,6 +490,12 @@
           "default": true,
           "markdownDescription": "Show a **Previous prompt** button above the message box: it jumps back to the prompt before the one you are reading and highlights it, so you can find what you asked without scrolling. On a phone or browser this is a per-device preference and this setting does not apply."
         },
+        "grok.deskAlerts": {
+          "type": "boolean",
+          "default": true,
+          "scope": "application",
+          "description": "Show alerts when a turn finishes, fails, or needs your input while you’re away from the conversation."
+        },
         "grok.soundNotifications": {
           "type": "boolean",
           "default": false,

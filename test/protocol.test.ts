@@ -9,6 +9,8 @@ import {
 } from "../src/protocol";
 // The webview's own copy of the contract (plain JS — it can't import the TS types).
 import { HOST_MESSAGE_TYPES as JS_HOST, WEBVIEW_MESSAGE_TYPES as JS_WEBVIEW } from "../media/webview-helpers.js";
+import { CONFIG_DEFAULTS } from "../src/desktop/config-store";
+import { parseWebviewMsg } from "../src/desktop/webview-msg-validate";
 
 // chat.js is loaded as a raw <script> in the webview, so there's nothing to import
 // — we assert against its source text instead.
@@ -18,6 +20,13 @@ const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.me
 const sorted = (a: readonly string[]) => [...a].sort();
 
 describe("host <-> webview message contract (src/protocol.ts is the source of truth)", () => {
+  it("enables desk alerts on both hosts and accepts only boolean setting changes", () => {
+    expect(packageJson.contributes.configuration.properties["grok.deskAlerts"].default).toBe(true);
+    expect(CONFIG_DEFAULTS["grok.deskAlerts"]).toBe(true);
+    const change = { type: "setDeskAlerts", value: false };
+    expect(parseWebviewMsg(change)).toEqual(change);
+    expect(parseWebviewMsg({ ...change, value: "false" })).toBeNull();
+  });
   it("contributes the phone handoff command and routes it through the chat host", () => {
     expect(packageJson.contributes.commands).toContainEqual({ command: "grok.continueOnPhone", title: "Continue on Phone", category: "AFK Pilot" });
     const extension = readFileSync(new URL("../src/extension.ts", import.meta.url), "utf8");

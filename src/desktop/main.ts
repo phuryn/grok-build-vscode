@@ -639,6 +639,7 @@ async function createApp(): Promise<void> {
   const host = createElectronHost({
     config,
     getWindow: () => mainWindow,
+    showWindow: showMainWindow,
     getLogFile: () => desktopLogFile,
     log,
     remoteActions,

@@ -84,7 +84,7 @@
     "promptComplete", "contextUsage", "commandOutput", "expandCommandOutputs", "setAllToolDetails", "focusInput", "findInSession", "restoreComposer", "truncateMessages", "uiConfirmRequest", "uiConfirmResolved", "agentReset", "agentError", "agentEnd", "exit", "setBusy", "summarizing",
     "sessionContext", "clearMessages", "onboarding", "error", "hostNotice", "xaiNotification", "subagentUpdate", "childStream", "runProgress", "sessions", "repoSessions", "pinnedSessions", "repos",
     "sessionDot", "queuedSends", "submitQueuedSend", "steerUnavailable", "feedbackAvailability", "turnFeedbackAck", "usage", "steerByDefault", "promptNav", "pinLiveWorkflows", "expandDiffCard", "soundNotifications", "processingSound", "inputNeededSound", "readRepliesAloud", "summarizeRepliesAloud", "speechSummary", "imageFull", "imageOriginal", "moveComposerCaret",
-    "remoteStatus", "remoteHandoff", "showRemoteHandoff", "hostReachable", "hostLink",
+    "remoteStatus", "remoteHandoff", "showRemoteHandoff", "hostReachable", "hostLink", "deskAlerts",
   ];
   const WEBVIEW_MESSAGE_TYPES = [
     "setMuseSetting",
@@ -106,7 +106,7 @@
     "setSoundNotifications", "setProcessingSound", "setInputNeededSound", "setReadRepliesAloud", "setSummarizeRepliesAloud", "setVoiceSendPhrase", "setVoiceKeyterms", "setTelemetryEnabled", "setThumbsFeedback", "setDesktopTray", "summarizeSpeech", "requestImageFull", "requestImageOriginal", "composerFocus",
     "newWorktreeSession", "applyWorktree", "removeWorktree", "rewindSession", "editLastMessage", "uiConfirmAnswer", "workflowControl", "refreshContextDetails",
     "refreshSubscriptionUsage",
-    "remoteSignIn", "remoteSignOut", "unlinkRemoteDevice", "openRemotePortal", "remoteHandoff", "showRemoteHandoff",
+    "remoteSignIn", "remoteSignOut", "unlinkRemoteDevice", "openRemotePortal", "remoteHandoff", "showRemoteHandoff", "setDeskAlerts",
     "openUpdateRelease", "restartToUpdate",
   ];
   const HOST_MESSAGE_TYPE_SET = new Set(HOST_MESSAGE_TYPES);

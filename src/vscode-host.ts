@@ -7,6 +7,7 @@
  * implements Host without this file existing at all).
  */
 import * as vscode from "vscode";
+import { STALE_DESK_APPROVAL } from "./desk-alerts";
 import { workspaceGrokHome } from "./workspace-grok-home";
 import {
   ensureConfigToml,
@@ -227,6 +228,25 @@ export function createVsCodeHost(
   );
 
   return {
+    deskAlerts: {
+      canApproveOnce: true,
+      isAway: (showingConversation) => !vscode.window.state.focused || !showingConversation,
+      show({ kind, title, body, open, approval }) {
+        const message = approval
+          ? `${title} · ${approval.agent} shell command: “${approval.command}” · ${body}`
+          : `${title} · ${body}`;
+        const buttons = approval ? ["Open", "Approve once"] : ["Open"];
+        const choice = kind === "error"
+          ? vscode.window.showErrorMessage(message, ...buttons)
+          : vscode.window.showInformationMessage(message, ...buttons);
+        void Promise.resolve(choice).then(async (action) => {
+          if (action === "Open") await open();
+          if (action === "Approve once" && approval && !approval.approve()) {
+            await vscode.window.showInformationMessage(STALE_DESK_APPROVAL);
+          }
+        }).catch(() => output.appendLine("[desk alerts] An alert action failed."));
+      },
+    },
     showInformationMessage(message, ...items) {
       return vscode.window.showInformationMessage(message, ...items);
     },
@@ -663,6 +683,7 @@ export function createVsCodeHostContext(context: vscode.ExtensionContext): HostC
 /** Adapt a VS Code WebviewView so `sidebar.resolveWebviewView` never sees vscode types. */
 export function wrapWebviewView(view: vscode.WebviewView): HostWebviewView {
   return {
+    get visible() { return view.visible; },
     get webview(): HostWebview {
       return wrapWebview(view.webview);
     },

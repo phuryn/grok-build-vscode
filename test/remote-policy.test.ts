@@ -32,6 +32,14 @@ import { pathsEqual } from "../src/worktree";
 const sorted = (a: readonly string[]) => [...a].sort();
 
 describe("remote-policy classification tables", () => {
+  it("keeps desk alert preferences off the remote wire", () => {
+    expect(allowFromRemote("setDeskAlerts", "full")).toBe(false);
+    expect(allowFromRemote("setDeskAlerts", "full", { isCloud: true })).toBe(false);
+    expect(remoteRequiresBoundSession("setDeskAlerts")).toBe(false);
+    expect(transformHostMsgForRemote({ type: "deskAlerts", value: false }, {} as MediaInlineDeps)).toBeNull();
+    const initial = { type: "initialState", cwd: "/project" } as HostMsg;
+    expect(transformHostMsgForRemote({ ...initial, deskAlerts: true } as HostMsg, {} as MediaInlineDeps)).toEqual(initial);
+  });
   it("keeps input-needed sound configuration host-local, like processing sound", () => {
     expect(INBOUND_DISPOSITION.setInputNeededSound).toBe("host-local");
     expect(INBOUND_DISPOSITION.setInputNeededSound).toBe(INBOUND_DISPOSITION.setProcessingSound);

@@ -18,6 +18,7 @@
 import {
   app,
   BrowserWindow,
+  Notification,
   dialog,
   ipcMain,
   shell,
@@ -193,6 +194,7 @@ export interface ElectronRemoteActions {
 export interface ElectronHostOptions {
   config: ConfigStore;
   getWindow: () => BrowserWindow | null;
+  showWindow?: () => void;
   log: (line: string) => void;
   /**
    * AFK Pilot link/unlink — filled after GrokSidebar is constructed so the host
@@ -578,6 +580,8 @@ export function createElectronHost(opts: ElectronHostOptions): Host {
   } = opts;
   const configListeners = config; // store owns change events
   let activeEditor: HostTextEditor | undefined;
+  // Electron needs a live JS object to deliver clicks after the banner hides.
+  const deskNotifications = new Set<Notification>();
 
   const notifyFolders = (prevActive: string | undefined) => {
     const roots = config.getWorkspaceRoots();
@@ -699,6 +703,30 @@ export function createElectronHost(opts: ElectronHostOptions): Host {
   }
 
   return {
+    deskAlerts: opts.showWindow && (process.platform === "win32" || process.platform === "darwin") ? {
+      canApproveOnce: false,
+      isAway: () => {
+        const win = getWindow();
+        return !!win && !win.isDestroyed() && (!win.isVisible() || win.isMinimized() || !win.isFocused());
+      },
+      show({ title, body, open }) {
+        if (!Notification.isSupported()) return;
+        const notice = new Notification({ title, body, silent: true });
+        notice.once("click", () => {
+          deskNotifications.delete(notice);
+          opts.showWindow?.();
+          void open().catch(() => log("[desk alerts] Could not open the conversation."));
+        });
+        notice.once("failed", () => deskNotifications.delete(notice));
+        deskNotifications.add(notice);
+        if (deskNotifications.size > 20) {
+          const oldest = deskNotifications.values().next().value!;
+          deskNotifications.delete(oldest);
+          oldest.close();
+        }
+        notice.show();
+      },
+    } : undefined,
     showInformationMessage(message, ...items) {
       const buttons = items as string[];
       return messageBox(getWindow, "info", message, buttons);
