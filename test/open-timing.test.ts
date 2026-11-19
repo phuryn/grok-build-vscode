@@ -6,6 +6,8 @@ vi.mock("../src/acp", async (importOriginal) => {
   class FakeAcpClient extends EventEmitter {
     setHumanWaitActive = vi.fn();
     supportsInterject(): boolean { return true; }
+    // A Grok client: no standard fork route, as AcpClient answers for Grok.
+    supportsTurnFork(): boolean { return false; }
     provider = "grok" as const;
     usesClientPlanGate = false;
     sessionId: string | undefined;
