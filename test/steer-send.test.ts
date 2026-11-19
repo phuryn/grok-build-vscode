@@ -96,7 +96,7 @@ describe("steerSend carries attachments", () => {
     return { session, request, client };
   }
 
-  it.each([grokBackend, new CodexBackend()])("carries actual backend image support through the host (%s)", async (backend) => {
+  it.each([grokBackend, new CodexBackend(), new ClaudeBackend()])("carries actual backend image support through the host (%s)", async (backend) => {
     const sidebar = makeSidebar();
     const { session, request } = attachBackend(sidebar, backend);
     const chip = makeImageChip(stagingPng(), 1, "image/png");
@@ -141,7 +141,7 @@ describe("steerSend carries attachments", () => {
     expect(sidebar.posted.some((m: HostMsg) => m.type === "steerUnavailable")).toBe(true);
   });
 
-  it.each([grokBackend, new CodexBackend()])("queues text and images on method-not-found (%s)", async (backend) => {
+  it.each([grokBackend, new CodexBackend(), new ClaudeBackend()])("queues text and images on method-not-found (%s)", async (backend) => {
     const sidebar = makeSidebar();
     const { session, request } = attachBackend(sidebar, backend);
     request.mockRejectedValueOnce({ code: -32601, message: "Method not found" });
@@ -163,7 +163,7 @@ describe("steerSend carries attachments", () => {
     );
   });
 
-  it.each([grokBackend, new CodexBackend()])(
+  it.each([grokBackend, new CodexBackend(), new ClaudeBackend()])(
     "queues an idle steer instead of starting a turn nobody is watching (%s)", async (backend) => {
       const sidebar = makeSidebar();
       const { session, request } = attachBackend(sidebar, backend);

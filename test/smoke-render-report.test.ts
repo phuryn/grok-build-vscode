@@ -99,7 +99,7 @@ describe("recorded boundary samples and unknown net", () => {
     expect(result.unhandled).toEqual([]);
     expect(result.ignored.map((r: any) => r.kind)).toEqual(expect.arrayContaining(["goal", "jetbrains", "commandAction", "_auth/status_update"]));
     expect(result.ignored.every((r: any) => r.reason.includes("src/"))).toBe(true);
-    expect(result.seen.find((r: any) => r.kind === "steering").status).toBe(provider === "codex" ? "KNOWN" : "KNOWN-IGNORED");
+    expect(result.seen.find((r: any) => r.kind === "steering").status).toBe("KNOWN");
     expect(classifyBoundaries([{ direction: "receive", message: { method: "_auth/status_update", id: 77 } }], known).unhandled).toHaveLength(1);
     expect(classifyBoundaries([{ direction: "receive", message: { result: { _meta: { unknownVendor: {} } } } }], known).unhandled).toHaveLength(1);
   });

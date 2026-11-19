@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import packageManifest from "../package.json";
 import { grokCliNeedsShell } from "./cli-process";
+import type { PromptContentBlock } from "./acp";
 import type {
   AcpBackend,
   BackendConfigState,
@@ -493,15 +494,26 @@ export class ClaudeBackend implements AcpBackend {
     return { method: "session/set_mode", params: { sessionId, modeId: claudeModeId(modeId) } };
   }
 
-  steeringCapabilities() {
-    return { supported: false, acceptsContent: false };
+  // The adapter takes a mid-turn message through the same `_session/steering`
+  // request as Codex's, and says so at initialize. An older adapter does not
+  // advertise it, so its turns keep queueing as before.
+  steeringCapabilities(initializeResult: any) {
+    const supported = initializeResult?._meta?.steering?.supported === true;
+    return { supported, acceptsContent: supported };
   }
 
-  interject(): null { return null; }
+  interject(sessionId: string, text: string, content?: readonly PromptContentBlock[]) {
+    return {
+      method: "_session/steering",
+      params: { sessionId, prompt: content?.length ? [...content] : [{ type: "text", text }] },
+    };
+  }
 
-  // Unreachable: `steeringCapabilities` answers no, so no steering RPC is ever
-  // sent. Present because the seam is the interface, not the caller.
-  steerDelivered(): boolean { return true; }
+  // The adapter answers `injected` or `startedNewTurn`, and throws when it
+  // cannot deliver. `failed` is kept as a non-delivery in case it ever says so.
+  steerDelivered(result: any): boolean {
+    return result?.outcome !== "failed";
+  }
 
   configState(response: any, fallback: BackendConfigState): BackendConfigState {
     return configStateFromClaudeOptions(response, fallback);

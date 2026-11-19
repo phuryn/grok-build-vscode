@@ -675,6 +675,7 @@ async function main() {
   }
   for (const [provider, Backend, locate] of [["codex", CodexBackend, locateCodexCli], ["claude", ClaudeBackend, locateClaudeCli], ["muse", MuseBackend, locateMuseCli]]) {
     if (chosenProvider && chosenProvider !== provider) continue;
+    const steers = provider === "codex" || provider === "claude";
     const required = [...capabilities, "model", "steering", "subagent", "workflow", "render", ...(provider === "muse" ? ["delivery prompt"] : [])];
     let scratch;
     let peer;
@@ -686,7 +687,7 @@ async function main() {
       say(`${provider} ${capability}: ${result} — ${detail}`);
       report();
     };
-    if (provider !== "codex") record("steering", "N/A", `${provider} does not support mid-turn steering`);
+    if (!steers) record("steering", "N/A", `${provider} does not support mid-turn steering`);
     if (provider === "codex") record("workflow", "N/A", "Codex has no workflow feature");
     if (provider === "muse") record("subagent", "N/A", "Muse delegation is a workflow; no plain subagent feature");
     if (permissionSmokeNotApplicable(provider)) record("permission", "N/A", permissionSmokeNotApplicable(provider));
@@ -759,11 +760,11 @@ async function main() {
       const initialize = async () => {
         const result = await peer.request("initialize", { protocolVersion: 1, clientCapabilities: acpClientCapabilities(provider) });
         assert.equal(result.protocolVersion, 1, "initialize.protocolVersion must be 1");
-        if (provider === "codex") assert.equal(result._meta?.steering?.supported, true, "initialize._meta.steering.supported must be true");
+        if (steers) assert.equal(result._meta?.steering?.supported, true, "initialize._meta.steering.supported must be true");
         return result;
       };
       connect();
-      await check("initialize", async () => { await initialize(); return `protocolVersion=1${provider === "codex" ? "; _meta.steering.supported=true" : ""}`; });
+      await check("initialize", async () => { await initialize(); return `protocolVersion=1${steers ? "; _meta.steering.supported=true" : ""}`; });
       let sessionResponse;
       const created = await check("session/new", async () => {
         const response = await peer.request("session/new", { cwd: scratch, mcpServers: [] });
@@ -841,7 +842,7 @@ async function main() {
       // The action starts at the first text chunk of a deliberately long turn.
       // No assertion uses model wording, and a resolved/idle prompt cannot pass.
       const longText = "Do not use tools. Immediately begin a detailed 3000-word explanation of library cataloguing, with many paragraphs. Continue until all sections are complete.";
-      if (provider === "codex") {
+      if (steers) {
         await check("steering", async () => {
           const turn = peer.prompt(sessionId, longText);
           try {

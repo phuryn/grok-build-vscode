@@ -34,14 +34,19 @@ describe("backend steering", () => {
     expect(backend.interject("s", "hello", []).params.prompt).toEqual([{ type: "text", text: "hello" }]);
   });
 
-  it("has no Claude steering method", () => {
-    expect(backends[2].interject("s", "hello", content)).toBeNull();
+  it("uses the same ACP prompt array for Claude", () => {
+    const backend = new ClaudeBackend();
+    expect(backend.interject("s", "look", content)).toEqual({
+      method: "_session/steering", params: { sessionId: "s", prompt: content },
+    });
+    expect(backend.interject("s", "hello").params.prompt).toEqual([{ type: "text", text: "hello" }]);
   });
 
   it.each([undefined, {}, { _meta: {} }, { _meta: { steering: {} } },
     { _meta: { steering: { supported: false } } }, { _meta: { steering: { supported: "true" } } },
-  ])("requires Codex's positive advertisement, regardless of version (%j)", (init) => {
+  ])("requires Codex's and Claude's positive advertisement, regardless of version (%j)", (init) => {
     expect(backends[1].steeringCapabilities(init, verifiedGrok)).toEqual({ supported: false, acceptsContent: false });
+    expect(backends[2].steeringCapabilities(init, verifiedGrok)).toEqual({ supported: false, acceptsContent: false });
   });
 
   it("advertises both Codex text and images without a version probe", () => {
@@ -54,9 +59,15 @@ describe("backend steering", () => {
     },
   );
 
-  it("accepts verified Grok images and ignores advertisements for Claude", () => {
+  it("accepts verified Grok images, and Claude text and images when its adapter advertises steering", () => {
     expect(grokBackend.steeringCapabilities(undefined, verifiedGrok)).toEqual({ supported: true, acceptsContent: true });
-    expect(backends[2].steeringCapabilities(advertised, verifiedGrok)).toEqual({ supported: false, acceptsContent: false });
+    expect(backends[2].steeringCapabilities(advertised, {})).toEqual({ supported: true, acceptsContent: true });
+  });
+
+  it.each([new CodexBackend(), new ClaudeBackend()])("treats only a failed outcome as not delivered (%s)", (backend) => {
+    expect(backend.steerDelivered({ outcome: "injected" })).toBe(true);
+    expect(backend.steerDelivered({ outcome: "startedNewTurn" })).toBe(true);
+    expect(backend.steerDelivered({ outcome: "failed" })).toBe(false);
   });
 });
 
@@ -73,7 +84,7 @@ describe("connection steering contract", () => {
 
   it.each(backends)("routes content support through the %s backend", async (backend) => {
     const { client, request } = connection(backend);
-    const capable = backend.provider !== "claude";
+    const capable = true;
     expect(client.honorsInterjectContent()).toBe(capable);
     const onQueued = vi.fn();
     await expect(client.interject("look", onQueued, content)).resolves.toBe(capable ? "ok" : "unsupported");
@@ -105,7 +116,7 @@ describe("connection steering contract", () => {
     expect(onQueued).not.toHaveBeenCalled();
   });
 
-  it.each(backends.slice(0, 2))("latches method-not-found and returns unsupported (%s)", async (backend) => {
+  it.each(backends)("latches method-not-found and returns unsupported (%s)", async (backend) => {
     const { client, request } = connection(backend);
     request.mockRejectedValueOnce({ code: -32601, message: "Method not found" });
     const onQueued = vi.fn();

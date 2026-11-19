@@ -101,7 +101,6 @@ export function knownBoundaries(root, provider) {
         "_claude/origin": "src/claude-backend.ts normalizeClaudeUpdate consumes usage_update regardless of the human-origin annotation; host accounting does not split usage by origin.",
         quota: "src/claude-backend.ts normalizeClaudePromptResult reads standard result.usage; duplicate _meta.quota.token_count/model_usage accounting is not a separate host quota surface.",
       } : {}),
-      ...(provider === "claude" ? { steering: "src/claude-backend.ts steeringCapabilities explicitly returns unsupported; Claude uses queued prompts, not the advertised optional steering RPC." } : {}),
       ...(provider === "codex" ? {
         codex: "src/codex-backend.ts normalizeCodexUpdate uses native subagent_spawned/subagent_state_update, standard tool status and message chunks; captured threadStatus/collaboration/phase annotations are not UI inputs. No _meta.codex.subagent reader exists in this checkout.",
         quota: "src/codex-backend.ts normalizeCodexPromptResult reads standard result.usage; duplicate _meta.quota.token_count/model_usage accounting is not a separate host quota surface.",
