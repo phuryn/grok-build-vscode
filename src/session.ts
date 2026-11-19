@@ -129,6 +129,7 @@ export interface SessionTurnToken {
  * singletons it replaces 1:1).
  */
 export class Session {
+  codexModeChange?: Promise<boolean>;
   /** Provider is fixed once the first user turn enters history. */
   provider: AcpProvider = "grok";
   /** Host-owned composer attachments for this session/view. */

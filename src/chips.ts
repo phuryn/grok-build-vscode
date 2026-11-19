@@ -26,6 +26,22 @@ export interface FileChip {
   fullId?: string;
 }
 
+export const PASTED_TEXT_NAME = "Pasted text.txt";
+export const MAX_PASTED_TEXT_BYTES = 1024 * 1024;
+
+export function isPastedText(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= MAX_PASTED_TEXT_BYTES
+    && Buffer.byteLength(value, "utf8") <= MAX_PASTED_TEXT_BYTES;
+}
+
+export function isPasteTextId(value: unknown): value is string {
+  return typeof value === "string" && /^[A-Za-z0-9_-]{20,128}$/.test(value);
+}
+
+export function isPastedTextChip(chip: FileChip): boolean {
+  return chip.id.startsWith("paste:");
+}
+
 // Formats we send to grok as inline vision blocks. Deliberately narrower than
 // "any image extension": SVG is excluded because it's an editable text source —
 // a user attaching one almost always wants grok to read/edit the file, which the

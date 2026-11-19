@@ -49,6 +49,7 @@ describe("host <-> webview message contract (src/protocol.ts is the source of tr
       museNativeModes: true,
       installMuse: true,
       uploadFile: true,
+      pasteTextMaxBytes: 1024 * 1024,
       remoteVoice: true,
       // Older hosts refuse to delete the conversation the requester is reading,
       // so the client has to be told rather than assume. Capability, not version.

@@ -51,6 +51,7 @@ export interface SessionListEntry {
 }
 
 export interface SessionMetaOverride {
+  codexAskApproval?: boolean;
   /** Agent that owns the session. Existing records omit it and therefore mean Grok. */
   provider?: AcpProvider;
   /** Provider-reported cwd for stores that are not laid out under the Grok home. */

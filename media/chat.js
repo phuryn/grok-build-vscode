@@ -526,6 +526,8 @@
   const addBtn = $("add-btn");
   const chipsEl = $("chips");
   const attachmentsEl = $("attachments");
+  const pendingTextPastes = new Map();
+  let recalledPrompt = null;
   const donutEl = $("donut");
   const donutArc = $("donut-arc");
   const donutLabel = $("donut-label");
@@ -1201,12 +1203,13 @@
     agent: { icon: ICON.bot, label: "Agent mode" },
     // A provider's own Auto mode; only a host that advertises it offers it.
     auto: { icon: ICON.shield, label: "Auto mode" },
+    askApproval: { icon: ICON.shieldQuestion, label: "Ask for approval" },
     plan: { icon: ICON.listTree, label: "Plan mode" },
     yolo: { icon: ICON.zap, label: "Auto accept" },
   };
   // Each provider's own name for what Auto accept runs it in. Antigravity's
   // is not named here: the host answers its requests itself.
-  const AUTO_ACCEPT_NATIVE_NAMES = { grok: "YOLO", claude: "Bypass permissions", codex: "Full access" };
+  const AUTO_ACCEPT_NATIVE_NAMES = { grok: "YOLO", claude: "Bypass permissions" };
   const MUSE_MODE_META = {
     yolo: { icon: ICON.zap, label: "Allow all", description: "No prompts; everything runs." },
     agent: { icon: ICON.shieldQuestion, label: "Prompt unmatched", description: "Prompt for anything no rule matches (the interactive default)." },
@@ -1491,7 +1494,7 @@
     if (state.activeProvider === "deepseek" && !deepseekAdvertised) return [];
     if (Array.isArray(state.offeredModes)) return state.offeredModes;
     if (state.activeProvider === "muse" || state.activeProvider === "deepseek") return [];
-    return Object.keys(MODE_META).filter((id) => id !== "auto" && (id !== "plan" || state.activeProvider !== "codex"));
+    return state.activeProvider === "codex" ? ["agent", "yolo"] : ["agent", "plan", "yolo"];
   }
 
   function offersMuseModes() {
@@ -1518,6 +1521,12 @@
       if (id === "yolo") return `Answers every approval ${name} raises. This may look the same as Agent, because ${name} asks rarely by default`;
     }
     if (id === "auto") return `${name} decides which actions are safe to run and asks you about the rest`;
+    if (state.activeProvider === "codex") {
+      if (id === "agent") return "Codex reviews requests to act outside the sandbox and asks you about potentially unsafe actions";
+      if (id === "askApproval") return "You decide every request to act outside the sandbox, such as editing external files or using the internet";
+      if (id === "plan") return "Codex explores and proposes a plan for you to review before implementation";
+      if (id === "yolo") return "Codex has full access to files and the internet and runs without asking";
+    }
     if (id === "plan") return `${name} explores and proposes a plan; file writes and commands are blocked until you approve it`;
     // "YOLO" is Grok Build's own word for it; elsewhere the provider's name
     // for the mode this runs in, or none.
@@ -7474,6 +7483,7 @@
 
   function switchComposerDraft(sessionId, completingLoad = false) {
     if (composerSessionId === sessionId) return;
+    recalledPrompt = null;
     // Keystrokes during a load belong to the conversation being opened, even
     // when its identity arrives after the transcript. They are kept, merged after
     // any saved draft, and never replaced. Only a load that began on an empty
@@ -18916,6 +18926,11 @@ ${fullText}`
       sendBtn.title = name + (state.startupStatus.stage === "updating" ? " is updating" : " is still starting");
       sendBtn.classList.add("initializing");
       sendBtn.disabled = true;
+    } else if (pendingTextPastes.size) {
+      sendBtn.innerHTML = ICON.spinner;
+      sendBtn.title = "Attaching pasted text…";
+      sendBtn.classList.add("initializing");
+      sendBtn.disabled = true;
     } else if (!state.busy) {
       sendBtn.innerHTML = ICON.arrowUp;
       sendBtn.title = "Send";
@@ -19691,6 +19706,7 @@ ${fullText}`
   }
 
   function renderInputHighlight() {
+    if (recalledPrompt && input.value !== recalledPrompt.value) recalledPrompt = null;
     // The busy button's face reads the composer too (text = queue-send arrow,
     // empty = Stop) — refresh it on every input change; this function's call
     // sites are exactly those.
@@ -21792,6 +21808,9 @@ ${fullText}`
         renderChips();
         updateSendButton();
         break;
+      case "pasteTextSettled":
+        settleTextPaste(msg.pasteId);
+        break;
       case "commandsUpdate":
         state.commands = msg.commands || [];
         break;
@@ -22675,6 +22694,7 @@ ${fullText}`
         addSessionContextBanner();
         break;
       case "clearMessages":
+        recalledPrompt = null;
         removeProjectPrompt();
         for (const el of document.querySelectorAll(".confirm-overlay[data-confirm-req-id]")) {
           el._resolveConfirm();
@@ -24263,24 +24283,55 @@ ${fullText}`
     openRailMenu(a, items, "chat-copy-link", { x: e.clientX, y: e.clientY });
   });
 
+  function settleTextPaste(pasteId) {
+    if (!pendingTextPastes.has(pasteId)) return;
+    clearTimeout(pendingTextPastes.get(pasteId));
+    pendingTextPastes.delete(pasteId);
+    state.pendingPaste -= 1;
+    updateSendButton();
+  }
+
   input.addEventListener("paste", (e) => {
-    const items = e.clipboardData?.items;
-    if (!items) return;
+    const clipboard = e.clipboardData;
+    if (!clipboard) return;
+    const pastedText = clipboard.getData("text/plain");
+    const max = state.hostCaps?.pasteTextMaxBytes;
+    // 32 KiB leaves ordinary snippets editable and keeps large logs out of
+    // the textarea. Measure the same UTF-8 bytes the host stages.
+    let bytes = 0;
+    if (max && pastedText.length > 8192) {
+      bytes = pastedText.length > max ? pastedText.length : new TextEncoder().encode(pastedText).byteLength;
+    }
+    if (bytes > max) {
+      e.preventDefault();
+      addError("This paste is larger than 1 MiB. Paste it in smaller pieces.");
+      return;
+    }
+    const pasteId = bytes > 32 * 1024 ? newRemoteTabToken() : null;
     // Collect image FILES synchronously (getAsFile is sync) so the decision to
     // suppress the default paste is made before any async work. Raster types
     // only — the host re-checks, this is just the first gate.
     const blobs = [];
-    for (const item of items) {
+    for (const item of clipboard.items || []) {
       if (item.kind !== "file" || !/^image\/(png|jpeg|gif|webp)$/i.test(item.type)) continue;
       const blob = item.getAsFile();
       if (blob) blobs.push(blob);
     }
-    if (blobs.length === 0) return; // plain text (or unsupported) — default paste
+    if (!pasteId && blobs.length === 0) return;
     e.preventDefault();
+    if (pasteId) {
+      state.pendingPaste += 1;
+      pendingTextPastes.set(pasteId, setTimeout(() => {
+        settleTextPaste(pasteId);
+        addError("Could not attach pasted text. Try pasting it again.");
+      }, 15_000));
+      updateSendButton();
+      vscode.postMessage({ type: "pasteText", text: pastedText, pasteId });
+    }
     // A mixed clipboard (copy from a web page / Word) carries text alongside
     // the image; preventDefault killed the text half, so re-insert it manually.
-    const pastedText = e.clipboardData.getData("text/plain");
-    if (pastedText) {
+    if (!pasteId && pastedText) {
+      recalledPrompt = null;
       const start = input.selectionStart ?? input.value.length;
       const end = input.selectionEnd ?? start;
       input.setRangeText(pastedText, start, end, "end");
@@ -24288,7 +24339,7 @@ ${fullText}`
       updateMention();
       renderInputHighlight();
     }
-    if (state.activeProvider === "deepseek") {
+    if (blobs.length && state.activeProvider === "deepseek") {
       addError("DeepSeek does not accept image attachments on this ACP route.");
       return;
     }
@@ -24320,6 +24371,7 @@ ${fullText}`
   });
   input.addEventListener("pointerdown", () => { composerPreferredColumn = null; });
   input.addEventListener("input", () => {
+    recalledPrompt = null;
     if (composerLoadDraft) composerLoadDraft.edited = true;
     composerPreferredColumn = null;
     updateSlash();
@@ -24337,6 +24389,28 @@ ${fullText}`
   // composer is NOT proof the user has nothing in flight.
   input.addEventListener("compositionstart", () => { state.composingIME = true; });
   input.addEventListener("compositionend", () => { state.composingIME = false; });
+
+  function recallComposerPrompt(e) {
+    if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return false;
+    if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey || state.replaying || state.repoSwitchPending) return false;
+    if (recalledPrompt && input.value !== recalledPrompt.value) recalledPrompt = null;
+    if (input.value && !recalledPrompt) return false;
+    if (!recalledPrompt && e.key === "ArrowDown") return false;
+    const prompts = liveTranscriptQueryAll(".msg.user:not(.queued):not([data-optimistic])").filter((el) => el._copyText?.trim());
+    const current = recalledPrompt ? prompts.indexOf(recalledPrompt.el) : prompts.length;
+    if (current < 0 || !prompts.length) return false;
+    e.preventDefault();
+    const next = Math.max(0, current + (e.key === "ArrowUp" ? -1 : 1));
+    const el = prompts[next];
+    input.value = el?._copyText || "";
+    recalledPrompt = el ? { el, value: input.value } : null;
+    input.setSelectionRange(input.value.length, input.value.length);
+    slashPopover.hidden = true;
+    hideMention();
+    renderInputHighlight();
+    return true;
+  }
+
   input.addEventListener("keydown", (e) => {
     // IME composition (#38): while a CJK IME is composing (preedit underline /
     // candidate window open), Enter confirms the candidate and arrows navigate
@@ -24344,7 +24418,7 @@ ${fullText}`
     // fragment gets sent (or queued, #37). `isComposing` is the standard
     // signal; keyCode 229 is the legacy "IME processing" code some engines
     // still report on the confirming keydown itself.
-    if (e.isComposing || e.keyCode === 229) return;
+    if (e.defaultPrevented || e.isComposing || e.keyCode === 229 || state.composingIME) return;
     if (!(e.ctrlKey && String(e.key).toLowerCase() === "p")) composerPreferredColumn = null;
     if (!slashPopover.hidden && state.slashFiltered.length) {
       if (e.key === "ArrowDown") {
@@ -24382,6 +24456,7 @@ ${fullText}`
       }
       if (e.key === "Escape") { hideMention(); return; }
     }
+    if (recallComposerPrompt(e)) return;
     const sendKey = state.useCtrlEnter
       ? e.key === "Enter" && (e.metaKey || e.ctrlKey)
       : !remoteUsesTouchComposer() && e.key === "Enter" && !e.shiftKey;

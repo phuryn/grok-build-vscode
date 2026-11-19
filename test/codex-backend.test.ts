@@ -208,6 +208,8 @@ describe("Codex config response state", () => {
   it("keeps permission mode when collaboration is default so full-access is not Agent", () => {
     expect(codexEffectiveModeId("default", "agent-full-access")).toBe("agent-full-access");
     expect(codexEffectiveModeId("default", "agent")).toBe("agent");
+    expect(codexEffectiveModeId("default", "read-only")).toBe("askApproval");
+    expect(codexEffectiveModeId("plan", "read-only")).toBe("plan");
     expect(codexEffectiveModeId("plan", "agent-full-access")).toBe("plan");
     expect(codexEffectiveModeId("default", undefined, "plan")).toBe("default");
 
@@ -233,6 +235,13 @@ describe("Codex config response state", () => {
 
     // Grok's client gate must stay independent of this mapping.
     expect(applyAgentModeToHostPlan("agent-full-access", true)).toBeNull();
+  });
+});
+
+it("selects the interactive approval preset through the permission axis", () => {
+  expect(new CodexBackend().setMode("session", "askApproval")).toEqual({
+    method: "session/set_config_option",
+    params: { sessionId: "session", configId: "mode", value: "read-only" },
   });
 });
 

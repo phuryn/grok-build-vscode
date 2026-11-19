@@ -88,6 +88,7 @@ describe("remembered mode preference (#25)", () => {
     expect(modeToRemember("plan")).toBeNull();
     expect(modeToRemember("onRequest")).toBeNull();
     expect(modeToRemember("denyUnmatched")).toBeNull();
+    expect(modeToRemember("askApproval")).toBeNull(); // Codex remembers it in provider state.
   });
 
   it("starts a NEW session in Auto accept only when that's the remembered mode", () => {
@@ -119,10 +120,10 @@ describe("remembered mode preference (#25)", () => {
     expect(startsInYolo("auto", false)).toBe(false);
   });
 
-  it("offers Plan to Grok and Claude only", () => {
+  it("offers the native picker choices for each provider", () => {
     expect(sessionModes("grok")).toEqual(["agent", "plan", "yolo"]);
     expect(sessionModes("claude")).toEqual(["agent", "auto", "plan", "yolo"]);
-    expect(sessionModes("codex")).toEqual(["agent", "yolo"]);
+    expect(sessionModes("codex")).toEqual(["agent", "askApproval", "plan", "yolo"]);
     expect(sessionModes("muse")).toEqual(["yolo", "agent", "onRequest"]);
     expect(sessionModes("muse", true)).toEqual(["yolo", "agent"]);
     for (const provider of ["grok", "codex", "claude"]) expect(sessionModes(provider, true)).toEqual(sessionModes(provider));

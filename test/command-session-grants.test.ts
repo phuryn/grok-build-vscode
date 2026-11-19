@@ -50,6 +50,16 @@ function harness() {
   return { session, client, sidebar, request, answer, grantOption, reply, clearSignals, data };
 }
 
+it("asks again in Ask for approval even for a command granted in Agent mode", () => {
+  const h = harness();
+  h.session.provider = "codex";
+  h.session.allowedCommandPrograms.add("npm");
+  h.client.currentModeId = "askApproval";
+  h.request();
+  expect(h.reply(1)).toBeUndefined();
+  expect(h.session.pendingPermissions.get(1)?.options.map(option => option.optionId)).toEqual(["cli-once", "cli-no"]);
+});
+
 describe.each<ShellDialect>(["posix", "powershell", "cmd"])("session program grammar: %s", (dialect) => {
   it("extracts every stage and ignores arguments", () => {
     expect(commandProgramsForGrant("npm test", dialect)).toEqual(["npm"]);

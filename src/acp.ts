@@ -1,6 +1,7 @@
 import { contextWindowSizes, type ContextWindowSelection } from "./context-selection";
 import { supportsSessionDeletion } from "./acp-backend";
 import { GrokHookCalls } from "./grok-hooks";
+import { appendPastedTextContext } from "./prompt-builder";
 import { ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { createInterface, Interface } from "node:readline";
 import { EventEmitter } from "node:events";
@@ -663,6 +664,7 @@ export class AcpClient extends EventEmitter {
       this.currentModeId = res.modes.currentModeId;
       this.emit("modeChanged", this.currentModeId);
     }
+    this.readCodexMode(res);
     this.emit("session", res);
 
     const wantedModel = modelId || this.backend.defaultModelId?.(this.availableModels.map((m) => m.modelId));
@@ -733,6 +735,7 @@ export class AcpClient extends EventEmitter {
       this.currentModeId = res.modes.currentModeId;
       this.emit("modeChanged", this.currentModeId);
     }
+    this.readCodexMode(res);
     this.emit("session", { sessionId, ...(res ?? {}) });
     this.emit("sessionLoaded", { sessionId });
     if (modelId && modelId !== this.currentModelId) {
@@ -744,6 +747,14 @@ export class AcpClient extends EventEmitter {
     }
     await this.refreshContextSelection();
     return { sessionId };
+  }
+
+  private readCodexMode(response: unknown, fallback = this.currentModeId): void {
+    if (this.provider !== "codex") return;
+    const { modeId } = this.backend.configState(response, { modeId: fallback });
+    if (!modeId || modeId === this.currentModeId) return;
+    this.currentModeId = modeId;
+    this.emit("modeChanged", modeId);
   }
 
   async setModel(modelId: string): Promise<void> {
@@ -842,7 +853,8 @@ export class AcpClient extends EventEmitter {
     if (this.contextWindowChanging) throw new Error("Wait for the context-window change to finish.");
     if (!this.sessionId) throw new Error("no session");
     const call = this.backend.setMode(this.sessionId, modeId);
-    const res = await this.request(call.method, call.params, () => {
+    let codexModeRead = false;
+    const res = await this.request(call.method, call.params, (reply) => {
       // The host still raises session chrome after this await. readline can
       // deliver a later ACP line in this same turn, so the Plan-accepted bit
       // has to land here — after a successful reply, before the next onLine.
@@ -851,6 +863,11 @@ export class AcpClient extends EventEmitter {
       // is one). usesClientPlanGate still decides whether writes/terminals
       // are blocked.
       if (modeId === "plan") this.planActive = true;
+      // An approval arriving on the next line must already see the new preset.
+      if (this.provider === "codex") {
+        this.readCodexMode(reply, modeId);
+        codexModeRead = true;
+      }
     });
     const state = this.backend.configState(res, {
       modelId: this.currentModelId,
@@ -858,12 +875,15 @@ export class AcpClient extends EventEmitter {
       modeId,
     });
     if (this.provider !== "grok" && state.modeId) {
+      const emitMode = this.provider !== "codex" || state.modeId !== this.currentModeId;
       this.currentModelId = state.modelId ?? this.currentModelId;
       this.currentReasoningEffort = state.reasoningEffort;
-      this.currentModeId = state.modeId;
       const current = this.availableModels.find((entry) => entry.modelId === this.currentModelId);
       if (current) current.reasoningEffort = this.currentReasoningEffort;
-      this.emit("modeChanged", state.modeId);
+      if (!codexModeRead) {
+        this.currentModeId = state.modeId;
+        if (emitMode) this.emit("modeChanged", state.modeId);
+      }
     }
   }
 
@@ -888,7 +908,7 @@ export class AcpClient extends EventEmitter {
     }
   }
 
-  async prompt(textOrBlocks: string | PromptContentBlock[], authoredTexts?: readonly string[]): Promise<PromptResultMeta> {
+  async prompt(textOrBlocks: string | PromptContentBlock[], authoredTexts?: readonly string[], pastedText = ""): Promise<PromptResultMeta> {
     if (this.contextWindowChanging) throw new Error("Wait for the context-window change to finish.");
     const firstText = typeof textOrBlocks === "string" ? textOrBlocks : textOrBlocks[0]?.type === "text" ? textOrBlocks[0].text : "";
     if (this.provider !== "deepseek" && /^\/context-window(?:\s|$)/i.test(firstText) && !this.availableCommands.some(c => c.name === "context-window"))
@@ -922,6 +942,9 @@ export class AcpClient extends EventEmitter {
         }
         return { ...block, text };
       });
+    }
+    if (pastedText && prompt[0]?.type === "text") {
+      prompt = [{ ...prompt[0], text: appendPastedTextContext(prompt[0].text, pastedText) }, ...prompt.slice(1)];
     }
     let raw: any;
     try {

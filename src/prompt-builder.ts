@@ -1,4 +1,4 @@
-import { isImageChip, isImplicitChip, type FileChip } from "./chips";
+import { isImageChip, isImplicitChip, isPastedTextChip, PASTED_TEXT_NAME, type FileChip } from "./chips";
 import type { PromptContentBlock } from "./acp";
 import { STAGED_IMAGE_TAG_HINT, WORKSPACE_IMAGE_TAG_HINT } from "./image-history";
 
@@ -36,6 +36,19 @@ function imageBasename(p: string): string {
 export const CONTEXT_TAG_OPEN =
   '<vscode-context note="added by the editor, not typed by the user">';
 export const CONTEXT_TAG_CLOSE = "</vscode-context>";
+
+export function buildPastedTextContext(chips: readonly FileChip[], readFile: (path: string) => string): string {
+  return chips.filter(chip => !chip.hidden && isPastedTextChip(chip)).map(chip => {
+    const text = readFile(chip.path);
+    // Count UTF-16 code units so replay can skip literal log contents, including
+    // any delimiters they contain, without rendering them in the transcript.
+    return `<afk-pasted-text length="${text.length}" name="${PASTED_TEXT_NAME}">\n${text}\n</afk-pasted-text>`;
+  }).join("\n\n");
+}
+
+export function appendPastedTextContext(text: string, context: string): string {
+  return text && context ? `${text}\n\n${context}` : text || context;
+}
 
 // Ambient selections survive sends; repeating a large snippet on every turn
 // crowds out conversation history. The agent can read larger ranges on demand.
@@ -81,7 +94,7 @@ export function buildPrompt(
   const openInEditor: string[] = []; // implicit active-editor file → ambient context only
   const blocks: string[] = []; // selection-range chips (explicit or the live editor selection) → fenced snippet of exactly those lines
   for (const chip of chips) {
-    if (chip.hidden) continue;
+    if (chip.hidden || isPastedTextChip(chip)) continue;
     if (chip.selectionStart && chip.selectionEnd) {
       // Existing restore parsers consume each path line verbatim. Keep the
       // range on a separate line so older clients can still open the file.

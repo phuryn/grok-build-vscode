@@ -365,6 +365,7 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
   refreshContextDetails: "view",
   refreshSubscriptionUsage: "view",
   pasteImage: "propose",
+  pasteText: "propose",
   // Host validates the extension/name/bytes before staging under globalStorage.
   uploadFile: "propose",
   // Workspace file mutation — same propose tier as upload/send, NOT view. A
@@ -654,6 +655,7 @@ export const REMOTE_REQUIRES_BOUND_SESSION: Record<WebviewMsg["type"], boolean> 
   refreshContextDetails: true,
   refreshSubscriptionUsage: true,
   pasteImage: true,
+  pasteText: true,
   uploadFile: true,
   writeProjectFile: false,
   removeChip: true,
@@ -1047,6 +1049,7 @@ export const OUTBOUND_DISPOSITION: Record<HostMsg["type"], OutboundDisposition> 
   planModeAvailability: "mirror",
   openModePopover: "mirror",
   chips: "mirror",
+  pasteTextSettled: "mirror",
   commandsUpdate: "mirror",
   mentionResults: "mirror",
   // Targeted answers to a phone's list/read/write. absPath on content is
@@ -1266,6 +1269,7 @@ export const OUTBOUND_PROJECT_AUTH: Record<HostMsg["type"], OutboundProjectAuth>
   session: "scope",
   sessionDot: "scope",
   chips: "scope",
+  pasteTextSettled: "none",
   contextWindowSelection: "scope",
   modelChanged: "scope",
   modeChanged: "scope",

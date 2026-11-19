@@ -1,4 +1,5 @@
 import { isModeId } from "../mode-prefs";
+import { isPastedText, isPasteTextId } from "../chips";
 
 /**
  * Runtime schema validation for renderer → host messages.
@@ -458,6 +459,9 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
     case "uploadFile":
       if (!isString(raw.name) || !isString(raw.data)) return null;
       break;
+    case "pasteText":
+      return isPastedText(raw.text) && isPasteTextId(raw.pasteId)
+        ? { type: "pasteText", text: raw.text, pasteId: raw.pasteId } : null;
     case "voiceStop":
       if (!opt(raw.discard, isBoolean)) return null;
       break;

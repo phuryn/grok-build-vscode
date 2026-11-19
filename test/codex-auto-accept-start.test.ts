@@ -42,7 +42,7 @@ it("turns the gate off and shows Agent when Codex refuses", async () => {
   expect(GrokSidebar.prototype["displayMode" as keyof GrokSidebar].call(host, session)).toBe("agent");
 });
 
-it("runs only for a new Codex chat that starts in a remembered Auto accept", () => {
+it("applies remembered Auto accept only after creating a new Codex chat", () => {
   const src = readFileSync(path.join(__dirname, "..", "src", "sidebar.ts"), "utf8");
   const call = src.indexOf("await this.startCodexFullAccess(session, client)");
   expect(call).toBeGreaterThan(0);
@@ -52,4 +52,7 @@ it("runs only for a new Codex chat that starts in a remembered Auto accept", () 
   const newSession = src.lastIndexOf("await client.newSession(defaultModel || undefined);", call);
   expect(newSession).toBeGreaterThan(0);
   expect(src.slice(newSession, call).split("\n")).toHaveLength(3);
+  const ready = src.indexOf("session.activeSessionId = client.sessionId", call);
+  expect(ready).toBeGreaterThan(call);
+  expect(src.slice(call, ready)).toContain("await this.restoreCodexApproval(session, client)");
 });

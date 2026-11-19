@@ -125,7 +125,7 @@ import { DEEPSEEK_API_KEY_SECRET, deepseekKey, validDeepSeekKey, isDeepSeekCrede
 import { locateDeepSeek, installManagedDeepSeek, DEEPSEEK_VERSION } from "./deepseek-managed-installer";
 import { MediaRef, adapterCompactSignal, adapterContextOccupancy, agentTimestampMsFromMeta, autoCompactStartedNote, childStreamFromRoute, commandOutputForToolCall, commandOutputFromLiveTerminal, contextUsedFromCompactNotification, enforceCompleteSessionCost, errorDetail, gateZeroTokenMeta, isAuthErrorText, isCredentialError, isIncompatibleAgentError, isResumeNotFound, isRateLimitError, isSubagentLifecycleUpdate, occupancyFromAdapterTurn, parseSessionInfoContext, permissionOutcomeFor, promptErrorText, rateLimitNoticeText, sessionInfoCacheFresh, sumUsage, summarizeBackgroundCommand, usageIsRealMeasurement, type UpdateRoute } from "./acp-dispatch";
 import { createMcpPrepareState, prepareMcpToolCall } from "./mcp-tool";
-import { EFFORT_PREFS_KEY, MUSE_MODE_PREF_KEY, MUSE_ON_REQUEST_UNAVAILABLE, museSandboxUnavailable, museOnRequestUnavailable, resolvedDefaultMode, configWriteTarget, isMuseModeId, modeToRemember, rememberedEffort, sessionModes, startsInNativeAuto, startsInYolo, musePosture, museShellSandboxEnabled, usesClientAutoAccept, type ModeId, type MuseSettings, type EffortPrefs } from "./mode-prefs";
+import { CODEX_ASK_APPROVAL_PREF_KEY, EFFORT_PREFS_KEY, MUSE_MODE_PREF_KEY, MUSE_ON_REQUEST_UNAVAILABLE, museSandboxUnavailable, museOnRequestUnavailable, resolvedDefaultMode, configWriteTarget, isMuseModeId, modeToRemember, rememberedEffort, sessionModes, startsInNativeAuto, startsInYolo, musePosture, museShellSandboxEnabled, usesClientAutoAccept, type ModeId, type MuseSettings, type EffortPrefs } from "./mode-prefs";
 import { supportsApprovalModeSwitching } from "./acp-backend";
 import { beginAuthRecovery, oauthShadowsXaiApiKey } from "./auth-recovery";
 import {
@@ -245,6 +245,9 @@ import {
   extFromMime,
   isImageChip,
   isImplicitChip,
+  isPasteTextId,
+  isPastedText,
+  PASTED_TEXT_NAME,
   isVisionImagePath,
   isVisionMime,
   makeExplicitChip,
@@ -257,7 +260,7 @@ import {
   toggleChip,
   allocateImageIndex,
 } from "./chips";
-import { buildPromptWithImages, buildQueuedPromptWithImages, type PromptImageInput, type QueuedPromptContribution } from "./prompt-builder";
+import { appendPastedTextContext, buildPastedTextContext, buildPromptWithImages, buildQueuedPromptWithImages, type PromptImageInput, type QueuedPromptContribution } from "./prompt-builder";
 import {
   chipsForQueueSend,
   claimQueuedSendDispatch,
@@ -3966,6 +3969,7 @@ See design doc for the full state machine diagram.`;
   }
 
   private defaultModeForProvider(provider: string): string {
+    if (provider === "codex" && this.state.get<boolean>(CODEX_ASK_APPROVAL_PREF_KEY)) return "askApproval";
     const shared = this.host.getConfiguration("grok").get<string>("defaultMode", "");
     const remembered = provider === "muse" ? this.state.get<string>(MUSE_MODE_PREF_KEY) ?? shared : shared;
     return resolvedDefaultMode(provider, remembered, this.defaultModeCohort);
@@ -3974,6 +3978,7 @@ See design doc for the full state machine diagram.`;
   private newSessionMode(provider: string): string {
     const mode = this.defaultModeForProvider(provider);
     if (provider === "muse") return musePosture(mode, false, undefined, this.museSettings(), !!museSandboxUnavailable(isCloudEnvironment())).mode;
+    if (provider === "codex" && mode === "askApproval") return mode;
     return startsInYolo(mode, false) ? "yolo" : startsInNativeAuto(provider, mode, false) ? "auto" : "agent";
   }
 
@@ -3983,6 +3988,7 @@ See design doc for the full state machine diagram.`;
       && !session.planActive && !session.autoApprove && !session.nativeAuto) return this.newSessionMode(session.provider);
     if (session.provider === "muse") return session.client?.currentModeId ?? session.musePosture?.mode ?? "agent";
     if (session.planActive) return "plan";
+    if (session.provider === "codex" && session.client?.currentModeId === "askApproval") return "askApproval";
     if (session.autoApprove) return "yolo";
     if (session.nativeAuto) return "auto";
     return "agent";
@@ -4040,6 +4046,26 @@ See design doc for the full state machine diagram.`;
     catch {
       session.autoApprove = false;
       this.postMode(session);
+    }
+  }
+
+  private rememberCodexApproval(sessionId: string, ask: boolean): Promise<void> {
+    return this.updateSessionMeta(current => {
+      if (!ask && !current[sessionId]?.codexAskApproval) return null;
+      return { ...current, [sessionId]: { ...current[sessionId], codexAskApproval: ask || undefined } };
+    });
+  }
+
+  private async restoreCodexApproval(session: Session, client: AcpClient, resumeId?: string): Promise<void> {
+    const ask = resumeId
+      ? this.state.get<SessionMetaOverrides>(SESSION_META_KEY, {})[resumeId]?.codexAskApproval
+      : this.defaultModeForProvider("codex") === "askApproval";
+    if (!ask) return;
+    try {
+      await client.setMode("askApproval");
+      if (!resumeId && session.client === client && client.sessionId) await this.rememberCodexApproval(client.sessionId, true);
+    } catch (e) {
+      if (session.client === client) this.emit(session, { type: "error", text: `Couldn't switch mode: ${(e as Error).message}` });
     }
   }
 
@@ -4194,18 +4220,44 @@ Only continue if you trust this code.`,
     }
   }
 
+  private async setCodexPickerMode(modeId: ModeId, session: Session, client: AcpClient, requester?: RemoteRequester): Promise<void> {
+    const previous = session.codexModeChange;
+    const pending = (previous ?? Promise.resolve()).then(async () => {
+      if (session.client !== client || !client.sessionId) return false;
+      try {
+        if (modeId === "plan") {
+          await client.setMode("plan");
+          return session.client === client;
+        }
+        await client.setMode(modeId === "yolo" ? "agent-full-access" : modeId);
+        if (session.client !== client) return false;
+        if (client.currentModeId === "plan") await client.setMode("default");
+        if (session.client !== client) return false;
+        if (session.autoApprove) this.autoApprovePendingPermissions(session);
+        const ask = modeId === "askApproval";
+        await this.rememberCodexApproval(client.sessionId, ask);
+        await this.state.update(CODEX_ASK_APPROVAL_PREF_KEY, ask || undefined);
+        const remember = modeToRemember(modeId);
+        if (remember) void this.rememberGrokConfig("defaultMode", remember);
+        return true;
+      } catch (e) {
+        if (session.client === client) this.reportRequester(requester, "error", `Couldn't switch mode: ${(e as Error).message}`);
+        return false;
+      }
+    });
+    session.codexModeChange = pending;
+    try { await pending; }
+    finally { if (session.codexModeChange === pending) session.codexModeChange = undefined; }
+  }
+
   async setMode(
     modeId: ModeId,
     session: Session = this.focused,
     requester?: RemoteRequester,
   ): Promise<void> {
-    // Agent/plan/yolo are mutually exclusive. Plan = client write/exec gate;
-    // YOLO = auto-approve. Both ride on top of the CLI's agent mode, except
-    // Plan which also tells the CLI to plan instead of act. The mode button only
-    // ever drives the focused session.
     // Ignore mode changes until the session exists: before session/new the CLI
     // setMode throws "no session" (and for Plan that error is surfaced to the user).
-    // The mode button is disabled while busy; this backstops the toggle-mode command.
+    // The picker is locked during startup.
     if (!session.client || !session.client.sessionId || session.priming) return;
     if (session.provider === "deepseek" && session.deepseekHarness === "minimal") return;
     if (session.provider === "muse" && session.museSandboxUnavailable && modeId === "onRequest") {
@@ -4214,6 +4266,8 @@ Only continue if you trust this code.`,
     }
     // Backstop the picker for stale clients and direct/remote commands.
     if (!sessionModes(session.provider, !!session.museSandboxUnavailable).includes(modeId) && modeId !== "plan") return;
+    if (session.provider === "codex") return this.setCodexPickerMode(modeId, session, session.client, requester);
+    if (modeId === "askApproval") return;
     // Muse switches approval without enabling the Plan path.
     if (!supportsModeSwitching(session.provider)) {
       if (!supportsAutoAccept(session.provider) || modeId === "auto") return;
@@ -4322,10 +4376,7 @@ Only continue if you trust this code.`,
       this.autoApprovePendingPermissions(session);
       if (session.client) {
         try {
-          if (session.provider === "codex") {
-            await session.client.setMode("default");
-            await session.client.setMode("agent-full-access");
-          } else if (session.provider === "claude") {
+          if (session.provider === "claude") {
             await session.client.setMode("yolo");
           } else {
             await session.client.setMode(ACT_MODE_ID);
@@ -4356,10 +4407,7 @@ Only continue if you trust this code.`,
     this.setPlanActive(session, false); // posts displayMode → "agent"
     if (session.client) {
       try {
-        if (session.provider === "codex") {
-          await session.client.setMode("default");
-          await session.client.setMode("agent");
-        } else if (session.provider === "claude") {
+        if (session.provider === "claude") {
           await session.client.setMode("agent");
         } else {
           await session.client.setMode(ACT_MODE_ID);
@@ -4867,10 +4915,11 @@ Only continue if you trust this code.`,
     // and never reaches `allowedCommandPrograms` below, so there the machinery
     // would remove a choice that works and offer one that resolves to a single
     // allow. Plan gating re-reads `toolCall.kind` and still applies.
+    const manualApproval = session.provider === "codex" && client.currentModeId === "askApproval";
     const execute = session.provider !== "muse"
       && String(req.toolCall?.kind ?? "").toLowerCase() === "execute";
     const command = (req.toolCall?.rawInput as { command?: unknown } | undefined)?.command;
-    const programs = execute && typeof command === "string"
+    const programs = execute && !manualApproval && typeof command === "string"
       ? commandProgramsForGrant(command, resolvedTerminalShellDialect()) : undefined;
     const allowOnce = req.options.find((o) => o.kind === "allow_once");
     // Every segment must be covered: an npm grant cannot smuggle in `&& rm`.
@@ -4900,7 +4949,7 @@ Only continue if you trust this code.`,
     // The card no longer offers "no, and never ask again"; execute cards also
     // stop writing the CLI's exact-string grants (#123). The CLI and
     // .grok/config.toml remain the route for either persistent policy.
-    const options = req.options.filter((o) => o.kind !== "reject_always" && (!execute || o.kind !== "allow_always"));
+    const options = req.options.filter((o) => o.kind !== "reject_always" && (!(execute || manualApproval) || o.kind !== "allow_always"));
     const ungranted = [...new Set(programs?.filter((program) => !session.allowedCommandPrograms.has(program)))];
     let commandGrant;
     if (allowOnce && ungranted.length > 0 && ungranted.length <= 3) {
@@ -5264,10 +5313,13 @@ Only continue if you trust this code.`,
       )
       : buildQueuedPromptWithImages(builtContributions, [], promptDeps, slashCommand != null);
 
-    await this.retainUploadedFilesForSession(
-      session,
-      contributions.flatMap((item) => item.chips),
-    );
+    const attached = contributions.flatMap(item => item.chips);
+    const pastedText = this.readPastedTextContext(session, attached);
+    if (pastedText === undefined) {
+      putBackOnComposer();
+      return;
+    }
+    await this.retainUploadedFilesForSession(session, attached);
     if (gen !== session.gen || session.client !== client) {
       putBackOnComposer();
       return;
@@ -5308,11 +5360,13 @@ Only continue if you trust this code.`,
     });
     if (!session.queuedSends.length) session.queuedSendRequiresRelay = false;
 
-    const rpcText = images.length ? displayText : built.text;
+    const rpcText = images.length ? displayText : appendPastedTextContext(built.text, pastedText);
+    const content = built.blocks.map((block, index) => index === 0 && block.type === "text"
+      ? { ...block, text: appendPastedTextContext(block.text, pastedText) } : block);
     try {
       const r = await client.interject(rpcText, () => {
         if (gen === session.gen && session.client === client) session.interjectionCount += 1;
-      }, images.length ? built.blocks : undefined);
+      }, images.length ? content : undefined);
       if (r === "unsupported") {
         // Unsupported backend: latch the button off and hand the item to the queue,
         // which is exactly the behavior Steer was offering to skip.
@@ -11403,7 +11457,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     }
     const disposeMs = replacedClient ? clock.elapsed(disposeAt) : 0;
     clock.record("dispose", disposeMs);
-    if ((session.provider === "muse" || session.provider === "deepseek") && resumeId) {
+    if ((session.provider === "muse" || session.provider === "deepseek" || session.provider === "codex") && resumeId) {
       await this.sessionMetaWrites;
       if (gen !== session.gen) return undefined;
     }
@@ -12336,6 +12390,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         clock.record("replay(post)", clock.elapsed(replayAt));
         if (session.provider === "deepseek" && !warmDeepSeekResume) this.emit(session, { type: "planNotice", text: DEEPSEEK_COLD_REOPEN });
         session.activeSessionId = resumeId;
+        if (session.provider === "codex" && gen === session.gen) await this.restoreCodexApproval(session, client, resumeId);
         if (!warmDeepSeekResume) session.titleGenerated = true; // existing session, name already in storage
 
         // Plan-gate restoration: the CLI replays its own current_mode_update
@@ -12386,6 +12441,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         await client.newSession(defaultModel || undefined);
         if (nativeAutoStart && gen === session.gen) await this.startNativeAuto(session, client);
         if (rememberedYolo && session.provider === "codex" && gen === session.gen) await this.startCodexFullAccess(session, client);
+        if (session.provider === "codex" && gen === session.gen) await this.restoreCodexApproval(session, client);
         clock.record("new", clock.elapsed(newAt));
         clock.record("load", 0);
         clock.record("replay(post)", 0);
@@ -12806,8 +12862,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           // handleSend reaches the prompt commit point. Receipt is remote use.
           if (session.hasHistory) this.reportRemoteMessage(session, origin);
           await this.handleSend(msg.text, msg.bare === true, session, origin, queuedSendCommit, msg.submissionId, undefined, msg.chips,
-            // Older renderers (or a provider switch in flight) can miss the
-            // pre-send image gate. Return text to its sender, not every viewer.
+            // A send can fail before committing. Return text to its sender.
             () => { if (!queuedSendCommit) this.restoreComposerFor(session, requester, msg.text); });
         } finally {
           if (queuedSendCommit) finishQueuedSendCommit(session, queuedSendCommit, false);
@@ -13135,6 +13190,17 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           attachmentOwner,
           requester,
         ));
+        break;
+      case "pasteText":
+        if (isPasteTextId(msg.pasteId)) {
+          try {
+            await this.trackAttach(this.addPastedText(msg.text, attachmentOwner, requester));
+          } finally {
+            const reply: HostMsg = { type: "pasteTextSettled", pasteId: msg.pasteId };
+            if (requester) this.sendRemoteRequester(requester, reply);
+            else this.postLocal(reply);
+          }
+        }
         break;
       case "permissionAnswer":
         this.answerPermission(session, msg.requestId, msg.optionId);
@@ -18439,6 +18505,44 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     }
   }
 
+  private async addPastedText(text: string, owner: AttachmentOwner, requester?: RemoteRequester): Promise<void> {
+    const session = owner();
+    if (!session) return;
+    if (!isPastedText(text)) {
+      this.reportRequester(requester, "error", "Could not attach pasted text. Paste up to 1 MiB at a time.");
+      return;
+    }
+    const id = randomUUID();
+    const dir = path.join(this.fileStagingDir(), id);
+    const file = path.join(dir, PASTED_TEXT_NAME);
+    try {
+      await fs.promises.mkdir(dir, { recursive: true });
+      await fs.promises.writeFile(file, text, { flag: "wx", mode: 0o600 });
+      if (owner() === session) {
+        session.chips.push({ id: `paste:${id}`, path: file, relPath: PASTED_TEXT_NAME, hidden: false });
+        this.postChips(session);
+        return;
+      }
+    } catch {
+      this.reportRequester(requester, "error", "Could not attach pasted text. Try pasting it again.");
+    }
+    await fs.promises.rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+
+  private readPastedTextContext(session: Session, chips: readonly FileChip[]): string | undefined {
+    try {
+      return buildPastedTextContext(chips, file => {
+        if (!stagedUploadDirectory(this.fileStagingDir(), file) || path.basename(file) !== PASTED_TEXT_NAME) {
+          throw new Error("Invalid pasted-text attachment");
+        }
+        return fs.readFileSync(file, "utf8");
+      });
+    } catch {
+      this.emit(session, { type: "agentError", text: "Could not read pasted text. Remove the attachment and paste it again." });
+      return undefined;
+    }
+  }
+
   private async retainUploadedFilesForSession(session: Session, chips: FileChip[]): Promise<void> {
     const sid = session.activeSessionId ?? session.client?.sessionId;
     if (!sid) return;
@@ -18741,13 +18845,13 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     submissionId?: string,
     onStarted?: () => void,
     requestedChips?: FileChip[],
-    onImageReadFailure?: () => void,
+    onPreflightFailure?: () => void,
   ): Promise<void> {
     if (this.cloudHostUpdate && !this.cloudHostUpdate.admitting) {
       this.emit(target ?? this.focused, { type: "error", text: CLOUD_UPDATE_REFUSAL });
       return;
     }
-    await this.withCloudHostWork(() => this.handleAdmittedSend(text, bare, target, origin, queuedSendCommit, submissionId, onStarted, requestedChips, onImageReadFailure));
+    await this.withCloudHostWork(() => this.handleAdmittedSend(text, bare, target, origin, queuedSendCommit, submissionId, onStarted, requestedChips, onPreflightFailure));
   }
 
   private async handleAdmittedSend(
@@ -18755,7 +18859,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     queuedSendCommit?: { text: string; items: QueuedSendEntry[] }, submissionId?: string,
     onStarted?: () => void,
     requestedChips?: FileChip[],
-    onImageReadFailure?: () => void,
+    onPreflightFailure?: () => void,
   ): Promise<void> {
     // `target` lets a queued-send flush fire into a BACKGROUNDED session (its
     // turn ended while another was focused). Only the focused session may spawn
@@ -18771,7 +18875,13 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // posted after it. Optional because handleSend runs against hand-built
     // instances in the suite that never ran a constructor.
     const picking = this.pickerChange;
+    const codexModeChange = session.codexModeChange;
     if (picking) await picking;
+    if (codexModeChange && !await codexModeChange) {
+      this.emit(session, { type: "agentError", text: "Mode change failed. Choose a mode and send again." });
+      onPreflightFailure?.();
+      return;
+    }
     await this.waitForSessionStart(session);
     // Desk↔remote co-attach: the OTHER view only learns `busy` once the
     // mirrored agentStart crosses the relay, so a send can race through that
@@ -18864,7 +18974,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         if (chip.hidden || !isImageChip(chip)) continue;
         const read = await this.readImageChip(chip, session, gen);
         if (read === "gone") return;
-        if (read === "failed") { onImageReadFailure?.(); return; }
+        if (read === "failed") { onPreflightFailure?.(); return; }
         images.push(read);
       }
     }
@@ -18890,9 +19000,14 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     const { blocks: promptBlocks } = contributions
       ? buildQueuedPromptWithImages(contributions, implicitChips, promptDeps, slashCommand != null)
       : buildPromptWithImages(text, chips, images, promptDeps, slashCommand != null);
+    const pastedText = this.readPastedTextContext(session, chips);
+    if (pastedText === undefined) {
+      onPreflightFailure?.();
+      return;
+    }
 
-    // Unlike images, document bytes are read lazily by Grok from the path in
-    // the prompt. Persist ownership before consuming the chip or sending.
+    // Keep staged documents available for the conversation, including resends
+    // of a pasted-text attachment after an edit.
     await this.retainUploadedFilesForSession(session, chips);
     if (gen !== session.gen) return;
 
@@ -18989,7 +19104,9 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           this.rememberAdapterContext(session, { compacted: true });
         }
       }
-      const meta = session.provider === "deepseek"
+      const meta = pastedText
+        ? await client.prompt(promptBlocks, session.provider === "deepseek" ? contributions?.map(item => item.text) ?? [text] : undefined, pastedText)
+        : session.provider === "deepseek"
         ? await client.prompt(promptBlocks, contributions?.map(item => item.text) ?? [text])
         : await client.prompt(promptBlocks);
       if (gen !== session.gen) {
@@ -19068,7 +19185,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       // An expired-token error wedges only THIS long-lived process (the CLI shares
       // ~/.grok/auth.json across the pool + sibling `grok login`); transparently
       // reload the process and resend before surfacing the error (see method doc).
-      if (await this.recoverAuthAndResend(session, e, text, sentChips, promptBlocks)) return;
+      const recovered = pastedText
+        ? await this.recoverAuthAndResend(session, e, text, sentChips, promptBlocks, pastedText)
+        : await this.recoverAuthAndResend(session, e, text, sentChips, promptBlocks);
+      if (recovered) return;
       // Recovery declined (already retried this streak, or not auth-shaped):
       // promptErrorText keeps the copy consistent — the entitlement notice for
       // billing-flavored wording (#58), the raw detail otherwise.
@@ -19122,6 +19242,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     displayText: string,
     chips: FileChip[],
     promptBlocks: Parameters<AcpClient["prompt"]>[0],
+    pastedText = "",
   ): Promise<boolean> {
     if (session.provider === "deepseek") {
       if (isDeepSeekCredentialError(err)) this.setProviderNeedsLogin("deepseek", true);
@@ -19183,7 +19304,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     this.setStatus(session, "working");
     session.adapterTurnCallUsed = [];
     try {
-      const meta = await client.prompt(promptBlocks);
+      const meta = pastedText ? await client.prompt(promptBlocks, undefined, pastedText) : await client.prompt(promptBlocks);
       if (gen !== session.gen) {
         this.emitAbandonedSend(session);
         return true;

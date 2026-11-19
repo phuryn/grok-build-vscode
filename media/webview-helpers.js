@@ -76,7 +76,7 @@
     "initialState", "moveViewHint", "welcomeTips", "projectSetup", "githubState", "githubRepos", "providerState", "mcpServers", "mcpConnectors", "mcpConnectorAuthorization", "routines", "codexInstallProgress", "agyInstallProgress", "planModeAvailability", "showThinking", "appPurpose", "fontScale", "grokUpdateStatus", "updateAvailable", "updateReady", "telemetryEnabled", "thumbsFeedback", "initialized",
     "cliUpdating", "startupStatus", "session", "sessionName", "composerDraftSession", "sessionRemoved", "sessionOpening", "recentSessions", "projectPrompt", "contextWindowSelection", "modelChanged", "modeChanged", "openModePopover",
     "voiceState", "voiceConfigured", "voicePartial", "voiceSubmit", "voiceTranscript",
-    "voiceError", "chips", "commandsUpdate", "mentionResults", "projectDirListing", "projectFileContent", "projectFileWriteResult", "gitStatusResult", "gitFileDiffResult", "turnFileDiffResult", "turnDiffBaseline", "gitRunResult", "userMessage", "agentStart", "thoughtChunk",
+    "voiceError", "chips", "pasteTextSettled", "commandsUpdate", "mentionResults", "projectDirListing", "projectFileContent", "projectFileWriteResult", "gitStatusResult", "gitFileDiffResult", "turnFileDiffResult", "turnDiffBaseline", "gitRunResult", "userMessage", "agentStart", "thoughtChunk",
     "messageChunk", "media", "userMessageChunk", "historyReplay", "historyBatch", "permissionHistoryQueue",
     "planHistoryQueue", "toolCall", "toolCallUpdate", "permissionRequest", "permissionOptions",
     "permissionResolved", "exitPlanRequest", "planResolved", "questionRequest", "questionResolved", "planNotice", "autoCompactNotice", "planBlocked",
@@ -100,7 +100,7 @@
     "dropFile", "permissionAnswer", "exitPlanAnswer", "questionAnswer", "questionCancel",
     "setContextWindow", "setModel", "installCodex", "cancelCodexInstall", "installAgy", "cancelAgyInstall", "agySignIn", "setExperimentalAntigravity", "setExperimentalDeepSeek", "installDeepSeek", "cancelDeepSeekInstall", "deepseekConnect", "disconnectProvider", "setDeepSeekHarness", "runInstallCmd", "runMuseInstallCmd", "runGrokLogin", "cancelDeviceLogin", "submitDeviceLoginCode", "logout", "checkGrokUpdate", "updateGrok", "updateCodex", "updateClaude",
     "recheckConnection", "refreshProviders", "retryProviderSession", "listSessions", "listRepoSessions", "selectRepo", "toggleRepoPin", "setRepoArchived", "setRepoColor", "setRepoIcon", "toggleSessionPin", "resumeSession", "renameSession", "deleteSession",
-      "clearAllSessions", "pickFile", "mentionQuery", "addMentionFile", "listProjectDir", "readProjectFile", "writeProjectFile", "gitStatus", "gitFileDiff", "turnFileDiff", "turnFileOpenDiff", "gitRun", "pasteImage", "uploadFile", "voiceStart", "voiceStop",
+      "clearAllSessions", "pickFile", "mentionQuery", "addMentionFile", "listProjectDir", "readProjectFile", "writeProjectFile", "gitStatus", "gitFileDiff", "turnFileDiff", "turnFileOpenDiff", "gitRun", "pasteImage", "pasteText", "uploadFile", "voiceStart", "voiceStop",
       "remoteVoiceStart", "remoteVoiceChunk", "remoteVoiceStop", "setVoiceBackend", "configureOpenAiVoice",
     "queueSend", "dequeueSend", "clearQueuedSends", "steerSend", "turnFeedback", "forkSession", "setSteerByDefault", "setPromptNav", "setPinLiveWorkflows", "setExpandDiffCard",
     "setSoundNotifications", "setProcessingSound", "setInputNeededSound", "setReadRepliesAloud", "setSummarizeRepliesAloud", "setVoiceSendPhrase", "setVoiceKeyterms", "setTelemetryEnabled", "setThumbsFeedback", "setDesktopTray", "summarizeSpeech", "requestImageFull", "requestImageOriginal", "composerFocus",
@@ -1051,9 +1051,33 @@
   // there's no block (a plain message) files is empty and body is the input.
   function parseAttachmentContext(text) {
     if (typeof text !== "string") return { files: [], body: text || "" };
+    const pasted = [];
+    const header = /(?:^|\n\n)<afk-pasted-text length="([0-9]{1,7})" name="Pasted text\.txt">\n/g;
+    const close = "\n</afk-pasted-text>";
+    let rest = "";
+    let cursor = 0;
+    for (let match; (match = header.exec(text));) {
+      rest += text.slice(cursor, match.index);
+      pasted.push("Pasted text.txt");
+      const end = header.lastIndex + Number(match[1]);
+      if (end + close.length > text.length) {
+        // Replay can deliver an attachment in chunks. Keep its partial data
+        // out of the bubble while the rest is arriving.
+        cursor = text.length;
+        break;
+      }
+      if (!text.startsWith(close, end)) {
+        pasted.pop();
+        rest += match[0];
+        cursor = header.lastIndex;
+        continue;
+      }
+      cursor = header.lastIndex = end + close.length;
+    }
+    text = rest + text.slice(cursor);
     const m = text.match(/<vscode-context[^>]*>\n?([\s\S]*?)\n?<\/vscode-context>\s*/);
-    if (!m) return { files: [], body: text };
-    const files = [];
+    if (!m) return { files: pasted, body: text };
+    const files = [...pasted];
     for (const raw of m[1].split("\n")) {
       const line = raw.trim();
       let mm;

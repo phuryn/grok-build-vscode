@@ -37,3 +37,28 @@ describe("native Auto mode in the picker", () => {
     expect(labels(h.doc)).toEqual(["Agent mode", "Plan mode", "Auto accept"]);
   });
 });
+
+describe("Codex modes in the picker", () => {
+  it.each([{}, { remote: true }])("offers four modes on an advertising host (%j)", (surface) => {
+    const h = bootWebview(surface);
+    dispatch(h.window, { type: "session", sessionId: "c", provider: "codex", models: [] });
+    dispatch(h.window, { type: "modeChanged", modeId: "askApproval", modes: ["agent", "askApproval", "plan", "yolo"] });
+    expect(h.doc.getElementById("mode-btn")!.textContent).toBe("Ask for approval");
+    for (const [index, modeId] of ["agent", "askApproval", "plan", "yolo"].entries()) {
+      openModes(h);
+      expect(labels(h.doc)).toEqual(["Agent mode", "Ask for approval", "Plan mode", "Auto accept"]);
+      expect(descs(h.doc)[1]).toContain("You decide every request");
+      expect(descs(h.doc)[2]).toContain("review before implementation");
+      click(h.window, h.doc.querySelectorAll(".mode-popover-item")[index]);
+      expect(h.posted.at(-1)).toEqual({ type: "setMode", modeId });
+    }
+  });
+
+  it.each([{ modes: undefined }, { modes: ["agent", "yolo"] }])("keeps the old Codex menu with legacy modes %j", ({ modes }) => {
+    const h = bootWebview({ remote: true });
+    dispatch(h.window, { type: "session", sessionId: "c", provider: "codex", models: [] });
+    dispatch(h.window, { type: "modeChanged", modeId: "agent", modes });
+    openModes(h);
+    expect(labels(h.doc)).toEqual(["Agent mode", "Auto accept"]);
+  });
+});

@@ -226,7 +226,7 @@ function optionValue(option: any): unknown {
 
 /**
  * Codex reports two axes at once: `collaboration_mode` (Plan vs Default) and
- * permission `mode` (`agent` / `agent-full-access`). Plan wins; otherwise the
+ * permission `mode`. Plan wins; otherwise the
  * permission mode is the host-facing id. Flattening collaboration `default` to
  * `"default"` discarded full-access and the toolbar then claimed Agent.
  */
@@ -236,6 +236,7 @@ export function codexEffectiveModeId(
   fallback?: string,
 ): string | undefined {
   if (collaboration === "plan") return "plan";
+  if (mode === "read-only") return "askApproval";
   if (typeof mode === "string") return mode;
   if (collaboration === "default") return "default";
   return fallback;
@@ -379,7 +380,8 @@ export class CodexBackend implements AcpBackend {
     if (modeId === "plan" || modeId === "default") {
       return { method: "session/set_config_option", params: { sessionId, configId: "collaboration_mode", value: modeId } };
     }
-    return { method: "session/set_config_option", params: { sessionId, configId: "mode", value: modeId } };
+    const value = modeId === "askApproval" ? "read-only" : modeId;
+    return { method: "session/set_config_option", params: { sessionId, configId: "mode", value } };
   }
 
   steeringCapabilities(initializeResult: any) {

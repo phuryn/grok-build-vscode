@@ -9,7 +9,7 @@ afterEach(() => Object.defineProperty(process, "platform", platformDescriptor));
 const OFFERED_MODES = {
   grok: ["agent", "plan", "yolo"],
   claude: ["agent", "auto", "plan", "yolo"],
-  codex: ["agent", "yolo"],
+  codex: ["agent", "askApproval", "plan", "yolo"],
   muse: ["yolo", "agent", "onRequest"],
   agy: ["agent", "yolo"],
   deepseek: ["agent", "yolo"],

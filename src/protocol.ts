@@ -21,12 +21,11 @@ import type { AcpProvider } from "./acp-backend";
 // that chat.js actually handles every HostMsg type — closing the loop across the
 // TS/JS boundary that tsc can't see.
 //
-// All payload-shape imports are `import type` so this module carries no runtime
-// dependency on vscode/acp/etc. — it compiles to just the two arrays, and the
-// test can import it without a VS Code environment.
+// Payload-shape imports are `import type` so the wire contract can be imported
+// without a VS Code environment.
 
 import type { ModelInfo, PromptResultMeta, PromptUsage, PermissionRequest, ExitPlanRequest, QuestionRequest } from "./acp";
-import type { FileChip } from "./chips";
+import { MAX_PASTED_TEXT_BYTES, type FileChip } from "./chips";
 import type { SttPreference, VoiceBackendState } from "./voice";
 import type { RepoListEntry, SessionListEntry } from "./sessions";
 import type { Dot } from "./session-pool";
@@ -85,6 +84,7 @@ export const HOST_CAPABILITIES = {
   // A distinct message: old runInstallCmd hosts always install Grok.
   installMuse: true,
   uploadFile: true,
+  pasteTextMaxBytes: MAX_PASTED_TEXT_BYTES,
   remoteVoice: true,
   // Whether `deleteSession` can take the conversation the requester is READING.
   // Older hosts refuse it — the live CLI re-persisted the files the moment they
@@ -207,6 +207,7 @@ export type HostUiCapabilities = {
   /** Desk-only fixed Muse installer. Absent/false hides the install button. */
   installMuse?: boolean;
   uploadFile: boolean;
+  pasteTextMaxBytes?: number;
   remoteVoice: boolean;
   deleteActiveSession?: boolean;
   /**
@@ -690,6 +691,7 @@ export type HostMsg =
   | { type: "voiceTranscript"; text: string; send?: boolean }
   | { type: "voiceError" }
   | { type: "chips"; chips: FileChip[] }
+  | { type: "pasteTextSettled"; pasteId: string }
   | { type: "commandsUpdate"; commands: unknown[] }
   // Reply to the webview's `mentionQuery` (the composer's `@` file popover):
   // workspace-relative paths (forward slashes), ranked by src/mention.ts. The
@@ -1551,6 +1553,7 @@ export type WebviewMsg =
   // Remote browser upload: an untrusted basename plus base64 bytes. The host
   // allowlists/sanitizes/stages it, then routes it through addDroppedFile.
   | { type: "uploadFile"; name: string; data: string }
+  | { type: "pasteText"; text: string; pasteId: string }
   | { type: "voiceStart" }
   /** Stop voice input. Manual Send/Queue sets discard so late transcription
    * cannot refill the composer that was just sent. */
@@ -1641,7 +1644,7 @@ const HOST_MESSAGE_TYPE_MAP: Record<HostMsg["type"], true> = {
   contextWindowSelection: true, initialized: true, cliUpdating: true, startupStatus: true, session: true, sessionName: true, composerDraftSession: true, modelChanged: true,
   modeChanged: true, openModePopover: true, voiceState: true, voiceConfigured: true,
   voicePartial: true, voiceSubmit: true, voiceTranscript: true, voiceError: true,
-  chips: true, commandsUpdate: true, mentionResults: true, projectDirListing: true, projectFileContent: true, projectFileWriteResult: true, gitStatusResult: true, gitFileDiffResult: true, turnFileDiffResult: true, turnDiffBaseline: true, gitRunResult: true, userMessage: true, agentStart: true,
+  chips: true, pasteTextSettled: true, commandsUpdate: true, mentionResults: true, projectDirListing: true, projectFileContent: true, projectFileWriteResult: true, gitStatusResult: true, gitFileDiffResult: true, turnFileDiffResult: true, turnDiffBaseline: true, gitRunResult: true, userMessage: true, agentStart: true,
   providerConfigContent: true, providerConfigWriteResult: true,
   thoughtChunk: true, messageChunk: true, media: true, userMessageChunk: true,
   historyReplay: true, historyBatch: true, permissionHistoryQueue: true, planHistoryQueue: true,
@@ -1679,7 +1682,7 @@ const WEBVIEW_MESSAGE_TYPE_MAP: Record<WebviewMsg["type"], true> = {
   listProjectDir: true, readProjectFile: true, writeProjectFile: true,
   readProviderConfig: true, writeProviderConfig: true, restartProviderSession: true,
   gitStatus: true, gitFileDiff: true, turnFileDiff: true, turnFileOpenDiff: true, gitRun: true,
-  pasteImage: true, uploadFile: true, voiceStart: true,
+  pasteImage: true, pasteText: true, uploadFile: true, voiceStart: true,
   voiceStop: true, setVoiceBackend: true, configureOpenAiVoice: true, remoteVoiceStart: true, remoteVoiceChunk: true,
   remoteVoiceStop: true, queueSend: true, dequeueSend: true, clearQueuedSends: true,
   steerSend: true, turnFeedback: true, forkSession: true,
