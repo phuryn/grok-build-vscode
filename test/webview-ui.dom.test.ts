@@ -894,8 +894,8 @@ describe("mode picker (the plan-gate entry path)", () => {
       .map((label) => label.textContent);
     expect(labels).toEqual(["Agent mode", "Auto accept"]);
     expect([...$(doc, "mode-popover").querySelectorAll(".mode-item-desc")].map((label) => label.textContent)).toEqual([
-      "Codex acts directly, asking approval only for changes it judges sensitive",
-      "Codex automatically approves all permission requests (Full access)",
+      "Codex reviews requests to act outside the sandbox and asks you about potentially unsafe actions",
+      "Codex has full access to files and the internet and runs without asking",
     ]);
   });
 

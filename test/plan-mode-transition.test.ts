@@ -5,6 +5,7 @@ import { AcpClient } from "../src/acp";
 import type { AcpBackend } from "../src/acp-backend";
 import { ClaudeBackend } from "../src/claude-backend";
 import { CodexBackend } from "../src/codex-backend";
+import { applyAgentModeToHostPlan } from "../src/plan-gate";
 import { GrokSidebar } from "../src/sidebar";
 import { Session } from "../src/session";
 
@@ -107,6 +108,9 @@ async function dispatchSetModeThenPermission(
 
   try {
     const pending = sidebar.setMode("plan", session);
+    // Codex mode changes are serialized behind the previous one, so its RPC is
+    // written a tick later than Grok's and Claude's.
+    await vi.waitFor(() => expect(written.length).toBeGreaterThan(0));
     const req = JSON.parse(written[0]);
     expect(["session/set_mode", "session/set_config_option"]).toContain(req.method);
 
@@ -270,7 +274,12 @@ function planningAdapterSession(
   opts: { backend: AcpBackend; provider: "codex" | "claude"; setMode?: () => Promise<void> },
 ): { client: AcpClient; written: string[]; session: Session } {
   const { client, written } = clientWithFakeProc({ backend: opts.backend });
-  client.setMode = opts.setMode ?? (async () => {});
+  // Codex reports the preset it switched to in its reply, and AcpClient reads
+  // it back (readCodexMode) and emits modeChanged. That readback is what turns
+  // Auto accept on, so the stub keeps it.
+  client.setMode = opts.setMode ?? (async (modeId: string) => {
+    if (opts.provider === "codex") (client as any).readCodexMode({}, modeId);
+  });
   const session = liveSession({
     autoApprove: false,
     planActive: true,
@@ -279,6 +288,17 @@ function planningAdapterSession(
   });
   client.planActive = true;
   return { client, written, session };
+}
+
+/** The host's modeChanged handler for an adapter without the client plan gate
+ *  (startSessionBody in sidebar.ts): the adapter's mode is the authority. */
+function followAdapterMode(sidebar: any, session: Session, client: AcpClient): void {
+  client.on("modeChanged", (id: string) => {
+    const next = applyAgentModeToHostPlan(id, client.usesClientPlanGate);
+    if (!next) return;
+    session.autoApprove = next.autoApprove;
+    sidebar.setPlanActive(session, next.planActive);
+  });
 }
 
 function showPermission(sidebar: any, session: Session, client: AcpClient, id: number, permission: object): void {
@@ -292,6 +312,7 @@ describe("Auto accept does not implement a pending plan review", () => {
       provider: "codex",
     });
     const sidebar = makeSidebar(session);
+    followAdapterMode(sidebar, session, client);
     showPermission(sidebar, session, client, 99, CODEX_PLAN_REVIEW);
 
     await sidebar.setMode("yolo", session);
@@ -366,6 +387,7 @@ describe("Auto accept does not implement a pending plan review", () => {
       provider: "codex",
     });
     const sidebar = makeSidebar(session);
+    followAdapterMode(sidebar, session, client);
     showPermission(sidebar, session, client, 42, EDIT_PERMISSION);
 
     await sidebar.setMode("yolo", session);
@@ -380,6 +402,7 @@ describe("Auto accept does not implement a pending plan review", () => {
       provider: "codex",
     });
     const sidebar = makeSidebar(session);
+    followAdapterMode(sidebar, session, client);
     showPermission(sidebar, session, client, 42, EDIT_PERMISSION);
     showPermission(sidebar, session, client, 99, CODEX_PLAN_REVIEW);
 
