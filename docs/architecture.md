@@ -154,7 +154,7 @@ that check runs first. The Connect press records consent and reads
 `--version`; on the desk it is the watcher that opens the warm-up session. A warm-up failure is logged and does not clear consent.
 
 If no Codex binary is found, onboarding can install the pinned official
-`rust-v0.153.4` standalone package into versioned global storage. The download is
+`rust-v0.166.0` standalone package into versioned global storage. The download is
 streamed to a sibling staging file, SHA-256 verified before decompression, unpacked
 with the dependency-free tar reader (preserving regular-file mode bits on POSIX),
 then renamed into place atomically. Discovery
