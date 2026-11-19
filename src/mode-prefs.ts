@@ -9,6 +9,7 @@ export type MuseModeId = "agent" | "yolo" | "onRequest" | "denyUnmatched";
 export type ModeId = MuseModeId | "plan" | "auto" | "askApproval";
 export const MUSE_MODE_PREF_KEY = "grok.defaultMuseMode";
 export const CODEX_ASK_APPROVAL_PREF_KEY = "grok.codexAskApproval";
+export const CODEX_MODE_WAITS_FOR_PLAN = "Answer the plan first. Codex implements it with the access it had when planning began. To implement it with approvals, choose No on the plan, switch modes, then ask Codex to implement the plan.";
 export const MUSE_CLOUD_ON_REQUEST_UNAVAILABLE = "Muse On request is unavailable on cloud machines. Open this conversation on a desktop to change its mode, or start a new cloud conversation in Prompt unmatched.";
 export const MUSE_WINDOWS_ON_REQUEST_UNAVAILABLE = "Muse On request is unavailable on Windows because Muse's shell sandbox cannot run there. Use Prompt unmatched or Allow all.";
 export type MuseSandboxUnavailable = "cloud" | "windows" | undefined;
