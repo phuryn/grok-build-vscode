@@ -1041,6 +1041,7 @@ export const OUTBOUND_DISPOSITION: Record<HostMsg["type"], OutboundDisposition> 
   // Conversation names are already exposed in the remote history list, so
   // the focused-name update has the same display-only sensitivity.
   sessionName: "mirror",
+  sessionGoal: "mirror",
   composerDraftSession: "mirror",
   sessionRemoved: "mirror",
   contextWindowSelection: "mirror",
@@ -1263,6 +1264,7 @@ export const OUTBOUND_PROJECT_AUTH: Record<HostMsg["type"], OutboundProjectAuth>
   projectPrompt: "scope",
   repoSessions: "message-cwd",
   sessionName: "message-cwd",
+  sessionGoal: "scope",
   composerDraftSession: "scope",
   sessionRemoved: "message-cwd",
   // Session-scoped live + restore payload — requires authorized session/repo cwd.

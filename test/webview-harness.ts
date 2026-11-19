@@ -17,6 +17,7 @@ const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.met
 const helperSrc = read("../media/webview-helpers.js");
 const settingsSrc = read("../media/settings.js");
 const filePanelSrc = read("../media/file-panel.js");
+const syntaxSrc = read("../media/syntax-highlight.js");
 // Project marks. Every surface serves these before chat.js and the file panel
 // (getHtml() and web/chat.html both do); without them here the rail and the
 // panel title would silently exercise their no-marks fallback instead.
@@ -127,6 +128,7 @@ export function bootWebview(opts: {
   (window as any).eval(marksSrc);
   (window as any).eval(iconPickerSrc);
   (window as any).eval(settingsSrc);
+  (window as any).eval(syntaxSrc);
   // Every surface loads the shared component; each feature gates its own mount.
   (window as any).eval(filePanelSrc);
   (window as any).eval(chatSrc);

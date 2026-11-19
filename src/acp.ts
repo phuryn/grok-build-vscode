@@ -1,5 +1,5 @@
 import { contextWindowSizes, type ContextWindowSelection } from "./context-selection";
-import { supportsSessionDeletion } from "./acp-backend";
+import { supportsSessionDeletion, type SessionGoal } from "./acp-backend";
 import { GrokHookCalls } from "./grok-hooks";
 import { appendPastedTextContext } from "./prompt-builder";
 import { ChildProcessWithoutNullStreams, spawn } from "node:child_process";
@@ -338,6 +338,8 @@ export class AcpClient extends EventEmitter {
 
   sessionId?: string;
   private loadingChildSessionIds?: Set<string>;
+  private loadingSessionId?: string;
+  currentGoal?: SessionGoal | null;
   currentModelId?: string;
   currentModeId?: string;
   availableModels: ModelInfo[] = [];
@@ -603,6 +605,7 @@ export class AcpClient extends EventEmitter {
 
   async newSession(modelId?: string): Promise<{ sessionId: string }> {
     if (this.contextWindowChanging) throw new Error("Wait for the context-window change to finish.");
+    this.currentGoal = undefined;
     const raw = await this.request("session/new", {
       cwd: this.opts.cwd,
       mcpServers: await this.mcpServersForSession(),
@@ -696,6 +699,8 @@ export class AcpClient extends EventEmitter {
     // Replay precedes the response and may use a different parent wire ID.
     // Only an explicit spawn identifies a child until the load completes.
     this.loadingChildSessionIds = new Set();
+    this.loadingSessionId = sessionId;
+    this.currentGoal = undefined;
     this.hookCalls.reset();
     let raw: any;
     try {
@@ -705,6 +710,7 @@ export class AcpClient extends EventEmitter {
       this.endTurn("completed");
     } finally {
       this.loadingChildSessionIds = undefined;
+      this.loadingSessionId = undefined;
     }
     const res = this.backend.normalizeSessionResponse(raw);
     this.sessionId = sessionId;
@@ -1677,6 +1683,11 @@ export class AcpClient extends EventEmitter {
       if (normalized.sessionTitle) {
         this.currentSessionTitle = normalized.sessionTitle;
         this.emit("sessionTitle", normalized.sessionTitle);
+      }
+      if (normalized.sessionGoal !== undefined && sessionId
+          && sessionId === (this.loadingSessionId ?? this.sessionId)) {
+        this.currentGoal = normalized.sessionGoal;
+        this.emit("sessionGoal");
       }
       if (normalized.contextWindow !== undefined) {
         this.lastContextWindow = normalized.contextWindow;

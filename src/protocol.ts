@@ -1,7 +1,7 @@
 import type { ContextWindowSelection } from "./context-selection";
 export type RemoteHandoffSource = "topbar" | "rail" | "projects" | "settings" | "palette";
 
-import type { AcpProvider } from "./acp-backend";
+import type { AcpProvider, SessionGoal } from "./acp-backend";
 // Single source of truth for the host <-> webview message contract.
 //
 // Two directions, two discriminated unions:
@@ -671,6 +671,7 @@ export type HostMsg =
   // another project's name, it presents one project's conversation as another's.
   // Optional and additive: a client that never sees it keeps its old fallback.
   | { type: "sessionName"; sessionId: string; name: string; cwd: string; repoCwd?: string }
+  | { type: "sessionGoal"; sessionId: string; goal: SessionGoal | null }
   | { type: "composerDraftSession"; draftId: string; sessionId: string }
   | { type: "contextWindowSelection"; selection: ContextWindowSelection }
   | { type: "modelChanged"; modelId: string }
@@ -1641,7 +1642,7 @@ export type WebviewMsg =
 const HOST_MESSAGE_TYPE_MAP: Record<HostMsg["type"], true> = {
   museSettings: true,
   cloudHostUpdateState: true, initialState: true, moveViewHint: true, welcomeTips: true, projectSetup: true, githubState: true, githubRepos: true, providerState: true, mcpServers: true, mcpConnectors: true, mcpConnectorAuthorization: true, routines: true, codexInstallProgress: true, agyInstallProgress: true, planModeAvailability: true, showThinking: true, appPurpose: true, fontScale: true, grokUpdateStatus: true, updateAvailable: true, updateReady: true, telemetryEnabled: true, thumbsFeedback: true,
-  contextWindowSelection: true, initialized: true, cliUpdating: true, startupStatus: true, session: true, sessionName: true, composerDraftSession: true, modelChanged: true,
+  contextWindowSelection: true, initialized: true, cliUpdating: true, startupStatus: true, session: true, sessionName: true, sessionGoal: true, composerDraftSession: true, modelChanged: true,
   modeChanged: true, openModePopover: true, voiceState: true, voiceConfigured: true,
   voicePartial: true, voiceSubmit: true, voiceTranscript: true, voiceError: true,
   chips: true, pasteTextSettled: true, commandsUpdate: true, mentionResults: true, projectDirListing: true, projectFileContent: true, projectFileWriteResult: true, gitStatusResult: true, gitFileDiffResult: true, turnFileDiffResult: true, turnDiffBaseline: true, gitRunResult: true, userMessage: true, agentStart: true,

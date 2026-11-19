@@ -74,7 +74,7 @@
     "cloudHostUpdateState",
     "providerConfigContent", "providerConfigWriteResult",
     "initialState", "moveViewHint", "welcomeTips", "projectSetup", "githubState", "githubRepos", "providerState", "mcpServers", "mcpConnectors", "mcpConnectorAuthorization", "routines", "codexInstallProgress", "agyInstallProgress", "planModeAvailability", "showThinking", "appPurpose", "fontScale", "grokUpdateStatus", "updateAvailable", "updateReady", "telemetryEnabled", "thumbsFeedback", "initialized",
-    "cliUpdating", "startupStatus", "session", "sessionName", "composerDraftSession", "sessionRemoved", "sessionOpening", "recentSessions", "projectPrompt", "contextWindowSelection", "modelChanged", "modeChanged", "openModePopover",
+    "cliUpdating", "startupStatus", "session", "sessionName", "sessionGoal", "composerDraftSession", "sessionRemoved", "sessionOpening", "recentSessions", "projectPrompt", "contextWindowSelection", "modelChanged", "modeChanged", "openModePopover",
     "voiceState", "voiceConfigured", "voicePartial", "voiceSubmit", "voiceTranscript",
     "voiceError", "chips", "pasteTextSettled", "commandsUpdate", "mentionResults", "projectDirListing", "projectFileContent", "projectFileWriteResult", "gitStatusResult", "gitFileDiffResult", "turnFileDiffResult", "turnDiffBaseline", "gitRunResult", "userMessage", "agentStart", "thoughtChunk",
     "messageChunk", "media", "userMessageChunk", "historyReplay", "historyBatch", "permissionHistoryQueue",

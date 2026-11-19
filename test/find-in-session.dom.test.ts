@@ -156,6 +156,33 @@ function coding(window: Window) {
 }
 
 describe("find in conversation (#99)", () => {
+  it("finds code across token boundaries with case and regex and builds one range", async () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, { type: "messageChunk", text: "```ts\nconst item: string = 'test';\n```" });
+    dispatch(window, { type: "promptComplete" });
+    expect(doc.querySelector(".msg.agent .hl-kw")?.textContent).toBe("const");
+    const find = api(window);
+    find.open();
+    find.setQuery("CONST ITEM: STRING");
+    expect(find.matchCount()).toBe(1);
+    find.setCaseSensitive(true);
+    expect(find.matchCount()).toBe(0);
+    find.setRegex(true);
+    find.setQuery("^const\\s+item: str[a-z]+");
+    expect(find.matchCount()).toBe(1);
+    const ranges = vi.spyOn(doc, "createRange");
+    find.next();
+    await new Promise<void>(resolve => { window.requestAnimationFrame(() => resolve()); });
+    const range = ranges.mock.results.at(-1)?.value as Range;
+    expect(range.startContainer.nodeValue).toBe("const");
+    expect(range.startOffset).toBe(0);
+    expect(range.endContainer.nodeValue).toBe("string");
+    expect(range.endOffset).toBe(6);
+    find.setRegex(false);
+    find.setQuery("TypeScript");
+    expect(find.matchCount()).toBe(0);
+  });
+
   it("does not invent a Highlight API in this environment", () => {
     const { window } = bootWebview();
     expect(api(window).hasHighlightApi()).toBe(false);

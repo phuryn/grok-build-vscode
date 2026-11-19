@@ -3,6 +3,7 @@ import * as path from "node:path";
 import packageManifest from "../package.json";
 import { grokCliNeedsShell } from "./cli-process";
 import type { PromptContentBlock } from "./acp";
+import { normalizeSessionInfoUpdate } from "./acp-backend";
 import type {
   AcpBackend,
   BackendConfigState,
@@ -325,9 +326,7 @@ export function normalizeClaudeUpdate(update: any, meta?: any, subagents = new C
     } };
   }
   if (update.sessionUpdate === "session_info_update") {
-    const title = [update.title, update.sessionTitle, update.name, update.sessionInfo?.title, update._meta?.title]
-      .find((value) => typeof value === "string" && value.trim()) as string | undefined;
-    return { sessionTitle: title?.trim() };
+    return normalizeSessionInfoUpdate(update);
   }
   if (update.sessionUpdate === "usage_update") {
     const used = finiteNumber(update.used);

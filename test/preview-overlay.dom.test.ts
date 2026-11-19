@@ -1,14 +1,7 @@
 // DOM regression for the in-app preview overlay (desktop previewInApp).
 // Drives the real media/chat.js View-all / proposed-diff entry points.
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { bootWebview, click, dispatch } from "./webview-harness";
-
-const highlightSrc = readFileSync(
-  fileURLToPath(new URL("../media/syntax-highlight.js", import.meta.url)),
-  "utf8",
-);
 
 const LONG_CMD = Array.from({ length: 8 }, (_, i) =>
   i === 0 ? 'function Get-Status { Write-Output "probe" }' : `Write-Output "line ${i + 1}"`,
@@ -33,11 +26,7 @@ function out(command: string, output: string) {
 }
 
 function bootPreview(opts: { preview?: boolean; commandLanguage?: string } = {}) {
-  const h = bootWebview({
-    beforeScripts: (window) => {
-      (window as unknown as { eval: (src: string) => void }).eval(highlightSrc);
-    },
-  });
+  const h = bootWebview();
   dispatch(h.window, {
     type: "initialState",
     effort: "",

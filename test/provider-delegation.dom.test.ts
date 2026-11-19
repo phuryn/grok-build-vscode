@@ -134,6 +134,24 @@ it("Claude corrects a provisional stop and retains the result across late receip
   }
 });
 
+it("find reveals a collapsed delegation result whose match spans syntax tokens", () => {
+  const s = setup("claude");
+  for (const u of claudeBackground.launch) s.accept(u);
+  s.accept({ sessionUpdate: "async_task_state_update", asyncTaskId: "agent-task",
+    state: "completed", summary: "```ts\nconst result: string = 'ready';\n```" });
+  for (const h of [s.desk, s.phone, s.reopen()]) {
+    const card = h.doc.querySelector(".subagent-card")!;
+    const header = card.querySelector(".delegation-header")!;
+    expect(header.getAttribute("aria-expanded")).toBe("false");
+    expect(card.querySelector(".hl-kw")?.textContent).toBe("const");
+    const find = (h.window as any).__grokFind;
+    find.open();
+    find.setQuery("const result: string");
+    expect(find.matchCount()).toBe(1);
+    expect(header.getAttribute("aria-expanded")).toBe("true");
+  }
+});
+
 it("Claude cold reopen without a task outcome settles in background with no invented clock", () => {
   const s = setup("claude");
   s.emit({ type: "historyReplay", active: true });

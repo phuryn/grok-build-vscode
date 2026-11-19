@@ -107,6 +107,7 @@ import {
   sessionHasWorkInFlight,
   sessionReadyForPrompt,
   sessionUiSnapshot,
+  sessionGoalMessage,
   startupStatusMessage,
   sessionModeMessage,
   turnIsInFlight,
@@ -11725,6 +11726,12 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         },
       });
     });
+    const postSessionGoal = () => {
+      if (gen !== session.gen) return;
+      const goal = sessionGoalMessage(session);
+      if (goal) this.emit(session, goal);
+    };
+    client.on("sessionGoal", postSessionGoal);
     client.on("session", (res) => {
       if (gen !== session.gen) return;
       const posture = session.musePosture;
@@ -11750,6 +11757,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         worktree: !!session.worktree,
         provider: session.provider,
       });
+      postSessionGoal();
       if (session.provider === "deepseek") this.emit(session, sessionModeMessage(session, this.displayMode(session)));
       if (session.provider === "grok") {
         const metaEnabled = parseFeedbackEnabledMeta(res);
@@ -19798,6 +19806,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
    *  the mode picker on reconnect. */
   private static readonly TRANSIENT_TYPES = new Set([
     "startupStatus",
+    "sessionGoal",
     "restoreComposer", "focusInput", "findInSession", "openModePopover",
     "uiConfirmRequest", "uiConfirmResolved",
     "subscriptionUsage",
@@ -20009,10 +20018,12 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     const clientIds = this.remoteClients.clientsForActiveValue(session);
     if (clientIds.length === 0) return;
     this.refreshWorkflowCompletions(session);
+    const goal = sessionGoalMessage(session);
     const snapshot = [
       ...bracketRemoteSnapshot(session.buffer),
       startupStatusMessage(session),
       { type: "subscriptionUsage" as const, windows: session.subscriptionUsage?.snapshot() ?? [] },
+      ...(goal ? [goal] : []),
     ];
     for (const clientId of clientIds) {
       for (const message of snapshot) this.sendRemoteClient(clientId, message, scope);
@@ -20855,12 +20866,14 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // The targeted send applies the normal remote transform; the calls below
     // refresh current mode, repository, and history chrome independently.
     if (this.uplink) {
+      const goal = sessionGoalMessage(session);
       const replay: HostMsg[] = [
         { type: "clearMessages" },
         ...(identity ? [identity] : []),
         ...bracketRemoteSnapshot(session.buffer),
         startupStatusMessage(session),
         { type: "subscriptionUsage", windows: session.subscriptionUsage?.snapshot() ?? [] },
+        ...(goal ? [goal] : []),
       ];
       for (const m of replay) {
         this.sendRemoteSession(session, m);
@@ -24141,12 +24154,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     const filePanelStyle = this.host.canSwitchWorkspaceFolder || HOST_CAPABILITIES.editProviderConfigFiles
       ? `<link rel="stylesheet" href="${mediaUri("file-panel.css")}" />`
       : "";
-    // The highlighter rides the same gate and MUST precede the panel: the panel
-    // reads `GrokSyntaxHighlight` at render time, and a missing global there
-    // silently degrades every file to plain text rather than failing loudly.
     const filePanelScript = this.host.canSwitchWorkspaceFolder || HOST_CAPABILITIES.editProviderConfigFiles
-      ? `<script nonce="${nonce}" src="${mediaUri("syntax-highlight.js")}"></script>\n` +
-        `  <script nonce="${nonce}" src="${mediaUri("file-panel.js")}"></script>`
+      ? `<script nonce="${nonce}" src="${mediaUri("file-panel.js")}"></script>`
       : "";
 
     return `<!DOCTYPE html>
@@ -24272,6 +24281,7 @@ ${closeMain}
   <script nonce="${nonce}" src="${mediaUri("repo-icons.js")}"></script>
   <script nonce="${nonce}" src="${mediaUri("repo-icon-picker.js")}"></script>
   <script nonce="${nonce}" src="${mediaUri("settings.js")}"></script>
+  <script nonce="${nonce}" src="${mediaUri("syntax-highlight.js")}"></script>
   ${filePanelScript}
   <script nonce="${nonce}" src="${mediaUri("chat.js")}"></script>
 </body>

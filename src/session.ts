@@ -702,6 +702,14 @@ export function sessionModeMessage(session: Session, modeId: string): Extract<Ho
   };
 }
 
+/** Goal state lives with the adapter connection and is kept out of the history buffer. */
+export function sessionGoalMessage(session: Session): Extract<HostMsg, { type: "sessionGoal" }> | undefined {
+  const client = session.client;
+  if (client?.sessionId && session.activeSessionId === client.sessionId && client.currentGoal !== undefined) {
+    return { type: "sessionGoal", sessionId: client.sessionId, goal: client.currentGoal };
+  }
+}
+
 /** Current non-chat UI state for rebuilding a view of this live session. */
 export function sessionUiSnapshot(
   session: Session,
@@ -711,6 +719,8 @@ export function sessionUiSnapshot(
   const messages: HostMsg[] = [];
   messages.push(startupStatusMessage(session));
   messages.push({ type: "subscriptionUsage", windows: session.subscriptionUsage?.snapshot() ?? [] });
+  const goal = sessionGoalMessage(session);
+  if (goal) messages.push(goal);
   if (session.client?.currentModelId) {
     messages.push({ type: "modelChanged", modelId: session.client.currentModelId });
   }

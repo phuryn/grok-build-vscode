@@ -119,6 +119,11 @@ export interface BackendConfigState {
   modeId?: string;
 }
 
+export interface SessionGoal {
+  objective: string;
+  status: string;
+}
+
 export interface BackendUpdate {
   update?: any;
   meta?: any;
@@ -126,6 +131,7 @@ export interface BackendUpdate {
   workflowUpdate?: any;
   notice?: string;
   sessionTitle?: string;
+  sessionGoal?: SessionGoal | null;
   contextWindow?: number;
   /** Direct occupancy reported by a backend, including an empty context. */
   contextUsed?: number;
@@ -149,6 +155,19 @@ export interface BackendUpdate {
   /** Already-normalized updates to route before this one (a backend closing
    *  cards at a turn boundary it only sees in the stream). */
   precede?: any[];
+}
+
+export function normalizeSessionInfoUpdate(update: any): BackendUpdate {
+  const title = [update.title, update.sessionTitle, update.name, update.sessionInfo?.title, update._meta?.title]
+    .find((value) => typeof value === "string" && value.trim()) as string | undefined;
+  const result: BackendUpdate = { sessionTitle: title?.trim() };
+  const goal = update._meta?.goal;
+  if (goal === null) result.sessionGoal = null;
+  else if (typeof goal?.objective === "string" && goal.objective.trim()
+      && typeof goal.status === "string" && goal.status.trim()) {
+    result.sessionGoal = { objective: goal.objective.trim(), status: goal.status.trim() };
+  }
+  return result;
 }
 
 export interface BackendSessionListEntry {

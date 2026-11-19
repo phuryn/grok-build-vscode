@@ -2083,8 +2083,55 @@
     return { url, trailing };
   }
 
-  function renderMarkdown(raw) {
-    // Normalise line endings FIRST. Everything below splits on a newline and
+  function renderCodeBlock(lang, code, syntax) {
+    const isDiff = lang === "diff";
+    // A diff's alignment IS its content, so it never wraps and gets no toggle.
+    const wraps = !isDiff && PROSE_FENCES.has(lang || "");
+    const inner = isDiff ? renderDiffCode(code)
+      : syntax ? `<code class="reply-code">${syntax.html}</code>`
+      : `<code>${escapeHtml(code.trimEnd())}</code>`;
+    return `<div class="code-block${isDiff ? " diff" : ""}${wraps ? " wrap" : ""}${syntax ? " has-language" : ""}">` +
+      (syntax ? `<div class="code-language">${escapeHtml(syntax.label)}</div>` : "") +
+      (isDiff ? "" :
+        `<button class="code-wrap-btn" type="button" title="Toggle word wrap" aria-label="Toggle word wrap" aria-pressed="${wraps}">` +
+          `<span class="code-wrap-glyph">${ICON.cornerDownRight}</span>` +
+        `</button>`) +
+      `<button class="code-copy-btn" type="button" title="Copy code" aria-label="Copy code">` +
+        `<span class="code-copy-glyph">${ICON.copy}</span>` +
+      `</button>` +
+      `<pre>${inner}</pre>` +
+    `</div>`;
+  }
+
+  function renderReplyMarkdown(el, raw) {
+    const previous = el._replyCodeBlocks || [];
+    const blocks = [];
+    const api = globalThis.GrokSyntaxHighlight;
+    el.innerHTML = renderMarkdown(raw, (lang, code, source) => {
+      // The parser only emits closed fences. Reuse their DOM across stream
+      // repaints so even a long block is tokenized and parsed just once.
+      let block = previous[blocks.length];
+      if (block?.lang !== lang || block?.source !== source) {
+        const id = api?.languageForId(lang) || (lang && api?.languageForPath("code." + lang));
+        const label = id === "ts" ? "TypeScript" : id === "js" ? "JavaScript" : lang;
+        const syntax = id ? { label, html: api.highlightCode(code.trimEnd(), id) } : undefined;
+        const template = document.createElement("template");
+        template.innerHTML = renderCodeBlock(lang, code, syntax);
+        const element = template.content.firstElementChild;
+        element._codeSource = source;
+        block = { lang, source, element };
+      }
+      const index = blocks.push(block) - 1;
+      return `<div data-reply-code-slot="${index}"></div>`;
+    });
+    for (const slot of el.querySelectorAll("[data-reply-code-slot]")) {
+      slot.replaceWith(blocks[Number(slot.dataset.replyCodeSlot)].element);
+    }
+    el._replyCodeBlocks = blocks;
+  }
+
+  function renderMarkdown(raw, replyCode) {
+    // Normalise line endings before parsing the prose. It splits on a newline and
     // then tests each line with $-anchored patterns -- and a carriage return
     // is a line terminator in JS regex, so `.` cannot match one. On a CRLF
     // file every $-anchored rule therefore failed at the final character:
@@ -2095,14 +2142,15 @@
     //
     // Surfaced in the desktop file panel because it renders whole files off
     // disk and most files on Windows are CRLF -- but it was never panel-only.
-    raw = String(raw == null ? "" : raw).replace(/\r\n?/g, "\n");
+    raw = String(raw == null ? "" : raw);
     const codeBlocks = [];
     // Fence is 3+ backticks; the closing fence must be the SAME length (\1
     // backreference). This lets an outer block fenced by 4/5 backticks wrap an
     // inner ``` block — the shorter inner fences can't close the longer outer one
     // (CommonMark nested code blocks, issue #20). A plain ``` block is the N=3 case.
-    let s = raw.replace(/(`{3,})(\w*)\n?([\s\S]*?)\1`*/g, (_, _fence, lang, code) => {
+    let s = raw.replace(/(`{3,})([\w+#-]*)(?:\r\n?|\n)?([\s\S]*?)\1`*/g, (_, _fence, lang, source) => {
       const i = codeBlocks.length;
+      const code = source.replace(/\r\n?/g, "\n");
       // Mermaid: keep the source as a normal-looking code block (so it shows as
       // readable text if mermaid never loads or the diagram is malformed), but
       // tag it so the post-render pass can swap in the rendered SVG. The closing
@@ -2131,26 +2179,11 @@
         codeBlocks.push(renderMath(tex, true));
         return `\x00B${i}\x00`;
       }
-      const isDiff = lang === "diff";
-      // A diff's alignment IS its content, so it never wraps and gets no toggle.
-      const wraps = !isDiff && PROSE_FENCES.has(lang || "");
-      const inner = isDiff
-        ? renderDiffCode(code)
-        : `<code>${escapeHtml(code).trimEnd()}</code>`;
-      codeBlocks.push(
-        `<div class="code-block${isDiff ? " diff" : ""}${wraps ? " wrap" : ""}">` +
-          (isDiff ? "" :
-            `<button class="code-wrap-btn" type="button" title="Toggle word wrap" aria-label="Toggle word wrap" aria-pressed="${wraps}">` +
-              `<span class="code-wrap-glyph">${ICON.cornerDownRight}</span>` +
-            `</button>`) +
-          `<button class="code-copy-btn" type="button" title="Copy code" aria-label="Copy code">` +
-            `<span class="code-copy-glyph">${ICON.copy}</span>` +
-          `</button>` +
-          `<pre>${inner}</pre>` +
-        `</div>`
-      );
+      codeBlocks.push(replyCode && lang !== "diff"
+        ? replyCode(lang, code, source)
+        : renderCodeBlock(lang, code));
       return `\x00B${i}\x00`;
-    });
+    }).replace(/\r\n?/g, "\n");
 
     // Pull LaTeX out before any HTML-escaping or inline-markdown — math is full
     // of \ { } & < > * _ that the inline() pass would mangle. Display math gets a
@@ -11002,6 +11035,8 @@
 
   function resetForNewSession() {
     beginComposerLoad();
+    goalSessionId = undefined;
+    renderSessionGoal(null);
     state.startupStatus = null;
     renderStartupStatus();
     clearSessionSuperseded();
@@ -15053,7 +15088,7 @@ ${fullText}`
     el._copyText = text;
     el.replaceChildren();
     const body = workflowText(el, bodyClass, "");
-    body.innerHTML = renderMarkdown(text);
+    renderReplyMarkdown(body, text);
     applyAutoDir(body);
     renderMermaidIn(body);
     workflowText(el, "msg-actions", "").appendChild(makeMessageCopyButton());
@@ -15228,7 +15263,7 @@ ${fullText}`
     el._childRenderScheduled = false;
     el._childRenderGen = (el._childRenderGen || 0) + 1;
     if (el._childProseEl) {
-      el._childProseEl.innerHTML = renderMarkdown(el._childProse || "");
+      renderReplyMarkdown(el._childProseEl, el._childProse || "");
       applyAutoDir(el._childProseEl);
     }
     if (el._childThoughtEl) el._childThoughtEl.textContent = el._childThought || "";
@@ -16590,7 +16625,7 @@ ${fullText}`
   function flushAgent() {
     state.agentRenderScheduled = false;
     if (!state.activeAgentEl) return;
-    state.activeAgentEl.innerHTML = renderMarkdown(state.activeAgentRaw);
+    renderReplyMarkdown(state.activeAgentEl, state.activeAgentRaw);
     applyAutoDir(state.activeAgentEl);
     renderMermaidIn(state.activeAgentEl);
     const wrapper = state.activeAgentEl.parentElement;
@@ -18839,6 +18874,29 @@ ${fullText}`
 
   // ---------- send ----------
 
+  let goalSessionId;
+  const goalStatuses = new Map([
+    ["active", "Active"], ["paused", "Paused"], ["blocked", "Blocked"],
+    ["complete", "Complete"], ["limited", "Limited"],
+  ]);
+  function renderSessionGoal(goal) {
+    let strip = $("session-goal");
+    if (!goal) {
+      strip?.remove();
+      return;
+    }
+    if (!strip) {
+      strip = document.createElement("div");
+      strip.id = "session-goal";
+      strip.className = "session-goal";
+      strip.setAttribute("role", "status");
+      strip.innerHTML = '<span class="session-goal-label">Goal</span><span class="session-goal-objective" dir="auto"></span><span class="session-goal-status"></span>';
+      document.querySelector(".composer-card").prepend(strip);
+    }
+    strip.querySelector(".session-goal-objective").textContent = goal.objective;
+    strip.querySelector(".session-goal-status").textContent = goalStatuses.get(goal.status) || "Unknown status";
+  }
+
   let startupTimer = null;
   function renderStartupStatus() {
     if (startupTimer !== null) clearTimeout(startupTimer);
@@ -20087,36 +20145,12 @@ ${fullText}`
    * searchable, so "find the command I ran" and "find that file path" still
    * work — it is only the payload bodies that drop out.
    */
-  const FIND_SKIP_SEL = ".tool-item-details, .tool-diff-region";
+  const FIND_SKIP_SEL = ".tool-item-details, .tool-diff-region, .code-language";
 
   function findCollectNodes() {
     const nodes = [];
     const root = messagesEl;
     if (!root) return nodes;
-    const SHOW_TEXT = (typeof NodeFilter !== "undefined" && NodeFilter.SHOW_TEXT) || 4;
-    const REJECT = (typeof NodeFilter !== "undefined" && NodeFilter.FILTER_REJECT) || 2;
-    const ACCEPT = (typeof NodeFilter !== "undefined" && NodeFilter.FILTER_ACCEPT) || 1;
-    if (typeof document.createTreeWalker === "function") {
-      const walker = document.createTreeWalker(root, SHOW_TEXT, {
-        acceptNode(node) {
-          if (!node || !node.data) return REJECT;
-          const parent = node.parentElement;
-          if (!parent) return REJECT;
-          const tag = parent.tagName;
-          if (tag === "SCRIPT" || tag === "STYLE") return REJECT;
-          if (parent.closest("#welcome, .welcome")) return REJECT;
-          if (parent.closest("[" + PENDING_CLEAR_ATTR + "]")) return REJECT;
-          if (parent.closest(FIND_SKIP_SEL)) return REJECT;
-          return ACCEPT;
-        },
-      });
-      let n = walker.nextNode();
-      while (n) {
-        nodes.push(n);
-        n = walker.nextNode();
-      }
-      return nodes;
-    }
     const stack = [root];
     while (stack.length) {
       const el = stack.pop();
@@ -20131,6 +20165,10 @@ ${fullText}`
       if (el.id === "welcome" || el.classList.contains("welcome")) continue;
       if (el.getAttribute && el.getAttribute(PENDING_CLEAR_ATTR) === "1") continue;
       if (typeof el.matches === "function" && el.matches(FIND_SKIP_SEL)) continue;
+      if (el.matches("code.reply-code")) {
+        nodes.push(el);
+        continue;
+      }
       for (let i = el.childNodes.length - 1; i >= 0; i--) stack.push(el.childNodes[i]);
     }
     return nodes;
@@ -20158,8 +20196,10 @@ ${fullText}`
     }
   }
 
+  const findNodeText = (node) => node.data ?? node.textContent;
+
   function searchNodeLiteral(node, query, caseSensitive, into) {
-    const raw = node.data;
+    const raw = findNodeText(node);
     const text = caseSensitive ? raw : raw.toLowerCase();
     const q = caseSensitive ? query : query.toLowerCase();
     if (!q) return;
@@ -20174,7 +20214,7 @@ ${fullText}`
   }
 
   function searchNodeRegex(node, re, into) {
-    const text = node.data;
+    const text = findNodeText(node);
     re.lastIndex = 0;
     let m = re.exec(text);
     while (m) {
@@ -20202,13 +20242,38 @@ ${fullText}`
     return (find.caseSensitive ? "c" : "") + (find.regex ? "r" : "") + (find.includeHidden ? "h" : "");
   }
 
+  // A syntax-colored fence is one search target. Index its text leaves once
+  // so each match can start and end inside different token spans.
+  const findCodeOffsets = new WeakMap();
+  function findTextPoint(node, offset) {
+    if (node.nodeType === 3) return [node, Math.min(offset, node.length)];
+    let leaves = findCodeOffsets.get(node);
+    if (!leaves) {
+      leaves = [];
+      const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+      let end = 0;
+      for (let leaf = walker.nextNode(); leaf; leaf = walker.nextNode()) {
+        end += leaf.length;
+        leaves.push({ leaf, end });
+      }
+      findCodeOffsets.set(node, leaves);
+    }
+    let low = 0, high = leaves.length - 1;
+    while (low < high) {
+      const mid = (low + high) >>> 1;
+      if (offset > leaves[mid].end) low = mid + 1;
+      else high = mid;
+    }
+    const { leaf, end } = leaves[low];
+    return [leaf, leaf.length - Math.max(0, end - offset)];
+  }
+
   function rangeForFindMatch(m) {
     if (!m || !m.node || !m.node.parentNode) return null;
     try {
       const r = document.createRange();
-      const len = m.node.data ? m.node.data.length : 0;
-      r.setStart(m.node, Math.max(0, Math.min(m.start, len)));
-      r.setEnd(m.node, Math.max(0, Math.min(m.end, len)));
+      r.setStart(...findTextPoint(m.node, m.start));
+      r.setEnd(...findTextPoint(m.node, m.end));
       return r;
     } catch {
       return null;
@@ -20461,7 +20526,7 @@ ${fullText}`
       const q = find.caseSensitive ? query : query.toLowerCase();
       for (const m of find.matches) {
         if (!m.node || !m.node.parentNode) continue;
-        const slice = m.node.data.slice(m.start, m.start + q.length);
+        const slice = findNodeText(m.node).slice(m.start, m.start + q.length);
         const have = find.caseSensitive ? slice : slice.toLowerCase();
         if (have === q) next.push({ node: m.node, start: m.start, end: m.start + q.length });
       }
@@ -21577,6 +21642,8 @@ ${fullText}`
         projectPromptView = msg.sessionId || "";
         if (state.contextSelectionSessionId !== msg.sessionId) state.contextWindowSelection = undefined;
         state.contextSelectionSessionId = msg.sessionId;
+        if (goalSessionId !== msg.sessionId) renderSessionGoal(null);
+        goalSessionId = msg.sessionId;
 
         state.subscriptionWindows = [];
         state.currentModelId = msg.currentModelId;
@@ -21612,6 +21679,9 @@ ${fullText}`
         reportRemotePreferences();
         break;
       }
+      case "sessionGoal":
+        if (goalSessionId && msg.sessionId === goalSessionId) renderSessionGoal(msg.goal);
+        break;
       case "sessionName": {
         const prev = state.sessionName;
         const next = {
@@ -23974,7 +24044,7 @@ ${fullText}`
       const codeEl = copyBtn.parentElement && copyBtn.parentElement.querySelector("pre code");
       // innerText (not textContent) so diff blocks, whose lines are block-level
       // spans with no literal newlines, still copy as one line per row.
-      const text = codeEl ? codeEl.innerText : "";
+      const text = copyBtn.parentElement?._codeSource ?? (codeEl ? codeEl.innerText : "");
       navigator.clipboard.writeText(text).then(() => {
         const glyph = copyBtn.querySelector(".code-copy-glyph");
         const prevGlyph = glyph ? glyph.innerHTML : "";

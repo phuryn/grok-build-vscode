@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { bootWebview, click, dispatch } from "./webview-harness";
 
 /**
@@ -33,6 +33,58 @@ const only = (el: HTMLElement) => {
   expect(found).toHaveLength(1);
   return found[0];
 };
+
+describe("syntax in replies", () => {
+  it("labels TypeScript, renders raw HTML as text, and copies the original source", async () => {
+    const source = '  const tag = "<script>&lt;</script>";  \r\n';
+    const { window, el } = renderAgent("```typescript\r\n" + source + "```");
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(window.navigator, "clipboard", { value: { writeText } });
+    const block = only(el);
+    expect(block.querySelector(".code-language")?.textContent).toBe("TypeScript");
+    expect(block.querySelector(".hl-kw")?.textContent).toBe("const");
+    expect(block.querySelector(".hl-str")?.textContent).toBe('"<script>&lt;</script>"');
+    expect(block.querySelector("script")).toBeNull();
+    click(window, block.querySelector(".code-copy-btn")!);
+    await Promise.resolve();
+    expect(writeText.mock.calls).toEqual([[source]]);
+  });
+
+  it.each(["", "unknown-language"])("keeps %j fences plain", lang => {
+    const { el } = renderAgent("```" + lang + "\nconst x = '<b>&';\n```");
+    const block = only(el);
+    expect(block.querySelector(".code-language, pre code span, pre code b")).toBeNull();
+    expect(block.querySelector("pre code")?.textContent).toBe("const x = '<b>&';");
+  });
+
+  it("reuses a closed fence across stream repaints and honors the highlighter size limit", async () => {
+    const { window, doc } = bootWebview();
+    const highlighter = (window as any).GrokSyntaxHighlight;
+    const highlight = vi.spyOn(highlighter, "highlightCode");
+    const send = (text: string) => dispatch(window, { type: "messageChunk", text });
+    const paint = () => new Promise<void>(resolve => window.requestAnimationFrame(() => resolve()));
+    send("```ts\n" + "const n = 1;\n".repeat(512));
+    await paint();
+    expect(highlight).not.toHaveBeenCalled();
+    send("```\n");
+    await paint();
+    const rendered = doc.querySelector(".msg.agent .code-block");
+    expect(rendered?.querySelector(".hl-kw")?.textContent).toBe("const");
+    for (let i = 0; i < 8; i++) {
+      send("\nstream update " + i);
+      await paint();
+      expect(doc.querySelector(".msg.agent")?.textContent).toContain("stream update " + i);
+      expect(doc.querySelector(".msg.agent .code-block")).toBe(rendered);
+    }
+    expect(highlight).toHaveBeenCalledTimes(1);
+    send("\n\n```ts\nconst " + "x".repeat(highlighter.MAX_HIGHLIGHT_BYTES) + "\n```");
+    dispatch(window, { type: "promptComplete" });
+    const large = doc.querySelectorAll(".msg.agent .code-block")[1];
+    expect(large.querySelector(".code-language")?.textContent).toBe("TypeScript");
+    expect(large.querySelector("pre code span")).toBeNull();
+    expect(large.querySelector("pre code")?.textContent?.length).toBe(highlighter.MAX_HIGHLIGHT_BYTES + 6);
+  });
+});
 
 describe("fenced prose wraps, fenced code scrolls (#181)", () => {
   // The bare fence is the one that matters most: the agent opens ``` with no

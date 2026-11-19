@@ -3850,6 +3850,14 @@ body.hide-turn-diff-summary .turn-diff-summary { display: none; }
   overflow-x: auto;
   background: transparent;
 }
+.code-language {
+  min-height: 34px;
+  padding: 8px 72px 0 8px;
+  box-sizing: border-box;
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.85em;
+  overflow-wrap: anywhere;
+}
 /* No font-size here on purpose: fenced code inherits the global `code` 0.92em,
    matching inline code (~12px at the default 13px UI font). Don't use
    --vscode-editor-font-size ÔÇö it defaults to 14px, LARGER than chat prose. */
@@ -6118,6 +6126,8 @@ mjx-container[display="true"] {
   padding: 24px;
   overflow: hidden;
   background: rgba(0, 0, 0, 0.45);
+}
+:is(.preview-overlay, .code-block.has-language) {
   --hl-com: #6a9955;
   --hl-str: #ce9178;
   --hl-num: #b5cea8;
@@ -6131,7 +6141,7 @@ mjx-container[display="true"] {
   --hl-add: #40c977;
   --hl-del: #fa423e;
 }
-body.vscode-light .preview-overlay {
+body.vscode-light :is(.preview-overlay, .code-block.has-language) {
   --hl-com: #008000;
   --hl-str: #a31515;
   --hl-num: #098658;
@@ -6145,18 +6155,18 @@ body.vscode-light .preview-overlay {
   --hl-add: #00a240;
   --hl-del: #ba2623;
 }
-.preview-overlay .hl-com { color: var(--hl-com); font-style: italic; }
-.preview-overlay .hl-str { color: var(--hl-str); }
-.preview-overlay .hl-num { color: var(--hl-num); }
-.preview-overlay .hl-kw { color: var(--hl-kw); }
-.preview-overlay .hl-typ { color: var(--hl-typ); }
-.preview-overlay .hl-fn { color: var(--hl-fn); }
-.preview-overlay .hl-prop { color: var(--hl-prop); }
-.preview-overlay .hl-tag { color: var(--hl-tag); }
-.preview-overlay .hl-tagname { color: var(--hl-tagname); }
-.preview-overlay .hl-atr { color: var(--hl-atr); }
-.preview-overlay .hl-add { color: var(--hl-add); }
-.preview-overlay .hl-del { color: var(--hl-del); }
+:is(.preview-overlay, .code-block.has-language) .hl-com { color: var(--hl-com); font-style: italic; }
+:is(.preview-overlay, .code-block.has-language) .hl-str { color: var(--hl-str); }
+:is(.preview-overlay, .code-block.has-language) .hl-num { color: var(--hl-num); }
+:is(.preview-overlay, .code-block.has-language) .hl-kw { color: var(--hl-kw); }
+:is(.preview-overlay, .code-block.has-language) .hl-typ { color: var(--hl-typ); }
+:is(.preview-overlay, .code-block.has-language) .hl-fn { color: var(--hl-fn); }
+:is(.preview-overlay, .code-block.has-language) .hl-prop { color: var(--hl-prop); }
+:is(.preview-overlay, .code-block.has-language) .hl-tag { color: var(--hl-tag); }
+:is(.preview-overlay, .code-block.has-language) .hl-tagname { color: var(--hl-tagname); }
+:is(.preview-overlay, .code-block.has-language) .hl-atr { color: var(--hl-atr); }
+:is(.preview-overlay, .code-block.has-language) .hl-add { color: var(--hl-add); }
+:is(.preview-overlay, .code-block.has-language) .hl-del { color: var(--hl-del); }
 .preview-panel {
   display: flex;
   flex-direction: column;
@@ -6840,6 +6850,25 @@ a.add-project-github-open {
 }
 .onb-steps li { margin: 0; }
 /* Session startup lives inside the composer; machine wake keeps its existing strip. */
+.session-goal {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--vscode-editorWidget-border, transparent);
+  font-size: 0.9em;
+}
+.session-goal-label, .session-goal-status {
+  color: var(--vscode-descriptionForeground, currentColor);
+  white-space: nowrap;
+}
+.session-goal-objective {
+  overflow-wrap: anywhere;
+  max-block-size: 3lh;
+  overflow: auto;
+}
+
 .startup-strip {
   display: flex; align-items: center; gap: 8px; min-width: 0;
   padding: 7px 12px; border-radius: var(--radius) var(--radius) 0 0;
