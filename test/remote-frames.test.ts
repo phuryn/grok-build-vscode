@@ -25,6 +25,16 @@ import {
 } from "../src/remote-frames";
 
 describe("uplink frame builders", () => {
+  it("admits a session-bound reply point and text without attachment paths", () => {
+    const wrap = (msg: unknown) => JSON.stringify({ t: "msg", clientId: "phone", msg });
+    const point = { type: "forkAtReply", sessionId: "parent", messageId: "msg_1" };
+    expect(parseRelayFrame(wrap({ ...point, draft: "revise", chips: [{ path: "/private" }] })))
+      .toEqual({ t: "msg", clientId: "phone", msg: { ...point, draft: "revise" } });
+    expect(parseRelayFrame(wrap(point))).toEqual({ t: "msg", clientId: "phone", msg: point });
+    expect(parseRelayFrame(wrap({ ...point, messageId: "" }))).toBeNull();
+    expect(parseRelayFrame(wrap({ ...point, sessionId: undefined }))).toBeNull();
+  });
+
   it("preserves New draft correlation and accepts attachment ids without trusting paths on Send", () => {
     const wrap = (msg: unknown) => JSON.stringify({ t: "msg", clientId: "phone", msg });
     const draftId = "01234567-89ab-cdef-0123-456789abcdef";

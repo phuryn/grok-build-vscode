@@ -198,6 +198,7 @@ The wire format is the highest-value test surface: ACP changes break everything 
 - Accepts only `.md`, `.txt`, `.pdf`, `.csv`, `.xlsx`, `.docx`; strips both path separator styles, sanitizes Windows-reserved basenames, and strictly validates base64/empty/20 MiB cases
 - Owned staging paths must have exactly `<root>/<uuid>/<filename>` shape
 - Session deletion preserves paths still referenced by another session/fork and identifies files safe to remove after the last reference
+- `fork-capability.test.ts` drives the ACP client against fake adapters and checks negotiated fork requests, replay point tracking, host refusals and the edit draft. `fork-in-new-chat.dom.test.ts` drives the shared desktop and phone chat script through the bubble actions and a windowed reopen. The manual `npm run smoke:acp -- --provider=claude --scenario=fork` and Codex equivalent use the owner's CLI to check stable reply IDs, a cut at the first replayed reply, and the original history after the fork.
 
 ### `test/worktree.test.ts` — worktree helpers, pure (P2-8, 23 tests)
 

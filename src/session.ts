@@ -1,6 +1,7 @@
 import { AcpClient } from "./acp";
 import type { HostMsg } from "./protocol";
 import type { FileChip } from "./chips";
+import { ForkPoints } from "./fork-points";
 import { permissionOptionsForPlan } from "./plan-gate";
 import type { AcpProvider } from "./acp-backend";
 import { deepseekShellUnsandboxed } from "./deepseek-backend";
@@ -306,6 +307,8 @@ export class Session {
    * only increment userMessageCount once per user message during replay.
    */
   inUserMessage = false;
+  readonly forkPoints = new ForkPoints();
+  forkInFlight = false;
 
   /**
    * True only while replaying a resumed session (session/load). grok ≥0.2.33

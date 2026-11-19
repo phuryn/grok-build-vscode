@@ -5133,7 +5133,7 @@ Only continue if you trust this code.`,
    */
   private queuedSendReadyText(session: Session): string | undefined {
     // Same readiness as handleSend — client without sessionId is still priming.
-    if (!sessionReadyForPrompt(session)) return undefined;
+    if (session.forkInFlight || !sessionReadyForPrompt(session)) return undefined;
     if (session.status === "working" || session.status === "needs-you") return undefined;
     // `""` is a ready image-only queue; `undefined` is "do not flush".
     return queuedFlushText(session.queuedSends);
@@ -5554,24 +5554,18 @@ Only continue if you trust this code.`,
     }
   }
 
-  /**
-   * Fork (#48) — branch this session's conversation into a new session and focus
-   * it. The source session is left completely untouched (verified: its history is
-   * byte-identical after a fork), and the workspace is never touched either —
-   * grok copies session files only, so **code is not rewound**. Whole-session
-   * only, deliberately: `targetPromptIndex` truncates `chat_history` without
-   * truncating `updates.jsonl`, so a partial fork would replay a conversation the
-   * model has forgotten (see research/grok-build-oss-findings.md § 3a).
-   */
-  private async forkFocusedSession(session: Session = this.focused, requester?: RemoteRequester): Promise<void> {
+  private async forkFocusedSession(
+    session: Session = this.focused,
+    requester?: RemoteRequester,
+    point?: Extract<WebviewMsg, { type: "forkAtReply" }>,
+  ): Promise<void> {
     if (!session.client || !session.activeSessionId) {
       this.reportRequester(requester, "warning", "Start a session before forking it.");
       return;
     }
-    // Pages from before 4.15.10 offer the fork on every agent, and only Grok's
-    // CLI has one; without this the call fails and tells a Claude user to
-    // update Grok.
-    if (!supportsFork(session.provider)) {
+    const { client, activeSessionId: parentId, provider } = session;
+    const turnFork = client.supportsTurnFork?.() === true;
+    if (!supportsFork(provider) || (!turnFork && (point || provider !== "grok"))) {
       this.reportRequester(
         requester,
         "info",
@@ -5583,61 +5577,76 @@ Only continue if you trust this code.`,
       this.reportRequester(requester, "info", "Nothing to fork yet — this session has no conversation.");
       return;
     }
+    if (turnFork && (sessionHasWorkInFlight(session) || session.replaying
+      || session.suppressContent || session.pendingPermissions.size > 0)) {
+      return void this.reportRequester(requester, "warning", "Wait for the current turn to finish before continuing in a new chat.");
+    }
+    if (session.forkInFlight) {
+      return void this.reportRequester(requester, "info", "A new chat is already being created from this conversation.");
+    }
+    if (point && !session.forkPoints.observed.has(point.messageId)) {
+      return void this.reportRequester(requester, "warning", "This reply is no longer available as a fork point.");
+    }
     // Resolve the parent's name BEFORE the fork — it names the fork, so it must
     // be the name the user was looking at when they clicked. Reading it after the
     // await risks a turn landing mid-fork and rewriting summary.json (and with it
     // grok's generated title), naming the fork after something never on screen.
-    // forkDisplayName is idempotent, so forking a fork stays "Foo (Fork)".
+    // forkDisplayName keeps a single "(Fork)" prefix when forking a fork.
     const parentName = this.sessionDisplayName(session);
     const forkName = forkDisplayName(parentName);
+    if (turnFork) session.forkInFlight = true;
     try {
       // Fork keeps the same cwd as the source, worktree-isolated ones included.
       const cwd = this.sessionCwd(session);
-      const r = await session.client.forkSession(cwd);
+      const replyIds = [...session.forkPoints.observed];
+      const keptReplyIds = point ? replyIds.slice(0, replyIds.indexOf(point.messageId) + 1) : replyIds;
+      const r = await (point ? client.forkSession(cwd, point.messageId) : client.forkSession(cwd));
       if (r === "unsupported") {
+        if (turnFork && session.client === client) this.postSessionName(session);
         this.reportRequester(
           requester,
           "warning",
-          "Forking needs a newer Grok Build CLI. Update via Settings → About.",
+          provider === "grok" ? "Forking needs a newer Grok Build CLI. Update via Settings → About."
+            : "This agent can't continue a conversation in a new chat.",
         );
         return;
       }
-      this.host.appendLine(`[fork] ${session.activeSessionId} → ${r.newSessionId} ("${forkName}")`);
-      // Stamp the name before focusing, so neither the history list nor the
-      // toolbar ever flashes grok's own generated title for the fork.
-      const overrides = this.state.get<SessionMetaOverrides>(SESSION_META_KEY, {});
-      const prev = overrides[r.newSessionId] ?? {};
-      const parentUploads = overrides[session.activeSessionId]?.uploadedFiles ?? [];
-      const parentMeta = overrides[session.activeSessionId] ?? {};
-      const carried: SessionMetaOverrides[string] = {
-        ...prev,
-        customName: forkName,
-        uploadedFiles: [...new Set([...(prev.uploadedFiles ?? []), ...parentUploads])],
-        contextUsed: parentMeta.contextUsed,
-        contextWindow: parentMeta.contextWindow,
-        contextPendingCompact: parentMeta.contextPendingCompact,
-      };
-      // A fork of a worktree session stays in that worktree — carry the binding.
-      // It's a second conversation branch sharing the checkout (like the Agent
-      // Dashboard's parallel sessions); Remove worktree disposes both.
-      if (session.worktree) {
-        carried.worktreePath = session.worktree.path;
-        carried.worktreeLabel = session.worktree.label;
-        carried.sourceGitRoot = session.worktree.sourceGitRoot;
-      }
-      await this.state.update(SESSION_META_KEY, {
-        ...overrides,
-        [r.newSessionId]: carried,
+      this.host.appendLine(`[fork] ${parentId} → ${r.newSessionId} ("${forkName}")`);
+      // Record the adapter's identity before the ordinary history-open route
+      // resolves the provider and checkout for this new conversation ID.
+      const worktree = session.worktree;
+      await this.updateSessionMeta((overrides) => {
+        const prev = overrides[r.newSessionId] ?? {};
+        const parent = overrides[parentId] ?? {};
+        return {
+          ...overrides,
+          [r.newSessionId]: {
+            ...prev,
+            customName: forkName,
+            uploadedFiles: [...new Set([...(prev.uploadedFiles ?? []), ...(parent.uploadedFiles ?? [])])],
+            contextUsed: point ? undefined : parent.contextUsed,
+            contextWindow: parent.contextWindow,
+            contextPendingCompact: point ? undefined : parent.contextPendingCompact,
+            ...(turnFork ? { provider, providerCwd: cwd, forkReplyIds: keptReplyIds } : {}),
+            ...(provider === "codex" ? { codexAskApproval: parent.codexAskApproval } : {}),
+            ...(point?.draft ? { queuedDraft: point.draft } : {}),
+            ...(worktree ? {
+              worktreePath: worktree.path, worktreeLabel: worktree.label, sourceGitRoot: worktree.sourceGitRoot,
+            } : {}),
+          },
+        };
       });
       this.sessionCache.delete(r.newSessionId); // customName changes displayName without touching mtime
 
       // The fork is on disk but has no live process; openSession loads it into a
       // fresh pool member and focuses it, exactly like clicking a history row.
+      if (turnFork && (session.client !== client || session.activeSessionId !== parentId)) return;
       if (requester) {
         const currentClientId = this.resolveRemoteRequester(requester);
-        if (!currentClientId) return;
+        if (!currentClientId || (turnFork && this.remoteClients.active(currentClientId) !== session)) return;
         await this.openRemoteSession(currentClientId, r.newSessionId, cwd);
       } else {
+        if (turnFork && this.focused !== session) return;
         await this.openSession(r.newSessionId, cwd);
       }
       this.reportRequester(
@@ -5645,11 +5654,37 @@ Only continue if you trust this code.`,
         "info",
         `Forked into "${forkName}". The original conversation is unchanged and is in your session history` +
           (parentName ? ` as "${parentName}"` : "") +
-          ". Files on disk were not touched.",
+          ". Files on disk were not touched." +
+          (point?.draft !== undefined ? " Attachments stay with the original message. Add them again if needed." : ""),
       );
     } catch (e: any) {
-      this.reportRequester(requester, "error", `Fork failed: ${e?.message ?? e}`);
+      if (point && e?.code === -32602) {
+        this.reportRequester(requester, "warning", "This reply is no longer available as a fork point.");
+      } else {
+        this.reportRequester(requester, "error", `Fork failed: ${e?.message ?? e}`);
+      }
+    } finally {
+      if (turnFork) {
+        session.forkInFlight = false;
+        if (session.queuedSends.length) void this.maybeFlushQueuedSends(session);
+      }
     }
+  }
+
+  private emitForkableTurnEnd(
+    session: Session, client: AcpClient, meta: PromptResultMeta, completed: boolean,
+  ): void {
+    const forkPoint = client.supportsTurnFork?.()
+      ? session.forkPoints.settle(completed && client.lastPromptStopReason === "end_turn")
+      : undefined;
+    if (forkPoint && session.activeSessionId) {
+      const id = session.activeSessionId;
+      void this.updateSessionMeta((current) => ({
+        ...current,
+        [id]: { ...current[id], forkReplyIds: [...new Set([...(current[id]?.forkReplyIds ?? []), forkPoint])] },
+      })).catch(() => this.host.appendLine("[fork] could not record the turn end"));
+    }
+    this.emit(session, { type: "agentEnd", meta, ...(forkPoint ? { forkPoint } : {}) });
   }
 
   /**
@@ -11523,6 +11558,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     session.replayUserRaw = "";
     session.replayUserCounted = false;
     session.replayUserIsInterjection = false;
+    session.forkPoints.load([]);
     if (!warmDeepSeekResume) session.userMessageCount = 0;
     if (!resumeId || resumeId !== session.activeSessionId) {
       session.telemetrySessionOrigin = undefined;
@@ -11862,13 +11898,14 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     });
     client.on("notice", (text: string) => {
       if (gen !== session.gen) return;
+      session.forkPoints.interrupt();
       session.inUserMessage = false;
       if (session.replaying) {
         this.emit(session, { type: "subagentUpdate", update: { sessionUpdate: "turn_completed" } });
       }
       this.emit(session, { type: "planNotice", text });
     });
-    client.on("messageChunk", (text: string) => {
+    client.on("messageChunk", (text: string, _meta?: unknown, messageId?: string) => {
       if (gen !== session.gen) return;
       if (session.captureAgentText !== undefined) {
         session.captureAgentText += text;
@@ -11876,10 +11913,18 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       }
       session.inUserMessage = false;
       session.historyEventCount += 1;
-      this.emit(session, { type: "messageChunk", text });
+      const turnFork = client.supportsTurnFork();
+      const forkPoint = turnFork && (session.replaying || turnIsInFlight(session))
+        ? session.forkPoints.reply(text.trim() ? messageId : undefined, session.replaying) : undefined;
+      if (turnFork && !session.replaying && !turnIsInFlight(session)) session.forkPoints.interrupt();
+      this.emit(session, {
+        type: "messageChunk", text,
+        ...(turnFork && messageId ? { messageId } : {}),
+        ...(forkPoint ? { forkPoint } : {}),
+      });
       this.noteAdapterCompactSignal(session, text);
     });
-    client.on("userMessageChunk", (text: string, meta?: any) => {
+    client.on("userMessageChunk", (text: string, meta?: any, messageId?: string) => {
       if (gen !== session.gen) return;
       // grok ≥0.2.33 echoes the *live* prompt back as user_message_chunk; 0.2.3
       // did not (its comment here read "the agent never echoes them back"). The
@@ -11887,6 +11932,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       // echo would render a duplicate bubble and double-count. Only the CLI's
       // session/load *replay* should drive user bubbles from here.
       if (!session.replaying) return;
+      const fork = client.supportsTurnFork() ? session.forkPoints.replayUser(messageId) : {};
+      if (fork.startsMessage) session.inUserMessage = false;
       // Older extension sessions contain a hidden primer user turn. Don't count
       // it toward plan positions, but forward it so the webview's matching
       // legacy pattern suppresses the primer bubble and grok's acknowledgement.
@@ -11931,6 +11978,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       this.emit(session, {
         type: "userMessageChunk",
         text,
+        ...fork,
         timestampMs: agentTimestampMsFromMeta(meta),
         images: historyImagePreviews(
           session.replayUserRaw,
@@ -11941,6 +11989,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     });
     client.on("thoughtChunk", (text: string) => {
       if (gen !== session.gen) return;
+      session.forkPoints.interrupt();
       session.inUserMessage = false;
       session.historyEventCount += 1;
       this.emit(session, { type: "thoughtChunk", text });
@@ -11963,6 +12012,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     });
     client.on("mediaContent", (m: MediaRef) => {
       if (gen !== session.gen) return;
+      session.forkPoints.interrupt();
       void this.postGeneratedMedia(m, session, gen);
     });
     client.on("taskBackgrounded", (u: any) => {
@@ -12005,6 +12055,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       this.emit(session, { type: "commandOutput", ...replayed });
     };
     const emitToolCallEvent = (type: "toolCall" | "toolCallUpdate", u: unknown) => {
+      session.forkPoints.interrupt();
       const prepared = prepareMcpToolCall(u, mcpState);
       if (prepared.action === "drop") {
         if (prepared.logLine) this.host.appendLine(prepared.logLine);
@@ -12403,7 +12454,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         // No replay means neither a replay bracket nor its inference that zero
         // replayed messages makes this an untouched, switchable conversation.
         if (session.provider === "deepseek") await load();
-        else await this.replayLoadedHistory(session, load);
+        else await this.replayLoadedHistory(session, load, resumeId);
         clock.record("replay(post)", clock.elapsed(replayAt));
         if (session.provider === "deepseek" && !warmDeepSeekResume) this.emit(session, { type: "planNotice", text: DEEPSEEK_COLD_REOPEN });
         session.activeSessionId = resumeId;
@@ -12965,6 +13016,11 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       case "forkSession":
         if (this.refuseMismatchedSessionId(msg.sessionId, session, requester)) break;
         await this.forkFocusedSession(session, requester);
+        break;
+      case "forkAtReply":
+        if (typeof msg.sessionId !== "string" || !msg.sessionId || this.refuseMismatchedSessionId(msg.sessionId, session, requester)) break;
+        if (msg.draft !== undefined && typeof msg.draft !== "string") break;
+        await this.forkFocusedSession(session, requester, msg);
         break;
       case "newWorktreeSession":
         await this.newWorktreeSession({ fromRemote: origin === "remote" });
@@ -16075,6 +16131,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       sessionId: id,
       name,
       cwd,
+      ...(session.client?.supportsTurnFork?.() ? { turnForkSupported: true } : {}),
       ...(owner && !pathsEqual(owner, cwd) ? { repoCwd: owner } : {}),
     };
     if (session === this.focused) this.postLocal(message);
@@ -18913,7 +18970,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // setStatus("working") is synchronous.
     // maybeFlushQueuedSends can never re-enter this branch: it only flushes
     // when the turn is over (queuedSendReadyText).
-    if (this.turnInFlight(session)) {
+    if (session.forkInFlight || this.turnInFlight(session)) {
       if (!queuedSendCommit) this.divertRacingSend(session, text, bare, this.composerChipsForSend(session, requestedChips));
       return;
     }
@@ -19034,7 +19091,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // check while one was still reading attachments, and the second prompt
     // would cancel the first turn. Runs before chips are consumed, so a
     // diverted send leaves its attachments staged for the queued flush.
-    if (this.turnInFlight(session)) {
+    if (session.forkInFlight || this.turnInFlight(session)) {
       if (!queuedSendCommit) this.divertRacingSend(session, text, bare, explicitVisibleChips(chips));
       return;
     }
@@ -19094,7 +19151,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     const sentChips = chips.filter((c) => !c.hidden);
     session.userMessageCount += 1;
     session.inUserMessage = false; // live send isn't part of the streamed-chunk count path
-    this.emit(session, { type: "userMessage", text, chips: sentChips, submissionId });
+    const forkBefore = session.forkPoints.startPrompt();
+    this.emit(session, { type: "userMessage", text, chips: sentChips, submissionId, ...(forkBefore ? { forkBefore } : {}) });
     this.emit(session, { type: "agentStart" });
     // The token, not the status, is what says a turn is running from here on —
     // and only whoever holds it may end this one.
@@ -19158,7 +19216,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       // turn emits its own end when it really ends. (The other agentEnd site
       // needs no guard: nothing awaits between its endTurn check and its
       // emit.)
-      if (!turnIsInFlight(session)) this.emit(session, { type: "agentEnd", meta });
+      if (!turnIsInFlight(session)) this.emitForkableTurnEnd(session, client, meta, !turn.stopRequested);
       this.noteLiveTurnEnded(session, turn, "done");
       // "done" only if this is still the LAST word. /compact releases its turn
       // token before awaiting the context refresh, so a send from another tab
@@ -19188,6 +19246,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       // turn, the failure it eventually reported is not ours to announce.
       // Checked BEFORE the auth resend, which starts a turn of its own.
       if (!endTurn(session, turn)) return;
+      session.forkPoints.interrupt();
       const e = err as any;
       // A rate/usage-limit failure (ACP -32003, or limit phrasing) is not a
       // credential problem: skip the auth recovery — its retry would end on
@@ -19313,6 +19372,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       session.userMessageCount += 1;
       this.emit(session, { type: "userMessage", text: displayText, chips });
     }
+    session.forkPoints.interrupt();
     this.emit(session, { type: "agentStart" });
     // The resend is a turn in its own right — it gets its own token, and the
     // outer turn's `finally` can no longer end it (the tokens differ).
@@ -19327,7 +19387,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         return true;
       }
       if (!endTurn(session, turn)) return true;
-      this.emit(session, { type: "agentEnd", meta });
+      this.emitForkableTurnEnd(session, client, meta, !turn.stopRequested);
       this.noteLiveTurnEnded(session, turn, "done");
       this.setStatus(session, "done");
       session.authRecoveryTried = false; // recovered — re-arm for a future expiry
@@ -19340,6 +19400,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         return true;
       }
       if (!endTurn(session, turn)) return true;
+      session.forkPoints.interrupt();
       const e2 = err2 as any;
       // The resend ran into a usage limit — that's the real story, not auth
       // (#57): a fresh process with a fresh token hit the same wall.
@@ -20601,7 +20662,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     this.mirrorToProjectsRail(message);
   }
 
-  private async replayLoadedHistory(session: Session, load: () => Promise<void>): Promise<void> {
+  private async replayLoadedHistory(session: Session, load: () => Promise<void>, id?: string): Promise<void> {
     // Join an in-flight load rather than superseding it: session/load cannot
     // be aborted, and a second stream would interleave into the same buffer.
     // `replaying` stays a boolean so remotes still see "any replay in progress".
@@ -20612,7 +20673,13 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       session.hasHistory = session.historyEventCount > 0 || session.userMessageCount > 0;
       this.refreshWorkflowCompletions(session);
     }, {
-      onStart: () => this.emit(session, { type: "historyReplay", active: true }),
+      onStart: () => {
+        if (id && session.client?.supportsTurnFork?.()) {
+          const meta = this.state.get<SessionMetaOverrides>(SESSION_META_KEY, {});
+          session.forkPoints.load(meta[id]?.forkReplyIds ?? []);
+        }
+        this.emit(session, { type: "historyReplay", active: true });
+      },
       onFinish: () => {
         this.emit(session, { type: "historyReplay", active: false });
         this.sendRemoteHistorySnapshot(session);
@@ -21721,9 +21788,20 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   }
 
   private noteAdapterCompactSignal(session: Session, update: unknown): void {
-    if (session.replaying || !usesPerCallContextOccupancy(session.provider)) return;
+    if (!usesPerCallContextOccupancy(session.provider)) return;
     const signal = adapterCompactSignal(update);
     if (!signal) return;
+    if (signal === "completed" && typeof update === "object" && session.client?.supportsTurnFork?.()) {
+      if (session.forkPoints.compact()) this.emit(session, { type: "forkPointsCleared" });
+      const id = session.activeSessionId;
+      if (id && !session.replaying) {
+        void this.updateSessionMeta((current) => {
+          if (!current[id]?.forkReplyIds?.length) return null;
+          return { ...current, [id]: { ...current[id], forkReplyIds: [] } };
+        }).catch(() => this.host.appendLine("[fork] could not clear pre-compaction turn ends"));
+      }
+    }
+    if (session.replaying) return;
     if (signal === "failed") {
       session.compactUsageArmed = false;
       session.adapterCompactThisTurn = false;
@@ -23794,6 +23872,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         sessionId: session.activeSessionId,
         name: this.sessionDisplayName(session),
         cwd: sessionCwd,
+        ...(session.client?.supportsTurnFork?.() ? { turnForkSupported: true } : {}),
       });
     }
     // Pins belong in the snapshot, not behind a `ready` handler: `ready` from a

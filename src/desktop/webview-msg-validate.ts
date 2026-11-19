@@ -190,6 +190,11 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
     case "remoteSignOut":
     case "unlinkRemoteDevice":
       break;
+    case "forkAtReply":
+      if (!isString(raw.sessionId) || !raw.sessionId.trim()
+        || !isString(raw.messageId) || !raw.messageId.trim()
+        || !opt(raw.draft, isString)) return null;
+      break;
     case "runGrokLogin":
     case "logout":
     case "recheckConnection":

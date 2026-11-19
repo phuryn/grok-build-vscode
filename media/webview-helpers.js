@@ -77,7 +77,7 @@
     "cliUpdating", "startupStatus", "session", "sessionName", "sessionGoal", "composerDraftSession", "sessionRemoved", "sessionOpening", "recentSessions", "projectPrompt", "contextWindowSelection", "modelChanged", "modeChanged", "openModePopover",
     "voiceState", "voiceConfigured", "voicePartial", "voiceSubmit", "voiceTranscript",
     "voiceError", "chips", "pasteTextSettled", "commandsUpdate", "mentionResults", "projectDirListing", "projectFileContent", "projectFileWriteResult", "gitStatusResult", "gitFileDiffResult", "turnFileDiffResult", "turnDiffBaseline", "gitRunResult", "userMessage", "agentStart", "thoughtChunk",
-    "messageChunk", "media", "userMessageChunk", "historyReplay", "historyBatch", "permissionHistoryQueue",
+    "messageChunk", "forkPointsCleared", "media", "userMessageChunk", "historyReplay", "historyBatch", "permissionHistoryQueue",
     "planHistoryQueue", "toolCall", "toolCallUpdate", "permissionRequest", "permissionOptions",
     "permissionResolved", "exitPlanRequest", "planResolved", "questionRequest", "questionResolved", "planNotice", "autoCompactNotice", "planBlocked",
     "subscriptionUsage",
@@ -102,7 +102,7 @@
     "recheckConnection", "refreshProviders", "retryProviderSession", "listSessions", "listRepoSessions", "selectRepo", "toggleRepoPin", "setRepoArchived", "setRepoColor", "setRepoIcon", "toggleSessionPin", "resumeSession", "renameSession", "deleteSession",
       "clearAllSessions", "pickFile", "mentionQuery", "addMentionFile", "listProjectDir", "readProjectFile", "writeProjectFile", "gitStatus", "gitFileDiff", "turnFileDiff", "turnFileOpenDiff", "gitRun", "pasteImage", "pasteText", "uploadFile", "voiceStart", "voiceStop",
       "remoteVoiceStart", "remoteVoiceChunk", "remoteVoiceStop", "setVoiceBackend", "configureOpenAiVoice",
-    "queueSend", "dequeueSend", "clearQueuedSends", "steerSend", "turnFeedback", "forkSession", "setSteerByDefault", "setPromptNav", "setPinLiveWorkflows", "setExpandDiffCard",
+    "queueSend", "dequeueSend", "clearQueuedSends", "steerSend", "turnFeedback", "forkSession", "forkAtReply", "setSteerByDefault", "setPromptNav", "setPinLiveWorkflows", "setExpandDiffCard",
     "setSoundNotifications", "setProcessingSound", "setInputNeededSound", "setReadRepliesAloud", "setSummarizeRepliesAloud", "setVoiceSendPhrase", "setVoiceKeyterms", "setTelemetryEnabled", "setThumbsFeedback", "setDesktopTray", "summarizeSpeech", "requestImageFull", "requestImageOriginal", "composerFocus",
     "newWorktreeSession", "applyWorktree", "removeWorktree", "rewindSession", "editLastMessage", "uiConfirmAnswer", "workflowControl", "refreshContextDetails",
     "refreshSubscriptionUsage",
@@ -1587,7 +1587,7 @@
         const start = i;
         let text = String(ev.text || "");
         i += 1;
-        while (i < flat.length && flat[i].type === "userMessageChunk") {
+        while (i < flat.length && flat[i].type === "userMessageChunk" && !flat[i].startsMessage) {
           text += String(flat[i].text || "");
           i += 1;
         }
@@ -1652,7 +1652,7 @@
       if (ev.type === "userMessageChunk") {
         let text = String(ev.text || "");
         i += 1;
-        while (i < flat.length && flat[i].type === "userMessageChunk") {
+        while (i < flat.length && flat[i].type === "userMessageChunk" && !flat[i].startsMessage) {
           text += String(flat[i].text || "");
           i += 1;
         }
@@ -1775,7 +1775,7 @@
           while (
             i + group.length < list.length &&
             list[i + group.length] &&
-            list[i + group.length].type === "userMessageChunk"
+            list[i + group.length].type === "userMessageChunk" && !list[i + group.length].startsMessage
           ) {
             group.push(list[i + group.length]);
           }
@@ -1953,6 +1953,7 @@
           break;
         case "userMessageChunk":
           flushAgent();
+          if (ev.startsMessage) flushUser();
           userText += ev.text || "";
           if (Array.isArray(ev.images)) userImages = userImages.concat(ev.images);
           break;

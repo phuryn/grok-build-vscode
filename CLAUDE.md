@@ -37,6 +37,8 @@ Grok session context-window choices use `AcpClient.contextWindowSelection` and t
 
 Thinking traces have a bottom **Show Less** button that collapses and focuses the header without following new output. `GrokHookCalls` maps Stop, StopFailure and SubagentStop notifications onto tool rows, including running state and failure diagnostics; child hooks stay in their child stream. See [thinking and hook display](research/thinking-and-hook-display.md).
 
+Claude and Codex use advertised ACP `session/fork` for Continue in a new chat and reply-based forks. `ForkPoints` matches settled reply IDs on history replay. See [Fork and fork points](docs/architecture.md#subsystem-notes).
+
 ## Where the detail lives
 
 This file is rules and orientation. Reference material that used to live here

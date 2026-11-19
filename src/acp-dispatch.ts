@@ -77,8 +77,8 @@ export type MediaRef =
   | { media: MediaKind; kind: "uri"; uri: string; mimeType?: string };
 
 export type UpdateRoute =
-  | { event: "messageChunk"; text: string }
-  | { event: "userMessageChunk"; text: string }
+  | { event: "messageChunk"; text: string; messageId?: string }
+  | { event: "userMessageChunk"; text: string; messageId?: string }
   | { event: "thoughtChunk"; text: string }
   | { event: "mediaContent"; media: MediaRef }
   | { event: "toolCall"; payload: any }
@@ -251,6 +251,7 @@ export function extractGeneratedMediaPaths(payload: any): MediaRef[] {
 
 export function routeSessionUpdate(u: any): UpdateRoute | null {
   if (!u) return null;
+  const messageId = typeof u.messageId === "string" && u.messageId.trim() ? { messageId: u.messageId } : {};
   switch (u.sessionUpdate) {
     case "agent_message_chunk": {
       const c = u.content;
@@ -258,11 +259,11 @@ export function routeSessionUpdate(u: any): UpdateRoute | null {
         const media = extractImageContent(c);
         if (media) return { event: "mediaContent", media };
       }
-      return { event: "messageChunk", text: c?.text ?? "" };
+      return { event: "messageChunk", text: c?.text ?? "", ...messageId };
     }
     case "user_message_chunk":
       if (updateHidesFromScrollback(u)) return null;
-      return { event: "userMessageChunk", text: u.content?.text ?? "" };
+      return { event: "userMessageChunk", text: u.content?.text ?? "", ...messageId };
     case "agent_thought_chunk":
       return { event: "thoughtChunk", text: u.content?.text ?? "" };
     case "tool_call":

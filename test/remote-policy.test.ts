@@ -19,6 +19,7 @@ import {
   mediaMimeFromPath,
   transformHostMsgForRemote,
   REMOTE_HISTORY_BYTE_LIMIT,
+  REMOTE_HISTORY_USER_LIMIT,
   MAX_REMOTE_MEDIA_BYTES,
   MAX_REMOTE_THUMBNAIL_BYTES,
   type MediaInlineDeps,
@@ -1253,6 +1254,20 @@ describe("remote reconnect snapshot replay", () => {
       { type: "historyBatch", messages: buffer },
       { type: "historyReplay", active: false },
     ]);
+  });
+
+  it("keeps an edit's reply ID when the phone snapshot drops the preceding turn", () => {
+    const buffer: HostMsg[] = [];
+    for (let i = 0; i <= REMOTE_HISTORY_USER_LIMIT; i++) {
+      buffer.push({
+        type: "userMessageChunk", text: `Prompt ${i}`, startsMessage: true,
+        ...(i ? { forkBefore: `reply-${i - 1}` } : {}),
+      });
+      buffer.push({ type: "messageChunk", text: `Reply ${i}`, forkPoint: `reply-${i}` });
+    }
+    expect(batched(buffer)[0]).toEqual({
+      type: "userMessageChunk", text: "Prompt 1", startsMessage: true, forkBefore: "reply-0",
+    });
   });
 
   it("permits the targeted speech-summary result to cross remotely", () => {

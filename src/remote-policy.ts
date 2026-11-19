@@ -35,6 +35,7 @@ function remoteUserMessageIndexes(buffer: readonly HostMsg[]): number[] {
   };
   buffer.forEach((msg, index) => {
     if (msg.type === "userMessageChunk") {
+      if (msg.startsMessage) finishChunks();
       if (chunkStart < 0) chunkStart = index;
       chunkText += msg.text;
       return;
@@ -315,6 +316,7 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
   // (`client_type` is extension/desktop even when a phone clicked).
   turnFeedback: "propose",
   forkSession: "propose",
+  forkAtReply: "propose",
   // Worktree create/apply/remove: REVERTED to host-local 2026-08-07, hours
   // after being widened to "propose" the same day. The widening was safe in
   // itself — the authorization underneath (git-list, path containment) never
@@ -645,6 +647,7 @@ export const REMOTE_REQUIRES_BOUND_SESSION: Record<WebviewMsg["type"], boolean> 
   steerSend: true,
   turnFeedback: true,
   forkSession: true,
+  forkAtReply: true,
   newWorktreeSession: false,
   applyWorktree: true,
   removeWorktree: true,
@@ -1069,6 +1072,7 @@ export const OUTBOUND_DISPOSITION: Record<HostMsg["type"], OutboundDisposition> 
   agentStart: "mirror",
   thoughtChunk: "mirror",
   messageChunk: "mirror",
+  forkPointsCleared: "mirror",
   userMessageChunk: "mirror",
   historyReplay: "mirror",
   historyBatch: "mirror",
@@ -1295,6 +1299,7 @@ export const OUTBOUND_PROJECT_AUTH: Record<HostMsg["type"], OutboundProjectAuth>
   agentStart: "scope",
   thoughtChunk: "scope",
   messageChunk: "scope",
+  forkPointsCleared: "scope",
   userMessageChunk: "scope",
   media: "scope",
   imageFull: "scope",

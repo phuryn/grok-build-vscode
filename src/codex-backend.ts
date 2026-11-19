@@ -2,7 +2,7 @@ import * as path from "node:path";
 import packageManifest from "../package.json";
 import { grokCliNeedsShell } from "./cli-process";
 import type { PromptContentBlock } from "./acp";
-import { normalizeSessionInfoUpdate } from "./acp-backend";
+import { acpForkRequest, normalizeSessionInfoUpdate } from "./acp-backend";
 import type {
   AcpBackend,
   BackendConfigState,
@@ -364,6 +364,7 @@ export class CodexBackend implements AcpBackend {
   }
 
   normalizePromptResult(result: any): any { return normalizeCodexPromptResult(result); }
+  fork = acpForkRequest;
   normalizeUpdate(update: any, meta: any): BackendUpdate { return normalizeCodexUpdate(update, meta); }
   normalizePermissionParams(params: any): any { return normalizeCodexPermissionParams(params); }
 

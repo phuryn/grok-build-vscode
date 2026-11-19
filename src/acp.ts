@@ -1,5 +1,5 @@
 import { contextWindowSizes, type ContextWindowSelection } from "./context-selection";
-import { supportsSessionDeletion, type SessionGoal } from "./acp-backend";
+import { advertisedFork, supportsSessionDeletion, type SessionGoal } from "./acp-backend";
 import { GrokHookCalls } from "./grok-hooks";
 import { appendPastedTextContext } from "./prompt-builder";
 import { ChildProcessWithoutNullStreams, spawn } from "node:child_process";
@@ -332,6 +332,8 @@ export class AcpClient extends EventEmitter {
   private readonly timeouts: AcpTimeouts;
   private humanWaitActive = false;
   private steering: BackendSteeringCapabilities;
+  private forkAdvertised = false;
+  lastPromptStopReason: string | undefined;
 
   readonly provider: AcpProvider;
   readonly usesClientPlanGate: boolean;
@@ -578,6 +580,7 @@ export class AcpClient extends EventEmitter {
       ),
     });
     this.steering = this.backend.steeringCapabilities(init, this.opts);
+    this.forkAdvertised = advertisedFork(init);
     this.emit("initialized", init);
     const auth = this.opts.startupAuth;
     if (auth) await this.authenticate(auth.methodId, this.timeouts.requestTimeoutMs, auth.meta);
@@ -963,6 +966,7 @@ export class AcpClient extends EventEmitter {
       throw error;
     }
     const result = this.backend.normalizePromptResult(raw);
+    this.lastPromptStopReason = result?.stopReason;
     this.endTurn(result?.stopReason === "cancelled" ? "cancelled" : "completed");
     const meta = extractPromptMeta(result);
     this.lastMeta = meta;
@@ -1115,21 +1119,32 @@ export class AcpClient extends EventEmitter {
     }
   }
 
-  /**
-   * Fork a session (#48) — copies the conversation into a NEW session id, leaving
-   * the source untouched (probe-verified: parent history byte-unchanged after
-   * forking + using the fork). Params are `ForkSessionRequest`'s three required
-   * camelCase fields; `{sessionId}` alone is -32602.
-   *
-   * This branches the CONVERSATION only — grok never touches the workspace here,
-   * so files stay exactly as they are (`/rewind` is the separate feature that
-   * restores file snapshots). We deliberately omit `targetPromptIndex`: it works
-   * on the wire but truncates `chat_history` without truncating `updates.jsonl`,
-   * so a partial fork would replay a conversation the model has forgotten.
-   * Returns the new session id, or `"unsupported"` on an older CLI.
-   */
-  async forkSession(cwd: string): Promise<{ newSessionId: string } | "unsupported"> {
+  supportsTurnFork(): boolean {
+    return this.forkAdvertised && !!this.backend.fork;
+  }
+
+  /** Copy the conversation into a new session ID. Grok's route is whole-session only. */
+  async forkSession(cwd: string, messageId?: string): Promise<{ newSessionId: string } | "unsupported"> {
     if (!this.sessionId) throw new Error("no session");
+    if (messageId !== undefined && !messageId.trim()) throw new Error("Missing fork point.");
+    if (this.provider !== "grok") {
+      if (!this.supportsTurnFork()) return "unsupported";
+      const call = this.backend.fork!(this.sessionId, cwd, messageId);
+      try {
+        const r = await this.request(call.method, call.params);
+        if (typeof r?.sessionId !== "string" || !r.sessionId || r.sessionId === this.sessionId) {
+          throw new Error("The agent did not return a new conversation.");
+        }
+        return { newSessionId: r.sessionId };
+      } catch (e) {
+        if (isMethodNotFoundError(e)) {
+          this.forkAdvertised = false;
+          return "unsupported";
+        }
+        throw e;
+      }
+    }
+    if (messageId !== undefined) return "unsupported";
     try {
       const r = await this.request("_x.ai/session/fork", {
         sourceSessionId: this.sessionId,
@@ -1812,9 +1827,9 @@ export class AcpClient extends EventEmitter {
     }
     if (r.event === "taskBackgrounded") { this.emit("taskBackgrounded", r.payload); return; }
     if (r.event === "taskCompleted") { this.emit("taskCompleted", r.payload); return; }
-    if (r.event === "messageChunk") this.emit("messageChunk", r.text, meta);
-    else if (r.event === "userMessageChunk") this.emit("userMessageChunk", r.text, meta);
-    else if (r.event === "thoughtChunk") this.emit("thoughtChunk", r.text);
+    if (r.event === "messageChunk" || r.event === "userMessageChunk") {
+      this.emit(r.event, r.text, meta, r.messageId);
+    } else if (r.event === "thoughtChunk") this.emit("thoughtChunk", r.text);
     else if (r.event === "mediaContent") this.emit("mediaContent", r.media);
     else if (r.event === "toolCall") {
       this.emit("toolCall", r.payload);

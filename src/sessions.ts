@@ -56,6 +56,8 @@ export interface SessionMetaOverride {
   provider?: AcpProvider;
   /** Provider-reported cwd for stores that are not laid out under the Grok home. */
   providerCwd?: string;
+  /** Settled reply IDs observed live, matched by ID on adapter replay. */
+  forkReplyIds?: string[];
   deepseekHarness?: "default" | "minimal";
   /** A prompt was sent through this host, including routine runs and failed turns. */
   deepseekPrompted?: boolean;

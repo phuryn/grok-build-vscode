@@ -2798,9 +2798,7 @@ describe("VS Code session overflow + gear worktree gating", () => {
     expect(has(doc, "Remove worktree")).toBe(true);
   });
 
-  // Only Grok's CLI forks, and the worktree destination is Grok's too: on any
-  // other agent the item did nothing and then said to update Grok.
-  it.each(["claude", "codex"])("offers no Continue in a new chat on %s", (provider) => {
+  it.each(["claude", "codex"])("requires the host's fork advertisement for Continue in a new chat on %s", (provider) => {
     const { window, doc, posted } = bootWebview({ vscode: true });
     dispatch(window, { type: "session", sessionId: "s1", provider, models: [], currentModelId: "m" });
     dispatch(window, { type: "sessionName", sessionId: "s1", name: "Session one", cwd: "/work/repo" });

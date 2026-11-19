@@ -2323,6 +2323,7 @@ body.turn-busy .queued-steer:hover {
 .msg-rewind-btn[hidden] { display: none; }
 /* Edit is the complement: shown only on the tip, where Rewind is hidden (#56). */
 .msg-edit-btn[hidden] { display: none; }
+body:not(.turn-fork-supported) .msg-fork-btn { display: none; }
 .msg-timestamp { font-size: 11px; }
 .msg.thinking {
   background: transparent;
@@ -5523,7 +5524,8 @@ body.session-superseded .question-actions {
 /* Rewind and Edit act on the frozen conversation. Kept visible so the
    transcript still reads normally, but genuinely not clickable. */
 body.session-superseded .msg-rewind-btn,
-body.session-superseded .msg-edit-btn {
+body.session-superseded .msg-edit-btn,
+body.session-superseded .msg-fork-btn {
   opacity: 0.35;
   pointer-events: none;
 }

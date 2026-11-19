@@ -618,12 +618,18 @@ function probeCli(cli, args, cwd) {
 
 async function main() {
   const selected = process.argv.slice(2);
-  const scenario = smokeScenario(selected, ["plain reply", "subagent", "workflow"]);
+  const scenario = smokeScenario(selected, ["plain reply", "subagent", "workflow", "fork"]);
   assert(selected.every(a => /^--provider=(codex|claude|muse|agy)$/.test(a) || a.startsWith("--scenario="))
-    && selected.filter(a => a.startsWith("--provider=")).length <= 1, "usage: npm run smoke:acp -- --provider=codex|claude|muse|agy [--scenario=plain-reply|subagent|workflow]");
+    && selected.filter(a => a.startsWith("--provider=")).length <= 1, "usage: npm run smoke:acp -- --provider=codex|claude|muse|agy [--scenario=plain-reply|subagent|workflow|fork]");
   const chosenProvider = selected.find(a => a.startsWith("--provider="))?.slice(11);
-  const requested = capability => !scenario || ["initialize", "session/new", "model", "render", "boundary audit"].includes(capability)
-    || capability === (scenario === "plain reply" ? "streaming" : scenario) || (scenario === "workflow" && capability === "delivery prompt");
+  assert(scenario !== "fork" || !chosenProvider || ["codex", "claude"].includes(chosenProvider),
+    "the fork scenario supports Claude and Codex");
+  const requested = capability => {
+    if (scenario === "fork") return ["initialize", "session/new", "model", "fork", "boundary audit"].includes(capability);
+    return !scenario || ["initialize", "session/new", "model", "render", "boundary audit"].includes(capability)
+      || capability === (scenario === "plain reply" ? "streaming" : scenario)
+      || (scenario === "workflow" && capability === "delivery prompt");
+  };
   const rpcMs = timeoutMs(process.env.ACP_SMOKE_RPC_TIMEOUT_MS, 90_000);
   const turnMs = timeoutMs(process.env.ACP_SMOKE_TURN_TIMEOUT_MS, 180_000);
   const workflowMs = timeoutMs(process.env.ACP_SMOKE_WORKFLOW_TIMEOUT_MS, 300_000);
@@ -639,6 +645,7 @@ async function main() {
   const { locateCodexCli } = require("../out/codex-cli-locator.js");
   const { locateClaudeCli } = require("../out/claude-cli-locator.js");
   const { acpClientCapabilities } = require("../out/acp.js");
+  const { advertisedFork } = require("../out/acp-backend.js");
   const { TerminalManager } = require("../out/terminal-manager.js");
   const outputParent = path.join(root, ".verification", "acp-smoke");
   fs.mkdirSync(outputParent, { recursive: true });
@@ -674,9 +681,10 @@ async function main() {
     catch (error) { record("setup", "FAIL", errorText(error)); }
   }
   for (const [provider, Backend, locate] of [["codex", CodexBackend, locateCodexCli], ["claude", ClaudeBackend, locateClaudeCli], ["muse", MuseBackend, locateMuseCli]]) {
-    if (chosenProvider && chosenProvider !== provider) continue;
+    if ((chosenProvider && chosenProvider !== provider) || (scenario === "fork" && provider === "muse")) continue;
     const steers = provider === "codex" || provider === "claude";
-    const required = [...capabilities, "model", "steering", "subagent", "workflow", "render", ...(provider === "muse" ? ["delivery prompt"] : [])];
+    const required = [...capabilities, "model", "steering", "subagent", "workflow", "render",
+      ...(scenario === "fork" ? ["fork"] : []), ...(provider === "muse" ? ["delivery prompt"] : [])];
     let scratch;
     let peer;
     let sessionId;
@@ -761,6 +769,7 @@ async function main() {
         const result = await peer.request("initialize", { protocolVersion: 1, clientCapabilities: acpClientCapabilities(provider) });
         assert.equal(result.protocolVersion, 1, "initialize.protocolVersion must be 1");
         if (steers) assert.equal(result._meta?.steering?.supported, true, "initialize._meta.steering.supported must be true");
+        if (scenario === "fork") assert(advertisedFork(result), "initialize did not advertise sessionCapabilities.fork");
         return result;
       };
       connect();
@@ -949,6 +958,55 @@ async function main() {
         assert(updates(recovery).some(u => u?.sessionUpdate === "agent_message_chunk" && nonempty(u.content?.text)), "reopened session returned no answer");
         return `fresh adapter replayed ${users.length} user and ${agents.length} agent chunks for ${sessionId}`;
       });
+      if (scenario === "fork") await check("fork", async () => {
+        const words = ["APPLE", "BANANA", "CHERRY"];
+        const replyIds = frames => [...new Set(frames.filter(u =>
+          u?.sessionUpdate === "agent_message_chunk" && nonempty(u.content?.text),
+        ).map(u => u.messageId))];
+        const live = [];
+        for (const word of words) {
+          const turn = peer.prompt(sessionId, `Do not use tools. Remember the word ${word}. Reply with exactly: noted`);
+          await finish(turn);
+          const ids = replyIds(updates(turn));
+          assert(ids.length && ids.every(nonempty), "live reply is missing its message ID");
+          live.push(...ids);
+        }
+        const load = async id => {
+          const from = peer.events.length;
+          await peer.request("session/load", { sessionId: id, cwd: scratch, mcpServers: [] });
+          return peer.received(from, "session/update", id).map(p => p.update);
+        };
+        const userWords = frames => {
+          const texts = frames.filter(u => u?.sessionUpdate === "user_message_chunk").map(u => u.content?.text).join("\n");
+          return words.filter(word => texts.includes(word));
+        };
+        const reopen = async () => {
+          await peer.stop();
+          connect();
+          await initialize();
+        };
+        await reopen();
+        const replay = await load(sessionId);
+        assert.deepEqual(replyIds(replay), live, "reopened reply IDs differ from the live turns");
+        assert.deepEqual(userWords(replay), words);
+        // The first prompt is one short reply. Use its last ID from replay.
+        const nextPrompt = replay.findIndex(u => u?.sessionUpdate === "user_message_chunk" && u.content?.text?.includes(words[1]));
+        assert(nextPrompt > 0, "replay did not show the start of turn 2");
+        const firstTurnIds = replyIds(replay.slice(0, nextPrompt));
+        const point = firstTurnIds.at(-1);
+        assert(nonempty(point), "replay did not show the first turn's last reply");
+        const { method, params } = backend.fork(sessionId, scratch, point);
+        const { sessionId: forkId } = await peer.request(method, params);
+        assert(nonempty(forkId) && forkId !== sessionId, "fork did not return a new session ID");
+        const fork = await load(forkId);
+        assert.deepEqual(userWords(fork), [words[0]], "fork must stop before turn 2");
+        assert.equal(replyIds(fork).length, firstTurnIds.length, "fork replay contains replies beyond turn 1");
+        await reopen();
+        const original = await load(sessionId);
+        assert.deepEqual(replyIds(original), live, "fork changed the original replies");
+        assert.deepEqual(userWords(original), words, "fork changed the original prompts");
+        return "stable live and replayed IDs; fork replay stops at turn 1; original still has all three turns";
+      }, 3 * turnMs + 8 * rpcMs);
       await peer.stop();
       peer = undefined;
       active = undefined;

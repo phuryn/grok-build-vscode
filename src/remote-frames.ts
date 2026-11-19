@@ -329,6 +329,13 @@ function parseRemoteWebviewMsg(msg: unknown): WebviewMsg | null {
     case "newSession":
       if (value.draftId !== undefined && (typeof value.draftId !== "string" || !REMOTE_TAB_TOKEN_RE.test(value.draftId))) return null;
       return { type: "newSession", ...(value.draftId !== undefined ? { draftId: value.draftId } : {}) };
+    case "forkAtReply":
+      return isRemoteSessionId(value.sessionId)
+        && typeof value.messageId === "string" && !!value.messageId.trim()
+        && (value.draft === undefined || typeof value.draft === "string")
+        ? { type: "forkAtReply", sessionId: value.sessionId, messageId: value.messageId,
+          ...(typeof value.draft === "string" ? { draft: value.draft } : {}) }
+        : null;
     case "resumeSession": {
       if (!isRemoteSessionId(value.id)) return null;
       if (value.cwd !== undefined && !isRemoteCwd(value.cwd)) return null;

@@ -4334,15 +4334,14 @@
       provider.id === id && provider.connected && provider.needsLogin === true);
   }
 
-  /**
-   * Destinations under "Continue in a new chat".
-   * Knowledge work / unsupported worktrees / already-in-worktree → workspace only.
-   * An agent that cannot fork gets none: both destinations are Grok's (its CLI
-   * forks, and creates the worktree), so offering either on another agent was a
-   * click that did nothing and then told the person to update Grok.
-   */
+  function turnForkAvailable() {
+    return !!state.activeSessionId && state.turnForkSessionId === state.activeSessionId;
+  }
+
+  /** Destinations under "Continue in a new chat". */
   function continueChatDestinations() {
-    if (!globalThis.GrokWebviewHelpers.providerSupports(state.activeProvider, "fork")) return [];
+    const legacyFork = globalThis.GrokWebviewHelpers.providerSupports(state.activeProvider, "fork");
+    if (!legacyFork && !turnForkAvailable()) return [];
     const dests = [
       {
         id: "workspace",
@@ -4354,7 +4353,7 @@
     // rather than the session that asked, so a remote tab working in another
     // repo would get a checkout somewhere it never chose. Offering the option
     // here would promise a placement the host does not honour.
-    if (isCodingPurpose() && state.worktreeSupported && !state.isWorktree && !IS_REMOTE) {
+    if (legacyFork && isCodingPurpose() && state.worktreeSupported && !state.isWorktree && !IS_REMOTE) {
       dests.push({
         id: "worktree",
         label: "Use a new worktree",
@@ -10794,6 +10793,7 @@
 
   const REPLAY_HOLD_TYPES = new Set([
     "userMessage", "agentStart", "turnDiffBaseline", "thoughtChunk", "messageChunk", "media",
+    "forkPointsCleared",
     "userMessageChunk", "historyBatch", "toolCall", "toolCallUpdate",
     "permissionRequest", "permissionOptions", "permissionResolved",
     "exitPlanRequest", "planResolved", "questionRequest", "questionResolved", "planNotice",
@@ -10812,6 +10812,12 @@
 
   function applyHistoryWindow(held) {
     const split = splitHistoryWindow(held, historyWindowTurns());
+    if (split.suffix.some((m) => m.type === "forkPointsCleared")) {
+      split.prefix = stripForkActions(split.prefix);
+    } else {
+      const reset = split.prefix.findLastIndex((m) => m.type === "forkPointsCleared");
+      if (reset >= 0) split.prefix = stripForkActions(split.prefix, reset);
+    }
     state.historyPrefix = split.prefix;
     state.historyPrefixUserCount = split.prefixUserCount;
     if (split.prefixUserCount > 0) {
@@ -10953,6 +10959,7 @@
     state.planHistoryQueue = plans.inChunk;
     state.permissionHistoryQueue = perms.inChunk;
     for (const m of chunk) handleHostMessage(m);
+    if (state.turnAgentActionsEl?.querySelector(".msg-fork-btn")) revealTurnFooter();
     flushPlanHistory();
     flushPermissionHistory();
     if (!state.historyPrefix.length) {
@@ -11120,6 +11127,8 @@
     state.turnRating = 0;
     state.steerSupported = false;
     state.steeringProvider = null;
+    state.turnForkSessionId = null;
+    document.body.classList.remove("turn-fork-supported");
     state.interjectionCount = 0;
     state.historyEventCount = 0;
     state.lastTurnUsage = null;
@@ -12237,6 +12246,7 @@
       const actions = document.createElement("div");
       actions.className = "msg-actions";
       actions.appendChild(makeMessageCopyButton());
+      if (role === "user" && opts?.forkBefore && !opts.steer) addForkAction(actions, opts.forkBefore, true);
       // Rewind sits next to Copy on user bubbles only (P2-9). Latest message
       // has nothing after it to discard — hidden via refreshUserRewindButtons.
       //
@@ -12310,6 +12320,26 @@
       });
     }
     return body;
+  }
+
+  function addForkAction(actions, messageId, edit = false) {
+    if (!actions || typeof messageId !== "string" || !messageId) return;
+    let btn = actions.querySelector(".msg-fork-btn");
+    if (!btn) {
+      btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "msg-action-btn msg-fork-btn";
+      btn.title = edit ? "Edit in a new chat" : "Go back to here in a new chat";
+      btn.setAttribute("aria-label", btn.title);
+      btn.innerHTML = `<span class="msg-action-glyph">${edit ? ICON.pencil : ICON.gitBranch}</span>`;
+      actions.insertBefore(btn, actions.querySelector(".msg-timestamp"));
+    }
+    btn.dataset.messageId = messageId;
+  }
+
+  function stripForkActions(frames, before = frames.length) {
+    return frames.map((m, i) => i < before && (m.forkBefore || m.forkPoint)
+      ? { ...m, forkBefore: undefined, forkPoint: undefined } : m);
   }
 
   /**
@@ -16856,12 +16886,13 @@ ${fullText}`
 
   // Replayed user prompts (session/load) arrive as user_message_chunk updates.
   // Commit any in-flight agent turn first, then accumulate into one user bubble.
-  function appendUserChunk(text, timestampMs, images) {
+  function appendUserChunk(text, timestampMs, images, startsMessage, forkBefore) {
     // Replay-only: live user bubbles come from the optimistic `userMessage`
     // post. grok ≥0.2.33 echoes the live prompt back as a user_message_chunk;
     // the host already drops those, but guard here too so a stray live echo
     // can never double the bubble.
     if (!state.replaying) return;
+    if (startsMessage) state.activeUserEl = null;
     if (state.activeAgentEl || state.activeThoughtEl || state.activeToolGroupEl) {
       commitAgentTurn();
     }
@@ -16910,7 +16941,7 @@ ${fullText}`
       pinTurnDiffSummary();
       startTurnDiffTracking();
       state.userMsgCount += 1;
-      state.activeUserEl = addMessage("user", "", undefined, { timestampMs });
+      state.activeUserEl = addMessage("user", "", undefined, { timestampMs, forkBefore });
       state.activeUserRaw = "";
     }
     if (state.skipUserBubble) return; // marker-only verdict: no user bubble
@@ -16925,6 +16956,7 @@ ${fullText}`
         state.userMsgCount = Math.max(0, state.userMsgCount - 1);
         state.interjectionCount += 1;
         steerEl.dataset.steer = "1";
+        steerEl.querySelector(".msg-fork-btn")?.remove();
         refreshUserRewindButtons();
       }
     }
@@ -21702,6 +21734,8 @@ ${fullText}`
         // Host-confirmed identity only. Optimistic rail clicks never write here.
         confirmComposerSession(msg.sessionId);
         state.activeSessionId = msg.sessionId;
+        state.turnForkSessionId = msg.turnForkSupported === true ? msg.sessionId : null;
+        document.body.classList.toggle("turn-fork-supported", turnForkAvailable());
         // May complete a resume (id match) or bind a new-session resolved id.
         noteRailTransitionSessionName(msg);
         // AFTER the note: a surviving transition means this frame was about a
@@ -21953,7 +21987,7 @@ ${fullText}`
           pinTurnDiffSummary();
           startTurnDiffTracking();
         }
-        addMessage("user", msg.text, msg.chips || [], { steer: msg.steer });
+        addMessage("user", msg.text, msg.chips || [], { steer: msg.steer, forkBefore: msg.forkBefore });
         forceScrollToBottom(); // jump back to the bottom on the user's own send (#16)
         break;
       case "turnDiffBaseline":
@@ -21994,12 +22028,22 @@ ${fullText}`
       case "messageChunk":
         advanceHistoryEvent();
         appendAgent(msg.text);
+        if (state.activeAgentEl && !state.suppressReplayTurn) {
+          const actions = state.turnAgentActionsEl;
+          const button = actions?.querySelector(".msg-fork-btn");
+          if (button && button.dataset.messageId !== msg.messageId) button.remove();
+          if (msg.forkPoint) addForkAction(actions, msg.forkPoint);
+        }
+        break;
+      case "forkPointsCleared":
+        for (const btn of liveTranscriptQueryAll(".msg-fork-btn")) btn.remove();
+        state.historyPrefix = stripForkActions(state.historyPrefix);
         break;
       case "media":
         addGeneratedMedia(msg);
         break;
       case "userMessageChunk":
-        appendUserChunk(msg.text, msg.timestampMs, msg.images);
+        appendUserChunk(msg.text, msg.timestampMs, msg.images, msg.startsMessage, msg.forkBefore);
         break;
       case "imageFull": {
         // Ignore an answer for a picture the overlay has moved on from, so a
@@ -22568,6 +22612,7 @@ ${fullText}`
         // A turn that ends with NO content (grok's [Plan cancelled] ack can be
         // empty) would otherwise orphan the dots forever — content-based
         // clearing never fires.
+        if (msg.forkPoint) addForkAction(state.turnAgentActionsEl, msg.forkPoint);
         revealTurnFooter();
         markLiveTurnFeedback();
         state.busy = false;
@@ -22577,6 +22622,8 @@ ${fullText}`
         speakCompletedTurn();
         break;
       case "exit":
+        state.turnForkSessionId = null;
+        document.body.classList.remove("turn-fork-supported");
         if (state.modelCatalogPending) setModelCatalogPending(false);
         stopProcessingCue();
         hideGrokking();
@@ -24207,6 +24254,18 @@ ${fullText}`
         userBubbleIndex: idx,
         text: (msgEl && msgEl._copyText) || "",
         totalUserBubbles: visibleUserBubbleCount(),
+      });
+      return;
+    }
+    const forkBtn = e.target.closest(".msg-fork-btn");
+    if (forkBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const bubble = forkBtn.closest(".msg");
+      if (!turnForkAvailable() || state.sessionSuperseded || state.replaying || isPendingClearNode(bubble)) return;
+      vscode.postMessage({
+        type: "forkAtReply", sessionId: state.activeSessionId, messageId: forkBtn.dataset.messageId,
+        ...(bubble?.classList.contains("user") ? { draft: bubble._copyText || "" } : {}),
       });
       return;
     }

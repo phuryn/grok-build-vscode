@@ -3,7 +3,7 @@ import * as path from "node:path";
 import packageManifest from "../package.json";
 import { grokCliNeedsShell } from "./cli-process";
 import type { PromptContentBlock } from "./acp";
-import { normalizeSessionInfoUpdate } from "./acp-backend";
+import { acpForkRequest, normalizeSessionInfoUpdate } from "./acp-backend";
 import type {
   AcpBackend,
   BackendConfigState,
@@ -465,6 +465,7 @@ export class ClaudeBackend implements AcpBackend {
   }
 
   normalizePromptResult(result: any): any { return normalizeClaudePromptResult(result); }
+  fork = acpForkRequest;
   private readonly workflows = new ClaudeWorkflows();
   private readonly subagents = new ClaudeSubagents();
   normalizeUpdate(update: any, meta: any): BackendUpdate {

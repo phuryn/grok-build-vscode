@@ -21,12 +21,12 @@ const PROVIDER_ACTIONS: Record<AcpProvider, {
   autoAccept: boolean;
   perCallContext: boolean;
   clientMcp: boolean;
-  /** Forks a conversation (`_x.ai/session/fork`, Grok's CLI only). */
+  /** Implements a conversation fork. Standard ACP also requires negotiation. */
   fork: boolean;
 }> = {
   grok: { deleteHistory: true, compact: true, adapterHistory: false, modeSwitching: true, approvalModeSwitching: false, autoAccept: true, perCallContext: false, clientMcp: true, fork: true },
-  codex: { deleteHistory: true, compact: true, adapterHistory: true, modeSwitching: true, approvalModeSwitching: false, autoAccept: true, perCallContext: true, clientMcp: true, fork: false },
-  claude: { deleteHistory: true, compact: true, adapterHistory: true, modeSwitching: true, approvalModeSwitching: false, autoAccept: true, perCallContext: true, clientMcp: true, fork: false },
+  codex: { deleteHistory: true, compact: true, adapterHistory: true, modeSwitching: true, approvalModeSwitching: false, autoAccept: true, perCallContext: true, clientMcp: true, fork: true },
+  claude: { deleteHistory: true, compact: true, adapterHistory: true, modeSwitching: true, approvalModeSwitching: false, autoAccept: true, perCallContext: true, clientMcp: true, fork: true },
   muse: { deleteHistory: false, compact: false, adapterHistory: true, modeSwitching: false, approvalModeSwitching: true, autoAccept: true, perCallContext: false, clientMcp: false, fork: false },
   agy: { deleteHistory: false, compact: false, adapterHistory: true, modeSwitching: false, approvalModeSwitching: false, autoAccept: true, perCallContext: false, clientMcp: false, fork: false },
   deepseek: { deleteHistory: false, compact: false, adapterHistory: true, modeSwitching: false, approvalModeSwitching: false, autoAccept: true, perCallContext: false, clientMcp: false, fork: false },
@@ -74,6 +74,22 @@ export function supportsAutoAccept(provider: AcpProvider): boolean {
 
 export function supportsFork(provider: AcpProvider): boolean {
   return actionsFor(provider).fork;
+}
+
+export function advertisedFork(initializeResult: any): boolean {
+  const fork = initializeResult?.agentCapabilities?.sessionCapabilities?.fork;
+  return fork !== null && typeof fork === "object" && !Array.isArray(fork);
+}
+
+/** Both standard ACP adapters use this optional reply point on their fork request. */
+export function acpForkRequest(sessionId: string, cwd: string, messageId?: string) {
+  return {
+    method: "session/fork",
+    params: {
+      sessionId, cwd, mcpServers: [],
+      ...(messageId === undefined ? {} : { _meta: { jetbrains: { air: { fork: { version: 1, messageId } } } } }),
+    },
+  };
 }
 
 export function supportsApprovalModeSwitching(provider: AcpProvider): boolean {
@@ -214,6 +230,7 @@ export interface AcpBackend<Provider extends string = AcpProvider> {
   setReasoningEffort(sessionId: string, modelId: string | undefined, level: string): { method: string; params: any } | { local: true } | null;
   setMode(sessionId: string, modeId: string): { method: string; params: any };
   steeringCapabilities(initializeResult: any, options: BackendSteeringOptions): BackendSteeringCapabilities;
+  fork?(sessionId: string, cwd: string, messageId?: string): { method: string; params: object };
   interject(sessionId: string, text: string, content?: readonly PromptContentBlock[]): { method: string; params: any } | null;
   /**
    * Whether a steering RPC that RESOLVED actually delivered the text. Some

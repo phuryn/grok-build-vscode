@@ -670,7 +670,7 @@ export type HostMsg =
   // alone falls back to that directory's leaf — and if the leaf happens to match
   // another project's name, it presents one project's conversation as another's.
   // Optional and additive: a client that never sees it keeps its old fallback.
-  | { type: "sessionName"; sessionId: string; name: string; cwd: string; repoCwd?: string }
+  | { type: "sessionName"; sessionId: string; name: string; cwd: string; repoCwd?: string; turnForkSupported?: boolean }
   | { type: "sessionGoal"; sessionId: string; goal: SessionGoal | null }
   | { type: "composerDraftSession"; draftId: string; sessionId: string }
   | { type: "contextWindowSelection"; selection: ContextWindowSelection }
@@ -843,14 +843,17 @@ export type HostMsg =
   /** `steer` marks a mid-turn interjection (#52). It paints a user bubble but is
    *  NOT a prompt and gets no rewind point, so the bubble must not consume a
    *  rewind index — see refreshUserRewindButtons. */
-  | { type: "userMessage"; text: string; chips?: FileChip[]; steer?: boolean; submissionId?: string }
+  | { type: "userMessage"; text: string; chips?: FileChip[]; steer?: boolean; submissionId?: string; forkBefore?: string }
   | { type: "agentStart" }
   | { type: "thoughtChunk"; text: string }
-  | { type: "messageChunk"; text: string }
+  | { type: "messageChunk"; text: string; messageId?: string; forkPoint?: string }
+  | { type: "forkPointsCleared" }
   | { type: "media"; media: string; src?: string; url?: string; mimeType?: string; path?: string; fullId?: string }
   | {
       type: "userMessageChunk";
       text: string;
+      startsMessage?: true;
+      forkBefore?: string;
       timestampMs?: number;
       images?: Array<{ imageIndex: number; path?: string; previewSrc?: string; fullId?: string }>;
     }
@@ -903,7 +906,7 @@ export type HostMsg =
     }
   | { type: "agentReset" }
   | { type: "agentError"; text: string }
-  | { type: "agentEnd"; meta?: PromptResultMeta }
+  | { type: "agentEnd"; meta?: PromptResultMeta; forkPoint?: string }
   | { type: "exit"; code: number | null }
   | { type: "setBusy"; value: boolean; locked?: boolean }
   | { type: "summarizing" }
@@ -1594,6 +1597,7 @@ export type WebviewMsg =
   // `sessionId` is additive: old clients omit it and keep today's path; a
   // present id that is not the dispatch-resolved session is refused.
   | { type: "forkSession"; sessionId?: string }
+  | { type: "forkAtReply"; sessionId: string; messageId: string; draft?: string }
   // Worktree UI (P2-8): new isolated session / merge back / remove worktree.
   | { type: "newWorktreeSession" }
   | { type: "applyWorktree"; sessionId?: string }
@@ -1647,7 +1651,7 @@ const HOST_MESSAGE_TYPE_MAP: Record<HostMsg["type"], true> = {
   voicePartial: true, voiceSubmit: true, voiceTranscript: true, voiceError: true,
   chips: true, pasteTextSettled: true, commandsUpdate: true, mentionResults: true, projectDirListing: true, projectFileContent: true, projectFileWriteResult: true, gitStatusResult: true, gitFileDiffResult: true, turnFileDiffResult: true, turnDiffBaseline: true, gitRunResult: true, userMessage: true, agentStart: true,
   providerConfigContent: true, providerConfigWriteResult: true,
-  thoughtChunk: true, messageChunk: true, media: true, userMessageChunk: true,
+  thoughtChunk: true, messageChunk: true, forkPointsCleared: true, media: true, userMessageChunk: true,
   historyReplay: true, historyBatch: true, permissionHistoryQueue: true, planHistoryQueue: true,
   toolCall: true, toolCallUpdate: true, permissionRequest: true, permissionOptions: true,
   permissionResolved: true, exitPlanRequest: true, planResolved: true, questionRequest: true, questionResolved: true,
@@ -1686,7 +1690,7 @@ const WEBVIEW_MESSAGE_TYPE_MAP: Record<WebviewMsg["type"], true> = {
   pasteImage: true, pasteText: true, uploadFile: true, voiceStart: true,
   voiceStop: true, setVoiceBackend: true, configureOpenAiVoice: true, remoteVoiceStart: true, remoteVoiceChunk: true,
   remoteVoiceStop: true, queueSend: true, dequeueSend: true, clearQueuedSends: true,
-  steerSend: true, turnFeedback: true, forkSession: true,
+  steerSend: true, turnFeedback: true, forkSession: true, forkAtReply: true,
   newWorktreeSession: true, applyWorktree: true, removeWorktree: true,
   rewindSession: true, editLastMessage: true, uiConfirmAnswer: true, workflowControl: true,
   refreshContextDetails: true,
