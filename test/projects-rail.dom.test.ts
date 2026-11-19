@@ -2229,6 +2229,21 @@ describe("continue-in-a-new-chat lives in the session ⋯ menu", () => {
     });
   });
 
+  it("offers nothing to continue on an agent that cannot fork", () => {
+    const { doc, window, posted } = boot("/work/alpha");
+    dispatch(window, pinnedFrame([]));
+    dispatch(window, {
+      ...sessionsFrame([row("a1", "/work/alpha", "alpha one", 9)]),
+      activeId: "a1",
+    });
+    dispatch(window, { type: "session", sessionId: "a1", provider: "claude", models: [], currentModelId: "m" });
+    const section = doc.querySelectorAll(".rail-repo")[repoNames(doc).indexOf("alpha")];
+    const menu = openMenu(window, section.querySelector(".rail-session") as HTMLElement);
+    expect(menuItem(menu, "Continue in a new chat")).toBeUndefined();
+    expect(menuItem(menu, "Export as Markdown")).toBeTruthy();
+    expect(posted.some((p) => p.type === "forkSession")).toBe(false);
+  });
+
   it("posts applyWorktree/removeWorktree with the confirmed-active session id", async () => {
     const { doc, window, posted } = bootWebview({
       beforeScripts: withRail,

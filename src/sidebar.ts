@@ -30,7 +30,7 @@ import * as path from "node:path";
 import { spawn } from "node:child_process";
 import { AcpClient, EffortLevel, ExitPlanRequest, PermissionRequest, QuestionRequest } from "./acp";
 import type { AcpProvider, BackendSessionListEntry } from "./acp-backend";
-import { usesAdapterHistory, isInternalProvider, INTERNAL_PROVIDERS, supportsSessionDeletion, supportsHistoryDeletion, supportsModeSwitching, supportsAutoAccept, supportsClientMcpServers, usesPerCallContextOccupancy } from "./acp-backend";
+import { usesAdapterHistory, isInternalProvider, INTERNAL_PROVIDERS, supportsSessionDeletion, supportsHistoryDeletion, supportsModeSwitching, supportsAutoAccept, supportsClientMcpServers, usesPerCallContextOccupancy, supportsFork } from "./acp-backend";
 import { CODEX_ACP_ADAPTER_VERSION, CodexBackend, isCodexCredentialError } from "./codex-backend";
 import { locateCodexCli, resolveCodexHome } from "./codex-cli-locator";
 import { foldersWithRecentSends } from "./project-init";
@@ -4020,6 +4020,21 @@ See design doc for the full state machine diagram.`;
     }
   }
 
+  /**
+   * A remembered Auto accept starts a new Codex chat in full access, the same
+   * switch the live picker makes. Without it the badge said Auto accept while
+   * Codex ran in its sandbox with no network until the picker was touched.
+   * If Codex refuses, the gate goes off too, so the badge says Agent.
+   * Claude is not switched here: its Auto accept answers each request once.
+   */
+  private async startCodexFullAccess(session: Session, client: AcpClient): Promise<void> {
+    try { await client.setMode("agent-full-access"); }
+    catch {
+      session.autoApprove = false;
+      this.postMode(session);
+    }
+  }
+
   private postMode(session: Session = this.focused): void {
     const message = sessionModeMessage(session, this.displayMode(session));
     if (session === this.focused) this.view?.webview.postMessage(message);
@@ -5393,6 +5408,17 @@ Only continue if you trust this code.`,
   private async forkFocusedSession(session: Session = this.focused, requester?: RemoteRequester): Promise<void> {
     if (!session.client || !session.activeSessionId) {
       this.reportRequester(requester, "warning", "Start a session before forking it.");
+      return;
+    }
+    // Pages from before 4.15.10 offer the fork on every agent, and only Grok's
+    // CLI has one; without this the call fails and tells a Claude user to
+    // update Grok.
+    if (!supportsFork(session.provider)) {
+      this.reportRequester(
+        requester,
+        "info",
+        `${providerDisplayName(session.provider)} can't continue a conversation in a new chat yet.`,
+      );
       return;
     }
     if (!session.hasHistory) {
@@ -12267,6 +12293,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         const newAt = clock.now();
         await client.newSession(defaultModel || undefined);
         if (nativeAutoStart && gen === session.gen) await this.startNativeAuto(session, client);
+        if (rememberedYolo && session.provider === "codex" && gen === session.gen) await this.startCodexFullAccess(session, client);
         clock.record("new", clock.elapsed(newAt));
         clock.record("load", 0);
         clock.record("replay(post)", 0);

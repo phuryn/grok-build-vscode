@@ -76,10 +76,13 @@ type AutoAcceptOption = {
 };
 
 /**
- * The allow Auto accept may send. Grok, Codex and Claude prefer `allow_always`.
+ * The allow Auto accept may send. Grok and Codex prefer `allow_always`.
  * Muse must not: `allow_always` is a permanent config grant, and a session-scoped
  * choice is advertised as `allow_once`, so kind alone would outlive Agent.
  * Antigravity's `allow_always` is likewise saved with the conversation.
+ * Claude's `allow_always` writes a "don't ask again" rule into the project's
+ * `.claude/settings.local.json`, which outlives Auto accept and also applies to
+ * Claude Code in a terminal, so Claude answers once too.
  */
 export function pickAutoAcceptOption<T extends AutoAcceptOption>(
   options: readonly T[],
@@ -92,7 +95,9 @@ export function pickAutoAcceptOption<T extends AutoAcceptOption>(
   if (provider === "muse") {
     return usable.find((option) => option.kind === "allow_once" && option._meta?.scope === "once");
   }
-  if (provider === "agy" || provider === "deepseek") return usable.find((option) => option.kind === "allow_once");
+  if (provider === "agy" || provider === "deepseek" || provider === "claude") {
+    return usable.find((option) => option.kind === "allow_once");
+  }
   return usable.find((option) => option.kind === "allow_always")
     ?? usable.find((option) => option.kind === "allow_once");
 }

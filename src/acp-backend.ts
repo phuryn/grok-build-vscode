@@ -21,13 +21,15 @@ const PROVIDER_ACTIONS: Record<AcpProvider, {
   autoAccept: boolean;
   perCallContext: boolean;
   clientMcp: boolean;
+  /** Forks a conversation (`_x.ai/session/fork`, Grok's CLI only). */
+  fork: boolean;
 }> = {
-  grok: { deleteHistory: true, compact: true, adapterHistory: false, modeSwitching: true, approvalModeSwitching: false, autoAccept: true, perCallContext: false, clientMcp: true },
-  codex: { deleteHistory: true, compact: true, adapterHistory: true, modeSwitching: true, approvalModeSwitching: false, autoAccept: true, perCallContext: true, clientMcp: true },
-  claude: { deleteHistory: true, compact: true, adapterHistory: true, modeSwitching: true, approvalModeSwitching: false, autoAccept: true, perCallContext: true, clientMcp: true },
-  muse: { deleteHistory: false, compact: false, adapterHistory: true, modeSwitching: false, approvalModeSwitching: true, autoAccept: true, perCallContext: false, clientMcp: false },
-  agy: { deleteHistory: false, compact: false, adapterHistory: true, modeSwitching: false, approvalModeSwitching: false, autoAccept: true, perCallContext: false, clientMcp: false },
-  deepseek: { deleteHistory: false, compact: false, adapterHistory: true, modeSwitching: false, approvalModeSwitching: false, autoAccept: true, perCallContext: false, clientMcp: false },
+  grok: { deleteHistory: true, compact: true, adapterHistory: false, modeSwitching: true, approvalModeSwitching: false, autoAccept: true, perCallContext: false, clientMcp: true, fork: true },
+  codex: { deleteHistory: true, compact: true, adapterHistory: true, modeSwitching: true, approvalModeSwitching: false, autoAccept: true, perCallContext: true, clientMcp: true, fork: false },
+  claude: { deleteHistory: true, compact: true, adapterHistory: true, modeSwitching: true, approvalModeSwitching: false, autoAccept: true, perCallContext: true, clientMcp: true, fork: false },
+  muse: { deleteHistory: false, compact: false, adapterHistory: true, modeSwitching: false, approvalModeSwitching: true, autoAccept: true, perCallContext: false, clientMcp: false, fork: false },
+  agy: { deleteHistory: false, compact: false, adapterHistory: true, modeSwitching: false, approvalModeSwitching: false, autoAccept: true, perCallContext: false, clientMcp: false, fork: false },
+  deepseek: { deleteHistory: false, compact: false, adapterHistory: true, modeSwitching: false, approvalModeSwitching: false, autoAccept: true, perCallContext: false, clientMcp: false, fork: false },
 };
 
 /**
@@ -68,6 +70,10 @@ export function supportsModeSwitching(provider: AcpProvider): boolean {
 
 export function supportsAutoAccept(provider: AcpProvider): boolean {
   return actionsFor(provider).autoAccept;
+}
+
+export function supportsFork(provider: AcpProvider): boolean {
+  return actionsFor(provider).fork;
 }
 
 export function supportsApprovalModeSwitching(provider: AcpProvider): boolean {

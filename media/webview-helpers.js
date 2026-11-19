@@ -1,12 +1,14 @@
 (function (root) {
   // Kept set-equal to INTERNAL_PROVIDERS by provider-enumerations.test.ts.
   const PROVIDER_ACTIONS = {
-    grok: { label: "Grok", deleteHistory: true, compact: true, clientMcp: true },
-    codex: { label: "Codex", deleteHistory: true, compact: true, clientMcp: true },
-    claude: { label: "Claude", deleteHistory: true, compact: true, clientMcp: true },
-    muse: { label: "Muse Code", deleteHistory: false, compact: false, clientMcp: false },
-    agy: { label: "Antigravity", deleteHistory: false, compact: false, clientMcp: false },
-    deepseek: { label: "DeepSeek", deleteHistory: false, compact: false, clientMcp: false },
+    // `fork`: "Continue in a new chat" has something that works. Only Grok's
+    // CLI forks a conversation, and its worktree destination is Grok's too.
+    grok: { label: "Grok", deleteHistory: true, compact: true, clientMcp: true, fork: true },
+    codex: { label: "Codex", deleteHistory: true, compact: true, clientMcp: true, fork: false },
+    claude: { label: "Claude", deleteHistory: true, compact: true, clientMcp: true, fork: false },
+    muse: { label: "Muse Code", deleteHistory: false, compact: false, clientMcp: false, fork: false },
+    agy: { label: "Antigravity", deleteHistory: false, compact: false, clientMcp: false, fork: false },
+    deepseek: { label: "DeepSeek", deleteHistory: false, compact: false, clientMcp: false, fork: false },
   };
   function providerSupports(provider, action) {
     return Object.hasOwn(PROVIDER_ACTIONS, provider || "grok")

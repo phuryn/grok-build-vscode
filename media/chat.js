@@ -4291,8 +4291,12 @@
   /**
    * Destinations under "Continue in a new chat".
    * Knowledge work / unsupported worktrees / already-in-worktree → workspace only.
+   * An agent that cannot fork gets none: both destinations are Grok's (its CLI
+   * forks, and creates the worktree), so offering either on another agent was a
+   * click that did nothing and then told the person to update Grok.
    */
   function continueChatDestinations() {
+    if (!globalThis.GrokWebviewHelpers.providerSupports(state.activeProvider, "fork")) return [];
     const dests = [
       {
         id: "workspace",
@@ -4314,11 +4318,16 @@
     return dests;
   }
 
-  /** One destination → go straight there; several → destination picker. */
+  /** One destination → go straight there; several → destination picker;
+   *  none → nothing, never a fork the agent cannot do. */
   function beginContinueInNewChat(sessionId) {
     const dests = continueChatDestinations();
-    if (dests.length <= 1) {
-      runContinueDestination(dests[0] ? dests[0].id : "workspace", sessionId);
+    if (!dests.length) {
+      closePopovers();
+      return;
+    }
+    if (dests.length === 1) {
+      runContinueDestination(dests[0].id, sessionId);
       return;
     }
     renderContinueDestinationPicker(dests, sessionId);
@@ -8967,14 +8976,16 @@
     if (!menuSlot) return;
     menuSlot.innerHTML = "";
     if (!state.activeSessionId) return;
+    // Built when the menu opens, so it follows the agent of the conversation
+    // on screen rather than the one at the last repaint.
     menuSlot.appendChild(railMenuButton(
       "Session actions",
-      [
-        {
+      () => [
+        ...(continueChatDestinations().length ? [{
           label: "Continue in a new chat",
           icon: ICON.gitFork,
           onSelect: () => beginContinueInNewChat(state.activeSessionId),
-        },
+        }] : []),
         {
           label: "Export conversation as Markdown",
           icon: ICON.download,
@@ -9717,7 +9728,7 @@
       const waiting = pending
         ? { disabled: true, title: "Available once the conversation has finished opening" }
         : null;
-      items.push({
+      if (continueChatDestinations().length) items.push({
         label: "Continue in a new chat",
         icon: ICON.gitFork,
         ...waiting,

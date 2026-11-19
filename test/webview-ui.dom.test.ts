@@ -2798,6 +2798,26 @@ describe("VS Code session overflow + gear worktree gating", () => {
     expect(has(doc, "Remove worktree")).toBe(true);
   });
 
+  // Only Grok's CLI forks, and the worktree destination is Grok's too: on any
+  // other agent the item did nothing and then said to update Grok.
+  it.each(["claude", "codex"])("offers no Continue in a new chat on %s", (provider) => {
+    const { window, doc, posted } = bootWebview({ vscode: true });
+    dispatch(window, { type: "session", sessionId: "s1", provider, models: [], currentModelId: "m" });
+    dispatch(window, { type: "sessionName", sessionId: "s1", name: "Session one", cwd: "/work/repo" });
+    const labels = openOverflow(window, doc);
+    expect(labels.some((text) => text.includes("Continue in a new chat"))).toBe(false);
+    expect(labels.some((text) => text.includes("Export conversation as Markdown"))).toBe(true);
+    expect(posted.some((message) => message.type === "forkSession")).toBe(false);
+  });
+
+  it("follows the agent of the conversation when the menu opens", () => {
+    const { window, doc } = bootWebview({ vscode: true });
+    dispatch(window, { type: "session", sessionId: "s1", provider: "claude", models: [], currentModelId: "m" });
+    dispatch(window, { type: "sessionName", sessionId: "s1", name: "Session one", cwd: "/work/repo" });
+    dispatch(window, { type: "session", sessionId: "s1", provider: "grok", models: [], currentModelId: "grok-build" });
+    expect(openOverflow(window, doc).some((text) => text.includes("Continue in a new chat"))).toBe(true);
+  });
+
   it("never shows gear Rewind — rewind is per-message only", () => {
     const { window, doc } = bootWebview({ vscode: true });
     dispatch(window, { type: "session", sessionId: "s1", models: [], currentModelId: "grok-build" });
