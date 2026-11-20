@@ -144,8 +144,8 @@ export function matchSlashCommand(text: string, commandNames: string[]): string 
   return commandNames.includes(m[1]) ? m[1] : null;
 }
 
-export function matchProviderSlashCommand(provider: AcpProvider, text: string, commandNames: string[]): string | null {
+export function matchProviderSlashCommand(provider: AcpProvider, text: string, commandNames: string[], nativeCompact = false): string | null {
   const command = matchSlashCommand(text, commandNames);
   if (provider === "muse" && command === "compact" && !commandNames.includes(command)) return null;
-  return command === "compact" && !supportsCompaction(provider) ? null : command;
+  return command === "compact" && !supportsCompaction(provider) && !(nativeCompact && commandNames.includes(command)) ? null : command;
 }

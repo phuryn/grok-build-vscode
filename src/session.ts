@@ -697,6 +697,7 @@ export function finishQueuedSendCommit(
 
 /** The same choices and restrictions feed live UI updates and reconnects. */
 export function sessionPickerModes(session: Session) {
+  if (session.client?.pickerModes) return [...session.client.pickerModes];
   if (session.provider === "deepseek" && session.deepseekHarness === "minimal") return [];
   return sessionModes(session.provider, !!session.museSandboxUnavailable, session.client?.nativeApprovalModes);
 }

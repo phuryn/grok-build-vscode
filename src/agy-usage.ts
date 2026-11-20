@@ -1,121 +1,218 @@
-import { createHash } from "node:crypto";
-import { readFileSync, statSync } from "node:fs";
+import { randomUUID, createHash } from "node:crypto";
+import * as fs from "node:fs";
 import * as path from "node:path";
+import { AcpClient } from "./acp";
+import { AgyBackend, agyAcpDir, agySessionPathKey } from "./agy-backend";
 import type { SubscriptionWindow } from "./subscription-usage";
 
-const PERSONAL_QUOTA_HOSTS = ["daily-cloudcode-pa.googleapis.com", "cloudcode-pa.googleapis.com"];
-const USER_AGENT = "AFK-Pilot";
-
-interface GoogleCredential {
-  client_id: string;
-  client_secret: string;
-  refresh_token: string;
-  project_id?: string;
+export function agyMeterDirectory(profile: string): string {
+  return path.join(profile, "afk-pilot-meter");
 }
 
-function readGoogleCredential(profile: string, methodId: string | undefined): GoogleCredential | undefined {
-  if (methodId !== "oauth-personal" && methodId !== "oauth-business") return;
+/** Memory-only identity for the managed sign-in. A refreshed access token leaves it unchanged. */
+export function agyUsageCredentialContext(profile: string, methodId: string | undefined): string | undefined {
+  if (methodId !== undefined && methodId !== "oauth-personal") return;
   try {
     const file = path.join(profile, "acp_token.json");
-    const stat = statSync(file);
+    const stat = fs.statSync(file);
     if (!stat.isFile() || stat.size > 16_384) return;
-    const credential = JSON.parse(readFileSync(file, "utf8"));
-    const { client_id, client_secret, refresh_token, project_id } = credential;
-    if (typeof client_id !== "string" || !client_id || typeof client_secret !== "string" || !client_secret
-      || typeof refresh_token !== "string" || !refresh_token) return;
-    return { client_id, client_secret, refresh_token, ...(typeof project_id === "string" && project_id ? { project_id } : {}) };
+    const { client_id, refresh_token, project_id } = JSON.parse(fs.readFileSync(file, "utf8"));
+    if (typeof refresh_token !== "string" || !refresh_token) return;
+    return `agy:${createHash("sha256").update(JSON.stringify([profile, client_id, refresh_token, project_id])).digest("hex")}`;
   } catch { return undefined; }
 }
 
-/** A silent, memory-only cache identity. Refreshing an access token leaves it unchanged. */
-export function agyUsageCredentialContext(profile: string, methodId: string | undefined): string | undefined {
-  const credential = readGoogleCredential(profile, methodId);
-  if (!credential) return;
-  return `agy:${createHash("sha256").update(JSON.stringify([profile, methodId, credential])).digest("hex")}`;
+const QUOTA_GROUPS: Readonly<Record<string, string>> = {
+  "gemini models": "Gemini",
+  "claude and gpt models": "Claude & GPT",
+};
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+function quotaReset(date: string): string | undefined {
+  const match = /^([A-Z][a-z]{2}) (\d{1,2}), (\d{4}), (\d{2}):(\d{2}) UTC$/.exec(date);
+  if (!match) return;
+  const [, month, day, year, hour, minute] = match;
+  const monthIndex = MONTHS.indexOf(month);
+  if (monthIndex < 0 || +year < 100 || +hour > 23 || +minute > 59) return;
+  const reset = new Date(Date.UTC(+year, monthIndex, +day, +hour, +minute));
+  if (reset.getUTCMonth() === monthIndex) return reset.toISOString();
 }
 
-const isRecord = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
-
-function groupLabel(group: unknown, bucketId: string): string | undefined {
-  if (typeof group === "string" && group.trim()) {
-    if (/^gemini models$/i.test(group.trim())) return "Gemini";
-    if (/^claude and gpt models$/i.test(group.trim())) return "Claude & GPT";
-    return group.replace(/\s+/g, " ").trim().slice(0, 80);
-  }
-  if (bucketId.startsWith("gemini-argon-")) return "Gemini Argon";
-  if (bucketId.startsWith("gemini-carbon-")) return "Gemini Carbon";
-  if (bucketId.startsWith("gemini-")) return "Gemini";
-  if (bucketId.startsWith("3p-")) return "Claude & GPT";
-  return undefined;
-}
-
-/** The same grouped quota summary used by the server's /usage command. */
-export function agySubscriptionWindows(raw: unknown, now = Date.now()): SubscriptionWindow[] {
-  if (!isRecord(raw)) return [];
-  const groups = Array.isArray(raw.groups) ? raw.groups.filter(isRecord) : [];
-  const sources = groups.some(group => Array.isArray(group.buckets) && group.buckets.length) ? groups : [raw];
-  const windows = new Map<string, SubscriptionWindow>();
+/** Parse only recognized quota sections and complete, valid window lines. */
+export function agySubscriptionWindows(text: string, now = Date.now()): SubscriptionWindow[] {
+  const result = new Map<string, SubscriptionWindow>();
   const observedAt = new Date(now).toISOString();
-  for (const group of sources) {
-    if (!Array.isArray(group.buckets)) continue;
-    for (const bucket of group.buckets) {
-      if (!isRecord(bucket) || bucket.disabled === true) continue;
-      const bucketId = bucket.bucketId ?? bucket.bucket_id;
-      const remaining = bucket.remainingFraction ?? bucket.remaining_fraction;
-      const window = bucket.window;
-      if (typeof bucketId !== "string" || !bucketId || (window !== "weekly" && window !== "5h")
-        || typeof remaining !== "number" || !Number.isFinite(remaining) || remaining < 0 || remaining > 1) continue;
-      const family = groupLabel(group.displayName ?? group.display_name, bucketId);
-      if (!family) continue;
-      const reset = bucket.resetTime ?? bucket.reset_time;
-      const resetTime = typeof reset === "string" ? Date.parse(reset) : NaN;
-      const periodType = `${bucketId}_${window}`;
-      windows.set(periodType, {
-        usedPercent: 100 - remaining * 100,
-        label: `${family} · ${window === "weekly" ? "Weekly" : "5-hour"}`,
-        periodType,
-        ...(Number.isFinite(resetTime) ? { periodEnd: new Date(resetTime).toISOString() } : {}),
-        observedAt,
-      });
+  let inQuota = false;
+  let family: string | undefined;
+  for (const line of text.split(/\r?\n/)) {
+    if (/^\s*#{1,6}\s/.test(line)) {
+      inQuota = /^\s*#{1,6}\s+Quota Limits\s*$/i.test(line);
+      family = undefined;
+    } else if (inQuota && /^[-*]\s/.test(line)) {
+      const heading = /^[-*]\s+\*\*(.+?)\*\*\s*$/.exec(line)?.[1];
+      family = heading && Object.hasOwn(QUOTA_GROUPS, heading.toLowerCase()) ? QUOTA_GROUPS[heading.toLowerCase()] : undefined;
+    } else if (inQuota && family) {
+      const match = /^\s+[-*]\s+\*\*(Weekly|Five Hour) Limit Remaining:\*\*\s+(\d+(?:\.\d+)?)% remaining \(resets ([^)]+)\)\s*$/i.exec(line);
+      if (!match || +match[2] > 100) continue;
+      const periodEnd = quotaReset(match[3]);
+      if (!periodEnd) continue;
+      const weekly = match[1].toLowerCase() === "weekly";
+      const periodType = `${family === "Gemini" ? "gemini" : "claude-gpt"}_${weekly ? "weekly" : "5h"}`;
+      result.set(periodType, { periodType, label: `${family} · ${weekly ? "Weekly" : "5-hour"}`,
+        usedPercent: 100 - +match[2], periodEnd, observedAt });
     }
   }
-  return [...windows.values()];
+  return [...result.values()];
 }
 
-/** Read-only and best-effort. The host's subscription cache owns scheduling and invalidation. */
-export async function readAgySubscriptionUsage(
-  profile: string,
-  methodId: string | undefined,
-  request: typeof fetch = fetch,
-): Promise<SubscriptionWindow[]> {
-  const credential = readGoogleCredential(profile, methodId);
-  if (!credential) return [];
-  const { project_id, ...refresh } = credential;
-  const options = { method: "POST", redirect: "error", signal: AbortSignal.timeout(10_000) } as const;
-  let accessToken: string;
-  try {
-    const response = await request("https://oauth2.googleapis.com/token", {
-      ...options, headers: { "User-Agent": USER_AGENT },
-      body: new URLSearchParams({ ...refresh, grant_type: "refresh_token" }),
-    });
-    if (!response.ok) return [];
-    const body: unknown = await response.json();
-    const token = isRecord(body) ? body.access_token : undefined;
-    if (typeof token !== "string" || !token) return [];
-    accessToken = token;
-  } catch { return []; }
-  const hosts = methodId === "oauth-business" ? [...PERSONAL_QUOTA_HOSTS].reverse() : PERSONAL_QUOTA_HOSTS;
-  for (const host of hosts) {
-    try {
-      const response = await request(`https://${host}/v1internal:retrieveUserQuotaSummary`, {
-        ...options,
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}`, "User-Agent": USER_AGENT },
-        body: JSON.stringify(project_id ? { project: project_id } : {}),
-      });
-      if (!response.ok) continue;
-      const windows = agySubscriptionWindows(await response.json());
-      if (windows.length) return windows;
-    } catch { /* Try the other quota host before leaving the meter empty. */ }
+function usableId(id: unknown): id is string {
+  return typeof id === "string" && /^[a-zA-Z0-9_-]{1,128}$/.test(id);
+}
+
+function missing(file: string): boolean {
+  try { fs.statSync(file); return false; }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return true; throw error; }
+}
+
+export class AgyUsageMeter {
+  private readonly profile: string;
+  private readonly cwd: string;
+  private readonly conversations: string;
+  private client?: AcpClient;
+  private clientIdentity?: string;
+  private idle?: ReturnType<typeof setTimeout>;
+  private reading?: Promise<SubscriptionWindow[]>;
+
+  constructor(
+    private readonly binary: string,
+    private readonly env: NodeJS.ProcessEnv,
+    private readonly signal?: AbortSignal,
+    private readonly settleMs = 1_500,
+  ) {
+    this.profile = path.resolve(agyAcpDir(env));
+    this.cwd = agyMeterDirectory(this.profile);
+    this.conversations = path.join(this.profile, "conversations");
   }
-  return [];
+
+  credentialContext(methodId?: string): string | undefined {
+    return agyUsageCredentialContext(this.profile, methodId);
+  }
+
+  read(methodId?: string): Promise<SubscriptionWindow[]> {
+    const identity = this.credentialContext(methodId);
+    if (!identity || this.signal?.aborted) return Promise.resolve([]);
+    return this.reading ??= this.refresh(identity).catch(async () => {
+      await this.dispose();
+      return [];
+    }).finally(() => { this.reading = undefined; });
+  }
+
+  async dispose(): Promise<void> {
+    clearTimeout(this.idle);
+    const client = this.client;
+    this.client = undefined;
+    this.clientIdentity = undefined;
+    await client?.dispose();
+  }
+
+  private async connection(identity: string): Promise<AcpClient> {
+    if (this.client && this.clientIdentity === identity) return this.client;
+    await this.dispose();
+    this.signal?.throwIfAborted();
+    const client = new AcpClient({
+      cliPath: this.binary, cwd: this.cwd, env: { ...this.env, GEMINI_HOME: path.dirname(this.profile) }, signal: this.signal,
+      backend: new AgyBackend(),
+      refuseServerRequests: true, log: () => {},
+      timeouts: { requestTimeoutMs: 30_000, promptIdleTimeoutMs: 10_000, promptAbsoluteTimeoutMs: 15_000 },
+    });
+    this.client = client;
+    this.clientIdentity = identity;
+    client.once("exit", () => { if (this.client === client) void this.dispose(); });
+    await client.start();
+    if (this.credentialContext() !== identity) throw new Error("Meter sign-in changed");
+    await client.authenticate("oauth-personal", 30_000);
+    return client;
+  }
+
+  private remembered(file: string): string | undefined {
+    if (missing(file)) return;
+    const { sessionId } = JSON.parse(fs.readFileSync(file, "utf8"));
+    if (!usableId(sessionId)) throw new Error("Invalid meter session id");
+    return sessionId;
+  }
+
+  private remember(file: string, sessionId: string): void {
+    const tmp = `${file}.${randomUUID()}.tmp`;
+    try {
+      fs.writeFileSync(tmp, JSON.stringify({ sessionId }), { flag: "wx", flush: true });
+      fs.renameSync(tmp, file);
+    } finally { fs.rmSync(tmp, { force: true }); }
+  }
+
+  private ownsSession(id: string): boolean {
+    const { cwd } = JSON.parse(fs.readFileSync(path.join(this.conversations, `${id}.meta`), "utf8"));
+    return typeof cwd === "string" && agySessionPathKey(cwd, process.platform) === agySessionPathKey(this.cwd, process.platform);
+  }
+
+  /** A create with a lost reply is recovered by its dedicated cwd. */
+  private recoverSession(): string | undefined {
+    if (missing(this.conversations)) return;
+    const matches = fs.readdirSync(this.conversations).flatMap(name => {
+      const id = name.endsWith(".meta") ? name.slice(0, -5) : undefined;
+      if (!usableId(id) || missing(path.join(this.conversations, `${id}.db`))) return [];
+      try {
+        if (this.ownsSession(id)) return [id];
+      } catch { /* a missing or unreadable sidecar cannot identify this conversation */ }
+      return [];
+    });
+    if (matches.length > 1) throw new Error("Multiple meter conversations share the meter directory");
+    return matches[0];
+  }
+
+  private async refresh(identity: string): Promise<SubscriptionWindow[]> {
+    clearTimeout(this.idle);
+    fs.mkdirSync(this.cwd, { recursive: true });
+    const file = path.join(this.cwd, "session.json");
+    const remembered = this.remembered(file);
+    let id = remembered;
+    const existing = id && !missing(path.join(this.conversations, `${id}.db`));
+    const client = await this.connection(identity);
+    if (this.credentialContext() !== identity) return [];
+    try {
+      if (existing && id) {
+        if (!this.ownsSession(id)) return [];
+        await client.loadSession(id, undefined, true);
+      } else {
+        // Each generation can create only once, even across host processes.
+        // An unresolved create keeps its claim until the vendor's disk row appears.
+        id = this.recoverSession();
+        if (id) {
+          await client.loadSession(id, undefined, true);
+        } else {
+          const claim = path.join(this.cwd, `create-${remembered ?? "first"}`);
+          try { fs.writeFileSync(claim, "", { flag: "wx", flush: true }); }
+          catch (error) { if ((error as NodeJS.ErrnoException).code === "EEXIST") return []; throw error; }
+          // A concurrent recovery may have published the next generation.
+          if (this.remembered(file) !== remembered) return [];
+          ({ sessionId: id } = await client.newSession());
+          if (!usableId(id)) throw new Error("Invalid meter session id");
+        }
+      }
+      let text = "";
+      const collect = (chunk: string) => { if (text.length + chunk.length <= 65_536) text += chunk; };
+      client.on("messageChunk", collect);
+      try {
+        await client.prompt("/usage");
+        // 1.5.2 was measured with this collection interval after the response.
+        await new Promise<void>(resolve => setTimeout(resolve, this.settleMs));
+      } finally { client.off("messageChunk", collect); }
+      if (id !== remembered && !missing(path.join(this.conversations, `${id}.db`))) this.remember(file, id);
+      return this.credentialContext() === identity ? agySubscriptionWindows(text) : [];
+    } finally {
+      if (this.client === client && !this.signal?.aborted) {
+        this.idle = setTimeout(() => void this.dispose(), 5 * 60_000);
+        this.idle.unref();
+      }
+    }
+  }
 }

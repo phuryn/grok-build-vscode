@@ -4,6 +4,9 @@
  * These tests drive the real handleSend / startSession pair.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as fs from "node:fs";
+import { tmpdir } from "node:os";
+import * as path from "node:path";
 import { RemoteClientState } from "../src/remote-client-state";
 import {
   INTERRUPTED_SEND_TEXT,
@@ -34,8 +37,9 @@ vi.mock("../src/acp", async (importOriginal) => {
     fsRead?: unknown;
     fsWrite?: unknown;
     terminal?: unknown;
-    constructor(_opts: { log: (msg: string) => void }) {
+    constructor(opts: ConstructorParameters<typeof actual.AcpClient>[0]) {
       super();
+      if (/fake-agy-(cli|acp)\.cjs$/.test(opts.cliPath)) return new actual.AcpClient(opts) as any;
     }
     async start(): Promise<void> {
       promptControl.starts += 1;
@@ -395,5 +399,54 @@ describe("send vs concurrent startSession", () => {
     await sidebar.maybeFlushQueuedSends(sidebar.focused);
     expect(sidebar.focused.queuedSends).toEqual([]);
     expect(sidebar.posted.filter((m: HostMsg) => m.type === "userMessage").map((m: any) => m.text)).toEqual(["first", "held"]);
+  });
+
+  it.each([false, true])("selects Antigravity once before admitting a turn (broken CLI: %s)", async broken => {
+    const cwd = fs.mkdtempSync(path.join(tmpdir(), "agy-host-start-"));
+    const sidebar = makeSidebar(cwd);
+    const sink = path.join(cwd, "cli.jsonl");
+    fs.writeFileSync(sink, "");
+    fs.mkdirSync(path.join(cwd, "antigravity-acp"));
+    fs.writeFileSync(path.join(cwd, "antigravity-acp", "acp_token.json"), "{}");
+    vi.stubEnv("GEMINI_HOME", cwd);
+    vi.stubEnv("FAKE_AGY_CLI_SINK", sink);
+    vi.stubEnv("FAKE_AGY_CLI_BROKEN", broken ? "1" : "0");
+    vi.stubEnv("FAKE_AGY_152", "1");
+    sidebar.focused.provider = "agy";
+    sidebar.providerConnectionState = { agy: true };
+    sidebar.connectedProviders = () => ["agy"];
+    sidebar.usableProviders = () => ["agy"];
+    sidebar.installedAgyCli = () => path.join(__dirname, "fixtures", "fake-agy-cli.cjs");
+    sidebar.locateProvider = () => path.join(__dirname, "fixtures", "fake-agy-acp.cjs");
+    const prompts = () => fs.readFileSync(sink, "utf8").trim().split(/\r?\n/).filter(Boolean)
+      .map(line => JSON.parse(line)).filter(row => row.method === "session/prompt").map(row => row.params.prompt[0].text);
+    try {
+      const client = await sidebar.startSession(undefined, sidebar.focused);
+      expect(client?.sessionId).toBeTruthy();
+      expect(client.supportsInterject()).toBe(!broken);
+      if (broken) {
+        expect(client.nativeApprovalModes).toBe(true);
+        expect(client.pickerModes).toBeUndefined();
+        return;
+      }
+      delete sidebar.maybeFlushQueuedSends;
+      const first = sidebar.handleSend("first");
+      await vi.waitFor(() => expect(prompts()).toEqual(["first"]));
+      const steer = sidebar.steerSend("steer", sidebar.focused);
+      await vi.waitFor(() => expect(sidebar.posted.some((m: any) => m.type === "messageChunk" && m.text === "steering pending")).toBe(true));
+      await sidebar.handleSend("held");
+      expect(sidebar.focused.queuedSends).toEqual([{ text: "held", chips: [] }]);
+      expect(prompts()).toEqual(["first", "steer"]);
+      await client.cancel(); // releases the fake CLI's final response
+      await Promise.all([first, steer]);
+      await vi.waitFor(() => expect(prompts()).toEqual(["first", "steer", "held"]));
+      await sidebar.maybeFlushQueuedSends(sidebar.focused);
+      expect(prompts()).toEqual(["first", "steer", "held"]);
+      expect(sidebar.posted.filter((m: any) => m.type === "userMessage").map((m: any) => m.text)).toEqual(["first", "steer", "held"]);
+    } finally {
+      await sidebar.focused.client?.dispose();
+      vi.unstubAllEnvs();
+      fs.rmSync(cwd, { recursive: true, force: true });
+    }
   });
 });
