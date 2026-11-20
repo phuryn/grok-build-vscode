@@ -216,6 +216,8 @@ export class MuseSession {
       });
       this.methods = await methods;
       this.projection.forkIds = this.capabilities().fork;
+      this.projection.stopWorkflows = this.methods.has("workflow/cancel");
+      this.projection.stopSubagents = this.methods.has("subagent/stop");
     } finally { clearTimeout(timeout); }
   }
 
@@ -609,6 +611,23 @@ export class MuseSession {
       this.forkLeave = undefined;
     }
     return { sessionId: fork.sessionId };
+  }
+
+  async stopDelegatedWork(sessionId: string, kind: "workflow" | "subagent", id: string): Promise<{ stopped: boolean }> {
+    this.assertSession(sessionId);
+    const target = this.projection.stopTarget(kind, id);
+    if (!target) return { stopped: false };
+    try {
+      const result = kind === "workflow"
+        ? await this.connection().command("workflow/cancel", { sessionId, workflowRunId: target })
+        : await this.connection().command("subagent/stop", { sessionId, subagentId: target });
+      return { stopped: result.status === "accepted" };
+    } catch (error) {
+      if (error instanceof MspError && (error.kind === "commandRejected" || error.kind === "notFound")) {
+        return { stopped: false };
+      }
+      throw error;
+    }
   }
 
   async cancel(sessionId: string): Promise<void> {

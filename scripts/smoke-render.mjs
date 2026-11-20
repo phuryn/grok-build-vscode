@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { execFileSync } from "node:child_process";
 import { bounded, timeoutMs, selectSmokeModel, selectSmokeEffort, desktopSmokeCatalog, smokeScenario, SUBAGENT_PROMPT, WORKFLOW_PROMPT, GROK_WORKFLOW_PROMPT, delegationAttempted } from "./acp-smoke.mjs";
+import { STOP_SCENARIOS } from "./acp-smoke.mjs";
 import { knownBoundaries, classifyBoundaries, readRenderedChat, assertRenderedScenario, renderReportMarkdown, completeRenderScenarios, cardResultEvidence, smokeOutcome } from "./smoke-render-report.mjs";
 import { desktopLaunch, parseTrace, desktopFacts, promptCompletion, modelRowIndex, deliveryChunk } from "./smoke-page-driver.mjs";
 import { cleanupBudget, closeDesktop } from "./smoke-cleanup.mjs";
@@ -26,6 +27,7 @@ async function waitFor(read, label, ms) {
 /** Existing live commands call this after their protocol checks. It spends credits. */
 export async function runRenderSmoke(provider, evidenceParent, cliOverride, selectedScenario) {
   assert(["grok", "codex", "claude", "muse"].includes(provider), "unknown render provider");
+  assert(!STOP_SCENARIOS.includes(selectedScenario) || ["claude", "muse"].includes(provider), "card Stop requires --provider=claude or --provider=muse");
   for (const key of Object.keys(process.env)) assert(!/^GROK_TEST_.*(?:ADAPTER|CLI).*PATH$/.test(key) || !process.env[key], `refusing fixture override ${key}`);
   const { _electron: electron } = await import("playwright");
   const output = path.join(evidenceParent, `${provider}-render`);
@@ -203,7 +205,65 @@ export async function runRenderSmoke(provider, evidenceParent, cliOverride, sele
     const send = async text => { await page.locator("#input").fill(text); await page.locator("#send-btn:not(.stop):not([disabled])").click({ timeout: rpcMs }); };
     const endTurn = (name, from, client) => waitPage(() => promptCompletion(readEvents(), from, client.clientId, client.sessionId), `${provider} ${name} prompt completion`, turnMs);
 
-    for (const name of ["plain reply", "subagent", "workflow"]) {
+    const stopCard = async (scenario, from, client) => {
+      const kind = scenario.name.slice("stop ".length);
+      const marker = "parent-finished-after-stop";
+      const draft = "Keep this draft while the child stops.";
+      const launch = kind === "workflow" ? "launch one actual background workflow with a single worker"
+        : "launch one actual background subagent with your native subagent tool";
+      await send(`To exercise a card control, ${launch}. Ask the worker to use a local shell command to wait for 45 seconds before replying. Keep doing independent work: run a separate local shell wait for 15 seconds after launching it, then reply with exactly ${marker}. Do not wait for the child, launch other children, or stop anything yourself.`);
+      // Claude's parent keeps its turn while background work runs, so Stop must land mid-turn.
+      // A Muse parent may end its turn at launch, and its workflow (and the agent's card) can
+      // appear after that: the work outlives the turn, and Stop after the turn is the ordinary
+      // Muse case. Everything below the click holds for both.
+      const parentKeepsTurn = provider === "claude";
+      await page.locator("#input").fill(draft);
+      const selector = kind === "workflow" ? ".workflow-pin-run, #messages .workflow-card:not(.workflow-trace)" : "#messages .subagent-card";
+      const card = page.locator(selector).filter({ has: page.locator(".delegated-stop") });
+      await waitPage(async () => {
+        const count = await card.count();
+        assert(count <= 1, "more than one stoppable card was launched");
+        if (count) return true;
+        const events = readEvents();
+        if (promptCompletion(events, from, client.clientId, client.sessionId)) {
+          const frames = events.slice(from).filter(e => e.direction === "receive" && e.clientId === client.clientId)
+            .map(e => ({ raw: e.message.params?.update }));
+          if (!delegationAttempted(frames, kind)) {
+            throw Object.assign(new Error(`model did not launch a native ${kind}`), { code: "NOT_OBSERVED" });
+          }
+          if (parentKeepsTurn) assert.fail("parent completed without a stoppable card");
+        }
+        return false;
+      }, "host-advertised card Stop", workflowMs);
+      if (kind === "workflow") await card.locator(".delegation-header[aria-expanded=false]").click({ timeout: rpcMs });
+      assert.deepEqual(await card.locator(".run-progress-btn").allTextContents(), ["Stop"]);
+      const runId = kind === "workflow" ? await card.getAttribute("data-run-id") : undefined;
+      const subagent = kind === "subagent" ? await card.elementHandle() : undefined;
+      if (parentKeepsTurn) assert(!promptCompletion(readEvents(), from, client.clientId, client.sessionId), "parent completed before pressing Stop");
+      await card.getByRole("button", { name: "Stop", exact: true }).click({ timeout: rpcMs });
+      await waitPage(async () => subagent
+        ? subagent.evaluate(el => el.matches(".subagent-done.subagent-cancelled") && el.querySelector(".subagent-status").textContent === "stopped")
+        : (await snapshot()).cards.some(c => c.kind === "workflow" && c.id === runId && c.terminal && c.header.status === "stopped"),
+        "stopped card after native lifecycle update", workflowMs);
+      const completed = await endTurn(scenario.name, from, client);
+      const events = readEvents();
+      const method = provider === "claude" ? "_session/async_task/stop" : "_muse/stop_delegated_work";
+      const outgoing = events.slice(from).filter(e => e.direction === "send" && e.clientId === client.clientId);
+      const sent = outgoing.filter(e => e.message.method === method);
+      assert.equal(sent.length, 1, "expected one native stop request");
+      assert.equal(sent[0].message.params.sessionId, client.sessionId);
+      assert.equal(outgoing.filter(e => e.message.method === "session/prompt").length, 1, "child Stop sent another prompt");
+      assert(!outgoing.some(e => e.message.method === "session/cancel"), "child Stop cancelled the parent session");
+      const promptReply = events.findIndex(e => e.direction === "receive" && e.clientId === client.clientId
+        && e.message.id === completed.message.id && !e.message.method);
+      if (parentKeepsTurn) assert(events.indexOf(sent[0]) < promptReply, "stop request arrived after the parent prompt settled");
+      assert.equal(await page.locator("#input").inputValue(), draft, "child Stop changed the typed draft");
+      assert.equal(await page.locator(".delegated-stop").count(), 0, "stopped card retained its Stop button");
+      if (parentKeepsTurn) await waitPage(async () => (await snapshot()).finalReply.includes(marker), "the parent continued to its final reply", turnMs);
+    };
+
+    const names = STOP_SCENARIOS.includes(selectedScenario) ? [selectedScenario] : ["plain reply", "subagent", "workflow"];
+    for (const name of names) {
       const scenario = { name, result: "PASS", pageErrors: [] };
       report.scenarios.push(scenario);
       if (selectedScenario && name !== selectedScenario) {
@@ -218,6 +278,12 @@ export async function runRenderSmoke(provider, evidenceParent, cliOverride, sele
         scenario.model = await setup(name, !selectedScenario && name !== "plain reply");
         const client = status(), from = readEvents().length;
         scenario.trace = { from, clientId: client.clientId, sessionId: client.sessionId };
+        if (STOP_SCENARIOS.includes(name)) {
+          await stopCard(scenario, from, client);
+          await capture(scenario);
+          assertRenderedScenario(scenario);
+          continue;
+        }
         await send(name === "plain reply" ? "Do not use tools. Reply with the single word ready." : name === "subagent" ? SUBAGENT_PROMPT : provider === "grok" ? GROK_WORKFLOW_PROMPT : WORKFLOW_PROMPT);
         if (provider === "muse" && name === "workflow") {
           deliveryProbe = { from, clientId: client.clientId, sessionId: client.sessionId };
@@ -256,7 +322,7 @@ export async function runRenderSmoke(provider, evidenceParent, cliOverride, sele
           }
         }
       } catch (error) {
-        Object.assign(scenario, { result: "FAIL", reason: String(error.message), stack: error.stack });
+        Object.assign(scenario, { result: error.code === "NOT_OBSERVED" ? "INCONCLUSIVE" : "FAIL", reason: String(error.message), stack: error.stack });
         failure ??= error;
         await capture(scenario).catch(e => scenario.pageErrors.push(String(e)));
       } finally { save(); }
@@ -324,7 +390,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   assert(provider, "usage: npm run smoke:render -- --provider=grok|codex|claude|muse");
   const parent = path.join(root, ".verification/acp-smoke"); fs.mkdirSync(parent, { recursive: true });
   const output = fs.mkdtempSync(path.join(parent, "render-"));
-  const scenario = smokeScenario(process.argv.slice(2), ["plain reply", "subagent", "workflow"]);
+  const scenario = smokeScenario(process.argv.slice(2), ["plain reply", "subagent", "workflow", ...STOP_SCENARIOS]);
   runRenderSmoke(provider, output, undefined, scenario).catch(error => {
     console.error(error);
     process.exitCode = smokeOutcome([{ result: error.code === "NOT_OBSERVED" ? "INCONCLUSIVE" : "FAIL" }]).exitCode;

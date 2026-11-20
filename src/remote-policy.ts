@@ -363,6 +363,7 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
   uiConfirmAnswer: "propose",
   // Workflow pause/resume/stop is a slash turn (same class as queueSend/steer).
   workflowControl: "propose",
+  stopDelegatedWork: "propose",
   // Donut popover re-fetch — read-only meter, no turn / no mutation.
   refreshContextDetails: "view",
   refreshSubscriptionUsage: "view",
@@ -655,6 +656,7 @@ export const REMOTE_REQUIRES_BOUND_SESSION: Record<WebviewMsg["type"], boolean> 
   editLastMessage: true,
   uiConfirmAnswer: true,
   workflowControl: true,
+  stopDelegatedWork: true,
   refreshContextDetails: true,
   refreshSubscriptionUsage: true,
   pasteImage: true,

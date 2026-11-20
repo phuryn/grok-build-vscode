@@ -68,6 +68,7 @@ node_modules/**
 # Do NOT use `!out/**/*.js` — that also un-ignores out/desktop/** and a later
 # `out/desktop/**` rule does not re-exclude those files under vsce's matcher.
 !out/*.js
+!out/claude-async-task-bridge.mjs
 !out/muse-adapter/*.mjs
 # Desktop Electron app — never ship in the VS Code extension vsix.
 out/desktop/**

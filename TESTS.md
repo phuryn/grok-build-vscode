@@ -509,6 +509,14 @@ posted.
 
 `test/claude-subagent-stream.test.ts` drives the real ACP router and shared card renderer with synthetic live frames and local transcripts read by the bundled Claude SDK. It covers foreground and background activity, nested agents, parent reply and usage isolation, and permission replies from desk and phone. `test/acp.test.ts` and `test/claude-workflows.test.ts` pin the negotiated capabilities. `test/acp-smoke-helpers.test.ts` rejects missing, misplaced and leaked child text. The owner-run `npm run smoke:acp -- --provider=claude --scenario=subagent` uses the small-model default (Haiku when advertised) and reopens on a fresh adapter.
 
+### Delegated work Stop
+
+`test/delegated-stop.test.ts` drives the shipped renderer, sidebar message routing and ACP client with local test data. It covers both card kinds, legacy control compatibility, focus across streaming updates, desk and phone routing, session isolation, duplicate presses, terminal and replay states, and parent prompt and queue preservation. `test/muse-session.test.ts` asserts the native command and scoped ID for each card, capability gating, and terminal state ordering against a fake MSP connection.
+
+`test/claude-task-preload.test.ts` compiles the host into a scratch directory and uses the shipped spawn arguments with the bundled Electron running as Node. The adapter's own AIR module must claim and settle the attributed background task. Missing files, a renamed export and an unsupported version still let the entry run. This suite uses no provider CLI or sign-in.
+
+The operator runs `npm run smoke:acp -- --provider=<claude|muse> --scenario=<stop-workflow|stop-subagent>` for each supported pair. The desktop lane presses the real card button while the original prompt is pending, checks the matching card settles stopped and the typed draft survives, then checks the parent reply and normal prompt completion. A model that never launches the requested kind leaves the scenario inconclusive.
+
 ### `test/media-subagent.dom.test.ts` — generated media + subagent card in a real DOM (10 tests)
 
 - `addGeneratedMedia` renders an image as `<img>` and a video as `<video controls>` from the host's `media` message, wires the Copy-path / Open-in-VS-Code hover actions, replaced by Show-in-folder for both media kinds on a host that advertises it, and falls back to an open-link button for a remote URL

@@ -394,7 +394,7 @@ it.each(["completed", "failed"])("Claude upgrades the receipt in place and finis
     expect(h.doc.querySelectorAll(".workflow-pin .workflow-dot")).toHaveLength(2);
     expect(h.doc.querySelector(".workflow-pin")?.textContent).toContain("two-steps");
     expect(h.doc.querySelector(".workflow-pin")?.textContent).toContain("step-two");
-    expect(h.doc.querySelectorAll(".run-progress-btn")).toHaveLength(0);
+    expect([...h.doc.querySelectorAll(".run-progress-btn")].map(button => button.textContent)).toEqual(["Stop"]);
   }
   s.accept(claudeAsyncWire[5]);
   s.accept({ ...claudeAsyncWire[6], state: terminal, summary: "## Result\n\n**Finished** <script>bad()</script>" });
@@ -403,6 +403,7 @@ it.each(["completed", "failed"])("Claude upgrades the receipt in place and finis
   for (const h of [s.desk, s.phone, s.reopen()]) {
     expect(h.doc.querySelectorAll(".workflow-card")).toHaveLength(1);
     expect(h.doc.querySelector(".workflow-pin")).toBeNull();
+    expect(h.doc.querySelectorAll(".run-progress-btn")).toHaveLength(0);
     expect(h.doc.querySelector(".workflow-report-state")?.textContent).toBe(terminal === "completed" ? "done" : "failed");
     expect(h.doc.querySelectorAll(".workflow-agent")).toHaveLength(2);
     expect(h.doc.querySelector(".workflow-output-body h2")?.textContent).toBe("Result");

@@ -105,6 +105,7 @@
     "queueSend", "dequeueSend", "clearQueuedSends", "steerSend", "turnFeedback", "forkSession", "forkAtReply", "setSteerByDefault", "setPromptNav", "setPinLiveWorkflows", "setExpandDiffCard",
     "setSoundNotifications", "setProcessingSound", "setInputNeededSound", "setReadRepliesAloud", "setSummarizeRepliesAloud", "setVoiceSendPhrase", "setVoiceKeyterms", "setTelemetryEnabled", "setThumbsFeedback", "setDesktopTray", "summarizeSpeech", "requestImageFull", "requestImageOriginal", "composerFocus",
     "newWorktreeSession", "applyWorktree", "removeWorktree", "rewindSession", "editLastMessage", "uiConfirmAnswer", "workflowControl", "refreshContextDetails",
+    "stopDelegatedWork",
     "refreshSubscriptionUsage",
     "remoteSignIn", "remoteSignOut", "unlinkRemoteDevice", "openRemotePortal", "remoteHandoff", "showRemoteHandoff", "setDeskAlerts",
     "openUpdateRelease", "restartToUpdate",

@@ -144,6 +144,8 @@ export interface RunProgressUpdate {
   workflowContent?: { resultSummary: string | null; pauseMessage: string | null };
   /** False for providers whose workflow controls the host cannot drive. */
   controlsAvailable?: boolean;
+  /** Scoped to a single live card and host connection. */
+  stopToken?: string;
   /** Child progress for providers that report a roster without phases. */
   agentProgressDots?: boolean;
   /** A launch receipt, without live progress or a composer pin. */
@@ -360,6 +362,7 @@ function parseWorkflow(u: Record<string, unknown>, sessionUpdate: string): RunPr
     cancelled,
     displayName: u.controlsAvailable === false ? undefined : displayName,
     ...(u.controlsAvailable === false ? { controlsAvailable: false } : {}),
+    ...(!done && !failed && !cancelled && typeof u.stopToken === "string" ? { stopToken: u.stopToken } : {}),
     ...(u.agentProgressDots === true ? { agentProgressDots: true } : {}),
     ...(u.launchOnly === true ? { launchOnly: true } : {}),
     sessionUpdate,

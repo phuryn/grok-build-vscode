@@ -1,6 +1,7 @@
 import type { WorkflowAgent, WorkflowPhase } from "./run-progress";
 
 interface AsyncWorkflow {
+  canStop?: boolean;
   taskType?: string;
   toolCallId?: string;
   status: string;
@@ -77,6 +78,21 @@ export class ClaudeWorkflows {
   private readonly tasks = new Map<string, AsyncWorkflow>();
   private readonly inputs = new Map<string, WorkflowPhase[]>();
 
+  stopTaskId(runId: string): string | undefined {
+    const launch = this.launches.get(runId);
+    if (launch?.run_id !== runId) return;
+    let found: string | undefined;
+    for (const [id, task] of this.tasks) {
+      if (task.taskType === "workflow" && task.canStop && !terminal(task.status)
+          && (!launch.asyncTaskId || launch.asyncTaskId === id)
+          && this.match([id, task.toolCallId]) === launch) {
+        if (found) return;
+        found = id;
+      }
+    }
+    return found;
+  }
+
   toolInput(update: any): void {
     if (update?._meta?.claudeCode?.toolName !== "Workflow" || typeof update.toolCallId !== "string") return;
     const phases = scriptPhases(update.rawInput?.script);
@@ -98,6 +114,7 @@ export class ClaudeWorkflows {
     const output = typeof update.rawOutput === "string" ? update.rawOutput : "";
     const taskId = update._meta?.claudeCode?.toolResponse?.taskId
       ?? /^Workflow launched in background\. Task ID:\s*(\S+)/.exec(output)?.[1];
+    if (typeof taskId === "string" && taskId) launch.asyncTaskId = taskId;
     for (const key of [update.toolCallId, taskId, receipt.run_id]) {
       if (typeof key === "string" && key) this.launches.set(key, launch);
     }
@@ -115,6 +132,11 @@ export class ClaudeWorkflows {
     const launch = this.match(ids);
     const status = /<status>([^<]*)<\/status>/.exec(text)?.[1];
     if (!launch || !status || !terminal(status)) return;
+    const task = ids[0] ? this.tasks.get(ids[0]) : undefined;
+    if (task?.taskType === "workflow" && task.canStop && this.match([ids[0], task.toolCallId]) === launch) {
+      if (!terminal(task.status)) task.status = status;
+      return this.snapshot(launch, task);
+    }
     // Cold replay has receipts only; warm replay already has the richer snapshot.
     if (launch.launchOnly !== false || launch.status === "launched") {
       launch.status = status;
@@ -132,7 +154,10 @@ export class ClaudeWorkflows {
       this.tasks.set(id, task);
     }
     if (typeof update.toolCallId === "string") task.toolCallId = update.toolCallId;
-    if (update.sessionUpdate === "async_task_spawned") task.taskType = update.taskType;
+    if (update.sessionUpdate === "async_task_spawned") {
+      task.taskType = update.taskType;
+      task.canStop = update.canStop === true;
+    }
     if (update.sessionUpdate === "async_task_state_update") {
       const status = update.state;
       // The adapter can correct its level-derived stopped edge with an event.
@@ -191,6 +216,7 @@ export class ClaudeWorkflows {
       : terminal(task.status) && value === "active" ? (task.status === "stopped" ? "cancelled" : task.status) : value;
     Object.assign(launch, {
       launchOnly: false, status: task.status, current_phase: task.currentPhase,
+      stopAvailable: !terminal(task.status) && this.tasks.get(this.stopTaskId(launch.run_id) ?? "") === task,
       phases: task.phases.map(p => ({ ...p, state: state(p.state) })),
       agents: task.agents.map(a => ({ ...a, state: state(a.state) })),
       elapsed_ms: task.elapsedMs, result_summary: task.summary,

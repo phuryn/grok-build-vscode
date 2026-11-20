@@ -39,6 +39,7 @@ export function permissionSmokeNotApplicable(provider) {
 
 export const SUBAGENT_PROMPT = "This is a delegation plumbing test. You MUST actually invoke your subagent/Agent tool exactly once, even though the task is trivial; answering yourself does not test it. Its only job: reply with the single word ok. Wait for the child to finish, then tell me what it said. Keep it minimal and do nothing else. Use the cheapest available model and lowest supported reasoning effort for the subagent.";
 export const WORKFLOW_PROMPT = "This is a workflow plumbing test. You MUST actually invoke your workflow tool, even though the task is trivial; answering yourself or launching ordinary subagents does not test it. Run exactly 2 steps, one agent per step. Step one: reply with the single word one. Step two: reply with the single word two. Declare both steps in the script's metadata before starting, wait for completion and report the result. Keep it minimal and do nothing else. Use the cheapest available model and lowest supported reasoning effort for both agents.";
+export const STOP_SCENARIOS = ["stop workflow", "stop subagent"];
 // Grok 1.0.41+ rejects an explicit per-agent model ("Explicit subagent model selection is unavailable for
 // this catalog"): asked for the cheapest model, the model names one, every step fails in 0 ms and it relaunches
 // the workflow. The session is already on the cheapest selectable model, so Grok is told not to set one.
@@ -147,7 +148,7 @@ export function delegationAttempted(frames, kind) {
     ? raw?._meta?.claudeCode?.toolName === "Workflow" || raw?._meta?.["muse/workflow"]
       || raw?.sessionUpdate === "workflow_updated" || raw?.taskType === "workflow"
       || /^workflow$/i.test(raw?.title ?? "") || raw?._meta?.["x.ai/tool"]?.name === "workflow"
-    : raw?.sessionUpdate?.startsWith("subagent_") || raw?._meta?.claudeCode?.subagent === true
+    : raw?.sessionUpdate?.startsWith("subagent_") || raw?._meta?.["muse/subagent"] === true || raw?._meta?.claudeCode?.subagent === true
       || raw?._meta?.claudeCode?.toolName === "Agent" || raw?._meta?.codex?.subagent
       || (["tool_call", "tool_call_update"].includes(raw?.sessionUpdate)
         && (raw.kind === "subagent" || /^(Agent|spawn_subagent|Start subagent\b.*)$/i.test(raw.title ?? ""))));
@@ -652,13 +653,16 @@ function probeCli(cli, args, cwd) {
 
 async function main() {
   const selected = process.argv.slice(2);
-  const scenario = smokeScenario(selected, ["plain reply", "subagent", "workflow", "fork"]);
+  const scenario = smokeScenario(selected, ["plain reply", "subagent", "workflow", "fork", ...STOP_SCENARIOS]);
   assert(selected.every(a => /^--provider=(codex|claude|muse|agy)$/.test(a) || a.startsWith("--scenario="))
-    && selected.filter(a => a.startsWith("--provider=")).length <= 1, "usage: npm run smoke:acp -- --provider=codex|claude|muse|agy [--scenario=plain-reply|subagent|workflow|fork]");
+    && selected.filter(a => a.startsWith("--provider=")).length <= 1, "usage: npm run smoke:acp -- --provider=codex|claude|muse|agy [--scenario=plain-reply|subagent|workflow|fork|stop-workflow|stop-subagent]");
   const chosenProvider = selected.find(a => a.startsWith("--provider="))?.slice(11);
+  const stopScenario = STOP_SCENARIOS.includes(scenario);
+  assert(!stopScenario || ["claude", "muse"].includes(chosenProvider), "select --provider=claude or --provider=muse for card Stop");
   assert(scenario !== "fork" || !chosenProvider || ["codex", "claude", "muse"].includes(chosenProvider),
     "the fork scenario supports Claude, Codex and Muse Code");
   const requested = (capability, provider) => {
+    if (stopScenario) return ["initialize", "session/new", "model", "render", "boundary audit"].includes(capability);
     if (scenario === "fork") return ["initialize", "session/new", "model", "fork", "boundary audit"].includes(capability);
     return !scenario || ["initialize", "session/new", "model", "render", "boundary audit"].includes(capability)
       || capability === (scenario === "plain reply" ? "streaming" : scenario)
@@ -788,7 +792,7 @@ async function main() {
       assert.equal(manifest.version, require("../package.json").dependencies[packageName], "installed adapter differs from the pinned bump; install dependencies before interpreting this smoke");
       const adapterPath = provider === "muse" ? path.join(root, "out", "muse-adapter", "main.mjs")
         : path.resolve(path.dirname(require.resolve(`${packageName}/package.json`)), typeof manifest.bin === "string" ? manifest.bin : Object.values(manifest.bin)[0]);
-      assert.equal(fs.realpathSync(spec.args[0]), fs.realpathSync(adapterPath), "spawn spec did not select the installed real adapter");
+      assert.equal(fs.realpathSync(spec.args.at(-1)), fs.realpathSync(adapterPath), "spawn spec did not select the installed real adapter");
       if (provider === "muse") {
         assert.equal(spec.env.MUSE_CODE_EXECUTABLE, cli);
         assert.equal(spec.env.ELECTRON_RUN_AS_NODE, "1");

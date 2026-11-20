@@ -84,19 +84,12 @@ Notes:
   transcript with their diffs, as before, and so do a forked skill's tools.
   On reopen the host reads the bundled SDK's separately stored child
   transcripts alongside the owning cards.
-- Claude adapter 0.76.0 excludes `local_agent` from its AIR task runtime even
-  with `asyncTasks` enabled. The September 27 background capture contains a
-  receipt and a parent reply, but no subagent task event. The receipt settles
-  the card as **in background**, with no clock, staleness warning or result
-  from the receipt. Observed activity makes it expandable. The answer arrives in Claude's
-  reply. The wake-up's `usage_update` has `_claude/origin.kind` equal to
-  `task-notification`, but no task ID; workflows use the same marker, so it
-  cannot identify a card or finish it. The host maps `async_task_*` events
-  when supplied and `<task-notification>` on replay by task/tool ID. An
-  observed outcome supplies done, failed or stopped, its result and any
-  reported duration/tokens. The smoke accepts a foreground hand-back or an
-  honest “in background” card; receipt text anywhere and done without a
-  result fail. The expected live desktop case on this adapter is “in background”.
+- The bundled adapter's AIR registry tracks attributed background Agent
+  tasks through the host preload. An observed task exposes Stop on its card
+  and reports its final state by task and tool ID. A receipt alone settles
+  as **in background**. The wake-up usage marker has no task identity.
+  Foreground hand-backs and replayed task notifications can still supply
+  output and measured usage.
 
 ### Workflows
 
@@ -243,8 +236,10 @@ conversation stopped showing its history.
   frames on the replay rail too, so the card is rebuilt at its original place,
   and a completion repair updates that entry instead of appending a new one.
   Before this, finished runs piled up above the message box on every reload.
-- **Controls only where the CLI offers them.** Only Grok's workflows can be
-  paused or stopped from the card. See the notes under [Workflows](#workflows).
+- **Controls only where the CLI offers them.** Grok's workflow commands offer
+  Pause, Resume and Stop. The native Stop button appears on a workflow or
+  subagent card when the host has confirmed a live control target. A workflow
+  roster or an activity row inside a subagent has no separate Stop button.
 - **A live workflow is pinned above the message box.** A workflow keeps
   running after the turn ends, and a card in the transcript scrolls away with
   its controls. The pin sits inside the composer, so the scroll-to-bottom and
@@ -262,9 +257,8 @@ conversation stopped showing its history.
     for that run is in the pin.
   - **Finished, in either mode:** the pin entry goes away and the transcript
     card becomes the closed report, where the workflow started.
-  - Pause, Resume and Stop are on whichever copy is live, never on both and
-    never on the trace line. A Claude launch receipt and the subagent cards
-    are unchanged.
+  - Workflow controls appear on the full live card. A subagent with a verified
+    stop target carries Stop in its own action row.
 
   Showing the full card twice, once in the transcript and once in the pin,
   looked cluttered, so the transcript keeps only a trace until the run ends.

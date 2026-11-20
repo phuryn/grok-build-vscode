@@ -215,6 +215,7 @@ export interface BackendSteeringOptions {
 }
 
 export type ChildHistoryReplay = (toolCallId: string) => Iterable<unknown>;
+export type DelegatedWorkKind = "workflow" | "subagent";
 
 export interface AcpBackend<Provider extends string = AcpProvider> {
   readonly provider: Provider;
@@ -231,7 +232,8 @@ export interface AcpBackend<Provider extends string = AcpProvider> {
   readonly nativeApprovalModes?: boolean;
   subscriptionCredentialContext?(authMethod: string | undefined): string | undefined;
   readSubscriptionUsage?(authMethod: string | undefined): Promise<SubscriptionWindow[]>;
-  normalizeUpdate(update: any, meta: any): BackendUpdate;
+  normalizeUpdate(update: any, meta: any, foreignSessionId?: string): BackendUpdate;
+  stopDelegatedWork?(sessionId: string, kind: DelegatedWorkKind, id: string): { method: string; params: object } | undefined;
   /** Supply child history at the position of its card in the parent replay. */
   prepareChildReplay?(sessionId: string, cwd: string): Promise<ChildHistoryReplay>;
   normalizePermissionParams(params: any): any;

@@ -1621,6 +1621,7 @@ export type WebviewMsg =
   | { type: "uiConfirmAnswer"; id: string; ok: boolean }
   // Workflow card controls (P2-10): pause / resume / stop by display name.
   | { type: "workflowControl"; action: "pause" | "resume" | "stop"; displayName: string }
+  | { type: "stopDelegatedWork"; kind: "workflow" | "subagent"; id: string; stopToken: string }
   /** Read-only Grok context snapshot for the open donut popover. */
   | { type: "refreshContextDetails" }
   | { type: "refreshSubscriptionUsage" }
@@ -1693,6 +1694,7 @@ const WEBVIEW_MESSAGE_TYPE_MAP: Record<WebviewMsg["type"], true> = {
   steerSend: true, turnFeedback: true, forkSession: true, forkAtReply: true,
   newWorktreeSession: true, applyWorktree: true, removeWorktree: true,
   rewindSession: true, editLastMessage: true, uiConfirmAnswer: true, workflowControl: true,
+  stopDelegatedWork: true,
   refreshContextDetails: true,
   refreshSubscriptionUsage: true,
   remoteSignIn: true, showRemoteHandoff: true, remoteHandoff: true, remoteSignOut: true, unlinkRemoteDevice: true, openRemotePortal: true,

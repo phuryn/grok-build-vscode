@@ -7081,3 +7081,25 @@ body.host-wait-visible .gfp-panel.gfp-overlay { bottom: var(--host-wait-height, 
 #context-popover .context-window-select { min-width: 0; padding: 2px 6px; }
 #context-popover .context-window-select:disabled { opacity: .6; cursor: default; }
 @media (hover: none), (pointer: coarse) { #context-popover .context-window-select { min-height: 36px; } }
+
+.subagent-card > .run-progress-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.subagent-card > .run-progress-actions .run-progress-btn {
+  min-height: 36px;
+  font: inherit;
+  font-size: 0.88em;
+  padding: 2px 8px;
+  border: 4px solid transparent;
+  border-radius: 8px;
+  background: var(--vscode-button-secondaryBackground, rgba(127, 127, 127, 0.2));
+  background-clip: padding-box;
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+  cursor: pointer;
+}
+.subagent-card > .run-progress-actions .run-progress-btn:hover {
+  background-color: var(--vscode-button-secondaryHoverBackground, rgba(127, 127, 127, 0.35));
+}

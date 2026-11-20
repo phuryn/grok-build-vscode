@@ -13196,6 +13196,9 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       case "workflowControl":
         await this.controlWorkflow(msg.action, msg.displayName, session);
         break;
+      case "stopDelegatedWork":
+        if (!session.replaying) await session.client?.stopDelegatedWork(msg);
+        break;
       case "refreshSubscriptionUsage":
         void this.refreshSubscriptionUsage(session);
         break;

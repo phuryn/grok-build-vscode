@@ -57,6 +57,12 @@ const app = agent()
     if (typeof params?.sessionId !== "string" || !Array.isArray(params.prompt)) throw RequestError.invalidParams();
     return { sessionId: params.sessionId, prompt: params.prompt as ContentBlock[] };
   }, ({ params }) => session.steer(params.sessionId, params.prompt))
+  .onRequest("_muse/stop_delegated_work", (value: unknown) => {
+    const p = value as Record<string, unknown> | null;
+    if (typeof p?.sessionId !== "string" || (p.kind !== "workflow" && p.kind !== "subagent")
+        || typeof p.id !== "string" || !p.id.trim()) throw RequestError.invalidParams();
+    return { sessionId: p.sessionId, kind: p.kind as "workflow" | "subagent", id: p.id };
+  }, ({ params }) => session.stopDelegatedWork(params.sessionId, params.kind, params.id))
   .onNotification("session/cancel", async ({ params }) => {
     try { await session.cancel(params.sessionId); } catch (error) { void stop(error); }
   });

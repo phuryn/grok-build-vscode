@@ -7,6 +7,11 @@ interface ItemState {
   text: string;
   output: string;
   toolCallId?: string;
+  delegationTerminal?: boolean;
+  /** `subagent`: the workflow run that owns it, when Muse names one. */
+  workflowRunId?: string;
+  /** `subagent`: the last item Muse sent, to settle the card when its run ends. */
+  lastItem?: Record<string, any>;
   /** `reasoning`: the summary parts as they stream (`item/delta` field `summary.N`). */
   parts: string[];
   /** `reasoning`: what has been emitted as thinking, the parts joined. */
@@ -78,6 +83,11 @@ function museToolKind(tool: unknown): "execute" | "search" | "other" {
 export class Projection {
   private readonly items = new Map<string, ItemState>();
   private readonly replyTurns = new Map<string, string>();
+  private readonly stopTargets = new Map<string, string>();
+  /** Workflow runs that have ended, with Muse's terminal status. */
+  private readonly endedWorkflows = new Map<string, string>();
+  stopWorkflows = false;
+  stopSubagents = false;
   forkIds = false;
   /** The reasoning item that last emitted thinking, if any. */
   private lastThoughtItem?: string;
@@ -86,9 +96,60 @@ export class Projection {
     private readonly log: (message: string) => void,
   ) {}
 
-  clear(): void { this.items.clear(); this.replyTurns.clear(); this.lastThoughtItem = undefined; }
+  clear(): void {
+    this.items.clear(); this.replyTurns.clear(); this.stopTargets.clear(); this.endedWorkflows.clear();
+    this.lastThoughtItem = undefined;
+  }
 
   replyTurnId(messageId: string): string | undefined { return this.replyTurns.get(messageId); }
+
+  stopTarget(kind: "workflow" | "subagent", id: string): string | undefined {
+    return this.stopTargets.get(`${kind}:${id}`);
+  }
+
+  private recordStopTarget(kind: "workflow" | "subagent", id: string, target: unknown): boolean {
+    const key = `${kind}:${id}`;
+    if (typeof target === "string" && target.trim()) {
+      this.stopTargets.set(key, target);
+      return true;
+    }
+    this.stopTargets.delete(key);
+    return false;
+  }
+
+  private projectSubagent(id: string, state: ItemState, item: Record<string, any>, live: boolean): void {
+    const first = !state.toolCallId;
+    const toolCallId = state.toolCallId ??= `muse-subagent:${id}`;
+    // A workflow agent's last own update can still say inProgress after its
+    // run has ended (observed when Stop cancels the run): the run's end is its end.
+    const museStatus: string = item.status === "inProgress" && state.workflowRunId
+      ? this.endedWorkflows.get(state.workflowRunId) ?? item.status : item.status;
+    state.delegationTerminal = museStatus !== "inProgress";
+    const canStop = this.recordStopTarget("subagent", toolCallId,
+      live && this.stopSubagents && !state.delegationTerminal ? item.subagentId : undefined);
+    const cancelled = museStatus === "cancelled";
+    const stoppedOrDone = cancelled || museStatus === "completed";
+    const status = !state.delegationTerminal ? "in_progress" : stoppedOrDone ? "completed" : "failed";
+    const output = item.result?.text || item.result?.summary
+      || (status === "failed" ? museToolFailureMessage({ ...item, status: museStatus }) : "");
+    const usage = item.usage;
+    const tokens = typeof usage?.inputTokens === "number" && typeof usage?.outputTokens === "number"
+      ? usage.inputTokens + usage.outputTokens : undefined;
+    this.emit({ sessionUpdate: first ? "tool_call" : "tool_call_update", toolCallId,
+      title: item.role || "Subagent", kind: "think", status, rawInput: { description: item.objective },
+      rawOutput: { output }, _meta: { "muse/subagent": true, "muse/cancelled": cancelled, "muse/canStop": canStop,
+        subagentStatusAuthoritative: true, subagentUsage: { durationMs: item.durationMs, tokens } } });
+  }
+
+  /** Settle the cards of a run's agents that are still open when the run ends. */
+  private settleWorkflowAgents(runId: string, status: string): void {
+    this.endedWorkflows.set(runId, status);
+    for (const [id, state] of this.items) {
+      if (state.kind === "subagent" && state.workflowRunId === runId && !state.delegationTerminal && state.lastItem) {
+        this.projectSubagent(id, state, state.lastItem, false);
+      }
+    }
+  }
 
   private append(state: ItemState, id: string, field: "text" | "output", text: string): void {
     const previous = state[field];
@@ -141,10 +202,10 @@ export class Projection {
       this.emit({ sessionUpdate: "user_message_chunk", content: { type: "text", text },
         ...(this.forkIds && typeof item.itemId === "string" ? { messageId: item.itemId } : {}) });
     }
-    this.accept("item/completed", { item });
+    this.accept("item/completed", { item }, false);
   }
 
-  accept(method: string, params: Record<string, any>): void {
+  accept(method: string, params: Record<string, any>, live = true): void {
     if (method === "session/contextUsage") {
       this.emit({ sessionUpdate: "usage_update", used: params.usedTokens, size: params.windowTokens });
       return;
@@ -178,6 +239,7 @@ export class Projection {
       this.items.set(id, state);
     }
     if (item.revision <= state.revision) return;
+    if (state.delegationTerminal && item.status === "inProgress") return;
     state.revision = item.revision;
     state.kind = item.kind;
     if (this.forkIds && item.kind === "agentMessage" && typeof item.turnId === "string" && item.turnId) {
@@ -188,7 +250,19 @@ export class Projection {
       const workflow = workflowUpdate(item);
       // Keep ACP schema-valid: provider metadata carries the rollup to our
       // backend, which emits the existing runProgress presentation message.
-      if (workflow) this.emit({ sessionUpdate: "session_info_update", _meta: { "muse/workflow": workflow } });
+      if (workflow) {
+        state.delegationTerminal = item.status !== "inProgress";
+        if (this.recordStopTarget("workflow", item.workflowRunId,
+          live && this.stopWorkflows && !state.delegationTerminal ? item.workflowRunId : undefined)) {
+          workflow.stopAvailable = true;
+        }
+        this.emit({ sessionUpdate: "session_info_update", _meta: { "muse/workflow": workflow } });
+        if (state.delegationTerminal) this.settleWorkflowAgents(item.workflowRunId, item.status);
+      }
+    } else if (item.kind === "subagent") {
+      state.lastItem = item;
+      if (typeof item.workflowRunId === "string" && item.workflowRunId) state.workflowRunId = item.workflowRunId;
+      this.projectSubagent(id, state, item, live);
     } else if (item.kind === "toolCall") {
       const first = !state.toolCallId;
       state.toolCallId = item.callId || id;

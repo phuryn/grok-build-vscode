@@ -109,6 +109,11 @@ describe("recorded boundary samples and unknown net", () => {
     expect(result.find((s: any) => s.name === "workflow").result).toBe("NOT RUN");
     expect(completeRenderScenarios([], "claude", undefined, "subagent").find((s: any) => s.name === "subagent").result).toBe("FAIL");
   });
+  it.each(["stop workflow", "stop subagent"])("reports a missing selected card stop scenario (%s)", name => {
+    expect(completeRenderScenarios([], "muse", "startup failed", name)).toEqual([
+      { name, result: "FAIL", reason: "startup failed", pageErrors: [] },
+    ]);
+  });
   it("accepts recorded Claude AIR and distinguishes a deliberate drop from a new kind", () => {
     const events = claude.map(update => ({ direction: "receive", message: { method: "session/update", params: { update } } }));
     const known = knownBoundaries(root, "claude");

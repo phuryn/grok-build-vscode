@@ -71,6 +71,107 @@ async function ready(methods: string[] = []) {
   return { ...s, result };
 }
 
+describe("Muse delegated work control", () => {
+  it.each(["workflow", "subagent"] as const)("resolves a live %s in the owning session without touching the admitted turn", async kind => {
+    const method = kind === "workflow" ? "workflow/cancel" : "subagent/stop";
+    const { session, command, event, client, admission } = await ready([method]);
+    const item = { itemId: "item", kind, revision: 1, status: "inProgress",
+      ...(kind === "workflow" ? { workflowRunId: "native-run" } : { subagentId: "native-agent" }) };
+    const id = kind === "workflow" ? "native-run" : "muse-subagent:item";
+    const otherItem = { ...item, itemId: "sibling", workflowRunId: "other-run", subagentId: "other-agent" };
+    const terminal = { ...item, revision: 2, status: "cancelled" };
+    const prompt = session.prompt("session", [{ type: "text", text: "Keep the parent working" }]);
+    admission.resolve({ status: "accepted", disposition: "started", turnId: "parent-turn" });
+    event("turn/started", { turnId: "parent-turn" });
+    event("item/started", { item, sessionId: "foreign" });
+    expect(await session.stopDelegatedWork("session", kind, id)).toEqual({ stopped: false });
+    event("item/started", { item });
+    event("item/started", { item: otherItem });
+    await expect(session.stopDelegatedWork("foreign", kind, id)).rejects.toThrow("Unknown Muse session");
+    expect(await session.stopDelegatedWork("session", kind, "missing")).toEqual({ stopped: false });
+    command.mockResolvedValueOnce({ status: "accepted" });
+    expect(await session.stopDelegatedWork("session", kind, id)).toEqual({ stopped: true });
+    event("item/completed", { item: terminal });
+    event("item/updated", { item });
+    event("item/updated", { item: { ...item, revision: 3 } });
+    expect(await session.stopDelegatedWork("session", kind, id)).toEqual({ stopped: false });
+    const sent = command.mock.calls.filter(([name]) => name !== "session/start");
+    expect(sent.map(([name]) => name)).toEqual(["turn/start", method]);
+    expect(sent[1][1]).toEqual({ sessionId: "session",
+      ...(kind === "workflow" ? { workflowRunId: "native-run" } : { subagentId: "native-agent" }) });
+    event("turn/completed", { turnId: "parent-turn", terminal: "completed" });
+    await expect(prompt).resolves.toMatchObject({ stopReason: "end_turn" });
+    const updates = client.notify.mock.calls.map(([, params]: any) => params.update);
+    if (kind === "workflow") {
+      expect(updates.filter(update => update?._meta?.["muse/workflow"]?.run_id === id).map(update => update._meta["muse/workflow"]))
+        .toMatchObject([{ status: "running", stopAvailable: true, controlsAvailable: false }, { status: "cancelled", controlsAvailable: false }]);
+    } else {
+      expect(updates.filter(update => update?.toolCallId === id)).toMatchObject([
+        { sessionUpdate: "tool_call", status: "in_progress", _meta: { "muse/canStop": true } },
+        { sessionUpdate: "tool_call_update", _meta: { "muse/cancelled": true, "muse/canStop": false } },
+      ]);
+    }
+  });
+
+  // Observed live (Muse 1.4.24): subagent/stop is accepted, the agent's own item
+  // stays inProgress, and only its workflow run reports "cancelled".
+  it("settles a workflow agent's card when its run ends, whichever arrives first", async () => {
+    const { session, command, event, client } = await ready(["workflow/cancel", "subagent/stop"]);
+    const agent = { itemId: "agent", kind: "subagent", subagentId: "native-agent", workflowRunId: "run",
+      status: "inProgress", revision: 1 };
+    const run = { itemId: "run-item", kind: "workflow", workflowRunId: "run", status: "inProgress", revision: 1 };
+    const sibling = { ...agent, itemId: "sibling", subagentId: "other-agent", workflowRunId: "other-run" };
+    event("item/started", { item: run });
+    event("item/started", { item: agent });
+    event("item/started", { item: sibling });
+    command.mockResolvedValueOnce({ status: "accepted" });
+    expect(await session.stopDelegatedWork("session", "subagent", "muse-subagent:agent")).toEqual({ stopped: true });
+    event("item/updated", { item: { ...agent, revision: 2 } });
+    event("item/completed", { item: { ...run, revision: 2, status: "cancelled" } });
+    // A late inProgress revision of the agent changes nothing.
+    event("item/updated", { item: { ...agent, revision: 3 } });
+    // A replayed agent whose run already ended opens settled.
+    event("item/started", { item: { ...agent, itemId: "late", subagentId: "late-agent", revision: 1 } });
+    await new Promise(resolve => setImmediate(resolve)); // Updates reach the client in order, asynchronously.
+    const updates = client.notify.mock.calls.map(([, params]: any) => params.update);
+    const card = (id: string) => updates.filter(update => update?.toolCallId === id);
+    expect(card("muse-subagent:agent").map(update => [update.status, update._meta["muse/cancelled"], update._meta["muse/canStop"]]))
+      .toEqual([["in_progress", false, true], ["in_progress", false, true], ["completed", true, false]]);
+    expect(card("muse-subagent:sibling")).toMatchObject([{ status: "in_progress", _meta: { "muse/canStop": true } }]);
+    expect(card("muse-subagent:late")).toMatchObject([{ sessionUpdate: "tool_call", status: "completed",
+      _meta: { "muse/cancelled": true, "muse/canStop": false } }]);
+    expect(await session.stopDelegatedWork("session", "subagent", "muse-subagent:agent")).toEqual({ stopped: false });
+  });
+
+  it("does not advertise stop for methods absent from the installed method index", async () => {
+    const { session, event, command } = await ready();
+    event("item/started", { item: { itemId: "item", kind: "workflow", workflowRunId: "run", status: "inProgress", revision: 1 } });
+    event("item/started", { item: { itemId: "agent", kind: "subagent", subagentId: "child", status: "inProgress", revision: 1 } });
+    expect(await session.stopDelegatedWork("session", "workflow", "run")).toEqual({ stopped: false });
+    expect(await session.stopDelegatedWork("session", "subagent", "muse-subagent:agent")).toEqual({ stopped: false });
+    expect(command.mock.calls.map(([name]) => name)).toEqual(["session/start"]);
+  });
+
+  it("replays terminal cards without a live stop target", async () => {
+    const { session, command, client } = setup(["workflow/cancel", "subagent/stop"]);
+    await session.initialize();
+    command.mockResolvedValueOnce({ session: { sessionId: "session", workspaceRoot: "/workspace" },
+      history: { mode: "inline", items: [
+        { kind: "workflow", itemId: "run-item", workflowRunId: "native-run", status: "cancelled", revision: 2 },
+        { kind: "subagent", itemId: "child-item", subagentId: "native-child", status: "cancelled", revision: 2 },
+      ] } } as any);
+    await session.loadSession("session", "/workspace", []);
+    const updates = client.notify.mock.calls.map(([, params]: any) => params.update);
+    expect(updates.find(update => update?._meta?.["muse/workflow"])?.["_meta"]["muse/workflow"])
+      .toMatchObject({ status: "cancelled", controlsAvailable: false });
+    expect(updates.find(update => update?.toolCallId === "muse-subagent:child-item")?._meta)
+      .toMatchObject({ "muse/cancelled": true, "muse/canStop": false });
+    expect(await session.stopDelegatedWork("session", "workflow", "native-run")).toEqual({ stopped: false });
+    expect(await session.stopDelegatedWork("session", "subagent", "muse-subagent:child-item")).toEqual({ stopped: false });
+    expect(command.mock.calls.map(([name]) => name)).toEqual(["session/resume"]);
+  });
+});
+
 describe("Muse native steering, compaction, skills and forks", () => {
   // The official installer's target is %LOCALAPPDATA%\Programs\muse\muse.cmd, so
   // a user name with a space puts one in the shim path and in %TEMP% alike.

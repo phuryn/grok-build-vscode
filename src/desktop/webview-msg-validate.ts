@@ -557,6 +557,11 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
       }
       if (!isString(raw.displayName)) return null;
       break;
+    case "stopDelegatedWork":
+      if ((raw.kind !== "workflow" && raw.kind !== "subagent") ||
+          !isString(raw.id) || !raw.id.trim() || raw.id.length > 512 ||
+          !isString(raw.stopToken) || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(raw.stopToken)) return null;
+      break;
     case "showRemoteHandoff":
     case "remoteHandoff":
       if (!["topbar", "rail", "projects", "settings", "palette"].includes(raw.source as string)

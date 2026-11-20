@@ -15201,6 +15201,13 @@ ${fullText}`
     const meta = el.querySelector(".delegation-meta");
     meta.textContent = Number.isFinite(el._subagentTokens) ? `${compactTokens(el._subagentTokens)} tokens` : "";
     wireSubagentExpand(el);
+    if (done || !el._stopToken) {
+      el._stopActions?.remove();
+      el._stopActions = undefined;
+    } else if (!el._stopActions) {
+      el._stopActions = workflowText(el, "run-progress-actions", "");
+      syncDelegatedStop(el._stopActions, "subagent", el._stopCardId, el._stopToken);
+    }
   }
 
   function observeSubagentLive(el) {
@@ -15466,6 +15473,13 @@ ${fullText}`
     if (status === "background") el._liveStartedAt = null;
     const finished = status === "completed" || status === "failed" || status === "cancelled" ||
       (out && out.type === "SubagentCompleted");
+    if (!finished && !el.classList.contains("subagent-done") && typeof call?.stopToken === "string") {
+      el._stopToken = call.stopToken;
+      el._stopCardId = call.toolCallId;
+      if (el._stopActions) syncDelegatedStop(el._stopActions, "subagent", el._stopCardId, el._stopToken);
+    } else if (finished || call?.stopAvailable === false) {
+      el._stopToken = undefined;
+    }
     if (!finished) { observeSubagentLive(el); refreshSubagentCard(el); return; }
     // Output lives in rawOutput.output (SubagentCompleted), rawOutput.text
     // ({type:"Text"} — Composer + background acks), or the content text.
@@ -15636,6 +15650,19 @@ ${fullText}`
     workflowPin = null;
     clearInterval(workflowAgeTimer);
     workflowAgeTimer = null;
+  }
+
+  function syncDelegatedStop(actions, kind, id, stopToken) {
+    const previous = actions.querySelector(".delegated-stop");
+    if (previous?.dataset.stopToken === stopToken) return;
+    previous?.remove();
+    if (!stopToken) return;
+    const button = workflowText(actions, "run-progress-btn delegated-stop", "Stop", "button");
+    button.type = "button";
+    button.title = `Stop ${kind}`;
+    button.dataset.stopToken = stopToken;
+    button.onclick = () => vscode.postMessage({ type: "stopDelegatedWork", kind, id, stopToken });
+    actions.prepend(button);
   }
 
   function workflowText(parent, className, text, tag = "div") {
@@ -16247,6 +16274,9 @@ ${fullText}`
       }
     }
     const expandable = !!(hasPhases || u.agents?.length || !actions.hidden || detailText || outputText || totals.length);
+    if (u.controlsAvailable === false) {
+      syncDelegatedStop(actions, "workflow", u.id, live && u.controlsAvailable === false ? u.stopToken : undefined);
+    }
     setDelegationExpandable(toggle, expandable, reportHeader ? toggle.parentElement.open : expanded);
     if (!reportHeader) toggle.onclick = () => {
       if (!expandable) return;

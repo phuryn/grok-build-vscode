@@ -1,10 +1,12 @@
 import { contextWindowSizes, type ContextWindowSelection } from "./context-selection";
 import { advertisedFork, supportsSessionDeletion, type SessionGoal } from "./acp-backend";
-import type { ChildHistoryReplay } from "./acp-backend";
+import type { ChildHistoryReplay, DelegatedWorkKind } from "./acp-backend";
+import type { WebviewMsg } from "./protocol";
 import { GrokHookCalls } from "./grok-hooks";
 import { appendPastedTextContext } from "./prompt-builder";
 import { ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { createInterface, Interface } from "node:readline";
+import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { claudeSubscriptionWindows, grokBillingReplyShape, grokSubscriptionWindows, museSubscriptionWindows, type SubscriptionWindow } from "./subscription-usage";
 import * as path from "node:path";
@@ -343,6 +345,7 @@ export class AcpClient extends EventEmitter {
   private loadingChildSessionIds?: Set<string>;
   private childHistoryReplay?: ChildHistoryReplay;
   private loadingSessionId?: string;
+  private readonly delegatedStops = new Map<string, { token: string; submitted: boolean }>();
   currentGoal?: SessionGoal | null;
   currentModelId?: string;
   currentModeId?: string;
@@ -609,6 +612,7 @@ export class AcpClient extends EventEmitter {
   }
 
   async newSession(modelId?: string): Promise<{ sessionId: string }> {
+    this.delegatedStops.clear();
     if (this.contextWindowChanging) throw new Error("Wait for the context-window change to finish.");
     this.currentGoal = undefined;
     const raw = await this.request("session/new", {
@@ -701,6 +705,7 @@ export class AcpClient extends EventEmitter {
   }
 
   async loadSession(sessionId: string, modelId?: string): Promise<{ sessionId: string }> {
+    this.delegatedStops.clear();
     if (this.contextWindowChanging) throw new Error("Wait for the context-window change to finish.");
     const mcpServers = await this.mcpServersForSession();
     // Replay precedes the response and may use a different parent wire ID.
@@ -1704,6 +1709,7 @@ export class AcpClient extends EventEmitter {
   }
 
   private handleSessionUpdate(u: any, meta?: any, sessionId?: string): void {
+    const delegationSession = this.loadingSessionId ?? this.sessionId;
     if (this.routeHookUpdate(u, meta, sessionId)) return;
     if (this.loadingChildSessionIds && u?.sessionUpdate === "subagent_spawned") {
       const childId = u.subagentSessionId ?? u.child_session_id ?? u.subagent_id;
@@ -1714,7 +1720,18 @@ export class AcpClient extends EventEmitter {
       : isForeignSessionUpdate(sessionId, this.sessionId);
     const updateGeneration = meta?.generation ?? u?._meta?.generation;
     if (this.provider === "grok" && typeof updateGeneration === "number" && updateGeneration !== this.contextGeneration) return;
-    const normalized = this.backend.normalizeUpdate(u, meta);
+    const foreignSessionId = isForeignSessionUpdate(sessionId, delegationSession) ? sessionId : undefined;
+    const normalized = this.backend.normalizeUpdate(u, meta, foreignSessionId);
+    if (this.backend.stopDelegatedWork && !foreign && delegationSession && sessionId === delegationSession) {
+      const workflow = normalized.workflowUpdate;
+      if (workflow) this.tagDelegatedStop("workflow", workflow.run_id, workflow,
+        /^(completed|failed|stopped|cancelled)$/.test(workflow.status));
+      const call = normalized.update;
+      if (!normalized.childSessionId && (call?.sessionUpdate === "tool_call" || call?.sessionUpdate === "tool_call_update")) {
+        this.tagDelegatedStop("subagent", call.toolCallId, call,
+          /^(completed|failed|cancelled)$/.test(call.status));
+      }
+    }
     for (const earlier of normalized.precede ?? []) this.routeUpdate(earlier, undefined);
     if (!foreign) {
       if (normalized.workflowUpdate) this.emit("subagentLifecycle", normalized.workflowUpdate, meta);
@@ -1770,6 +1787,34 @@ export class AcpClient extends EventEmitter {
     this.routeUpdate(u, meta, foreign ? sessionId : normalized.childSessionId);
     if (this.childHistoryReplay && !foreign && normalized.childSessionId === undefined && typeof u?.child_session_id === "string") {
       for (const child of this.childHistoryReplay(u.child_session_id)) this.handleSessionUpdate(child, undefined, sessionId);
+    }
+  }
+
+  async stopDelegatedWork({ kind, id, stopToken }: Extract<WebviewMsg, { type: "stopDelegatedWork" }>): Promise<void> {
+    if (!this.sessionId || this.loadingSessionId || typeof id !== "string"
+        || (kind !== "workflow" && kind !== "subagent")) return;
+    const target = this.delegatedStops.get(`${kind}:${id}`);
+    if (!target || target.token !== stopToken || target.submitted) return;
+    const call = this.backend.stopDelegatedWork?.(this.sessionId, kind, id);
+    if (!call) return;
+    target.submitted = true;
+    try {
+      await this.request(call.method, call.params);
+    } catch {
+      target.submitted = false;
+      this.opts.log("[acp] Delegated work stop request failed.");
+    }
+  }
+
+  private tagDelegatedStop(kind: DelegatedWorkKind, id: unknown, update: any, ended: boolean): void {
+    if (typeof id !== "string" || !id || id.length > 512) return;
+    const key = `${kind}:${id}`;
+    if (ended || update.stopAvailable === false) {
+      this.delegatedStops.delete(key);
+    } else if (update.stopAvailable === true) {
+      let target = this.delegatedStops.get(key);
+      if (!target) this.delegatedStops.set(key, target = { token: randomUUID(), submitted: false });
+      update.stopToken = target.token;
     }
   }
 
