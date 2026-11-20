@@ -148,7 +148,7 @@ aistudio.google.com/apikey). Vertex AI and Enterprise sign-in are not offered.
   `agyInstallProgress` go to the requesting tab, including after reconnect.
   Desk Disconnect preserves both credentials. Cloud Sign out removes the
   saved API key and any stored Google sign-in through ACP `logout`, regardless
-  of the method last used, and signs out an installed agy CLI the same way. It never starts a browser or asks a host modal.
+  of the method last used; clearing a Google sign-in also signs out an installed agy CLI the same way. It never starts a browser or asks a host modal.
 - Key fields clear on submission and have no draft or retry storage. Known
   offline submissions are refused before reaching the transport. The relay
   client's outbox is outside this checkout: its exclusion of key messages,

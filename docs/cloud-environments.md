@@ -146,7 +146,7 @@ Antigravity and DeepSeek are offered on cloud machines too. With `remoteSetup`
 advertised in `providerState`, a phone can install the managed runtime on demand,
 paste an API key into host secret storage, and Sign out to remove credentials.
 Antigravity Sign out clears both its stored key and any stored Google sign-in,
-including an installed agy CLI's;
+and clearing a Google sign-in also signs out an installed agy CLI;
 DeepSeek Sign out deletes its stored key.
 No runtime is added to machine startup. A cloud host advertising
 `googleSignInPaste: true` also offers Google sign-in from a phone. Open the link
