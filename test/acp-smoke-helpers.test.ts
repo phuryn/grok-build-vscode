@@ -14,7 +14,7 @@ import { selectGrokLaneModel } from "../scripts/acp-smoke.mjs";
 const { isSubagentToolCall } = require("../media/webview-helpers.js");
 // The entry guard makes this import pure: npm test never starts a real CLI.
 // @ts-expect-error Standalone release script intentionally has no declaration file.
-import { permissionSmokeNotApplicable, approvalOption, bounded, checkPermission, checkTools, timeoutMs, selectSmokeModel, selectSmokeEffort, desktopSmokeCatalog, smokeScenario, lowestSmokeEffort, checkSubagents, checkWorkflow, delegationAttempted, isMuseDeliveryChunk, inconclusive } from "../scripts/acp-smoke.mjs";
+import { permissionSmokeNotApplicable, approvalOption, bounded, checkPermission, checkTools, timeoutMs, selectSmokeModel, selectSmokeEffort, desktopSmokeCatalog, smokeScenario, lowestSmokeEffort, checkSubagents, checkClaudeSubagentText, checkWorkflow, delegationAttempted, isMuseDeliveryChunk, inconclusive } from "../scripts/acp-smoke.mjs";
 
 describe("ACP smoke evidence checks (no adapter or model)", () => {
   it("explains an unavailable Composer lane using its session catalog", () => {
@@ -91,7 +91,7 @@ function framesFor(backend: any, updates: any[], seedBackend: any = backend) {
     const normalized = backend.normalizeUpdate(raw, undefined);
     const seed = raw?._meta?.claudeCode?.toolName === "Workflow"
       ? seedBackend.normalizeUpdate(raw, undefined).workflowUpdate : undefined;
-    return structuredClone({ sessionId, raw, update: normalized.update,
+    return structuredClone({ sessionId, raw, update: normalized.update, childSessionId: normalized.childSessionId,
       workflow: parseRunProgressUpdate(normalized.workflowUpdate ?? normalized.update),
       seedWorkflow: parseRunProgressUpdate(seed) });
   });
@@ -261,6 +261,23 @@ describe("normalized delegation evidence", () => {
     ];
     expect(checkSubagents(framesFor(new ClaudeBackend(), updates), "parent", isSubagentToolCall)).toContain("1 normalized");
     expect(() => checkSubagents(framesFor(new ClaudeBackend(), updates.map((f, i) => i ? { raw: { ...f.raw, rawOutput: "" } } : f)), "parent", isSubagentToolCall)).toThrow(/no non-empty/);
+  });
+  it("requires Claude child text after the matching card was created on both live and replay", () => {
+    const launch = claudeBackground.launch[0];
+    const childText = { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "child report" },
+      _meta: { claudeCode: { parentToolUseId: launch.toolCallId } } };
+    const live = framesFor(new ClaudeBackend(), [launch, childText, ...claudeBackground.launch.slice(1)].map(raw => ({ raw })));
+    const ids = checkClaudeSubagentText(live, "parent");
+    expect(ids).toEqual([launch.toolCallId]);
+    const replay = framesFor(new ClaudeBackend(), [launch, childText].map(raw => ({ raw })));
+    expect(checkClaudeSubagentText(replay, "parent", ids)).toEqual(ids);
+    expect(() => checkClaudeSubagentText(replay.slice(0, 1), "parent", ids)).toThrow(/received no child text/);
+    expect(() => checkClaudeSubagentText(replay.toReversed(), "parent", ids)).toThrow(/received no child text/);
+    expect(() => checkClaudeSubagentText([replay[0], { ...replay[1], childSessionId: undefined }], "parent", ids)).toThrow(/leaked/);
+    const handback = { sessionUpdate: "tool_call", toolCallId: "handback", title: "SubagentHandback", kind: "other", status: "pending",
+      rawInput: { message: "ok" }, _meta: { claudeCode: { toolName: "SubagentHandback", parentToolUseId: launch.toolCallId } } };
+    const handbackOnly = framesFor(new ClaudeBackend(), [launch, handback].map(raw => ({ raw })));
+    expect(() => checkClaudeSubagentText(handbackOnly, "parent", ids)).toThrow(expect.objectContaining({ code: "NOT_OBSERVED" }));
   });
   it("distinguishes model refusal from a lost normalized delegation", () => {
     expect(() => checkSubagents([], "parent", isSubagentToolCall)).toThrow(/model did not delegate/);

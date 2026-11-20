@@ -1,5 +1,6 @@
 import { contextWindowSizes, type ContextWindowSelection } from "./context-selection";
 import { advertisedFork, supportsSessionDeletion, type SessionGoal } from "./acp-backend";
+import type { ChildHistoryReplay } from "./acp-backend";
 import { GrokHookCalls } from "./grok-hooks";
 import { appendPastedTextContext } from "./prompt-builder";
 import { ChildProcessWithoutNullStreams, spawn } from "node:child_process";
@@ -244,7 +245,7 @@ export type AcpClientCapabilities = {
   fs: { readTextFile?: boolean; writeTextFile: boolean };
   terminal: boolean;
   subagents?: Record<string, never>;
-  _meta?: { jetbrains: { air: { version: number; capabilities: string[] } } };
+  _meta?: { "subagent-transcript"?: true; jetbrains: { air: { version: number; capabilities: string[] } } };
 };
 
 /**
@@ -311,7 +312,7 @@ export function acpClientCapabilities(
   if (provider === "codex") return { ...ACP_DELEGATED_FS_CAPABILITIES, subagents: {},
     _meta: { jetbrains: { air: { version: 1, capabilities: ["nativeSubagentSessions"] } } } };
   if (provider === "claude") return { ...ACP_DELEGATED_FS_CAPABILITIES,
-    _meta: { jetbrains: { air: { version: 1, capabilities: ["asyncTasks"] } } } };
+    _meta: { "subagent-transcript": true, jetbrains: { air: { version: 1, capabilities: ["asyncTasks"] } } } };
   if (provider === "agy" || provider === "deepseek") return ACP_SERVER_EXECUTED_CAPABILITIES;
   if (provider !== "grok") return ACP_DELEGATED_FS_CAPABILITIES;
   if (!versionVerified) return ACP_DELEGATED_FS_CAPABILITIES;
@@ -340,6 +341,7 @@ export class AcpClient extends EventEmitter {
 
   sessionId?: string;
   private loadingChildSessionIds?: Set<string>;
+  private childHistoryReplay?: ChildHistoryReplay;
   private loadingSessionId?: string;
   currentGoal?: SessionGoal | null;
   currentModelId?: string;
@@ -709,11 +711,19 @@ export class AcpClient extends EventEmitter {
     this.hookCalls.reset();
     let raw: any;
     try {
+      if (this.backend.prepareChildReplay) {
+        try {
+          this.childHistoryReplay = await this.backend.prepareChildReplay(sessionId, this.opts.cwd);
+        } catch (error) {
+          this.opts.log(`[acp] Could not read child history for session ${sessionId}: ${(error as Error).message}`);
+        }
+      }
       raw = await this.request(this.provider === "deepseek" ? "session/resume" : "session/load", { sessionId, cwd: this.opts.cwd, mcpServers, ...this.backend.sessionParams?.(this.opts.cwd) });
       // The replay is the session's past turns; whatever the backend still
       // holds open from it is settled, inside the host's replay window.
       this.endTurn("completed");
     } finally {
+      this.childHistoryReplay = undefined;
       this.loadingChildSessionIds = undefined;
       this.loadingSessionId = undefined;
     }
@@ -1758,6 +1768,9 @@ export class AcpClient extends EventEmitter {
       }
     }
     this.routeUpdate(u, meta, foreign ? sessionId : normalized.childSessionId);
+    if (this.childHistoryReplay && !foreign && normalized.childSessionId === undefined && typeof u?.child_session_id === "string") {
+      for (const child of this.childHistoryReplay(u.child_session_id)) this.handleSessionUpdate(child, undefined, sessionId);
+    }
   }
 
   /** What a backend still holds open when a turn or a replay ends. */

@@ -157,7 +157,7 @@ export function delegationAttempted(frames, kind) {
 export function checkSubagents(frames, sessionId, isSubagentToolCall) {
   assert(!frames.some(f => hasClaudeAgentReceipt(f.update)), "Claude launch receipt is not a subagent result or reply");
   const calls = new Map();
-  for (const frame of frames.filter(f => f.sessionId === sessionId)) {
+  for (const frame of frames.filter(f => f.sessionId === sessionId && f.childSessionId === undefined)) {
     const u = frame.update;
     if (!["tool_call", "tool_call_update"].includes(u?.sessionUpdate)) continue;
     if (u.sessionUpdate === "tool_call" && isSubagentToolCall(u)) {
@@ -186,11 +186,34 @@ export function checkSubagents(frames, sessionId, isSubagentToolCall) {
     assert.equal(call.status, "completed", `subagent ${call.toolCallId} did not complete successfully`);
     const content = !background && (call.content ?? []).some(b => nonempty(b.content?.text));
     const child = call.child_session_id;
-    const childOutput = nonempty(child) && frames.some(f => f.sessionId === child
+    const childOutput = nonempty(child) && frames.some(f => (f.childSessionId ?? f.sessionId) === child
       && f.update?.sessionUpdate === "agent_message_chunk" && nonempty(f.update.content?.text));
     assert(nonempty(output) || content || childOutput, `subagent ${call.toolCallId} has no non-empty normalized result/child output`);
   }
   return `${calls.size} normalized subagent card(s): ${backgroundCount} in background (completion not reported), ${calls.size - backgroundCount} completed with non-empty result`;
+}
+
+export function checkClaudeSubagentText(frames, sessionId, expectedCards) {
+  const cards = frames.filter(f => f.sessionId === sessionId && f.childSessionId === undefined
+    && f.update?.sessionUpdate === "tool_call" && f.update._meta?.claudeCode?.subagent === true);
+  const ids = expectedCards ?? [...new Set(cards.map(f => f.update.toolCallId))];
+  assert(ids.length, "no normalized Claude subagent card");
+  assert(!frames.some(f => f.sessionId === sessionId && f.raw?._meta?.claudeCode?.parentToolUseId
+    && f.childSessionId === undefined && ["agent_message_chunk", "user_message_chunk"].includes(f.update?.sessionUpdate)),
+  "Claude child text leaked into the parent transcript");
+  for (const id of ids) {
+    const card = cards.find(f => f.update.toolCallId === id && f.update.child_session_id === id);
+    assert(card, `Claude card ${id} lacks its child stream ID`);
+    const sent = frames.slice(frames.indexOf(card) + 1).filter(f => f.sessionId === sessionId && f.childSessionId === id);
+    if (sent.some(f => f.update?.sessionUpdate === "agent_message_chunk" && nonempty(f.update.content?.text))) continue;
+    // The hand-off is a child's last act, so a child that answered only through
+    // it will send no text: an unproven check, not a broken stream.
+    if (sent.some(f => f.update?._meta?.claudeCode?.toolName === "SubagentHandback")) {
+      throw inconclusive("NOT_OBSERVED", `Claude card ${id}: the child answered only through SubagentHandback, so no live child text was sent`);
+    }
+    assert.fail(`Claude card ${id} received no child text`);
+  }
+  return ids;
 }
 
 /** All snapshots are parsed by the shipped parseRunProgressUpdate before this check. */
@@ -384,6 +407,26 @@ export class Peer {
       stream.on("error", (e) => this.fail(new Error(`adapter ${name}: ${e.message}`)));
     }
     this.proc.stderr.on("data", (data) => this.record("stderr", data.toString()));
+    this.load = async (sessionId) => {
+      this.childReplay = await backend.prepareChildReplay?.(sessionId, cwd);
+      try { return await this.request("session/load", { sessionId, cwd, mcpServers: [] }); }
+      finally { this.childReplay = undefined; }
+    };
+    const recordUpdate = (sessionId, raw, meta) => {
+      const normalized = backend.normalizeUpdate(raw, meta);
+      const seed = raw?._meta?.claudeCode?.toolName === "Workflow"
+        ? seedBackend.normalizeUpdate(raw, meta).workflowUpdate : undefined;
+      // Normalizers own mutable workflow buffers. Retain each instant, not
+      // references that a later completed snapshot could retroactively fill.
+      const frame = structuredClone({ sessionId, raw, update: normalized.update, childSessionId: normalized.childSessionId,
+        workflow: parseProgress(normalized.workflowUpdate ?? normalized.update), seedWorkflow: parseProgress(seed),
+        ignored: !Object.entries(normalized).some(([key, value]) => key !== "meta" && value !== undefined) });
+      this.normalized.push(frame);
+      this.record("normalized", frame);
+      if (this.childReplay && normalized.childSessionId === undefined && typeof normalized.update?.child_session_id === "string") {
+        for (const child of this.childReplay(normalized.update.child_session_id)) recordUpdate(sessionId, child, undefined);
+      }
+    };
     this.rl = createInterface({ input: this.proc.stdout });
     this.rl.on("error", (e) => this.fail(e));
     this.rl.on("line", (line) => {
@@ -393,16 +436,7 @@ export class Peer {
         this.record("receive", message);
         if (["session/update", "_x.ai/session_notification", "x.ai/session_notification", "_x.ai/session/update", "x.ai/session/update"].includes(message.method)) {
           const { update: raw, sessionId, _meta } = message.params;
-          const normalized = backend.normalizeUpdate(raw, _meta);
-          const seed = raw?._meta?.claudeCode?.toolName === "Workflow"
-            ? seedBackend.normalizeUpdate(raw, _meta).workflowUpdate : undefined;
-          // Normalizers own mutable workflow buffers. Retain each instant, not
-          // references that a later completed snapshot could retroactively fill.
-          const frame = structuredClone({ sessionId, raw, update: normalized.update,
-            workflow: parseProgress(normalized.workflowUpdate ?? normalized.update), seedWorkflow: parseProgress(seed),
-            ignored: !Object.entries(normalized).some(([key, value]) => key !== "meta" && value !== undefined) });
-          this.normalized.push(frame);
-          this.record("normalized", frame);
+          recordUpdate(sessionId, raw, _meta);
         }
         if (message.method && message.id !== undefined) {
           // Handle concurrently: an outstanding permission or terminal request
@@ -624,10 +658,11 @@ async function main() {
   const chosenProvider = selected.find(a => a.startsWith("--provider="))?.slice(11);
   assert(scenario !== "fork" || !chosenProvider || ["codex", "claude", "muse"].includes(chosenProvider),
     "the fork scenario supports Claude, Codex and Muse Code");
-  const requested = capability => {
+  const requested = (capability, provider) => {
     if (scenario === "fork") return ["initialize", "session/new", "model", "fork", "boundary audit"].includes(capability);
     return !scenario || ["initialize", "session/new", "model", "render", "boundary audit"].includes(capability)
       || capability === (scenario === "plain reply" ? "streaming" : scenario)
+      || (scenario === "subagent" && provider === "claude" && capability === "resume")
       || (scenario === "workflow" && capability === "delivery prompt");
   };
   const rpcMs = timeoutMs(process.env.ACP_SMOKE_RPC_TIMEOUT_MS, 90_000);
@@ -701,7 +736,7 @@ async function main() {
     if (provider === "muse") record("subagent", "N/A", "Muse delegation is a workflow; no plain subagent feature");
     if (permissionSmokeNotApplicable(provider)) record("permission", "N/A", permissionSmokeNotApplicable(provider));
     const check = async (capability, fn, ms = Math.min(2_147_483_647, turnMs * 2 + rpcMs)) => {
-      if (!requested(capability)) { record(capability, "NOT RUN", "excluded by --scenario; not release validation"); return false; }
+      if (!requested(capability, provider)) { record(capability, "NOT RUN", "excluded by --scenario; not release validation"); return false; }
       say(`${provider}: checking ${capability}`);
       try {
         assert(!interrupted, "smoke interrupted");
@@ -814,6 +849,7 @@ async function main() {
       const selectedModel = await check("model", configureModel);
       if (!selectedModel) throw new Error("model selection failed; refusing paid prompts with an unknown/default model");
       let completedPrompt = false;
+      let claudeChildCards;
       const updates = (turn) => {
         const events = peer.events.slice(turn.from);
         const response = events.findIndex((e) => e.direction === "receive" && e.message.id === turn.id && !e.message.method);
@@ -913,11 +949,22 @@ async function main() {
             && !frames().some(f => isSubagentToolCall(f.update))) {
           return checkSubagents(frames(), sessionId, isSubagentToolCall);
         }
+        let unproven;
         await peer.waitUntil(() => {
-          try { checkSubagents(frames(), sessionId, isSubagentToolCall); return true; }
-          catch { return false; }
-        }, "normalized subagent completion and result", workflowMs);
-        return checkSubagents(frames(), sessionId, isSubagentToolCall);
+          try {
+            checkSubagents(frames(), sessionId, isSubagentToolCall);
+            if (provider === "claude") claudeChildCards = checkClaudeSubagentText(frames(), sessionId);
+            return true;
+          }
+          catch (error) {
+            if (error?.code !== "NOT_OBSERVED") return false;
+            unproven = error;
+            return true;
+          }
+        }, provider === "claude" ? "normalized Claude subagent completion and live child text" : "normalized subagent completion and result", workflowMs);
+        if (unproven) throw unproven;
+        const result = checkSubagents(frames(), sessionId, isSubagentToolCall);
+        return claudeChildCards ? `${result}; live child text received` : result;
       }, Math.min(2_147_483_647, turnMs + workflowMs + rpcMs));
 
       if (provider !== "codex") {
@@ -968,17 +1015,20 @@ async function main() {
         connect();
         await initialize();
         const from = peer.events.length;
-        await peer.request("session/load", { sessionId, cwd: scratch, mcpServers: [] });
+        await peer.load(sessionId);
         const replay = peer.received(from, "session/update", sessionId).map((p) => p.update);
         const users = replay.filter((u) => u?.sessionUpdate === "user_message_chunk" && u.content?.type === "text" && nonempty(u.content.text));
         const agents = replay.filter((u) => u?.sessionUpdate === "agent_message_chunk" && u.content?.type === "text" && nonempty(u.content.text));
         assert(users.length > 0 && agents.length > 0, `session/load returned without conversation replay (user=${users.length}, agent=${agents.length})`);
+        if (scenario === "subagent" && !claudeChildCards) throw inconclusive("MODEL_DID_NOT_DELEGATE", "live child text was not verified");
+        if (claudeChildCards) checkClaudeSubagentText(peer.normalized, sessionId, claudeChildCards);
+        if (scenario === "subagent") return "fresh adapter replayed child text on the same Claude subagent card";
         // A reopened Muse 1.4.0 conversation cannot launch workflows. Exercise
         // ordinary prompt admission here; workflow coverage uses the fresh one.
         const recovery = peer.prompt(sessionId, "Do not use tools. Reply with the single word ok.");
         await finish(recovery);
         assert(updates(recovery).some(u => u?.sessionUpdate === "agent_message_chunk" && nonempty(u.content?.text)), "reopened session returned no answer");
-        return `fresh adapter replayed ${users.length} user and ${agents.length} agent chunks for ${sessionId}`;
+        return `fresh adapter replayed ${users.length} user and ${agents.length} agent chunks for ${sessionId}${claudeChildCards ? "; same subagent cards received child text" : ""}`;
       });
       if (scenario === "fork" || muse) await check("fork", async () => {
         if (muse && !scenario) {

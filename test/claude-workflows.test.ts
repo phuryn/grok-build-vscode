@@ -158,6 +158,7 @@ describe("Claude AIR workflows", () => {
       const caps = schema.zInitializeRequest.parse({ protocolVersion: 1, clientCapabilities: acpClientCapabilities(provider) }).clientCapabilities;
       expect(clientSupportsAsyncTasks(caps)).toBe(provider === "claude");
       expect(clientSupportsSubagents(caps)).toBe(provider === "codex");
+      expect(caps._meta?.["subagent-transcript"]).toBe(provider === "claude" ? true : undefined);
     }
     const backend = new ClaudeBackend();
     normalize(backend, wire[1]);

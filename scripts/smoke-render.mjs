@@ -237,6 +237,24 @@ export async function runRenderSmoke(provider, evidenceParent, cliOverride, sele
         await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
         await capture(scenario);
         assertRenderedScenario(scenario);
+        if (provider === "claude" && name === "subagent" && scenario.result === "PASS") {
+          // Judge each card against what the host sent it: a child that only
+          // handed back (SubagentHandback, no prose) leaves no text to show.
+          const child = readEvents().filter(e => e.direction === "host-to-webview" && e.message.type === "childStream");
+          const cards = page.locator("#messages .subagent-card");
+          for (const card of await cards.all()) {
+            const id = await card.getAttribute("data-child-session-id");
+            const sent = child.filter(e => e.message.childSessionId === id);
+            assert(sent.length, `Claude card ${id} received no live child activity`);
+            const rows = card.locator(".subagent-stream .subagent-prose:visible, .subagent-stream .subagent-tool:visible");
+            assert(await rows.count(), `Claude card ${id} rendered none of its live child activity`);
+            if (sent.some(e => e.message.event === "messageChunk" && String(e.message.text || "").trim())) {
+              const prose = card.locator(".subagent-stream .subagent-prose:visible");
+              assert((await prose.allTextContents()).some(value => value.trim()),
+                `Claude card ${id} received child text but rendered none`);
+            }
+          }
+        }
       } catch (error) {
         Object.assign(scenario, { result: "FAIL", reason: String(error.message), stack: error.stack });
         failure ??= error;
