@@ -3873,6 +3873,24 @@ export class GrokSidebar {
   ): Promise<void> {
     if (session.priming) return; // ignore changes fired mid-session-start (see switchModel)
 
+    // Live effort switch — no restart — when the CLI honors per-session
+    // effort (grok ≥ the build advertising models[]._meta.supportsReasoningEffort
+    // + accepting set_model _meta.reasoningEffort; confirmed 0.2.101; Codex's
+    // reasoning_effort option). Tried on an empty chat too: a restart starts
+    // in the default mode, so a mode picked before the first prompt (Codex
+    // Plan) would be lost. Only a real, non-empty effort qualifies — "unset"
+    // (back to default) still needs a fresh spawn without --reasoning-effort.
+    // Persist the preference ONLY after the switch actually lands (live-applied,
+    // or restart accepted) — a persist-before that fails + dismissed restart
+    // would leave the saved default changed while the session ran at the old effort.
+    if (newLevel && session.client?.currentModelSupportsEffort()) {
+      const applied = await session.client.setReasoningEffort(newLevel).catch(() => false);
+      if (applied) {
+        await this.rememberProviderEffort(session.provider, newLevel);
+        return;
+      }
+    }
+
     if (!session.hasHistory || !session.client) {
       // As with a model switch on an empty session: restart without the summarize-vs-restart
       // prompt and discard the abandoned empty session — but only when it truly had no
@@ -3886,22 +3904,6 @@ export class GrokSidebar {
       await this.startSession(undefined, session);
       if (wasEmpty && session.provider === "grok") this.discardRestartedEmptySession(discardId, session);
       return;
-    }
-
-    // Live effort switch — no restart — when the CLI honors per-session
-    // effort (grok ≥ the build advertising models[]._meta.supportsReasoningEffort
-    // + accepting set_model _meta.reasoningEffort; confirmed 0.2.101). Only a
-    // real, non-empty effort qualifies — "unset" (back to default) still needs
-    // a fresh spawn without --reasoning-effort. Persist the preference ONLY
-    // after the switch actually lands (live-applied, or restart accepted) — a
-    // persist-before that fails + dismissed restart would leave the saved
-    // default changed while the session ran at the old effort.
-    if (newLevel && session.client.currentModelSupportsEffort()) {
-      const applied = await session.client.setReasoningEffort(newLevel).catch(() => false);
-      if (applied) {
-        await this.rememberProviderEffort(session.provider, newLevel);
-        return;
-      }
     }
 
     if (origin === "remote" && clientId) {
@@ -5644,9 +5646,11 @@ Only continue if you trust this code.`,
       if (requester) {
         const currentClientId = this.resolveRemoteRequester(requester);
         if (!currentClientId || (turnFork && this.remoteClients.active(currentClientId) !== session)) return;
+        await this.releaseForkSource(session, client, parentId);
         await this.openRemoteSession(currentClientId, r.newSessionId, cwd);
       } else {
         if (turnFork && this.focused !== session) return;
+        await this.releaseForkSource(session, client, parentId);
         await this.openSession(r.newSessionId, cwd);
       }
       this.reportRequester(
@@ -5669,6 +5673,24 @@ Only continue if you trust this code.`,
         if (session.queuedSends.length) void this.maybeFlushQueuedSends(session);
       }
     }
+  }
+
+  /**
+   * Codex locks every conversation its process has opened to that process,
+   * the copy a fork just made included, and refuses to load it anywhere else
+   * ("already has an active writer"). `session/close` does not lift the lock
+   * for 20 to 60 seconds; the process exiting lifts it at once. The new chat
+   * opens the copy in a fresh process, so the original's process goes first,
+   * the way a crash takes it: the original leaves the live pool, and going
+   * back to it reopens it from history, while a view still on it respawns on
+   * its next send.
+   */
+  private async releaseForkSource(session: Session, client: AcpClient, parentId: string): Promise<void> {
+    if (session.provider !== "codex" || session.client !== client) return;
+    const exited = this.detachClient(session)?.dispose();
+    this.pool.delete(session);
+    this.post({ type: "sessionDot", id: parentId, dot: this.dotForId(parentId) });
+    await exited;
   }
 
   private emitForkableTurnEnd(

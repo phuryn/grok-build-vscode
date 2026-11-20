@@ -33,6 +33,7 @@ function hostWith(session: Session) {
   host.remoteClients = new RemoteClientState<Session>("/work/repo");
   host.remoteClients.ready("phone");
   host.remoteClients.setActive("phone", session);
+  host.pendingConfirms = new Map();
   return host;
 }
 
@@ -221,7 +222,11 @@ it.each(["local", "remote"])("opens the adapter fork and stores only the edit te
   const client = Object.assign(session.client!, {
     supportsTurnFork: () => true,
     forkSession: vi.fn(async () => ({ newSessionId: "child" })),
+    dispose: vi.fn(async () => {}),
+    setHumanWaitActive: vi.fn(),
   });
+  host.post = vi.fn();
+  host.dotForId = () => undefined;
   host.openSession = vi.fn();
   host.openRemoteSession = vi.fn();
   const parentId = session.activeSessionId!;
@@ -258,6 +263,41 @@ it.each(["local", "remote"])("opens the adapter fork and stores only the edit te
     origin === "remote" ? expect.objectContaining({ clientId: "phone" }) : undefined, "info",
     expect.stringContaining("Files on disk were not touched. Attachments stay with the original message."),
   );
+});
+
+// Codex keeps a conversation its process opened locked to that process, a
+// fork's copy included ("already has an active writer"), and only the process
+// exiting lifts it at once. The new chat opens the copy in a fresh process.
+it.each(["codex", "claude"] as const)("lets go of the original's process before opening a %s copy only where the adapter locks it", async (provider) => {
+  const session = startedSession(provider);
+  const host = hostWith(session);
+  host.post = vi.fn();
+  host.dotForId = () => undefined;
+  let exited = false;
+  const dispose = vi.fn(async () => { await Promise.resolve(); exited = true; });
+  const client = Object.assign(session.client!, {
+    supportsTurnFork: () => true,
+    forkSession: vi.fn(async () => ({ newSessionId: "child" })),
+    dispose,
+    setHumanWaitActive: vi.fn(),
+  });
+  let overrides: Record<string, any> = {};
+  host.state = { get: () => overrides, update: async (_key: string, value: typeof overrides) => { overrides = value; } };
+  let atOpen: { client: unknown; live: boolean; exited: boolean } | undefined;
+  host.openSession = vi.fn(async () => { atOpen = { client: session.client, live: host.pool.has(session), exited }; });
+  session.forkPoints.reply("first", false);
+  session.forkPoints.settle(true);
+  await host.onMessage({ type: "forkSession" }, "local");
+  expect(host.openSession).toHaveBeenCalledWith("child", "/work/repo");
+  if (provider === "codex") {
+    expect(atOpen).toEqual({ client: undefined, live: false, exited: true });
+    expect(host.post).toHaveBeenCalledWith({ type: "sessionDot", id: "codex-1", dot: undefined });
+    expect(host.remoteClients.active("phone")).toBe(session);
+  } else {
+    expect(atOpen).toEqual({ client, live: true, exited: false });
+    expect(dispose).not.toHaveBeenCalled();
+  }
+  expect(host.reportRequester).toHaveBeenLastCalledWith(undefined, "info", expect.stringContaining('Forked into "(Fork) Parent"'));
 });
 
 it("requires the bound session and propose permission for a typed fork point", () => {
