@@ -146,5 +146,6 @@ export function matchSlashCommand(text: string, commandNames: string[]): string 
 
 export function matchProviderSlashCommand(provider: AcpProvider, text: string, commandNames: string[]): string | null {
   const command = matchSlashCommand(text, commandNames);
+  if (provider === "muse" && command === "compact" && !commandNames.includes(command)) return null;
   return command === "compact" && !supportsCompaction(provider) ? null : command;
 }

@@ -10,13 +10,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { makeExplicitChip, makeImageChip, makeImplicitChip } from "../src/chips";
 import type { HostMsg } from "../src/protocol";
 import { enqueueQueuedSend } from "../src/queued-send";
-import { Session } from "../src/session";
+import { finishQueuedSendCommit, Session } from "../src/session";
 import { GrokSidebar } from "../src/sidebar";
 import { AcpClient } from "../src/acp";
 import type { AcpBackend } from "../src/acp-backend";
 import { grokBackend } from "../src/grok-backend";
 import { CodexBackend } from "../src/codex-backend";
 import { ClaudeBackend } from "../src/claude-backend";
+import { MuseBackend } from "../src/muse-backend";
 
 const PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
@@ -96,9 +97,9 @@ describe("steerSend carries attachments", () => {
     return { session, request, client };
   }
 
-  it.each([grokBackend, new CodexBackend(), new ClaudeBackend()])("carries actual backend image support through the host (%s)", async (backend) => {
+  it.each([grokBackend, new CodexBackend(), new ClaudeBackend(), new MuseBackend()])("carries actual backend image support through the host (%s)", async (backend) => {
     const sidebar = makeSidebar();
-    const { session, request } = attachBackend(sidebar, backend);
+    const { session, request } = attachBackend(sidebar, backend, true, true, { outcome: "injected" });
     const chip = makeImageChip(stagingPng(), 1, "image/png");
     session.chips = [chip];
     await sidebar.steerSend("look at this", session, undefined, [chip]);
@@ -116,6 +117,64 @@ describe("steerSend carries attachments", () => {
       expect.objectContaining({ text: "look at this", steer: true }),
     ]);
     expect(sidebar.posted.some((m: HostMsg) => m.type === "agentStart")).toBe(false);
+  });
+
+  it("flushes a refused Muse steer once even if the previous turn finished before its answer", async () => {
+    const sidebar = makeSidebar();
+    const { session, request } = attachBackend(sidebar, new MuseBackend());
+    session.status = "working";
+    session.queuedSends = enqueueQueuedSend([], "send this once", []);
+    session.queuedSendRequiresRelay = true;
+    sidebar.handleSend = vi.fn(async (_text, _bare, s, _origin, claim) => {
+      expect(finishQueuedSendCommit(s, claim, true)).toBe(true);
+    });
+    request.mockImplementationOnce(async () => {
+      session.status = "done";
+      session.turnToken = undefined;
+      await sidebar.maybeFlushQueuedSends(session); // The ordinary end-of-turn flush wins the race.
+      return { outcome: "refused" };
+    });
+    await sidebar.steerSend("send this once", session, undefined, undefined, true);
+    expect(sidebar.handleSend).toHaveBeenCalledOnce();
+    await sidebar.maybeFlushQueuedSends(session);
+    expect(request).toHaveBeenCalledOnce();
+    expect(sidebar.handleSend).toHaveBeenCalledOnce();
+    expect(sidebar.handleSend).toHaveBeenCalledWith(
+      "send this once", false, session, "local", expect.objectContaining({ items: [{ text: "send this once", chips: [] }] }),
+    );
+    expect(session.queuedSends).toEqual([]);
+    expect(session.interjectionCount).toBe(0);
+    expect(sidebar.posted.some((m: HostMsg) => m.type === "agentReset")).toBe(false);
+  });
+
+  it("never resends a Muse correction after an unconfirmed acknowledgement", async () => {
+    const sidebar = makeSidebar();
+    const { session, request } = attachBackend(sidebar, new MuseBackend());
+    request.mockRejectedValueOnce(new Error("transport closed"));
+    await sidebar.steerSend("still visible", session);
+    expect(session.queuedSends).toEqual([]);
+    expect(sidebar.posted).toContainEqual(expect.objectContaining({ type: "userMessage", text: "still visible", steer: true }));
+    expect(sidebar.reportRequester).toHaveBeenCalledWith(undefined, "warning", expect.stringContaining("could not confirm delivery"));
+  });
+
+  it("does not dispatch a queued Muse steer after that text has already flushed", async () => {
+    const sidebar = makeSidebar();
+    const { session, request } = attachBackend(sidebar, new MuseBackend());
+    session.queuedSends = enqueueQueuedSend([], "newly queued text", []);
+    await sidebar.steerSend("already sent text", session, undefined, undefined, true);
+    expect(request).not.toHaveBeenCalled();
+    expect(session.queuedSends).toEqual([{ text: "newly queued text", chips: [] }]);
+    expect(sidebar.posted).toEqual([]);
+  });
+
+  it("holds a Muse correction when its starting turn is replaced during preparation", async () => {
+    const sidebar = makeSidebar();
+    const { session, request } = attachBackend(sidebar, new MuseBackend());
+    session.status = "working";
+    sidebar.retainUploadedFilesForSession.mockImplementationOnce(async () => { session.turnToken = {}; });
+    await sidebar.steerSend("keep this for later", session);
+    expect(request).not.toHaveBeenCalled();
+    expect(session.queuedSends).toEqual([{ text: "keep this for later", chips: [] }]);
   });
 
   it.each([grokBackend, new CodexBackend(), new ClaudeBackend()])(

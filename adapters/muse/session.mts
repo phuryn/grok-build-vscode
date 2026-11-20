@@ -1,7 +1,9 @@
 import { MspError, spawnMspConnection, type MspHandshake, type SpawnedMspConnection } from "@muse-code/sdk";
-import { RequestError, type AgentContext, type ContentBlock, type PromptResponse } from "@agentclientprotocol/sdk";
+import { RequestError, type AgentContext, type AvailableCommand, type ContentBlock, type PromptResponse, type SessionUpdate } from "@agentclientprotocol/sdk";
+import { museCliInvocation, readMuseMethods } from "./capabilities.mjs";
 import { Projection } from "./projection.mjs";
 import { Approvals } from "./approvals.mjs";
+import { museSkillCommands, museSkillInput } from "./skills.mjs";
 // A deep import because the SDK root re-exports nothing from `msp.js`, and
 // this is the only route to the effort vocabulary. Type-only, so it costs
 // the packaging graph nothing; the disk-read assertion in
@@ -38,13 +40,18 @@ export function museTurnFailure(terminal: { error?: { kind?: string; message?: s
  * bare "Internal error" for every attached picture (#211). Anything else is
  * still refused, in words.
  */
-export function museTurnInput(prompt: ContentBlock[]): Array<{ type: "text"; text: string } | { type: "image"; base64Data: string; mediaType: string }> {
+export function museTurnInput(prompt: ContentBlock[], skills: ReadonlySet<string> = new Set()) {
   if (!prompt.length) throw new RequestError(-32602, "Muse Code got an empty message.");
-  return prompt.map((part) => {
-    if (part.type === "text") return { type: "text", text: part.text };
-    if (part.type === "image" && part.data && part.mimeType) return { type: "image", base64Data: part.data, mediaType: part.mimeType };
+  return prompt.map((part, index) => {
+    if (part.type === "text") return (index === 0 ? museSkillInput(part.text, skills) : undefined)
+      ?? { type: "text" as const, text: part.text };
+    if (part.type === "image" && part.data && part.mimeType) return { type: "image" as const, base64Data: part.data, mediaType: part.mimeType };
     throw new RequestError(-32602, `Muse Code can't take this kind of attachment (${part.type}); send text or images.`);
   });
+}
+
+function isCompactPrompt(prompt: ContentBlock[]): boolean {
+  return prompt.length === 1 && prompt[0].type === "text" && prompt[0].text.trim() === "/compact";
 }
 
 const RESUME_RETRY_DELAY_MS = 300;
@@ -69,16 +76,6 @@ function isBlankMuseSession(session: Record<string, any>): boolean {
  */
 const CHILD_EXIT_BUDGET_MS = 2000;
 
-/**
- * Windows command shims are scripts, not binaries: Node has refused to spawn
- * a `.cmd`/`.bat` directly since CVE-2024-27980. `src/cli-process.ts` carries
- * the same rule for the host, but the adapter compiles under its own tsconfig
- * whose rootDir is `adapters/muse`, so it cannot import that file.
- */
-function museCliNeedsShell(cliPath: string, platform = process.platform): boolean {
-  return platform === "win32" && /\.(cmd|bat)$/i.test(cliPath);
-}
-
 function childExitTimeout(): Promise<undefined> {
   return new Promise<undefined>(resolve => {
     const timer = setTimeout(() => resolve(undefined), CHILD_EXIT_BUDGET_MS);
@@ -89,8 +86,10 @@ function childExitTimeout(): Promise<undefined> {
 interface PendingTurn {
   turnId?: string;
   queued?: boolean;
+  finished?: boolean;
   cancelRequested?: boolean;
   early: Map<string, Record<string, any>>;
+  started: Set<string>;
   resolve: (result: Record<string, any>) => void;
   reject: (error: unknown) => void;
 }
@@ -102,6 +101,14 @@ export class MuseSession {
   private starting?: Promise<void>;
   private closing?: Promise<void>;
   private sessionId?: string;
+  private workspaceRoot?: string;
+  private methods = new Set<string>();
+  private skillSelectors = new Set<string>();
+  private refreshingSkills = false;
+  private skillsDirty = false;
+  private pendingCompact?: { resolve: (item: Record<string, any>) => void; reject: (error: unknown) => void };
+  private forking = false;
+  private forkLeave?: { sessionId: string; commandId: string; settle: (released: boolean) => void };
   private reasoningEffort?: ReasoningEffort;
   private approvalMode: ApprovalMode = "promptUnmatched";
   private shellSandbox = true;
@@ -120,13 +127,9 @@ export class MuseSession {
     private readonly log: (message: string) => void,
     private readonly fatal: (error: unknown) => void,
     private readonly spawn = spawnMspConnection,
+    private readonly probeMethods = readMuseMethods,
   ) {
-    this.projection = new Projection(update => {
-      this.updates = this.updates.then(() => this.client.notify("session/update", {
-        sessionId: this.sessionId!, update,
-      }));
-      void this.updates.catch(error => this.fail(error));
-    }, log);
+    this.projection = new Projection(update => this.publish(update), log);
     this.approvals = new Approvals(
       params => this.client.request("session/request_permission", params),
       params => this.connection().command("approval/decide", params),
@@ -134,6 +137,21 @@ export class MuseSession {
       error => this.fail(error),
       () => this.approvalMode === "allowAll",
     );
+  }
+
+  private publish(update: SessionUpdate): void {
+    const sessionId = this.sessionId!;
+    this.updates = this.updates.then(() => this.client.notify("session/update", { sessionId, update }));
+    void this.updates.catch(error => this.fail(error));
+  }
+
+  capabilities() {
+    return {
+      steer: this.methods.has("turn/steer"),
+      compact: this.methods.has("session/compact"),
+      fork: this.methods.has("session/fork") && this.methods.has("session/leave"),
+      skills: this.methods.has("skill/list"),
+    };
   }
 
   initialize(): Promise<void> {
@@ -144,11 +162,6 @@ export class MuseSession {
   private async start(): Promise<void> {
     const executable = process.env.MUSE_CODE_EXECUTABLE;
     if (!executable) throw new Error("MUSE_CODE_EXECUTABLE must name the installed Muse CLI");
-    // The SDK spawns the command itself and exposes neither `shell` nor
-    // `windowsVerbatimArguments`, so the shim is wrapped here instead. The
-    // executable and `serve` stay separate argv entries. Omit /s: it strips
-    // Node's quotes around a spaced executable path before cmd resolves it.
-    const needsShell = museCliNeedsShell(executable);
     const posture = JSON.parse(process.env.GROK_MUSE_POSTURE || "{}");
     this.sandboxUnavailable = posture.sandboxUnavailable === "cloud" || posture.sandboxUnavailable === "windows"
       ? posture.sandboxUnavailable : undefined;
@@ -165,9 +178,12 @@ export class MuseSession {
       args.push("--sandbox-network", posture.sandboxNetwork);
     }
     if (posture.mode === "yolo" || posture.trustWorkspaces === true) args.push("--trust-workspace");
+    const methods = this.probeMethods(executable).catch(error => {
+      this.log(`Muse schema export unavailable: ${String(error)}`);
+      return new Set<string>();
+    });
     const handshake = this.handshake = this.spawn({
-      command: needsShell ? process.env.COMSPEC || "cmd.exe" : executable,
-      args: needsShell ? ["/d", "/c", executable, ...args] : args,
+      ...museCliInvocation(executable, args),
       cwd: process.cwd(), env: process.env,
       onStderr: chunk => process.stderr.write(chunk) });
     handshake.onNotification(notification => {
@@ -198,6 +214,8 @@ export class MuseSession {
       void this.msp.connection.closed.then(() => {
         if (!this.closing) this.fail(new Error("Muse transport closed"));
       });
+      this.methods = await methods;
+      this.projection.forkIds = this.capabilities().fork;
     } finally { clearTimeout(timeout); }
   }
 
@@ -215,12 +233,44 @@ export class MuseSession {
       const session = result.session as { sessionId?: string; modelId?: string; approvalMode?: { mode: ApprovalMode } } | undefined;
       if (!session?.sessionId) throw new Error("Muse session/start returned no sessionId");
       this.sessionId = session.sessionId;
+      this.workspaceRoot = workspaceRoot;
       this.approvalMode = session.approvalMode?.mode ?? this.approvalMode;
       this.assertSandbox(this.approvalMode);
+      await this.refreshSkills();
       return { sessionId: session.sessionId, models: await this.models(session.modelId), ...this.modes(session.approvalMode?.mode) };
     } finally { this.creating = false; }
   }
 
+  private async refreshSkills(): Promise<void> {
+    if (!this.capabilities().compact && !this.capabilities().skills) return;
+    this.skillsDirty = true;
+    if (this.refreshingSkills) return;
+    this.refreshingSkills = true;
+    const sessionId = this.sessionId!;
+    try {
+      do {
+        this.skillsDirty = false;
+        let commands: AvailableCommand[] = [];
+        if (this.capabilities().skills) {
+          try {
+            const result = await this.connection().request("skill/list", { sessionId });
+            commands = museSkillCommands(result.skills);
+          } catch (error) {
+            this.log(`Muse skill/list failed: ${String(error)}`);
+            if (this.skillSelectors.size) continue; // Keep the last good catalog.
+          }
+        }
+        if (this.sessionId !== sessionId || this.closing) return;
+        this.skillSelectors = new Set(commands.map(command => command.name));
+        if (this.capabilities().compact) {
+          commands.unshift({ name: "compact", description: "Summarize the conversation so far to free up context",
+            _meta: { "afk/compact": true } });
+        }
+        this.publish({ sessionUpdate: "available_commands_update", availableCommands: commands });
+        await this.updates;
+      } while (this.skillsDirty);
+    } finally { this.refreshingSkills = false; }
+  }
 
   async models(currentModelId?: string) {
     const catalog = await this.connection().request("model/list", {});
@@ -358,6 +408,7 @@ export class MuseSession {
       const result = await this.resumeSession(sessionId);
       const resumed = result.session as any;
       if (resumed?.sessionId !== sessionId || resumed.workspaceRoot !== cwd) throw new Error("Muse resume workspace/session mismatch");
+      this.workspaceRoot = cwd;
       // Native mode must reach the host before Muse reissues pending approvals.
       await this.publishMode(resumed.approvalMode?.mode);
       // Preserve the replayed fact for the host's next start, but never admit
@@ -408,6 +459,7 @@ export class MuseSession {
         for (const approval of (pending.approvals as any[] ?? [])) this.approvals.accept("approval/requested", approval);
       }
       await this.updates;
+      await this.refreshSkills();
       return { _meta: { models: await this.models(resumed.modelId) }, ...this.modes(this.approvalMode) };
     } catch (error) {
       this.sessionId = undefined;
@@ -421,11 +473,12 @@ export class MuseSession {
     this.assertSession(sessionId);
     if (this.pendingModeRepairs || this.needsModeRepair(this.approvalMode)) await this.updates;
     this.assertSandbox(this.approvalMode);
-    if (this.pending) throw new Error("Muse session already has an active prompt");
-    const input = museTurnInput(prompt);
+    if (this.pending || this.pendingCompact || this.forking) throw new Error("Muse session already has an active prompt");
+    if (isCompactPrompt(prompt)) return this.compact(sessionId);
+    const input = museTurnInput(prompt, this.skillSelectors);
     let pending!: PendingTurn;
     const completed = new Promise<Record<string, any>>((resolve, reject) => {
-      pending = { resolve, reject, early: new Map() };
+      pending = { resolve, reject, early: new Map(), started: new Set() };
     });
     // A transport failure can arrive while turn/start is still awaiting admission.
     void completed.catch(() => {});
@@ -441,10 +494,14 @@ export class MuseSession {
         throw new Error(`Muse did not admit a prompt turn: ${JSON.stringify(admitted)}`);
       }
       pending.turnId = admitted.turnId;
-      pending.queued = admitted.disposition === "queued";
+      pending.queued = admitted.disposition === "queued" && !pending.started.has(admitted.turnId);
+      pending.started.clear();
       this.log(`Muse turn admitted: ${admitted.turnId}`);
       const early = pending.early.get(admitted.turnId);
-      if (early) pending.resolve(early);
+      if (early) {
+        pending.finished = true;
+        pending.resolve(early);
+      }
       else if (pending.cancelRequested) await this.cancel(sessionId);
       pending.early.clear();
       const terminal = await completed;
@@ -457,6 +514,101 @@ export class MuseSession {
     } finally {
       this.pending = undefined;
     }
+  }
+
+  async steer(sessionId: string, prompt: ContentBlock[]) {
+    this.assertSession(sessionId);
+    if (!this.capabilities().steer) throw RequestError.methodNotFound("turn/steer");
+    const pending = this.pending;
+    const expectedTurnId = pending?.turnId;
+    if (!expectedTurnId || pending.finished || pending.queued || isCompactPrompt(prompt)) return { outcome: "refused" };
+    try {
+      const result = await this.connection().command("turn/steer", {
+        sessionId, expectedTurnId, input: museTurnInput(prompt, this.skillSelectors),
+      });
+      if (result.status === "accepted" && result.turnId === expectedTurnId) return { outcome: "injected" };
+      throw new Error("Muse returned an unexpected steer acknowledgement");
+    } catch (error) {
+      if (error instanceof MspError && error.code === -32601) throw RequestError.methodNotFound("turn/steer");
+      // These are explicit refusals, so the host can safely send the text once
+      // the turn ends. A lost acknowledgement cannot authorize a second send.
+      if (error instanceof RequestError || (error instanceof MspError
+        && ["commandRejected", "sessionNotLoaded", "invalidParams", "skillNotFound", "overloaded", "backpressured", "inputTooLarge"].includes(error.kind))) {
+        return { outcome: "refused" };
+      }
+      throw error;
+    }
+  }
+
+  private async compact(sessionId: string): Promise<PromptResponse> {
+    if (!this.capabilities().compact) throw RequestError.methodNotFound("session/compact");
+    const completed = new Promise<Record<string, any>>((resolve, reject) => {
+      this.pendingCompact = { resolve, reject };
+    });
+    void completed.catch(() => {});
+    try {
+      const result = await this.connection().command("session/compact", { sessionId }).catch(error => {
+        if (error instanceof MspError && error.kind === "commandRejected" && error.data.reason === "missing_run") {
+          return { status: "noop" };
+        }
+        throw error;
+      });
+      if (result.status === "noop") return { stopReason: "end_turn", _meta: { compactOutcome: "noop" } };
+      if (result.status !== "accepted") throw new Error("Unexpected Muse compaction acknowledgement");
+      const { outcome, reason } = await completed;
+      await this.updates;
+      if (outcome === "compacted" || outcome === "noop") {
+        if (outcome === "compacted") await this.readSubscriptionUsage();
+        return { stopReason: "end_turn", _meta: { compactOutcome: outcome } };
+      }
+      if (outcome === "cancelled") return { stopReason: "cancelled" };
+      this.log(`Muse compaction failed: ${typeof reason === "string" ? reason : "unknown reason"}`);
+      throw new RequestError(-32603, "Muse Code could not compact this conversation.");
+    } finally { this.pendingCompact = undefined; }
+  }
+
+  async fork(sessionId: string, cwd: string, messageId?: string) {
+    this.assertSession(sessionId);
+    if (!this.capabilities().fork) throw RequestError.methodNotFound("session/fork");
+    if (cwd !== this.workspaceRoot || this.pending || this.pendingCompact || this.forking) {
+      throw new RequestError(-32602, "Muse cannot fork this conversation right now.");
+    }
+    const lastTurnId = messageId === undefined ? undefined : this.projection.replyTurnId(messageId);
+    if (messageId !== undefined && !lastTurnId) throw RequestError.invalidParams();
+    this.forking = true;
+    try { return await this.forkAndRelease(sessionId, cwd, lastTurnId); }
+    finally { this.forking = false; }
+  }
+
+  private async forkAndRelease(sessionId: string, cwd: string, lastTurnId?: string) {
+    const connection = this.connection();
+    const result = await connection.command("session/fork", {
+      sessionId, excludeItems: true, ...(lastTurnId ? { cutPoint: { lastTurnId } } : {}),
+    }).catch(error => {
+      if (error instanceof MspError && error.kind === "forkBoundaryInvalid") throw RequestError.invalidParams();
+      if (error instanceof MspError && error.code === -32601) throw RequestError.methodNotFound("session/fork");
+      throw error;
+    });
+    const fork = result.session as { sessionId?: string; workspaceRoot?: string; forkedFrom?: { sessionId: string } } | undefined;
+    if (!fork?.sessionId || fork.sessionId === sessionId || fork.workspaceRoot !== cwd || fork.forkedFrom?.sessionId !== sessionId) {
+      throw new Error("Muse fork returned an unexpected conversation");
+    }
+    // Fork loads the copy in this serve. Release only its writer before AFK
+    // opens it in a new process. The original still owns its own live work.
+    const commandId = connection.mintCommandId();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const released = new Promise<boolean>(settle => {
+      this.forkLeave = { sessionId: fork.sessionId!, commandId, settle };
+      timer = setTimeout(() => settle(false), 10_000);
+    });
+    try {
+      const ack = await connection.command("session/leave", { sessionId: fork.sessionId }, { commandId });
+      if (ack.status !== "accepted" || !await released) throw new Error("Muse could not release the fork");
+    } finally {
+      clearTimeout(timer);
+      this.forkLeave = undefined;
+    }
+    return { sessionId: fork.sessionId };
   }
 
   async cancel(sessionId: string): Promise<void> {
@@ -509,6 +661,11 @@ export class MuseSession {
   }
 
   private notification(method: string, params: Record<string, any>): void {
+    const leave = this.forkLeave;
+    if (method === "session/leaveCompleted" && leave && params.sessionId === leave.sessionId && params.commandId === leave.commandId) {
+      leave.settle(params.outcome === "released");
+      return;
+    }
     // `usage/changed` carries no session id, so the check below would drop it.
     if (method === "usage/changed") {
       if (this.sessionId) void this.publishSubscriptionUsage(params);
@@ -527,6 +684,14 @@ export class MuseSession {
       return;
     }
     this.assertSandbox(this.approvalMode);
+    if (method === "skill/changed" && this.capabilities().skills) void this.refreshSkills().catch(error => this.fail(error));
+    if (method === "item/completed" && params.item?.kind === "compaction" && params.item.trigger === "manual") {
+      this.pendingCompact?.resolve(params.item);
+    }
+    if (method === "turn/started" && this.pending && typeof params.turnId === "string") {
+      if (!this.pending.turnId) this.pending.started.add(params.turnId);
+      else if (this.pending.turnId === params.turnId) this.pending.queued = false;
+    }
     this.projection.accept(method, params);
     this.approvals.accept(method, params);
     if (method === "turn/completed" && typeof params.turnId === "string") this.approvals.forgetTurn(params.turnId);
@@ -536,18 +701,25 @@ export class MuseSession {
     if (["turn/completed", "turn/unqueued"].includes(method) && this.pending && typeof params.turnId === "string") {
       const terminal = method === "turn/unqueued" ? { ...params, terminal: "cancelled" } : params;
       if (!this.pending.turnId) this.pending.early.set(params.turnId, terminal);
-      else if (params.turnId === this.pending.turnId) this.pending.resolve(terminal);
+      else if (params.turnId === this.pending.turnId) {
+        this.pending.finished = true;
+        this.pending.resolve(terminal);
+      }
     }
   }
 
   private fail(error: unknown): void {
     this.pending?.reject(error);
+    this.pendingCompact?.reject(error);
+    this.forkLeave?.settle(false);
     if (!this.closing) this.fatal(error);
   }
 
   close(): Promise<void> {
     return this.closing ??= Promise.resolve().then(async () => {
       this.pending?.reject(new Error("Muse adapter is closing"));
+      this.pendingCompact?.reject(new Error("Muse adapter is closing"));
+      this.forkLeave?.settle(false);
       this.approvals.clear();
       const handshake = this.handshake;
       if (!handshake) return;

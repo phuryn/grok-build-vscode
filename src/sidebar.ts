@@ -111,6 +111,7 @@ import {
   sessionGoalMessage,
   sessionPickerModes,
   subscriptionUsageMessage,
+  museCommandSnapshot,
   startupStatusMessage,
   sessionModeMessage,
   turnIsInFlight,
@@ -5218,6 +5219,10 @@ Only continue if you trust this code.`,
     const authored = text ?? "";
     const takeQueue = (fromQueue && queuedSendsHaveContent(session.queuedSends))
       || queuedSendsContainChipIds(session.queuedSends, requestedChips);
+    // The original queue may already have flushed while the tap crossed the
+    // relay. Treat a queued steer as a claim on that text, never a fresh send.
+    if (session.provider === "muse" && fromQueue
+      && (!takeQueue || authored !== queuedSendsText(session.queuedSends))) return;
 
     if (!session.client || !session.activeSessionId) {
       // No live turn to steer — fall back to the queue rather than drop it.
@@ -5289,6 +5294,7 @@ Only continue if you trust this code.`,
 
     const client = session.client;
     const gen = session.gen;
+    const museSteerTurn = session.provider === "muse" ? session.turnToken : undefined;
     const promptDeps = {
       readFile: (p: string) => fs.readFileSync(p, "utf8"),
       extName: (p: string) => path.extname(p),
@@ -5369,7 +5375,7 @@ Only continue if you trust this code.`,
     // it sends the ordinary tracked turn the user was going to get anyway.
     // `turnInFlight` and not `status`: only the token can tell "working"
     // from "was working and never settled".
-    if (!this.turnInFlight(session)) {
+    if (!this.turnInFlight(session) || (session.provider === "muse" && session.turnToken !== museSteerTurn)) {
       putBackOnQueue();
       // This text is already paid for: the relay meters `steerSend` on ingress
       // exactly like `send`, which is why every other fallback in this function
@@ -5399,14 +5405,18 @@ Only continue if you trust this code.`,
       ? { ...block, text: appendPastedTextContext(block.text, pastedText) } : block);
     try {
       const r = await client.interject(rpcText, () => {
-        if (gen === session.gen && session.client === client) session.interjectionCount += 1;
+        if (session.provider !== "muse" && gen === session.gen && session.client === client) session.interjectionCount += 1;
       }, images.length ? content : undefined);
       if (r === "unsupported") {
         // Unsupported backend: latch the button off and hand the item to the queue,
         // which is exactly the behavior Steer was offering to skip.
         this.emit(session, { type: "steerUnavailable" });
-        this.emit(session, { type: "agentReset" });
+        if (session.provider !== "muse") this.emit(session, { type: "agentReset" });
         putBackOnQueue();
+        if (session.provider === "muse") {
+          session.queuedSendRequiresRelay = false;
+          void this.maybeFlushQueuedSends(session);
+        }
         this.reportRequester(
           requester,
           "warning",
@@ -5441,14 +5451,20 @@ Only continue if you trust this code.`,
           "warning",
           "The agent could not take that correction mid-turn — your message was queued instead. It will send when the turn finishes.",
         );
+        if (session.provider === "muse") void this.maybeFlushQueuedSends(session);
         return;
       }
+      if (session.provider === "muse" && gen === session.gen && session.client === client) session.interjectionCount += 1;
       this.host.appendLine(
         images.length
           ? `[steer] interjected ${rpcText.length} chars + ${images.length} image(s) into the running turn`
           : `[steer] interjected ${rpcText.length} chars into the running turn`,
       );
     } catch (e: any) {
+      if (session.provider === "muse") {
+        this.reportRequester(requester, "warning", "Muse Code could not confirm delivery. Your message is still visible in the conversation.");
+        return;
+      }
       this.emit(session, { type: "agentReset" });
       putBackOnQueue();
       this.emit(session, { type: "error", text: `Steer failed: ${e?.message ?? e}. Your message was queued instead.` });
@@ -5653,6 +5669,7 @@ Only continue if you trust this code.`,
             contextPendingCompact: point ? undefined : parent.contextPendingCompact,
             ...(turnFork ? { provider, providerCwd: cwd, forkReplyIds: keptReplyIds } : {}),
             ...(provider === "codex" ? { codexAskApproval: parent.codexAskApproval } : {}),
+            ...(provider === "muse" && session.musePosture ? { musePosture: session.musePosture } : {}),
             ...(point?.draft ? { queuedDraft: point.draft } : {}),
             ...(worktree ? {
               worktreePath: worktree.path, worktreeLabel: worktree.label, sourceGitRoot: worktree.sourceGitRoot,
@@ -11818,7 +11835,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           cwd,
           version: handshakeVersion,
           provider: session.provider,
-          init: { protocolVersion: init?.protocolVersion },
+          init: { protocolVersion: init?.protocolVersion,
+            ...(session.provider === "muse" && client.supportsInterject() ? { steeringOwnsQueue: true } : {}) },
           steeringSupported: client.supportsInterject(),
         },
       });
@@ -12036,6 +12054,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         type: "userMessageChunk",
         text,
         ...fork,
+        ...(session.provider === "muse" && session.replayUserIsInterjection ? { forkBefore: undefined } : {}),
         timestampMs: agentTimestampMsFromMeta(meta),
         images: historyImagePreviews(
           session.replayUserRaw,
@@ -19145,6 +19164,12 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     const { blocks: promptBlocks } = contributions
       ? buildQueuedPromptWithImages(contributions, implicitChips, promptDeps, slashCommand != null)
       : buildPromptWithImages(text, chips, images, promptDeps, slashCommand != null);
+    // The compact gesture has no model input. Omit ambient editor text only,
+    // so a composer pick runs the same command as the context button.
+    if (session.provider === "muse" && slashCommand === "compact" && text.trim() === "/compact"
+      && !explicitVisibleChips(chips).length && promptBlocks[0]?.type === "text") {
+      promptBlocks[0] = { type: "text", text: "/compact" };
+    }
     const pastedText = this.readPastedTextContext(session, chips);
     if (pastedText === undefined) {
       onPreflightFailure?.();
@@ -19245,7 +19270,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       if (slashCommand === "compact") {
         session.sawCompactFailed = false;
         session.sawCompactNotification = false;
-        if (usesAdapterHistory(session.provider)) {
+        if (usesAdapterHistory(session.provider) && session.provider !== "muse") {
           session.adapterCompactThisTurn = true;
           this.rememberAdapterContext(session, { compacted: true });
         }
@@ -19272,7 +19297,9 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         // note already showed and a "Compacted." would contradict it. Deliberately
         // not persisted: grok's own history has no such message, so re-focus keeps
         // it but a disk restore won't.
-        if (!session.sawCompactFailed) this.emit(session, { type: "messageChunk", text: "Compacted." });
+        if (!session.sawCompactFailed && (session.provider !== "muse" || meta.compactOutcome)) {
+          this.emit(session, { type: "messageChunk", text: meta.compactOutcome === "noop" ? "Nothing to compact yet." : "Compacted." });
+        }
         // The live compact rail is exact and wins. Older Grok CLIs fall through
         // to the control-plane meter; only an explicit -32601 may use the hidden
         // legacy prompt fallback.
@@ -20166,6 +20193,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     const goal = sessionGoalMessage(session);
     const snapshot = [
       ...bracketRemoteSnapshot(session.buffer),
+      ...museCommandSnapshot(session),
       startupStatusMessage(session),
       subscriptionUsageMessage(session),
       ...(goal ? [goal] : []),
@@ -20667,6 +20695,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     if (message.type === "clearMessages") session.buffer = [];
     else if (!GrokSidebar.TRANSIENT_TYPES.has(message.type)) session.buffer.push(message);
     if (message.type === "runProgress") this.cloudHostUpdate?.considerApply();
+    // Muse's command list is replayed from the session snapshot (museCommandSnapshot), not from the buffer.
+    if (session.provider === "muse" && message.type === "commandsUpdate" && session.buffer.at(-1) === message) session.buffer.pop();
     if (message.type === "userMessage" && !message.steer) {
       session.liveFeedbackEligible = false;
       session.turnRating = 0;
@@ -21022,6 +21052,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         { type: "clearMessages" },
         ...(identity ? [identity] : []),
         ...bracketRemoteSnapshot(session.buffer),
+        ...museCommandSnapshot(session),
         startupStatusMessage(session),
         subscriptionUsageMessage(session),
         ...(goal ? [goal] : []),

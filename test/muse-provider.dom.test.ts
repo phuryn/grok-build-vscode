@@ -61,9 +61,27 @@ it.each(INTERNAL_PROVIDERS)("offers compaction only when implemented for %s", pr
   dispatch(h.window, { type: "contextUsage", used: 10000, window: 100000 });
   click(h.window, h.doc.getElementById("donut"));
   const button = h.doc.querySelector(".context-compact");
-  expect(!!button).toBe(supportsCompaction(provider));
+  const legacyCompact = provider !== "muse" && supportsCompaction(provider);
+  expect(!!button).toBe(legacyCompact);
   if (button) click(h.window, button);
-  expect(h.posted.some(m => m.type === "send" && m.text === "/compact")).toBe(supportsCompaction(provider));
+  expect(h.posted.some(m => m.type === "send" && m.text === "/compact")).toBe(legacyCompact);
+});
+
+it.each([false, true])("uses the advertised compact action on desk and phone (remote=%s)", remote => {
+  const h = bootWebview({ remote });
+  dispatch(h.window, { type: "providerState", providers: [{ id: "muse", connected: true }] });
+  dispatch(h.window, { type: "session", sessionId: "s", provider: "muse", models: [] });
+  dispatch(h.window, { type: "contextUsage", used: 10000, window: 100000 });
+  click(h.window, h.doc.getElementById("donut"));
+  expect(h.doc.querySelector(".context-compact")).toBeNull();
+  dispatch(h.window, { type: "commandsUpdate", commands: [{ name: "compact", _meta: { "afk/compact": true } }] });
+  click(h.window, h.doc.querySelector(".context-compact"));
+  expect(h.posted).toContainEqual(expect.objectContaining({ type: "send", text: "/compact", bare: true }));
+  dispatch(h.window, { type: "clearMessages" });
+  dispatch(h.window, { type: "session", sessionId: "old-cli", provider: "muse", models: [] });
+  dispatch(h.window, { type: "contextUsage", used: 10000, window: 100000 });
+  click(h.window, h.doc.getElementById("donut"));
+  expect(h.doc.querySelector(".context-compact")).toBeNull();
 });
 function catalog(h: ReturnType<typeof bootWebview>) {
   dispatch(h.window, { type: "session", sessionId: "s", provider: "grok", currentModelId: "grok",

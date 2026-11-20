@@ -1,5 +1,5 @@
 import { Readable, Writable } from "node:stream";
-import { agent, ndJsonStream } from "@agentclientprotocol/sdk";
+import { agent, ndJsonStream, RequestError, type ContentBlock } from "@agentclientprotocol/sdk";
 import { MuseSession, REASONING_EFFORTS } from "./session.mjs";
 
 const log = (message: string) => { process.stderr.write(`${message}\n`); };
@@ -20,11 +20,22 @@ const app = agent()
     let models;
     try { await session.initialize(); models = await session.models(); }
     catch (error) { void stop(error); throw error; }
-    return { _meta: { models }, protocolVersion: 1, agentInfo: { name: "muse_adapter", version: "1" },
-      agentCapabilities: { loadSession: true, sessionCapabilities: { list: {} }, promptCapabilities: { image: true, embeddedContext: false } } };
+    const { steer, fork } = session.capabilities();
+    return { _meta: { models, ...(steer ? { steering: { supported: true } } : {}) },
+      protocolVersion: 1, agentInfo: { name: "muse_adapter", version: "1" },
+      agentCapabilities: { loadSession: true, sessionCapabilities: { list: {}, ...(fork ? { fork: {} } : {}) },
+        promptCapabilities: { image: true, embeddedContext: false } } };
   })
   .onRequest("session/new", ({ params }) => session.newSession(params.cwd, params.mcpServers))
   .onRequest("session/load", ({ params }) => session.loadSession(params.sessionId, params.cwd, params.mcpServers))
+  .onRequest("session/fork", ({ params }) => {
+    const point = (params._meta?.jetbrains as { air?: { fork?: { version?: unknown; messageId?: unknown } } } | undefined)?.air?.fork;
+    if (params.mcpServers?.length || (point !== undefined
+      && (point?.version !== 1 || typeof point.messageId !== "string" || !point.messageId.trim()))) {
+      throw RequestError.invalidParams();
+    }
+    return session.fork(params.sessionId, params.cwd, point?.messageId as string | undefined);
+  })
   .onRequest("session/list", ({ params }) => session.listSessions(params.cwd ?? undefined, params.cursor))
   .onRequest("session/set_mode", ({ params }) => session.setMode(params.sessionId, params.modeId))
   .onRequest("session/set_model", (value: unknown) => {
@@ -41,6 +52,11 @@ const app = agent()
     return { sessionId: p.sessionId, value: effort };
   }, ({ params }) => session.setReasoningEffort(params.sessionId, params.value))
   .onRequest("session/prompt", ({ params }) => session.prompt(params.sessionId, params.prompt))
+  .onRequest("_session/steering", (value: unknown) => {
+    const params = value as { sessionId?: unknown; prompt?: unknown } | null;
+    if (typeof params?.sessionId !== "string" || !Array.isArray(params.prompt)) throw RequestError.invalidParams();
+    return { sessionId: params.sessionId, prompt: params.prompt as ContentBlock[] };
+  }, ({ params }) => session.steer(params.sessionId, params.prompt))
   .onNotification("session/cancel", async ({ params }) => {
     try { await session.cancel(params.sessionId); } catch (error) { void stop(error); }
   });

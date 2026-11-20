@@ -224,6 +224,22 @@ describe("send vs concurrent startSession", () => {
     }
   });
 
+  it.each([["compacted", "Compacted."], ["noop", "Nothing to compact yet."]])("paints the Muse compact outcome %s once", async (compactOutcome, response) => {
+    const sidebar = makeSidebar("/repo");
+    await sidebar.startSession(undefined, sidebar.focused);
+    const { focused } = sidebar;
+    focused.provider = "muse";
+    focused.client.availableCommands = [{ name: "compact", _meta: { "afk/compact": true } }];
+    focused.client.prompt = vi.fn(async () => ({ compactOutcome }));
+    sidebar.rememberAdapterContext = vi.fn();
+    sidebar.posted = [];
+    await sidebar.handleSend("/compact");
+    expect(focused.client.prompt).toHaveBeenCalledOnce();
+    expect(focused.client.prompt).toHaveBeenCalledWith([{ type: "text", text: "/compact" }]);
+    expect(sidebar.posted.filter((m: HostMsg) => m.type === "messageChunk")).toEqual([{ type: "messageChunk", text: response }]);
+    expect(sidebar.rememberAdapterContext).not.toHaveBeenCalledWith(focused, { compacted: true });
+  });
+
   it("keeps remote accounting on a same-conversation restart and resets it for a new conversation", async () => {
     const sidebar = makeSidebar("/repo");
     await sidebar.startSession(undefined, sidebar.focused);

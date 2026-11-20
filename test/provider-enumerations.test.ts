@@ -49,7 +49,12 @@ describe("provider registration across surfaces", () => {
       expect(isInternalProvider(id)).toBe(true);
       expect(sanitizeSessionStartProps({ provider: id }).provider).toBe(id);
       expect(PROVIDER_ACTIONS[id].label).toBe(providerDisplayName(id));
-      expect(providerSupports(id, "compact")).toBe(supportsCompaction(id));
+      if (id === "muse") {
+        expect(supportsCompaction(id)).toBe(true);
+        expect(providerSupports(id, "compact")).toBe(false); // Requires a session command frame.
+      } else {
+        expect(providerSupports(id, "compact")).toBe(supportsCompaction(id));
+      }
       expect(providerSupports(id, "clientMcp")).toBe(supportsClientMcpServers(id));
       expect(providerSupports(id, "deleteHistory")).toBe(supportsHistoryDeletion(id));
       expect(!!host.createProviderBackend(id)).toBe(usesAdapterHistory(id));
@@ -94,7 +99,8 @@ describe("provider registration across surfaces", () => {
 
   it.each(INTERNAL_PROVIDERS)("only interprets compact for capable providers: %s", provider => {
     for (const names of [[], ["compact"]]) {
-      expect(matchProviderSlashCommand(provider, "/compact", names)).toBe(supportsCompaction(provider) ? "compact" : null);
+      const canCompact = supportsCompaction(provider) && (provider !== "muse" || names.includes("compact"));
+      expect(matchProviderSlashCommand(provider, "/compact", names)).toBe(canCompact ? "compact" : null);
     }
     expect(matchSlashCommand("/compact", [])).toBe("compact");
   });

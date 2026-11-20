@@ -723,6 +723,16 @@ export function sessionGoalMessage(session: Session): Extract<HostMsg, { type: "
   }
 }
 
+/** Muse's catalog and queue capability describe the live connection. */
+export function museCommandSnapshot(session: Session) {
+  if (session.provider !== "muse") return [];
+  return [{
+    type: "commandsUpdate" as const,
+    commands: session.client?.availableCommands ?? [],
+    ...(session.client?.supportsInterject?.() ? { steeringOwner: session.provider } : {}),
+  }];
+}
+
 /** Current non-chat UI state for rebuilding a view of this live session. */
 export function sessionUiSnapshot(
   session: Session,
@@ -732,6 +742,7 @@ export function sessionUiSnapshot(
   const messages: HostMsg[] = [];
   messages.push(startupStatusMessage(session));
   messages.push(subscriptionUsageMessage(session));
+  messages.push(...museCommandSnapshot(session));
   const goal = sessionGoalMessage(session);
   if (goal) messages.push(goal);
   if (session.client?.currentModelId) {

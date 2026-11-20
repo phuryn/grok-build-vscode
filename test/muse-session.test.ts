@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MuseSession } from "../adapters/muse/session.mts";
-import { readFileSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { museSchemaMethods, readMuseMethods } from "../adapters/muse/capabilities.mts";
+import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { createRequire } from "node:module";
@@ -31,7 +32,10 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-function setup() {
+const stageMethods = ["turn/steer", "session/compact", "skill/list", "session/fork", "session/leave"];
+const compactPrompt = [{ type: "text" as const, text: "/compact" }];
+
+function setup(methods: string[] = []) {
   vi.stubEnv("MUSE_CODE_EXECUTABLE", "/fake/muse");
   let notify!: (notification: any) => void;
   let protocolError!: (error: Error) => void;
@@ -44,7 +48,7 @@ function setup() {
     return {};
   });
   const description = "Your content, including inter-session messages, may be used for product improvement.";
-  const connection = { command, closed: closed.promise,
+  const connection = { command, closed: closed.promise, mintCommandId: () => "leave-command",
     request: vi.fn(async () => ({ models: [{ modelId: "default-model", displayLabel: "Default",
       description, contextLimit: 1007997 }] })) };
   const handshake = { exited: exited.promise, onNotification: (fn: typeof notify) => { notify = fn; },
@@ -53,18 +57,168 @@ function setup() {
     close: vi.fn(async () => exited.promise) };
   const client = { notify: vi.fn(async () => {}), request: vi.fn() };
   const logs: string[] = [], fatal = vi.fn(), spawn = vi.fn((_options: { command: string; args: string[] }) => handshake);
-  const session = new MuseSession(client as any, message => logs.push(message), fatal, spawn as any);
+  const session = new MuseSession(client as any, message => logs.push(message), fatal, spawn as any,
+    async () => museSchemaMethods({ methods: Object.fromEntries(methods.map(method => [method, {}])) }));
   const event = (method: string, params: any = {}) => notify({ method, params: { sessionId: "session", ...params } });
   const raw = (method: string, params: Record<string, any> = {}) => notify({ method, params });
   return { session, spawn, handshake, client, logs, fatal, event, raw, admission, exited, closed, command, connection, description, protocolError: (e: Error) => protocolError(e) };
 }
 
-async function ready() {
-  const s = setup();
+async function ready(methods: string[] = []) {
+  const s = setup(methods);
   await s.session.initialize();
   const result = await s.session.newSession("/workspace", []);
   return { ...s, result };
 }
+
+describe("Muse native steering, compaction, skills and forks", () => {
+  // The official installer's target is %LOCALAPPDATA%\Programs\muse\muse.cmd, so
+  // a user name with a space puts one in the shim path and in %TEMP% alike.
+  it.runIf(process.platform === "win32")("reads the method list when the shim and the temp folder both contain a space", async () => {
+    const root = mkdtempSync(join(tmpdir(), "afk muse "));
+    try {
+      const shim = join(root, "Programs muse", "muse.cmd");
+      const temp = join(root, "Local Temp");
+      for (const dir of [dirname(shim), temp]) mkdirSync(dir, { recursive: true });
+      writeFileSync(shim, `@echo off\r\nif not "%3"=="--out" exit /b 2\r\n>"%~4\\msp.schema.json" echo {"methods":{"turn/steer":{},"skill/list":{}}}\r\n`);
+      vi.stubEnv("TEMP", temp);
+      vi.stubEnv("TMP", temp);
+      expect([...await readMuseMethods(shim)].sort()).toEqual(["skill/list", "turn/steer"]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps capabilities independent and uses no unavailable method", async () => {
+    const s = await ready(["skill/list", "session/fork"]);
+    expect(s.session.capabilities()).toEqual({ steer: false, compact: false, skills: true, fork: false });
+    await expect(s.session.steer("session", compactPrompt)).rejects.toMatchObject({ code: -32601 });
+    await expect(s.session.prompt("session", compactPrompt)).rejects.toMatchObject({ code: -32601 });
+    await expect(s.session.fork("session", "/workspace")).rejects.toMatchObject({ code: -32601 });
+    expect(s.command.mock.calls.map(([method]) => method)).toEqual(["session/start"]);
+    expect(museSchemaMethods({ methods: ["turn/steer"] }).size).toBe(0);
+  });
+
+  it("steers only the admitted foreground turn and keeps the exact ID through a refusal", async () => {
+    const s = await ready(stageMethods);
+    const input = [{ type: "text" as const, text: "keep every word" }];
+    const turn = s.session.prompt("session", [{ type: "text", text: "start" }]);
+    await expect(s.session.steer("session", input)).resolves.toEqual({ outcome: "refused" });
+    s.event("turn/started", { turnId: "background" });
+    s.admission.resolve({ status: "accepted", disposition: "queued", turnId: "ours" });
+    await vi.waitFor(() => expect(s.logs).toContain("Muse turn admitted: ours"));
+    await expect(s.session.steer("session", input)).resolves.toEqual({ outcome: "refused" });
+    s.event("turn/started", { turnId: "ours" });
+    await expect(s.session.steer("session", compactPrompt)).resolves.toEqual({ outcome: "refused" });
+    s.command.mockResolvedValueOnce({ status: "accepted", turnId: "ours" });
+    await expect(s.session.steer("session", input)).resolves.toEqual({ outcome: "injected" });
+    s.command.mockRejectedValueOnce(new MspError({ code: -32030, message: "turn ended", data: { kind: "commandRejected" } }));
+    await expect(s.session.steer("session", input)).resolves.toEqual({ outcome: "refused" });
+    s.command.mockRejectedValueOnce(new Error("lost acknowledgement"));
+    await expect(s.session.steer("session", input)).rejects.toThrow("lost acknowledgement");
+    s.event("turn/completed", { turnId: "ours", terminal: "completed" });
+    await turn;
+    await expect(s.session.steer("session", input)).resolves.toEqual({ outcome: "refused" });
+    expect(s.command.mock.calls.filter(([method]) => method === "turn/steer")).toEqual(
+      Array.from({ length: 3 }, () => ["turn/steer", { sessionId: "session", expectedTurnId: "ours", input }]),
+    );
+    expect(s.command.mock.calls.filter(([method]) => method === "turn/start")).toHaveLength(1);
+  });
+
+  it.each(["compacted", "noop", "failed", "cancelled"])("settles accepted compact from its manual terminal (%s)", async outcome => {
+    const s = await ready(stageMethods);
+    const ack = deferred<any>();
+    s.command.mockReturnValueOnce(ack.promise);
+    const turn = s.session.prompt("session", compactPrompt);
+    const settled = vi.fn();
+    void turn.then(settled, settled);
+    expect(s.command).toHaveBeenLastCalledWith("session/compact", { sessionId: "session" });
+    s.event("item/completed", { item: { kind: "compaction", trigger: "auto", outcome: "compacted" } });
+    s.event("item/completed", { sessionId: "other", item: { kind: "compaction", trigger: "manual", outcome: "compacted" } });
+    s.event("item/completed", { item: { kind: "compaction", trigger: "manual", outcome, reason: "summarizer_failed" } });
+    expect(settled).not.toHaveBeenCalled();
+    ack.resolve({ status: "accepted" });
+    if (outcome === "failed") await expect(turn).rejects.toThrow("Muse Code could not compact this conversation.");
+    else if (outcome === "cancelled") await expect(turn).resolves.toEqual({ stopReason: "cancelled" });
+    else await expect(turn).resolves.toEqual({ stopReason: "end_turn", _meta: { compactOutcome: outcome } });
+    expect(s.command.mock.calls.some(([method]) => method === "turn/start")).toBe(false);
+  });
+
+  it("treats a noop acknowledgement and a missing run as ordinary empty history", async () => {
+    const s = await ready(["session/compact"]);
+    s.command.mockResolvedValueOnce({ status: "noop", reason: "no_compactable_history" });
+    s.command.mockRejectedValueOnce(new MspError({ code: -32030, message: "missing run",
+      data: { kind: "commandRejected", reason: "missing_run" } }));
+    for (let count = 0; count < 2; count++) {
+      await expect(s.session.prompt("session", compactPrompt)).resolves.toEqual({ stopReason: "end_turn", _meta: { compactOutcome: "noop" } });
+    }
+  });
+
+  it("publishes a bounded skill catalog, refreshes on change and submits the exact qualified selector", async () => {
+    const s = setup(stageMethods);
+    const catalog = [
+      null, { selector: "broken" }, { selector: "/bad", description: "no" },
+      { selector: "x".repeat(129), description: "too long" }, { selector: "compact", description: "collision" },
+      { selector: "context-window", description: "collision" },
+      { selector: "plugin:example", description: "a".repeat(400), source: "plugin" },
+      { selector: "plugin:example", description: "duplicate" },
+      ...Array.from({ length: 210 }, (_, index) => ({ selector: `skill-${index}`, description: "Skill" })),
+    ];
+    s.connection.request.mockImplementation(async (method: string) =>
+      method === "skill/list" ? { skills: catalog } : { models: [] } as any);
+    await s.session.initialize();
+    await s.session.newSession("/workspace", []);
+    const commands = () => (s.client.notify.mock.lastCall as any)?.[1].update.availableCommands;
+    expect(commands().map((c: any) => c.name)).toEqual([
+      "compact", "plugin:example", ...Array.from({ length: 199 }, (_, index) => `skill-${index}`),
+    ]);
+    expect(commands()[1].description).toHaveLength(300);
+    const turn = s.session.prompt("session", [{ type: "text", text: "/plugin:example  an argument" }]);
+    expect(s.command).toHaveBeenLastCalledWith("turn/start", { sessionId: "session", ifBusy: "queue",
+      input: [{ type: "skill", selector: "plugin:example", arguments: "an argument" }] });
+    s.event("turn/completed", { turnId: "t", terminal: "completed" });
+    s.admission.resolve({ status: "accepted", disposition: "started", turnId: "t" });
+    await turn;
+    expect(s.connection.request.mock.calls.filter(([method]) => method === "skill/list")).toHaveLength(1);
+    catalog.splice(0, catalog.length, { selector: "fresh", description: "New skill" });
+    s.event("skill/changed");
+    await vi.waitFor(() => expect(commands()?.map((c: any) => c.name)).toEqual(["compact", "fresh"]));
+  });
+
+  it("forks whole or through a settled reply, including the reply preceding an edit", async () => {
+    const s = setup(stageMethods);
+    const first = { kind: "agentMessage", itemId: "reply-1", turnId: "turn-1", revision: 1, text: "first" };
+    const second = { kind: "agentMessage", itemId: "reply-2", turnId: "turn-2", revision: 1, text: "second" };
+    s.command.mockImplementation(async (method: string, params?: any) => {
+      if (method === "session/resume") return { session: { sessionId: "session", workspaceRoot: "/workspace" },
+        history: { mode: "inline", items: [first, { kind: "userMessage", itemId: "prompt-2", text: "edit me" }, second] } } as any;
+      if (method === "session/fork") return { session: { sessionId: "child", workspaceRoot: "/workspace",
+        forkedFrom: { sessionId: "session" } } } as any;
+      if (method === "session/leave") {
+        s.event("session/leaveCompleted", { sessionId: params.sessionId, commandId: "different", outcome: "failed" });
+        s.event("session/leaveCompleted", { sessionId: params.sessionId, commandId: "leave-command", outcome: "released" });
+        return { status: "accepted" };
+      }
+      return {};
+    });
+    await s.session.initialize();
+    await s.session.loadSession("session", "/workspace", []);
+    const ids = (s.client.notify.mock.calls as any[]).map(([, params]) => params.update?.messageId).filter(Boolean);
+    expect(ids).toEqual(["reply-1", "prompt-2", "reply-2"]);
+    for (const [point, cutPoint] of [[undefined, undefined], ["reply-2", { lastTurnId: "turn-2" }], ["reply-1", { lastTurnId: "turn-1" }]] as const) {
+      await expect(s.session.fork("session", "/workspace", point)).resolves.toEqual({ sessionId: "child" });
+      expect(s.command).toHaveBeenCalledWith("session/fork", {
+        sessionId: "session", excludeItems: true, ...(cutPoint ? { cutPoint } : {}),
+      });
+      expect(s.command).toHaveBeenLastCalledWith("session/leave", { sessionId: "child" }, { commandId: "leave-command" });
+    }
+    await expect(s.session.fork("session", "/workspace", "prompt-2")).rejects.toMatchObject({ code: -32602 });
+    s.command.mockRejectedValueOnce(new MspError({ code: -32025, message: "gone", data: { kind: "forkBoundaryInvalid" } }));
+    await expect(s.session.fork("session", "/workspace", "reply-1")).rejects.toMatchObject({ code: -32602 });
+    expect(s.command.mock.calls.filter(([method]) => method === "session/leave")).toHaveLength(3);
+    expect(s.fatal).not.toHaveBeenCalled();
+  });
+});
 
 describe("Muse native modes", () => {
   it.each(["agent", "yolo", "onRequest", "denyUnmatched"])("starts Windows %s without sandbox/network flags and keeps workspace trust", async mode => {
