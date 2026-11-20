@@ -274,6 +274,10 @@ describe("normalized delegation evidence", () => {
     expect(() => checkClaudeSubagentText(replay.slice(0, 1), "parent", ids)).toThrow(/received no child text/);
     expect(() => checkClaudeSubagentText(replay.toReversed(), "parent", ids)).toThrow(/received no child text/);
     expect(() => checkClaudeSubagentText([replay[0], { ...replay[1], childSessionId: undefined }], "parent", ids)).toThrow(/leaked/);
+    const handback = { sessionUpdate: "tool_call", toolCallId: "handback", title: "SubagentHandback", kind: "other", status: "pending",
+      rawInput: { message: "ok" }, _meta: { claudeCode: { toolName: "SubagentHandback", parentToolUseId: launch.toolCallId } } };
+    const handbackOnly = framesFor(new ClaudeBackend(), [launch, handback].map(raw => ({ raw })));
+    expect(() => checkClaudeSubagentText(handbackOnly, "parent", ids)).toThrow(expect.objectContaining({ code: "NOT_OBSERVED" }));
   });
   it("distinguishes model refusal from a lost normalized delegation", () => {
     expect(() => checkSubagents([], "parent", isSubagentToolCall)).toThrow(/model did not delegate/);

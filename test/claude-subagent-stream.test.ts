@@ -112,6 +112,34 @@ describe("Claude child stream", () => {
     }
   });
 
+  it("keeps a subagent's file edits and a forked skill's tools in the transcript", () => {
+    const { client, frames } = setup();
+    client.sessionId = sessionId;
+    update(client, background.launch[0]);
+    const diff = { type: "diff", path: "src/a.ts", oldText: "old line", newText: "new line" };
+    update(client, child({ sessionUpdate: "tool_call", toolCallId: "child-edit", title: "Edit src/a.ts", kind: "edit", status: "pending", content: [diff] }, agentId, "Edit"));
+    update(client, child(chunk("agent_message_chunk", "child answer")));
+    // Progress frames can omit the ancestry after the tool has been identified.
+    update(client, { sessionUpdate: "tool_call_update", toolCallId: "child-edit", status: "completed" });
+    update(client, { ...tool("skill", "Skill"), _meta: { claudeCode: { toolName: "Skill" } } });
+    update(client, child({ ...tool("skill-bash", "Run ls"), kind: "execute" }, "skill", "Bash"));
+    update(client, { sessionUpdate: "tool_call_update", toolCallId: "skill-bash", status: "completed" });
+
+    expect(frames.filter(frame => frame.type === "childStream")).toMatchObject([
+      { childSessionId: agentId, event: "messageChunk", text: "child answer" },
+    ]);
+    expect(frames.filter(frame => frame.type === "toolCall").map(frame => frame.call.toolCallId))
+      .toEqual([agentId, "child-edit", "skill", "skill-bash"]);
+    expect(frames.filter(frame => frame.type === "toolCallUpdate").map(frame => frame.call.toolCallId))
+      .toEqual(["child-edit", "skill-bash"]);
+
+    const { doc, window } = view();
+    for (const frame of frames.slice(0, 2)) dispatch(window, frame);
+    dispatch(window, { type: "permissionRequest", req: { id: 7, toolCall: { toolCallId: "child-edit", title: "Edit src/a.ts", kind: "edit" },
+      options: [{ optionId: "allow", name: "Allow once", kind: "allow_once" }] } });
+    expect(doc.querySelector(".permission .card-subtitle")?.textContent).toContain("src/a.ts");
+  });
+
   it("loads the bundled SDK's child transcripts beside their cards before the next parent turn", async () => {
     const cwd = mkdtempSync(join(process.cwd(), ".claude-child-history-"));
     vi.stubEnv("CLAUDE_CONFIG_DIR", cwd);

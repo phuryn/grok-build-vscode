@@ -80,8 +80,10 @@ Notes:
   minutes and marks those still running as failed; that deadline is the
   adapter's, not ours.
 - Claude uses the original `Agent` tool call ID for the stream. A nested
-  agent contributes to the outer card. On reopen the host reads the bundled
-  SDK's separately stored child transcripts alongside the owning cards.
+  agent contributes to the outer card. A child's file edits stay in the
+  transcript with their diffs, as before, and so do a forked skill's tools.
+  On reopen the host reads the bundled SDK's separately stored child
+  transcripts alongside the owning cards.
 - Claude adapter 0.76.0 excludes `local_agent` from its AIR task runtime even
   with `asyncTasks` enabled. The September 27 background capture contains a
   receipt and a parent reply, but no subagent task event. The receipt settles

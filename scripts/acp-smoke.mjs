@@ -204,9 +204,14 @@ export function checkClaudeSubagentText(frames, sessionId, expectedCards) {
   for (const id of ids) {
     const card = cards.find(f => f.update.toolCallId === id && f.update.child_session_id === id);
     assert(card, `Claude card ${id} lacks its child stream ID`);
-    assert(frames.slice(frames.indexOf(card) + 1).some(f => f.sessionId === sessionId && f.childSessionId === id
-      && f.update?.sessionUpdate === "agent_message_chunk" && nonempty(f.update.content?.text)),
-    `Claude card ${id} received no child text`);
+    const sent = frames.slice(frames.indexOf(card) + 1).filter(f => f.sessionId === sessionId && f.childSessionId === id);
+    if (sent.some(f => f.update?.sessionUpdate === "agent_message_chunk" && nonempty(f.update.content?.text))) continue;
+    // The hand-off is a child's last act, so a child that answered only through
+    // it will send no text: an unproven check, not a broken stream.
+    if (sent.some(f => f.update?._meta?.claudeCode?.toolName === "SubagentHandback")) {
+      throw inconclusive("NOT_OBSERVED", `Claude card ${id}: the child answered only through SubagentHandback, so no live child text was sent`);
+    }
+    assert.fail(`Claude card ${id} received no child text`);
   }
   return ids;
 }
@@ -922,14 +927,20 @@ async function main() {
             && !frames().some(f => isSubagentToolCall(f.update))) {
           return checkSubagents(frames(), sessionId, isSubagentToolCall);
         }
+        let unproven;
         await peer.waitUntil(() => {
           try {
             checkSubagents(frames(), sessionId, isSubagentToolCall);
             if (provider === "claude") claudeChildCards = checkClaudeSubagentText(frames(), sessionId);
             return true;
           }
-          catch { return false; }
+          catch (error) {
+            if (error?.code !== "NOT_OBSERVED") return false;
+            unproven = error;
+            return true;
+          }
         }, provider === "claude" ? "normalized Claude subagent completion and live child text" : "normalized subagent completion and result", workflowMs);
+        if (unproven) throw unproven;
         const result = checkSubagents(frames(), sessionId, isSubagentToolCall);
         return claudeChildCards ? `${result}; live child text received` : result;
       }, Math.min(2_147_483_647, turnMs + workflowMs + rpcMs));

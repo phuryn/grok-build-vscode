@@ -218,6 +218,7 @@ const cleanClaudeError = (text: string) => text.replace(/^\s*<tool_use_error>([\
 class ClaudeSubagents {
   readonly calls = new Set<string>();
   private readonly childCalls = new Map<string, string>();
+  private readonly transcriptCalls = new Set<string>();
   private readonly agents = new Map<string, string>();
   private readonly tasks = new Map<string, { toolCallId?: string; taskType?: string; state?: string; output?: string; durationMs?: number; tokens?: number }>();
 
@@ -228,8 +229,18 @@ class ClaudeSubagents {
     const callId = update.toolCallId;
     const known = this.childCalls.get(callId);
     if (known) return known;
+    if (this.transcriptCalls.has(callId)) return;
     if (typeof owner !== "string" || !owner || (owner === callId && this.calls.has(callId))) return;
-    const root = this.childCalls.get(owner) ?? owner;
+    // Only a subagent has a card. A forked skill tags its tools with the Skill
+    // call, and those stay in the transcript as they did in 4.16.0.
+    const root = this.childCalls.get(owner) ?? (this.calls.has(owner) ? owner : undefined);
+    if (!root) return;
+    // A file edit keeps the transcript route too: its diff, the approval card's
+    // preview and the turn's changed files all come from there.
+    if (update.kind === "edit") {
+      if (typeof callId === "string") this.transcriptCalls.add(callId);
+      return;
+    }
     if (typeof callId === "string" && owner !== callId) this.childCalls.set(callId, root);
     return root;
   }
