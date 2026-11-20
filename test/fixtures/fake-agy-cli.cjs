@@ -87,6 +87,11 @@ rl.on("line", line => {
         prior = undefined;
       }
       return;
+    case "logout":
+      // The real CLI clears its own stored sign-in (agentCapabilities.auth.logout, 1.5.8).
+      fs.mkdirSync(path.join(process.env.GEMINI_HOME, "antigravity-cli"), { recursive: true });
+      fs.writeFileSync(path.join(process.env.GEMINI_HOME, "antigravity-cli", "signed-out"), "");
+      return write({ id, result: {} });
     default:
       if (id === "plan-review") return finish(complete);
       if (id !== undefined) return write({ id, error: { code: -32601, message: "Unknown method" } });

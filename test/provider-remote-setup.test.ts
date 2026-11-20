@@ -118,6 +118,8 @@ function credentialHost(provider: "agy" | "deepseek", google = false, method = "
   s.agyGoogleSignedIn = vi.fn(async () => google);
   const client = { start: vi.fn(), logout: vi.fn(async () => { google = false; }), dispose: vi.fn(), authenticate: vi.fn() };
   s.agySignInClient = vi.fn(() => client);
+  // Managed credentials only: a machine with Google's agy CLI installed would otherwise sign it out too.
+  s.installedAgyCli = vi.fn(() => undefined);
   s.locateProvider = vi.fn(() => "/installed");
   s.startDeviceLogin = vi.fn();
   return { s, secrets, client };

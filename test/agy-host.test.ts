@@ -503,6 +503,19 @@ describe("Disconnect and Sign out", () => {
     expect(sidebar.providerConnectionState.agy).toBe(false);
   });
 
+  it("Sign out with Google also signs out the installed agy CLI, whose sign-in new chats would otherwise keep", async () => {
+    signIn();
+    const sidebar = host({ connected: true, method: "google" });
+    sidebar.installedAgyCli = vi.fn(() => path.join(__dirname, "fixtures", "fake-agy-cli.cjs"));
+    sidebar.persistProviderConnections = vi.fn(async () => {});
+    await sidebar.logout("agy", { signOutCli: true });
+    expect(sidebar.host.showWarningMessage).toHaveBeenCalledWith(expect.stringContaining("including the agy CLI's"), { modal: true }, "Sign Out");
+    expect(fs.existsSync(token())).toBe(false);
+    expect(fs.existsSync(path.join(home, "antigravity-cli", "signed-out"))).toBe(true);
+    expect(sidebar.host.showErrorMessage).not.toHaveBeenCalled();
+    expect(sidebar.providerConnectionState.agy).toBe(false);
+  });
+
   it("Sign out with a key deletes the saved key and leaves the Google sign-in", async () => {
     signIn();
     const sidebar = host({ connected: true, method: "api-key", key: KEY });

@@ -356,7 +356,7 @@ VS Code commands (not Grok slash commands):
 | `AFK Pilot: Collapse All Tool Details (This Session)` | Collapse them all, and keep new ones collapsed — this session only |
 | `AFK Pilot: Rebuild Projects from recent activity` | Redo the one-time pass that added the folders you sent messages in during the last 30 days. Keeps every project you added, created or cloned, and every pin, colour, icon and archive |
 | `AFK Pilot: Show Logs` | Open the AFK Pilot output channel (ACP messages, errors) |
-| `AFK Pilot: Log Out` | Sign an agent's CLI out on this machine (`grok logout`, `codex logout`, `claude auth logout`; for Antigravity, its Google sign-in or saved Gemini API key) — the way to switch accounts. **Settings → Providers → Disconnect** only turns an agent off here and leaves its CLI signed in |
+| `AFK Pilot: Log Out` | Sign an agent's CLI out on this machine (`grok logout`, `codex logout`, `claude auth logout`; for Antigravity, its Google sign-in (and the agy CLI's, when installed) or its saved Gemini API key) — the way to switch accounts. **Settings → Providers → Disconnect** only turns an agent off here and leaves its CLI signed in |
 
 | Key | Action |
 |---|---|

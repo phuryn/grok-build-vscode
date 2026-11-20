@@ -8,7 +8,7 @@ import { MuseBackend, withMuseCredentialBackend } from "./muse-backend";
 import { locateMuseCli, parseMuseVersionOutput } from "./muse-cli-locator";
 import { museInstallCommand } from "./muse-install";
 import { AgyBackend, agyAcpDir, agySessionsFor, agyThinkingLevel, listAgyCatalog } from "./agy-backend";
-import { agyHistoryProgram, agyProgramCandidates, locateAgyCli } from "./agy-backend";
+import { agyHistoryProgram, agyProgramCandidates, locateAgyCli, type AgyProgram } from "./agy-backend";
 import { AgyUsageMeter } from "./agy-usage";
 import { agyGatewayAuth, agyGatewayEnv, agyGoogleAuth, agyGoogleSignInPresent, isAgySignInMethod, normalizeAgyApiKey, runAgySignIn, type AgySignInMethod } from "./agy-auth";
 import { AgyKeyRelay, type AgyModelListing, type AgyRelayLease } from "./agy-key-relay";
@@ -2916,14 +2916,14 @@ export class GrokSidebar {
 
   /** The short-lived server a Google sign-in runs in. Born in the home
    *  directory for the same reason the history process is. */
-  private agySignInClient(cliPath: string, signal: AbortSignal): AcpClient {
+  private agySignInClient(cliPath: string, signal: AbortSignal, program: AgyProgram = "server"): AcpClient {
     const consent = this.providerRunSignal("agy");
     return new AcpClient({
       signal: AbortSignal.any([consent, signal]),
       cliPath,
       cwd: this.projectHomeDir(),
       env: { ...process.env },
-      backend: new AgyBackend(),
+      backend: new AgyBackend(program === "cli" ? { program } : undefined),
       // The server can print the loopback request (including its code) to stderr.
       log: isCloudEnvironment() ? () => {} : (message) => this.host.appendLine(message),
     });
@@ -5243,7 +5243,7 @@ Only continue if you trust this code.`,
       || queuedSendsContainChipIds(session.queuedSends, requestedChips);
     // The original queue may already have flushed while the tap crossed the
     // relay. Treat a queued steer as a claim on that text, never a fresh send.
-    if (session.provider === "muse" && fromQueue
+    if ((session.provider === "muse" || session.client?.ownsSteeringQueue) && fromQueue
       && (!takeQueue || authored !== queuedSendsText(session.queuedSends))) return;
 
     if (!session.client || !session.activeSessionId) {
@@ -9931,8 +9931,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   }
 
   /**
-   * Antigravity has no CLI to run `logout` with: the server clears its own
-   * stored Google sign-in through ACP `logout`, in a server started for it.
+   * The server clears its own stored Google sign-in through ACP `logout`, in a
+   * server started for it. Google's agy CLI keeps a separate sign-in and new
+   * chats prefer it when installed, so Log Out (how a desk switches accounts)
+   * clears that one the same way.
    */
   private async signOutAgy(
     opts: { fromRemote?: boolean; report?: (text: string) => void },
@@ -9963,9 +9965,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       fail("Antigravity sign-out could not run because the Antigravity server is not installed. The account remains connected.");
       return;
     }
+    const agyCli = this.installedAgyCli();
     if (!opts.fromRemote && !clearAll) {
       const choice = await this.host.showWarningMessage(
-        "Sign out of Antigravity? This clears the Google sign-in Antigravity stored on this machine.",
+        `Sign out of Antigravity? This clears the Google sign-in Antigravity stored on this machine${agyCli ? ", including the agy CLI's" : ""}.`,
         { modal: true },
         "Sign Out",
       );
@@ -9981,6 +9984,17 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       return;
     } finally {
       await client.dispose();
+    }
+    if (agyCli) {
+      const cliClient = this.agySignInClient(agyCli, new AbortController().signal, "cli");
+      try {
+        await cliClient.start();
+        await cliClient.logout();
+      } catch (error) {
+        fail(`Antigravity is signed out, but the agy CLI could not be: ${errorDetail(error)}. New Antigravity chats may still use the CLI's account.`);
+      } finally {
+        await cliClient.dispose();
+      }
     }
     if (clearAll) {
       try { await this.context.secrets.delete(AGY_API_KEY_SECRET); }
