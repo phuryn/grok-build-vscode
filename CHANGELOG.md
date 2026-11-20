@@ -1,5 +1,38 @@
 # Changelog
 
+## 4.16.0 — 2026-11-20
+
+**Go back, edit and continue in a new chat on Claude and Codex, desk alerts, Plan mode for Codex, and Auto accept that does what it says.**
+
+### Added
+
+- **Go back, edit, or continue in a new chat, on Claude Code and Codex.** Hover a reply and click the branch icon beside copy to open a new chat that ends at that reply. Hover one of your prompts, from the second on, and click the pencil to open a new chat that stops just before it, with its text in the message box for you to change and send; a file or image attached to it stays with the original message. **Continue in a new chat** in the conversation's menu copies the whole conversation. The original stays unchanged in your history. The icons appear only around replies that finished in this version of AFK Pilot, and they work once the running turn has finished. Grok Build keeps its own Rewind and Edit.
+- **Desk alerts.** When a turn finishes, fails, or waits for your answer while you are not looking at it, AFK Pilot tells you: a toast in VS Code when its window is in the background or another conversation is showing, and a notification from the desktop app on Windows and macOS when its window is in the background or minimized. Click it to open that conversation. In VS Code, a short, plain shell command waiting for approval can be approved from the toast with **Approve once**. A command that is chained, runs in the background, or asks for more than running it (network access, a wider sandbox) offers **Open** instead, so you see the whole request first. Turn alerts off in Settings → **Desk alerts**.
+- **Steer works with Claude Code.** A message you send while Claude works can go straight into the running turn with the **Steer** button, attachments included, as on Grok and Codex. Muse Code still queues.
+- **`/context` works with Claude Code.** It shows Claude's breakdown of what fills the context window, in the chat. It was hidden for every agent because Grok's renders only in its own terminal, and it stays hidden there.
+- **Plan mode and Ask for approval for Codex.** Plan mode has Codex explore and propose a plan for you to review before it changes anything, with the same review card as `/plan`. Ask for approval keeps Codex in its sandbox and asks you about every request to act outside it, such as editing a file elsewhere or using the internet. AFK Pilot remembers Ask for approval for your next Codex chats and when you reopen one. While Codex waits for your answer to a plan, you cannot switch it to Agent or Ask for approval, because Codex carries out an approved plan with the access it had when planning began; Auto accept can still be picked. To carry a plan out with approvals, choose No on the plan, switch to Ask for approval, then ask Codex to implement it.
+- **Up arrow brings back your earlier prompts.** In an empty message box, Up fills in your last prompt in this conversation, and Up and Down step through the others. Change the text and the arrows move the cursor again.
+- **A large paste becomes a file.** Pasting more than 32 KiB of text, such as a long log, adds a **Pasted text.txt** attachment instead of filling the message box. The agent gets the full text. One paste can be up to 1 MiB.
+- **Coloured code in replies.** A code block in a language AFK Pilot recognizes is coloured like the file preview and labelled with its language. Copy copies the original text, and Find in the conversation finds text inside it.
+- **Goals are shown.** When you set a goal with `/goal` in Claude Code or Codex, it shows above the message box with its status (Active, Paused, Complete and so on) while the agent works on it. `/goal clear` removes it.
+
+The new screens in this release are on the desk, in VS Code and the desktop app. A phone or browser keeps working with it as before and gets them in a later update.
+
+### Changed
+
+- **The Codex CLI that AFK Pilot installs is now 0.166.0 (was 0.153.4)**, because the newest models refuse older Codex builds on a ChatGPT account. A Codex you installed earlier keeps working, and Settings offers the update.
+- **Auto accept on Claude answers "Yes" once, never "Yes, and don't ask again".** Before, each answer could save a rule in the project's `.claude/settings.local.json`. Those rules stayed after you turned Auto accept off, and Claude Code in a terminal used them too. If you used Auto accept with Claude before, open that file and remove any rules you did not mean to keep.
+- **A new Codex chat started with Auto accept runs in full access, the same as picking Auto accept in a chat already does.** Auto accept is remembered once for every agent except Muse Code, so this applies even if you last picked it in another agent's chat, unless Codex's own Ask for approval is remembered. Before, the badge said Auto accept while Codex still worked in its sandbox with no network, so commands like `git ls-remote` or a package install failed the first time. Full access is Codex's own mode: unrestricted access to the internet and to any file on your computer, with no prompts. If you want Codex to ask you before it reaches outside the project, start the chat in Ask for approval instead. If Codex refuses the switch, the chat starts in Agent and Auto accept turns off.
+
+### Fixed
+
+- **"Continue in a new chat" appears only where it works.** It now works on Claude Code and Codex too. Muse Code, Antigravity and DeepSeek cannot copy a conversation, and the menu item failed there with "unsupported", so VS Code and the desktop app no longer show it for them.
+- **A link in the chat opens once, and Cancel opens nothing (#231).** VS Code asked "Do you want Code to open the external website?" and opened the page anyway. It now waits for your answer. Thanks to padixa.
+- **The command waiting for your approval shows up to ten lines (#208).** In a narrow panel at 150% scaling it showed five or six. The approval card still fits above the message box. Thanks to padixa.
+- **A reload brings back the conversation you were in (#233).** After Reload Window, an extension-host restart or a new window, the panel started a blank new session, and you had to find your conversation in history. It now reopens the last conversation for that folder, when its agent is available. If you were in a new, empty chat, you stay in a new chat. Thanks to AllenChildress.
+- **AFK Pilot's own lines in its output channel start with the time (#233)**, in UTC like the desktop app's log, so a pasted log lines up with the agent's own files. An agent's error output is written as it arrives.
+- **A reply stays under its own prompt when you switch back to a conversation.** In a conversation opened from History or the projects rail, sending a prompt, switching to another conversation and coming back joined the new reply onto the previous one, and your prompt sat below it with no answer. Nothing was lost; reopening the conversation showed it correctly.
+
 ## 4.15.9 — 2026-11-12
 
 **Antigravity and DeepSeek for everyone, on every machine, set up from your phone.**
