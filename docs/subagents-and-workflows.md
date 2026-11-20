@@ -172,7 +172,9 @@ new turn footer. On reopen:
 
 Every provider is mapped onto one of the two cards in the host, before
 anything reaches the webview. No provider adds a host-to-webview message type,
-so a phone mirrors exactly what the desk shows.
+so a phone shows the same cards as the desk. **Stop** on a card needs a
+renderer that reads `stopToken`, so a phone or browser shows it only once the
+relay serves that client.
 
 | Card | Fed by | Provider mapping |
 |---|---|---|
@@ -180,8 +182,8 @@ so a phone mirrors exactly what the desk shows.
 | Workflow card | `runProgress`, whose payload is the `RunProgressUpdate` from `parseRunProgressUpdate` | Grok's `workflow_updated` is parsed directly. Claude's receipts and task events (`ClaudeWorkflows`) and Muse's snapshots are rewritten as Grok-shaped `workflow_updated` frames in `BackendUpdate.workflowUpdate` and go through the same parser. |
 
 The only provider-specific flags on a workflow are additive:
-`controlsAvailable: false` (no controls, and no handle an older renderer could
-send), `agentProgressDots` (one dot per agent, for Muse) and `launchOnly` (a
+`controlsAvailable: false` (no Pause/Resume controls, and no handle an older renderer could
+send; Stop comes from a separate `stopToken`), `agentProgressDots` (one dot per agent, for Muse) and `launchOnly` (a
 Claude launch receipt with no live progress, never pinned).
 
 Child output is routed by session ID. While a conversation is being reopened,

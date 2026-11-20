@@ -266,7 +266,7 @@ The CLI accepts a second `session/prompt` to steer the running turn. The
 earlier request returns `end_turn` while work continues. `AcpClient` waits
 for the final steering response before ending the turn. The live
 `user_message_chunk` echo is suppressed, and ordinary held sends still wait
-for turn settlement. Attachments use the regular send queue.
+for turn settlement. A message with images uses the regular send queue.
 
 ### Skills in the slash menu
 
@@ -295,8 +295,9 @@ still sets the server's system-prompt append on
 > workspace folders listed in your context hold skills only.
 
 It is prompt-level, so `npm run smoke:acp -- --provider=agy` asserts a
-command's `Cwd` and an edit's file live, in a scratch folder under the home
-folder where the bug reproduces.
+command's `Cwd` live, in a scratch folder in the system temp folder (under the
+home folder on Windows, where the bug reproduces), and that a refused edit
+writes nothing there.
 
 ### An approved edit is reported twice
 
@@ -499,8 +500,8 @@ These choices have explicit recheck triggers.
 - **Why:** the harness sorts its workspace roots alphabetically and runs
   commands in the first, so for a project under the home folder the skills
   folder under `~/.gemini` won and commands ran and files landed there.
-- **Evidence:** reproduced live; the smoke asserts a command's `Cwd` and an
-  edit's file in a scratch folder under the home folder.
+- **Evidence:** reproduced live; the smoke asserts a command's `Cwd` in a scratch
+  folder in the system temp folder (under the home folder on Windows).
 - **Risk:** it is prompt-level, so a model can still ignore it.
 - **Revisit when:** Google fixes the workspace ordering (the smoke passes
   without the append), or the server lets a client name its working root.

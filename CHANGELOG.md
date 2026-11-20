@@ -1,5 +1,24 @@
 # Changelog
 
+## 4.17.0 — 2026-11-20
+
+**Google's agy CLI with Plan mode and steering, Antigravity's usage meter, Stop for one subagent or workflow, live subagent activity on Claude Code, and steer, compact, skills and fork on Muse Code.**
+
+### Added
+
+- **Antigravity runs on Google's agy CLI when you have it installed.** With a Google sign-in, new Antigravity chats then use the CLI and its own sign-in, which brings Agent mode, Accept edits, Auto mode and Plan mode, its effort option, **Steer** into a running turn, `/compact` and `/goal` in the slash menu, and its Claude and GPT models. In Plan mode the CLI plans without changing your project; its plan comes back as a reply or as a file you see as an edit card, and you carry on by replying. A conversation reopens with the program that started it, and the CLI's conversations appear in History. With a Gemini API key, or without the CLI, Antigravity runs on the server AFK Pilot installs, as before. **Log Out** of a Google sign-in signs out both.
+- **Antigravity's usage meter.** With a Google sign-in, the context popover shows your 5-hour and weekly limits for Gemini models and for Claude and GPT models, read from Antigravity's own `/usage`. It keeps one hidden conversation for this, so reading it leaves nothing new in your history.
+- **Stop one subagent or workflow.** While a Claude Code subagent runs in the background, or a Claude Code or Muse Code workflow runs, its card has **Stop**. It ends that piece of work and the main turn keeps going. On a Muse workflow, the workflow card's Stop covers its agents.
+- **Watch a Claude Code subagent work.** A subagent's activity shows in its card as it happens, and comes back when you reopen the conversation.
+- **Muse Code: Steer, `/compact`, your skills, and Go back, Edit and Continue in a new chat.** A message sent while Muse works can go straight into the running turn. `/compact` works. Your Muse skills appear in the slash menu. The branch icon, the pencil and **Continue in a new chat** now work on Muse too. Each appears only when your Muse Code CLI offers it.
+- **Antigravity: Accept edits, and your skills in the slash menu.** The mode picker offers Antigravity's own Accept edits mode next to Agent and Auto accept. Skills from your user and project skill folders appear in the slash menu.
+
+Stop on a card is on the desk, in VS Code and the desktop app. A phone or browser keeps working with this release and gets it in a later update.
+
+### Changed
+
+- **The Antigravity server AFK Pilot installs is now 1.5.2.** An older copy AFK Pilot installed is upgraded the next time you start an Antigravity chat; the model list follows what that server offers. A message you send while it works waits in the queue until the turn ends, because this server cannot be steered (the agy CLI can).
+
 ## 4.16.0 — 2026-11-20
 
 **Go back, edit and continue in a new chat on Claude and Codex, desk alerts, Plan mode for Codex, and Auto accept that does what it says.**
