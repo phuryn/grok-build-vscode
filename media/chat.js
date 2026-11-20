@@ -21978,6 +21978,11 @@ ${fullText}`
           drainPlanHistory(state.userMsgCount);
           state.interjectionCount += 1;
         } else {
+          // A new prompt ends any reply still open. Live, the previous turn is
+          // already committed; on a re-focus rebuild a history-opened chat's
+          // replay ends inside the outer bracket, which commits nothing, so the
+          // live reply would join the last history reply.
+          if (state.activeAgentEl || state.activeThoughtEl || state.activeToolGroupEl) commitAgentTurn();
           drainPlanHistory(state.userMsgCount);
           drainPermissionHistory(state.userMsgCount);
           state.userMsgCount += 1;

@@ -263,6 +263,8 @@ describe("truncateMessages removes only the tail (#56/P2-9)", () => {
     dispatch(window, { type: "userMessage", text: user, chips: [] });
     dispatch(window, { type: "agentStart" });
     dispatch(window, { type: "messageChunk", text: agent });
+    // The host's order: the prompt resolves, then the turn ends.
+    dispatch(window, { type: "promptComplete", meta: { totalTokens: 1 } });
     dispatch(window, { type: "agentEnd", meta: { totalTokens: 1 } });
   };
   const texts = (doc: Document) =>
@@ -281,10 +283,15 @@ describe("truncateMessages removes only the tail (#56/P2-9)", () => {
       expect.stringContaining("one"),
       expect.stringContaining("two"),
     ]);
-    // Everything after the surviving bubbles is gone — the discarded turn's
-    // user message is not the last child any more.
+    // Everything after the surviving turns is gone: the last message is the
+    // second turn's reply, and the discarded turn left nothing behind.
     const kids = [...doc.querySelectorAll("#messages > .msg")];
-    expect(kids[kids.length - 1]).toBe(users[1]);
+    const last = kids[kids.length - 1] as HTMLElement;
+    expect(last.classList.contains("agent")).toBe(true);
+    expect(last.textContent).toContain("reply-bravo");
+    const all = doc.getElementById("messages")!.textContent!;
+    expect(all).not.toContain("three");
+    expect(all).not.toContain("reply-charlie");
   });
 
   it("does NOT show the welcome screen — the panel never empties", () => {
