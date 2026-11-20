@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MuseSession } from "../adapters/muse/session.mts";
-import { museSchemaMethods } from "../adapters/muse/capabilities.mts";
-import { readFileSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { museSchemaMethods, readMuseMethods } from "../adapters/muse/capabilities.mts";
+import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { createRequire } from "node:module";
@@ -72,6 +72,23 @@ async function ready(methods: string[] = []) {
 }
 
 describe("Muse native steering, compaction, skills and forks", () => {
+  // The official installer's target is %LOCALAPPDATA%\Programs\muse\muse.cmd, so
+  // a user name with a space puts one in the shim path and in %TEMP% alike.
+  it.runIf(process.platform === "win32")("reads the method list when the shim and the temp folder both contain a space", async () => {
+    const root = mkdtempSync(join(tmpdir(), "afk muse "));
+    try {
+      const shim = join(root, "Programs muse", "muse.cmd");
+      const temp = join(root, "Local Temp");
+      for (const dir of [dirname(shim), temp]) mkdirSync(dir, { recursive: true });
+      writeFileSync(shim, `@echo off\r\nif not "%3"=="--out" exit /b 2\r\n>"%~4\\msp.schema.json" echo {"methods":{"turn/steer":{},"skill/list":{}}}\r\n`);
+      vi.stubEnv("TEMP", temp);
+      vi.stubEnv("TMP", temp);
+      expect([...await readMuseMethods(shim)].sort()).toEqual(["skill/list", "turn/steer"]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("keeps capabilities independent and uses no unavailable method", async () => {
     const s = await ready(["skill/list", "session/fork"]);
     expect(s.session.capabilities()).toEqual({ steer: false, compact: false, skills: true, fork: false });
