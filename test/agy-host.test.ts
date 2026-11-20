@@ -132,6 +132,21 @@ describe("Antigravity approval and installation", () => {
     expect(sidebar.configUpdate).toHaveBeenCalledWith("defaultMode", "yolo", "global");
   });
 
+  it("answers the approval already on screen when a native session switches to Auto accept", async () => {
+    const sidebar = host();
+    const session = sidebar.focused;
+    const client = { sessionId: "s", nativeApprovalModes: true, currentModeId: "agent", setMode: vi.fn(async mode => { client.currentModeId = mode; }) };
+    session.client = client;
+    sidebar.sendRemoteSession = vi.fn();
+    sidebar.autoApprovePendingPermissions = vi.fn();
+    await sidebar.setMode("acceptEdits", session);
+    expect(sidebar.autoApprovePendingPermissions).not.toHaveBeenCalled();
+    await sidebar.setMode("yolo", session);
+    expect(session.autoApprove).toBe(false);
+    expect(sidebar.autoApprovePendingPermissions).toHaveBeenCalledOnce();
+    expect(sidebar.autoApprovePendingPermissions).toHaveBeenCalledWith(session);
+  });
+
   it("shares one pinned upgrade attempt and keeps a custom server path outside the upgrader", async () => {
     const sidebar = host();
     const binary = installer.agyManagedBinaryPath(home);

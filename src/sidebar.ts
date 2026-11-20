@@ -4336,7 +4336,9 @@ Only continue if you trust this code.`,
         await this.rememberMusePosture(session);
       }
       this.setPlanActive(session, false);
-      if (session.autoApprove) this.autoApprovePendingPermissions(session);
+      // A native yolo covers only the server's next requests; cards already
+      // on screen still need the answer 4.16.0 gave them.
+      if (session.autoApprove || (client.nativeApprovalModes && modeId === "yolo")) this.autoApprovePendingPermissions(session);
       return;
     }
     if (modeId === "onRequest" || modeId === "denyUnmatched") return;
