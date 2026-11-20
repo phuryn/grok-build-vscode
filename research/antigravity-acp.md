@@ -126,7 +126,10 @@ aistudio.google.com/apikey). Vertex AI and Enterprise sign-in are not offered.
   server with an empty `GEMINI_HOME`; `auth/logout` and `session/logout` are
   -32601), which clears the token and the saved method; for a key, the saved
   key is deleted. Settings' button only disconnects, as for every desk provider
-  (#203).
+  (#203). When Google's agy CLI is installed, a Google sign-out also sends the
+  CLI ACP `logout` (initialize and logout only, no session): new Google chats
+  prefer the CLI, which keeps its own sign-in, so leaving it would keep them on
+  the old account. A CLI failure after the server signed out is reported.
 - A remote desk may paste a key or adopt an existing Google sign-in
   (`agyGoogleSignInPresent`), without starting `authenticate`. A local desk
   still offers browser sign-in (`googleSignIn`). Cloud hosts additionally
@@ -145,7 +148,7 @@ aistudio.google.com/apikey). Vertex AI and Enterprise sign-in are not offered.
   `agyInstallProgress` go to the requesting tab, including after reconnect.
   Desk Disconnect preserves both credentials. Cloud Sign out removes the
   saved API key and any stored Google sign-in through ACP `logout`, regardless
-  of the method last used. It never starts a browser or asks a host modal.
+  of the method last used, and signs out an installed agy CLI the same way. It never starts a browser or asks a host modal.
 - Key fields clear on submission and have no draft or retry storage. Known
   offline submissions are refused before reaching the transport. The relay
   client's outbox is outside this checkout: its exclusion of key messages,
