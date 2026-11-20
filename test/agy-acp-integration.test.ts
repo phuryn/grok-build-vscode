@@ -3,7 +3,7 @@ import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AcpClient, type PermissionRequest } from "../src/acp";
 import { AgyBackend, agyWorkingFolderPrompt } from "../src/agy-backend";
 import { agyGatewayAuth, agyGatewayEnv, agyGoogleAuth, agyGoogleSignInPresent, runAgySignIn } from "../src/agy-auth";
@@ -83,6 +83,60 @@ describe("Antigravity over ACP (real subprocess, fake server)", () => {
     await agy.start();
     await agy.newSession();
     expect(agy.currentReasoningEffort).toBe("medium");
+  });
+
+  it("uses advertised 1.5.2 models, exact extra-high effort, and native approval modes across reopen", async () => {
+    signIn(home);
+    const agy = client({ FAKE_AGY_152: "1" }, agyGoogleAuth());
+    await agy.start();
+    const { sessionId } = await agy.newSession();
+    expect(received().find(entry => entry.method === "initialize").params).not.toHaveProperty("clientInfo");
+    expect(agy.nativeApprovalModes).toBe(true);
+    expect(agy.supportsInterject()).toBe(false);
+    expect(agy.currentModeId).toBe("agent");
+    expect(agy.availableModels.map(model => [model.modelId, model.reasoningEfforts])).toEqual([
+      ["gemini-4-neon", ["low", "medium", "high", "xhigh"]],
+      ["gemini-4-carbon", ["low", "medium", "high"]],
+      ["gemini-4-argon", ["low", "medium", "high"]],
+      ["gemini-4-hydrogen", ["low", "medium", "high", "xhigh"]],
+      ["gemini-3.8-flash", ["low", "medium", "high"]],
+    ]);
+    await agy.setModel("gemini-4-neon");
+    await expect(agy.setReasoningEffort("xhigh")).resolves.toBe(true);
+    expect(agy.currentReasoningEffort).toBe("xhigh");
+    for (const mode of ["yolo", "agent", "acceptEdits"]) {
+      await agy.setMode(mode);
+      expect(agy.currentModeId).toBe(mode);
+    }
+    expect(received().filter(entry => entry.method === "session/set_config_option")
+      .map(entry => [entry.params.configId, entry.params.value])).toEqual([
+      ["model", "gemini-4-neon"], ["thinking_level", "xhigh"], ["mode", "yolo"], ["mode", "default"], ["mode", "auto_edit"],
+    ]);
+    await agy.dispose();
+    const reopened = client({ FAKE_AGY_152: "1" }, agyGoogleAuth());
+    await reopened.start();
+    await reopened.loadSession(sessionId);
+    expect(reopened.currentModeId).toBe("acceptEdits");
+  });
+
+  it("merges skills with native commands and rewrites only authored skill picks on the wire", async () => {
+    signIn(home);
+    for (const name of ["review", "usage", "native-check", "plan", "logout"]) {
+      const folder = path.join(cwd, ".agents", "skills", name);
+      fs.mkdirSync(folder, { recursive: true });
+      fs.writeFileSync(path.join(folder, "SKILL.md"), `---\nname: ${name}\ndescription: A project skill\n---\n`);
+    }
+    const agy = client({ FAKE_AGY_152: "1" }, agyGoogleAuth());
+    await agy.start();
+    await agy.newSession();
+    await vi.waitFor(() => expect(agy.availableCommands.map(command => command.name)).toEqual(["usage", "native-check", "review"]));
+    expect(agy.availableCommands[1]).toEqual({ name: "native-check", description: "Native command for the collision test" });
+    const blocks = [{ type: "text", text: "Attached context /review \n\nPlease /review these notes" }] as const;
+    await agy.prompt([...blocks], ["Please /review these notes"]);
+    expect(received().find(entry => entry.method === "session/prompt").params.prompt).toEqual([
+      { type: "text", text: "Attached context /review \n\nPlease [Use the review skill with lookup_skill and follow its instructions] these notes" },
+    ]);
+    expect(blocks[0].text).toBe("Attached context /review \n\nPlease /review these notes");
   });
 
   it("classifies a signed-out session/new as a credential error", async () => {

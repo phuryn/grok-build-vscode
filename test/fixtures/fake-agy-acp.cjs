@@ -1,11 +1,12 @@
 #!/usr/bin/env node
-// A stand-in for Google's agy_acp_server 1.4.0, replaying the frames measured
+// A stand-in for Google's agy_acp_server, replaying the frames measured
 // against the real server (research/antigravity-acp.md). State lives under
 // GEMINI_HOME exactly where the real server keeps it, so host code that reads
 // the server's files sees what it would see in production.
 //
 // Env: GEMINI_HOME (required), FAKE_AGY_SINK (JSONL of requests received),
 // FAKE_AGY_SIGN_IN = approve (default) | deny | hang.
+// FAKE_AGY_152 opts into the 1.5.2 Google catalog and session-open commands.
 //
 // `gateway` behaves as the real server's does (measured against 1.4.0 with a
 // local fake of the Gemini API): refused as an unsupported method unless
@@ -29,6 +30,7 @@ let nextServerId = 0;
 const waiting = new Map();
 const cancelled = new Set();
 const sessions = new Map();
+const version152 = process.env.FAKE_AGY_152 === "1";
 let loggedOut = false;
 // What `authenticate` selected in this process; settings.json otherwise.
 let auth;
@@ -78,30 +80,37 @@ function authRequired() {
   return { code: -32000, message: "Authentication required", data: { message: "No authentication method selected." } };
 }
 const MODE_OPTION = { currentValue: "default", options: [{ value: "default", name: "Default" }, { value: "auto_edit", name: "Auto Edit" }, { value: "yolo", name: "YOLO" }], id: "mode", name: "Session Mode", category: "mode", type: "select" };
+const FAMILIES = (version152 ? ["Gemini 4 Neon", "Gemini 4 Carbon", "Gemini 4 Argon", "Gemini 4 Hydrogen", "Gemini 3.8 Flash"] : ["Gemini 3.8 Flash"])
+  .map(name => ({ name, value: name.toLowerCase().replaceAll(" ", "-") }));
+function levels(model) {
+  const standard = ["low", "medium", "high"];
+  return model === "gemini-4-neon" || model === "gemini-4-hydrogen" ? [...standard, "xhigh"] : standard;
+}
 function configOptions(session) {
+  const mode = { ...MODE_OPTION, currentValue: session.mode ?? "default" };
   if (session?.gatewayModels) {
     // Gateway mode: models exactly as the gateway declares them, no thinking_level.
-    return [{ currentValue: session.model, options: session.gatewayModels, id: "model", name: "Model", category: "model", type: "select" }, MODE_OPTION];
+    return [{ currentValue: session.model, options: session.gatewayModels, id: "model", name: "Model", category: "model", type: "select" }, mode];
   }
   const level = session?.level ?? "high";
   return [
-    { currentValue: "gemini-3.8-flash", options: [{ value: "gemini-3.8-flash", name: "Gemini 3.8 Flash" }], id: "model", name: "Model", category: "model", type: "select" },
-    { currentValue: level, options: ["low", "medium", "high"].map((value) => ({ value, name: value })), id: "thinking_level", name: "Thinking Level", category: "thought_level", type: "select" },
-    MODE_OPTION,
+    { currentValue: session.model, options: FAMILIES, id: "model", name: "Model", category: "model", type: "select" },
+    { currentValue: level, options: levels(session.model).map((value) => ({ value, name: value })), id: "thinking_level", name: "Thinking Level", category: "thought_level", type: "select" },
+    mode,
   ];
 }
 function sessionResult(sessionId, session) {
   return {
     ...(sessionId ? { sessionId } : {}),
-    modes: { currentModeId: "default", availableModes: [{ id: "default", name: "Default" }, { id: "auto_edit", name: "Auto Edit" }, { id: "yolo", name: "YOLO" }] },
+    modes: { currentModeId: session.mode ?? "default", availableModes: MODE_OPTION.options.map(({ value, name }) => ({ id: value, name })) },
     configOptions: configOptions(session),
     models: session?.gatewayModels
       ? { availableModels: session.gatewayModels.map(({ value, name }) => ({ modelId: value, name })), currentModelId: session.model }
-      : { availableModels: ["high", "medium", "low"].map((l) => ({ modelId: `gemini-3.8-flash-${l}`, name: `Gemini 3.8 Flash (${l})` })), currentModelId: `gemini-3.8-flash-${session?.level ?? "high"}` },
+      : { availableModels: FAMILIES.flatMap(({ value, name }) => levels(value).map(level => ({ modelId: `${value}-${level}`, name: `${name} (${level})` }))), currentModelId: `${session.model}-${session.level}` },
   };
 }
 async function newSessionState(cwd) {
-  if (!gatewayBase()) return { cwd, level: "high" };
+  if (!gatewayBase()) return { cwd, model: "gemini-3.8-flash", level: "high" };
   const gatewayModels = await discoverGatewayModels();
   return { cwd, gatewayModels, model: gatewayModels[0].value };
 }
@@ -128,7 +137,9 @@ async function gatewayTurn(sessionId, session, text) {
 }
 function commands(sessionId) {
   update(sessionId, { sessionUpdate: "available_commands_update", availableCommands: [
-    { name: "plan", description: "Plan carefully" }, { name: "logout", description: "Log out" }, { name: "usage", description: "Show usage" }] });
+    { name: "plan", description: "Plan carefully" }, { name: "logout", description: "Log out" }, { name: "usage", description: "Show usage" },
+    ...(version152 ? [{ name: "native-check", description: "Native command for the collision test" }] : []),
+  ] });
 }
 function remember(sessionId, cwd) {
   fs.mkdirSync(conversations, { recursive: true });
@@ -221,7 +232,7 @@ rl.on("line", async (line) => {
         agentCapabilities: { loadSession: true, sessionCapabilities: { list: {}, resume: {} }, auth: { logout: {} },
           _meta: { antigravity: { tier: true, systemPrompt: { append: true } } } },
         authMethods: [{ id: "oauth-personal", name: "Log in with Google" }],
-        agentInfo: { name: "antigravity-acp", title: "Google Antigravity", version: "1.4.0" } } });
+        agentInfo: { name: "antigravity-acp", title: "Google Antigravity", version: version152 ? "1.5.2" : "1.4.0" } } });
     case "authenticate": {
       if (params.methodId === "gateway") {
         if (!/^(1|true|yes|on)$/i.test(String(process.env.AGY_ACP_ENABLE_GATEWAY_AUTH ?? "").trim())) {
@@ -269,15 +280,20 @@ rl.on("line", async (line) => {
       const session = await newSessionState(params.cwd);
       sessions.set(sessionId, session);
       remember(sessionId, params.cwd);
-      return write({ id, result: sessionResult(sessionId, session) });
+      write({ id, result: sessionResult(sessionId, session) });
+      if (version152) commands(sessionId);
+      return;
     }
     case "session/load": {
       if (!signedIn()) return write({ id, error: authRequired() });
       const session = await newSessionState(params.cwd);
+      try { session.mode = JSON.parse(fs.readFileSync(path.join(conversations, `${params.sessionId}.meta`), "utf8")).mode; } catch { /* older fixture */ }
       sessions.set(params.sessionId, session);
       update(params.sessionId, { content: { type: "text", text: "Remember 41." }, sessionUpdate: "user_message_chunk" });
       update(params.sessionId, { content: { type: "text", text: "OK" }, sessionUpdate: "agent_message_chunk" });
-      return write({ id, result: sessionResult(undefined, session) });
+      write({ id, result: sessionResult(undefined, session) });
+      if (version152) commands(params.sessionId);
+      return;
     }
     case "session/list":
       return write({ id, result: { sessions: [...sessions].map(([sessionId, value]) => ({ sessionId, cwd: value.cwd, title: `Session ${sessionId.slice(0, 8)}` })) } });
@@ -286,12 +302,19 @@ rl.on("line", async (line) => {
       if (!session) return write({ id, error: { code: -32002, message: "Resource not found" } });
       if (params.configId === "thinking_level") {
         if (session.gatewayModels) return write({ id, error: { code: -32602, message: "Unknown config option id: thinking_level" } });
+        if (!levels(session.model).includes(params.value)) return write({ id, error: { code: -32602, message: "Unsupported thinking level" } });
         session.level = params.value;
       }
       if (params.configId === "model") {
-        const offered = session.gatewayModels ? session.gatewayModels.map((option) => option.value) : ["gemini-3.8-flash"];
+        const offered = (session.gatewayModels ?? FAMILIES).map(option => option.value);
         if (!offered.includes(params.value)) return write({ id, error: { code: -32602, message: `Model '${params.value}' is not available for the current authentication method.` } });
-        if (session.gatewayModels) session.model = params.value;
+        session.model = params.value;
+        if (!levels(session.model).includes(session.level)) session.level = "high";
+      }
+      if (params.configId === "mode") {
+        if (!MODE_OPTION.options.some(option => option.value === params.value)) return write({ id, error: { code: -32602, message: "Unsupported mode" } });
+        session.mode = params.value;
+        fs.writeFileSync(path.join(conversations, `${params.sessionId}.meta`), JSON.stringify({ cwd: session.cwd, mode: session.mode }));
       }
       return write({ id, result: { configOptions: configOptions(session) } });
     }

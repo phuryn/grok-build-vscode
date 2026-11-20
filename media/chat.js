@@ -717,6 +717,7 @@
     lastTurnUsage: null, // last prompt's billing split (#53), for the donut popover
     sessionUsage: null, // session-cumulative billing — summed by the host, not grok
     subscriptionWindows: [], // latest account capacity; never part of the transcript
+    subscriptionUsageHideWhenEmpty: false,
     // Whether this HOST has ever sent `subscriptionUsage`. A host property, not
     // a session one, so a new conversation does not un-learn it.
     subscriptionUsageKnown: false,
@@ -1201,6 +1202,7 @@
 
   const MODE_META = {
     agent: { icon: ICON.bot, label: "Agent mode" },
+    acceptEdits: { icon: ICON.shield, label: "Accept edits" },
     // A provider's own Auto mode; only a host that advertises it offers it.
     auto: { icon: ICON.shield, label: "Auto mode" },
     askApproval: { icon: ICON.shieldQuestion, label: "Ask for approval" },
@@ -1511,6 +1513,7 @@
 
   function modeDescription(id) {
     if (offersMuseModes() && Object.hasOwn(MUSE_MODE_META, id)) return MUSE_MODE_META[id].description;
+    if (id === "acceptEdits") return "Automatically approves file edits. Other tools follow the agent’s approval rules.";
     const name = providerDisplayName(state.activeProvider);
     if (state.activeProvider === "muse") {
       if (state.hostCaps && state.hostCaps.museNativeModes) {
@@ -2829,7 +2832,9 @@
     // comment further down records what returning early from here cost last
     // time. Building a handful of detached nodes and dropping them is the
     // cheaper mistake.
-    if (state.subscriptionUsageKnown && state.activeProvider !== "deepseek") contextPopover.appendChild(subscription);
+    if (!state.subscriptionUsageHideWhenEmpty || windows.length) {
+      if (state.subscriptionUsageKnown && state.activeProvider !== "deepseek") contextPopover.appendChild(subscription);
+    }
 
     // KNOWLEDGE WORK STOPS HERE: the numbers and the action on them, nothing
     // else. Context occupancy and account capacity both answer "can I keep
@@ -22497,6 +22502,7 @@ ${fullText}`
         break;
       case "subscriptionUsage":
         state.subscriptionUsageKnown = true;
+        state.subscriptionUsageHideWhenEmpty = msg.hideWhenEmpty === true;
         state.subscriptionWindows = Array.isArray(msg.windows) ? msg.windows : [];
         if (!contextPopover.hidden) renderContextPopover();
         break;

@@ -12,6 +12,7 @@ import {
   agyManagedRoot,
   extractZipFile,
   installManagedAgy,
+  isSupersededManagedAgy,
   locateAgyServer,
 } from "../src/agy-managed-installer";
 import type { CodexDownload } from "../src/codex-managed-installer";
@@ -92,12 +93,12 @@ function fakeDownload(archive: Buffer): CodexDownload {
 // (the registry publishes none). A second copy on purpose, so an edited digest
 // in the source fails here rather than shipping.
 const releases = [
-  ["win32", "x64", "windows/agy-acp-server-1.4.0-windows-x86_64.zip", "d737aad2d6388e071bc907db415c129a256915d275f436e68f10dcdf6af896da", 125646049],
-  ["win32", "arm64", "windows/agy-acp-server-1.4.0-windows-arm64.zip", "37fac14835f06caf05b4b93fed59a0e16e7c716e3ec95f03d4779a61abe3c2e6", 126083066],
-  ["darwin", "arm64", "macos/agy-acp-server-1.4.0-darwin-arm64.zip", "21a32eeab85b394a515510c84539bda4b2504bf2917e0a201f5c4130b13581a5", 112734313],
-  ["darwin", "x64", "macos/agy-acp-server-1.4.0-darwin-x86_64.zip", "407b6b8ef167bb207d1effdbd488bacf63ba7dab2b47d4a47d8ea3710a8c0f55", 118343529],
-  ["linux", "x64", "linux/agy-acp-server-1.4.0-linux-x86_64.zip", "fbb2d54dd94fb897845308d3b6b46187c627f1c60078ded81adeeaf8b90c5d7a", 336175910],
-  ["linux", "arm64", "linux/agy-acp-server-1.4.0-linux-arm64.zip", "3dc43a21f5402b23a4dba7b320a6745e9dbf4b6ead912ce9fc76011ea3a08a7e", 321912925],
+  ["win32", "x64", "windows/agy-acp-server-1.5.2-windows-x86_64.zip", "5cbadd4f4df698572473d8890fc26ec2dc1724501f06e3a963941daec2bd21d6", 105407645],
+  ["win32", "arm64", "windows/agy-acp-server-1.5.2-windows-arm64.zip", "8a4b2ea8df2ffefae33309348752e9119d21a6d36090c0eb48631c2e8f5781ab", 108049351],
+  ["darwin", "arm64", "macos/agy-acp-server-1.5.2-darwin-arm64.zip", "123a16d5c40a8ac99e20f01a62b68dd860fd96b1c528dfb8eaa37ca8733d4845", 100309778],
+  ["darwin", "x64", "macos/agy-acp-server-1.5.2-darwin-x86_64.zip", "92addb5580577b5356d35484d72d1a113d9c5312ad766bcb304983aa8e3fbb06", 106351992],
+  ["linux", "x64", "linux/agy-acp-server-1.5.2-linux-x86_64.zip", "99dd8612450805011619d7b8447ce374c289e00549d8557f36790e1dd6256852", 273964075],
+  ["linux", "arm64", "linux/agy-acp-server-1.5.2-linux-arm64.zip", "e729e05ef54ef0763e48900032466b47fa7c9939cde257f93ba49410ab577acb", 264270419],
 ] as const;
 
 describe("managed Antigravity release", () => {
@@ -116,6 +117,14 @@ describe("managed Antigravity release", () => {
     expect(agyManagedFileNames("win32")).toEqual({ server: "agy_acp_server.exe", harness: "localharness_external.exe" });
     expect(agyManagedFileNames("darwin")).toEqual({ server: "agy_acp_server.par", harness: "localharness_external" });
     expect(agyManagedFileNames("linux")).toEqual({ server: "agy_acp_server.par", harness: "localharness_external" });
+  });
+
+  it("detects a superseded managed binary only inside extension storage", () => {
+    const root = path.resolve("extension-storage");
+    const old = path.join(agyManagedRoot(root), "1.4.0", agyManagedFileNames().server);
+    expect(isSupersededManagedAgy(root, old)).toBe(true);
+    expect(isSupersededManagedAgy(root, agyManagedBinaryPath(root))).toBe(false);
+    expect(isSupersededManagedAgy(root, path.resolve("external", "1.4.0", agyManagedFileNames().server))).toBe(false);
   });
 });
 

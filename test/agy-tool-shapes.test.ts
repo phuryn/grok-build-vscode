@@ -247,7 +247,7 @@ describe("Antigravity's key-mode model catalog", () => {
     }
   });
 
-  it("never drops the model in use unless it is Gemini 2, filters chat models only in key mode, and Gemini 2 in both", () => {
+  it("keeps the existing gateway chat filter and preserves the Google catalog in server order", () => {
     expect(agyKeyChatModels([{ modelId: "gemma-4-31b-it" }, { modelId: "gemini-3.8-flash" }], "gemma-4-31b-it").map((m) => m.modelId))
       .toEqual(["gemini-3.8-flash", "gemma-4-31b-it"]);
     const response = { sessionId: "s", configOptions: [
@@ -256,13 +256,11 @@ describe("Antigravity's key-mode model catalog", () => {
     ] };
     // The gateway's own start, Gemini 2.5 Flash, is in use and still not shown.
     expect(normalizeAgySessionResponse(response, true).models.availableModels.map((m: any) => m.modelId)).toEqual(["gemini-4-argon"]);
-    // A Google sign-in keeps everything else as the server sends it; the 2.5 TTS
-    // variant is Gemini 2 too.
     expect(normalizeAgySessionResponse(response).models.availableModels.map((m: any) => m.modelId))
-      .toEqual(["gemini-4-argon", "gemma-4-31b-it"]);
-    // With no model option to read, the server's own list loses Gemini 2 too.
+      .toEqual(["gemini-2.5-flash", "gemini-2.5-flash-preview-tts", "gemini-4-argon", "gemma-4-31b-it"]);
     expect(normalizeAgySessionResponse({ sessionId: "s", models: { currentModelId: "gemini-3.8-flash-high",
-      availableModels: [{ modelId: "gemini-3.8-flash-high" }, { modelId: "gemini-2.5-pro" }] } }).models.availableModels).toEqual([{ modelId: "gemini-3.8-flash-high" }]);
+      availableModels: [{ modelId: "gemini-3.8-flash-high" }, { modelId: "gemini-2.5-pro" }] } }).models.availableModels)
+      .toEqual([{ modelId: "gemini-3.8-flash-high" }, { modelId: "gemini-2.5-pro" }]);
   });
 
   it("starts a key's conversation on Gemini 4 Argon, and offers no effort where the server has no thinking_level", () => {

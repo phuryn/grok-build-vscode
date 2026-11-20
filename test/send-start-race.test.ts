@@ -358,4 +358,26 @@ describe("send vs concurrent startSession", () => {
     ]);
     expect(sidebar.focused.queuedSends).toEqual([]);
   });
+
+  it("holds an Antigravity message through the current turn and sends it once on settlement", async () => {
+    const sidebar = makeSidebar("/repo");
+    await sidebar.startSession(undefined, sidebar.focused);
+    sidebar.focused.provider = "agy";
+    delete sidebar.maybeFlushQueuedSends;
+    let finish!: () => void;
+    promptControl.hang = new Promise<void>(resolve => { finish = resolve; });
+    const first = sidebar.handleSend("first");
+    await vi.waitFor(() => expect(promptControl.calls).toBe(1));
+    await sidebar.handleSend("held");
+    await sidebar.maybeFlushQueuedSends(sidebar.focused);
+    expect(sidebar.focused.queuedSends).toEqual([{ text: "held", chips: [] }]);
+    expect(promptControl.calls).toBe(1);
+    promptControl.hang = false;
+    finish();
+    await first;
+    await vi.waitFor(() => expect(promptControl.calls).toBe(2));
+    await sidebar.maybeFlushQueuedSends(sidebar.focused);
+    expect(sidebar.focused.queuedSends).toEqual([]);
+    expect(sidebar.posted.filter((m: HostMsg) => m.type === "userMessage").map((m: any) => m.text)).toEqual(["first", "held"]);
+  });
 });

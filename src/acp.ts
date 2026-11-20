@@ -616,7 +616,8 @@ export class AcpClient extends EventEmitter {
     });
     const res = this.backend.normalizeSessionResponse(raw);
     this.sessionId = res.sessionId;
-    await this.refreshCommands();
+    if (this.backend.backgroundCommands) void this.refreshCommands();
+    else await this.refreshCommands();
     this.resetContextSelection();
     this.availableModels = (res.models?.availableModels ?? []).map((m: any) => ({
       modelId: m.modelId,
@@ -671,6 +672,7 @@ export class AcpClient extends EventEmitter {
       this.emit("modeChanged", this.currentModeId);
     }
     this.readCodexMode(res);
+    this.readNativeApprovalMode(res);
     this.emit("session", res);
 
     const wantedModel = modelId || this.backend.defaultModelId?.(this.availableModels.map((m) => m.modelId));
@@ -717,7 +719,8 @@ export class AcpClient extends EventEmitter {
     }
     const res = this.backend.normalizeSessionResponse(raw);
     this.sessionId = sessionId;
-    await this.refreshCommands();
+    if (this.backend.backgroundCommands) void this.refreshCommands();
+    else await this.refreshCommands();
     this.resetContextSelection();
     if (res?.models?.availableModels) {
       this.availableModels = res.models.availableModels.map((m: any) => ({
@@ -745,6 +748,7 @@ export class AcpClient extends EventEmitter {
       this.emit("modeChanged", this.currentModeId);
     }
     this.readCodexMode(res);
+    this.readNativeApprovalMode(res);
     this.emit("session", { sessionId, ...(res ?? {}) });
     this.emit("sessionLoaded", { sessionId });
     if (modelId && modelId !== this.currentModelId) {
@@ -756,6 +760,16 @@ export class AcpClient extends EventEmitter {
     }
     await this.refreshContextSelection();
     return { sessionId };
+  }
+
+  get nativeApprovalModes(): boolean { return this.backend.nativeApprovalModes === true; }
+
+  private readNativeApprovalMode(response: unknown): void {
+    if (!this.nativeApprovalModes) return;
+    const { modeId } = this.backend.configState(response, {});
+    if (!modeId) return;
+    this.currentModeId = modeId;
+    this.emit("modeChanged", modeId);
   }
 
   private readCodexMode(response: unknown, fallback = this.currentModeId): void {
@@ -930,7 +944,7 @@ export class AcpClient extends EventEmitter {
     if (this.provider === "deepseek" && prompt.some(block => block.type === "image"))
       throw new Error("DeepSeek does not accept image attachments on this ACP route.");
     if (this.backend.rewritePrompt) {
-      await this.refreshCommands();
+      if (!this.backend.backgroundCommands) await this.refreshCommands();
       // Copy at the transport boundary: callers retain the authored message for
       // their transcript, retries, title, and the desk/remote user-message echo.
       prompt = prompt.map((block, index) => {
@@ -1294,7 +1308,12 @@ export class AcpClient extends EventEmitter {
   private billingShapeLogged = false;
   private billingErrorLogged = false;
 
+  subscriptionCredentialContext(): string | undefined {
+    return this.backend.subscriptionCredentialContext?.(this.opts.startupAuth?.methodId);
+  }
+
   async getSubscriptionUsage(): Promise<SubscriptionWindow[]> {
+    if (this.backend.readSubscriptionUsage) return this.backend.readSubscriptionUsage(this.opts.startupAuth?.methodId);
     if (this.provider !== "grok" || this.billingUnsupported) return [];
     try {
       const raw = await this.request("_x.ai/billing", {});

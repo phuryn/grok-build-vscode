@@ -147,7 +147,9 @@ describe("Antigravity models and effort", () => {
 
   it("offers Agent and Auto accept, never Plan, and Auto accept never sends a saved grant", () => {
     expect(sessionModes("agy")).toEqual(["agent", "yolo"]);
+    expect(sessionModes("agy", false, true)).toEqual(["agent", "acceptEdits", "yolo"]);
     expect(() => new AgyBackend().setMode("s", "plan")).toThrow(/Plan/);
+    expect(() => new AgyBackend().setMode("s", "acceptEdits")).toThrow(/Accept edits/);
     expect(new AgyBackend().setMode("s", "yolo")).toEqual({ method: "session/set_mode", params: { sessionId: "s", modeId: "yolo" } });
     const options = [
       { optionId: "allow_always", name: "Allow Always (risky)", kind: "allow_always" },

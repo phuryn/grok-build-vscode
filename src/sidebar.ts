@@ -11,6 +11,7 @@ import { AgyBackend, agyAcpDir, agySessionsFor, agyThinkingLevel, listAgyCatalog
 import { agyGatewayAuth, agyGatewayEnv, agyGoogleAuth, agyGoogleSignInPresent, isAgySignInMethod, normalizeAgyApiKey, runAgySignIn, type AgySignInMethod } from "./agy-auth";
 import { AgyKeyRelay, type AgyModelListing, type AgyRelayLease } from "./agy-key-relay";
 import { installManagedAgy, locateAgyServer } from "./agy-managed-installer";
+import { isSupersededManagedAgy } from "./agy-managed-installer";
 import type {
   Host,
   HostCancellationToken,
@@ -108,6 +109,8 @@ import {
   sessionReadyForPrompt,
   sessionUiSnapshot,
   sessionGoalMessage,
+  sessionPickerModes,
+  subscriptionUsageMessage,
   startupStatusMessage,
   sessionModeMessage,
   turnIsInFlight,
@@ -128,6 +131,7 @@ import { MediaRef, adapterCompactSignal, adapterContextOccupancy, agentTimestamp
 import { createMcpPrepareState, prepareMcpToolCall } from "./mcp-tool";
 import { CODEX_ASK_APPROVAL_PREF_KEY, CODEX_MODE_WAITS_FOR_PLAN, EFFORT_PREFS_KEY, MUSE_MODE_PREF_KEY, MUSE_ON_REQUEST_UNAVAILABLE, museSandboxUnavailable, museOnRequestUnavailable, resolvedDefaultMode, configWriteTarget, isMuseModeId, modeToRemember, rememberedEffort, sessionModes, startsInNativeAuto, startsInYolo, musePosture, museShellSandboxEnabled, usesClientAutoAccept, type ModeId, type MuseSettings, type EffortPrefs } from "./mode-prefs";
 import { supportsApprovalModeSwitching } from "./acp-backend";
+import { AGY_ACCEPT_EDITS_PREF_KEY } from "./mode-prefs";
 import { beginAuthRecovery, oauthShadowsXaiApiKey } from "./auth-recovery";
 import {
   WELCOME_TIPS_KEY,
@@ -1057,6 +1061,7 @@ export class GrokSidebar {
   private museHistoryGeneration = 0;
   private museSessionCache = new Map<string, SessionListEntry[]>();
   private agyServerPath?: string;
+  private managedAgyUpgrade?: Promise<string | undefined>;
   /** The one place a Gemini API key goes; see agy-key-relay.ts. */
   private agyRelay?: AgyKeyRelay;
   /** Models whose agent answered an Auto request with its fallback, this run:
@@ -2956,6 +2961,17 @@ export class GrokSidebar {
     }
   }
 
+  private upgradeManagedAgy(cliPath: string): Promise<string | undefined> | undefined {
+    const storageRoot = this.context.globalStorageUri.fsPath;
+    if (!isSupersededManagedAgy(storageRoot, cliPath) || this.host.getConfiguration("grok").get<string>("agyServerPath", "").trim()) return;
+    // Retain the located fallback if a verified update cannot be installed.
+    return this.managedAgyUpgrade ??= installManagedAgy({ storageRoot, signal: this.providerRunSignal("agy") })
+      .catch(error => {
+        this.host.appendLine(`[agy] managed update failed: ${errorDetail(error)}`);
+        return undefined;
+      });
+  }
+
   private async installManagedCodexCli(): Promise<void> {
     if (this.codexInstallAbort) return;
     const alreadyLocated = this.locateProvider("codex");
@@ -3561,7 +3577,7 @@ export class GrokSidebar {
       // Publish cleared snapshots now; a new process binds the new account.
       for (const session of new Set([this.focused, ...this.pool])) {
         if (session.subscriptionUsage && !session.subscriptionUsage.current()) {
-          this.emit(session, { type: "subscriptionUsage", windows: [] });
+          this.emit(session, subscriptionUsageMessage(session));
         }
       }
     };
@@ -3972,6 +3988,7 @@ See design doc for the full state machine diagram.`;
   }
 
   private defaultModeForProvider(provider: string): string {
+    if (provider === "agy" && this.state.get<boolean>(AGY_ACCEPT_EDITS_PREF_KEY)) return "acceptEdits";
     if (provider === "codex" && this.state.get<boolean>(CODEX_ASK_APPROVAL_PREF_KEY)) return "askApproval";
     const shared = this.host.getConfiguration("grok").get<string>("defaultMode", "");
     const remembered = provider === "muse" ? this.state.get<string>(MUSE_MODE_PREF_KEY) ?? shared : shared;
@@ -3990,6 +4007,7 @@ See design doc for the full state machine diagram.`;
     if (!session.client && !session.priming && !session.activeSessionId && !session.hasHistory
       && !session.planActive && !session.autoApprove && !session.nativeAuto) return this.newSessionMode(session.provider);
     if (session.provider === "muse") return session.client?.currentModeId ?? session.musePosture?.mode ?? "agent";
+    if (session.client?.nativeApprovalModes && session.client.currentModeId) return session.client.currentModeId;
     if (session.planActive) return "plan";
     if (session.provider === "codex" && session.client?.currentModeId === "askApproval") return "askApproval";
     if (session.autoApprove) return "yolo";
@@ -4277,7 +4295,7 @@ Only continue if you trust this code.`,
       return;
     }
     // Backstop the picker for stale clients and direct/remote commands.
-    if (!sessionModes(session.provider, !!session.museSandboxUnavailable).includes(modeId) && modeId !== "plan") return;
+    if (!sessionPickerModes(session).includes(modeId) && modeId !== "plan") return;
     if (session.provider === "codex") return this.setCodexPickerMode(modeId, session, session.client, requester);
     if (modeId === "askApproval") return;
     // Muse switches approval without enabling the Plan path.
@@ -4297,7 +4315,7 @@ Only continue if you trust this code.`,
         this.reportRequester(requester, "warning", MUSE_ON_REQUEST_UNAVAILABLE);
         return;
       }
-      if (supportsApprovalModeSwitching(session.provider)) {
+      if (supportsApprovalModeSwitching(session.provider) && (session.provider !== "agy" || client.nativeApprovalModes)) {
         try {
           await client.setMode(modeId);
         } catch (error) {
@@ -4308,10 +4326,12 @@ Only continue if you trust this code.`,
       }
       if (session.client !== client) return;
       if (remember) void this.rememberGrokConfig("defaultMode", remember);
+      if (session.provider === "agy") await this.state.update(AGY_ACCEPT_EDITS_PREF_KEY, modeId === "acceptEdits" ? true : undefined);
       if (session.provider === "muse") await this.state.update(MUSE_MODE_PREF_KEY, modeId);
       if (session.client !== client) return;
       session.autoApprove = modeId === "yolo";
-      if (session.musePosture) {
+      if (client.nativeApprovalModes) session.autoApprove = false;
+      if (session.musePosture && isMuseModeId(modeId)) {
         session.musePosture = { ...session.musePosture, mode: modeId };
         await this.rememberMusePosture(session);
       }
@@ -11617,7 +11637,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     this.emit(session, { type: "setBusy", value: true, locked: true });
 
     const cfg = this.host.getConfiguration("grok");
-    const cliPath = this.locateProvider(session.provider);
+    let cliPath = this.locateProvider(session.provider);
     if (!cliPath) {
       if (gen !== session.gen) return undefined;
       this.pool.delete(session);
@@ -11654,6 +11674,14 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       this.setProviderNeedsLogin("agy", true);
       this.emit(session, { type: "onboarding", state: this.onboardingForSession(session), provider: "agy", platform: process.platform });
       return undefined;
+    }
+    if (session.provider === "agy") {
+      const upgrade = this.upgradeManagedAgy(cliPath);
+      if (upgrade) {
+        const pinned = await upgrade;
+        if (gen !== session.gen) return undefined;
+        if (pinned && !cfg.get<string>("agyServerPath", "").trim()) cliPath = this.agyServerPath = pinned;
+      }
     }
 
     // Keep the established once-per-extension-upgrade update trigger, then read
@@ -11869,6 +11897,11 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     });
     client.on("modeChanged", (id) => {
       if (gen !== session.gen) return;
+      if (client.nativeApprovalModes) {
+        session.autoApprove = false;
+        this.setPlanActive(session, false);
+        return;
+      }
       if (session.provider === "muse" && isMuseModeId(id)) {
         session.autoApprove = id === "yolo";
         if (session.musePosture) session.musePosture = { ...session.musePosture, mode: id };
@@ -12532,6 +12565,11 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         if (nativeAutoStart && gen === session.gen) await this.startNativeAuto(session, client);
         if (rememberedYolo && session.provider === "codex" && gen === session.gen) await this.startCodexFullAccess(session, client);
         if (session.provider === "codex" && gen === session.gen) await this.restoreCodexApproval(session, client);
+        if (client.nativeApprovalModes && gen === session.gen) {
+          const mode = rememberedYolo ? "yolo" : this.defaultModeForProvider(session.provider) === "acceptEdits" ? "acceptEdits" : "agent";
+          try { if (client.currentModeId !== mode) await client.setMode(mode); }
+          catch (error) { this.host.appendLine(`[acp] Could not apply the starting mode: ${errorDetail(error)}`); }
+        }
         clock.record("new", clock.elapsed(newAt));
         clock.record("load", 0);
         clock.record("replay(post)", 0);
@@ -12565,8 +12603,17 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       // Throw into the classifier instead: the retry budget owns transient
       // startup deaths, and the final failure surfaces like any other.
       if (session.client !== client) throw new Error("the provider exited during startup");
-      this.bindSubscriptionUsage(session, env);
-      void this.refreshSubscriptionUsage(session);
+      if (session.provider === "agy") {
+        this.publishSubscriptionUsage(session);
+        setImmediate(() => {
+          if (gen !== session.gen || session.client !== client) return;
+          this.bindSubscriptionUsage(session, env);
+          void this.refreshSubscriptionUsage(session);
+        });
+      } else {
+        this.bindSubscriptionUsage(session, env);
+        void this.refreshSubscriptionUsage(session);
+      }
       // Session is live — unlock the composer and flush anything typed during
       // the startup window (#37).
       session.priming = false;
@@ -19201,7 +19248,9 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           this.rememberAdapterContext(session, { compacted: true });
         }
       }
-      const meta = pastedText
+      const meta = session.provider === "agy"
+        ? await client.prompt(promptBlocks, contributions?.map(item => item.text) ?? [text], pastedText)
+        : pastedText
         ? await client.prompt(promptBlocks, session.provider === "deepseek" ? contributions?.map(item => item.text) ?? [text] : undefined, pastedText)
         : session.provider === "deepseek"
         ? await client.prompt(promptBlocks, contributions?.map(item => item.text) ?? [text])
@@ -19403,7 +19452,9 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     this.setStatus(session, "working");
     session.adapterTurnCallUsed = [];
     try {
-      const meta = pastedText ? await client.prompt(promptBlocks, undefined, pastedText) : await client.prompt(promptBlocks);
+      const meta = session.provider === "agy"
+        ? await client.prompt(promptBlocks, [displayText], pastedText)
+        : pastedText ? await client.prompt(promptBlocks, undefined, pastedText) : await client.prompt(promptBlocks);
       if (gen !== session.gen) {
         this.emitAbandonedSend(session);
         return true;
@@ -20114,7 +20165,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     const snapshot = [
       ...bracketRemoteSnapshot(session.buffer),
       startupStatusMessage(session),
-      { type: "subscriptionUsage" as const, windows: session.subscriptionUsage?.snapshot() ?? [] },
+      subscriptionUsageMessage(session),
       ...(goal ? [goal] : []),
     ];
     for (const clientId of clientIds) {
@@ -20970,7 +21021,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         ...(identity ? [identity] : []),
         ...bracketRemoteSnapshot(session.buffer),
         startupStatusMessage(session),
-        { type: "subscriptionUsage", windows: session.subscriptionUsage?.snapshot() ?? [] },
+        subscriptionUsageMessage(session),
         ...(goal ? [goal] : []),
       ];
       for (const m of replay) {
@@ -21905,6 +21956,16 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
 
   private bindSubscriptionUsage(session: Session, env: NodeJS.ProcessEnv): void {
     const provider = session.provider;
+    if (provider === "agy") {
+      const client = session.client;
+      const key = client?.subscriptionCredentialContext?.();
+      if (!client || !key) return;
+      const caches = this.subscriptionUsageCaches ??= new Map();
+      let cache = caches.get(key);
+      if (!cache) caches.set(key, cache = new SubscriptionUsageCache());
+      session.subscriptionUsage = new SubscriptionUsageBinding(cache, key, () => client.subscriptionCredentialContext?.() ?? "");
+      return;
+    }
     const cwd = this.sessionCwd(session);
     const key = subscriptionCredentialContext(provider, env);
     const caches = this.subscriptionUsageCaches ??= new Map();
@@ -21937,7 +21998,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   }
 
   private publishSubscriptionUsage(session: Session): void {
-    this.emit(session, { type: "subscriptionUsage", windows: session.subscriptionUsage?.snapshot() ?? [] });
+    this.emit(session, subscriptionUsageMessage(session));
   }
 
   private async refreshSubscriptionUsage(session: Session): Promise<void> {
@@ -21945,6 +22006,11 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     const client = session.client;
     this.publishSubscriptionUsage(session);
     if (!binding) return;
+    if (session.provider === "agy" && client?.sessionId) {
+      await binding.refresh(() => client.getSubscriptionUsage());
+      if (session.client === client && session.subscriptionUsage === binding) this.publishSubscriptionUsage(session);
+      return;
+    }
     // Claude and Muse are not pulled from the popover. Claude's window
     // arrives on the rate-limit event that rides a turn; Muse's adapter
     // reads after a turn and on usage/changed. `observe()` is the only

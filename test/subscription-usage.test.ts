@@ -218,6 +218,32 @@ function hostHarness(provider: Session["provider"] = "grok") {
 }
 
 describe("host subscription lifecycle", () => {
+  it("shares Antigravity reads for one Google sign-in and publishes ephemeral, account-scoped windows", async () => {
+    const { sidebar, session, read } = hostHarness("agy");
+    let credential: string | undefined = "agy:fake-google-account";
+    Object.assign(session.client!, { subscriptionCredentialContext: () => credential });
+    sidebar.bindSubscriptionUsage(session, process.env);
+    await sidebar.refreshSubscriptionUsage(session);
+    const other = new Session();
+    other.provider = "agy";
+    other.client = { sessionId: "other", subscriptionCredentialContext: () => credential, getSubscriptionUsage: read } as any;
+    sidebar.bindSubscriptionUsage(other, process.env);
+    await sidebar.refreshSubscriptionUsage(other);
+    expect(read).toHaveBeenCalledOnce();
+    expect(other.subscriptionUsage?.snapshot()).toEqual(windows());
+    expect(session.buffer).toEqual([]);
+    expect(sidebar.sendRemoteSession).toHaveBeenLastCalledWith(other, { type: "subscriptionUsage", windows: windows(), hideWhenEmpty: true });
+    credential = undefined;
+    await sidebar.refreshSubscriptionUsage(session);
+    expect(read).toHaveBeenCalledOnce();
+    expect(sidebar.sendRemoteSession).toHaveBeenLastCalledWith(session, { type: "subscriptionUsage", windows: [], hideWhenEmpty: true });
+    const gateway = new Session();
+    gateway.provider = "agy";
+    gateway.client = other.client;
+    sidebar.bindSubscriptionUsage(gateway, process.env);
+    expect(gateway.subscriptionUsage).toBeUndefined();
+  });
+
   it("shares Grok reads across the same credential context but starts each Claude process empty", async () => {
     const { sidebar, session, read } = hostHarness();
     const dir = mkdtempSync(path.join(tmpdir(), "subscription-sharing-"));

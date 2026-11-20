@@ -8,6 +8,27 @@ import { AgyBackend } from "../src/agy-backend";
 const onboarding = (doc: Document) => doc.getElementById("welcome-onboarding")!;
 
 describe("Antigravity in the chat renderer", () => {
+  it.each([false, true])("uses the existing picker for advertised Accept edits (remote=%s)", remote => {
+    const h = bootWebview({ remote });
+    dispatch(h.window, { type: "providerState", providers: [{ id: "agy", connected: true }] });
+    dispatch(h.window, { type: "session", sessionId: "s", provider: "agy", models: [] });
+    dispatch(h.window, { type: "modeChanged", modeId: "agent", modes: ["agent", "yolo"] });
+    const button = h.doc.getElementById("mode-btn")!;
+    click(h.window, button);
+    expect(h.doc.getElementById("mode-popover")!.textContent).not.toContain("Accept edits");
+    click(h.window, button);
+    dispatch(h.window, { type: "modeChanged", modeId: "agent", modes: ["agent", "acceptEdits", "yolo"] });
+    click(h.window, button);
+    const menu = h.doc.getElementById("mode-popover")!;
+    expect(menu.textContent).not.toContain("Plan mode");
+    const row = [...menu.querySelectorAll(".mode-popover-item")].find(el => el.textContent?.includes("Accept edits"));
+    expect(row).toBeDefined();
+    click(h.window, row!);
+    expect(h.posted).toContainEqual({ type: "setMode", modeId: "acceptEdits" });
+    dispatch(h.window, { type: "modeChanged", modeId: "acceptEdits", modes: ["agent", "acceptEdits", "yolo"] });
+    expect(button.title).toContain("Accept edits");
+  });
+
   it.each([false, true])("offers Low/Medium/High only for a key model that thinks (remote=%s)", (remote) => {
     const backend = new AgyBackend({ keyRelay: {
       baseUrl: "http://127.0.0.1/relay/lease", release: () => {}, thinkingLevel: "medium", setThinkingLevel: () => {},

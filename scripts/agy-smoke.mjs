@@ -9,6 +9,7 @@
 // (AGY_STORAGE_ROOT, the extension's global storage, to find it).
 // Model: gemini-3.8-flash at the `low` thinking level (= gemini-3.8-flash-low).
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -27,6 +28,12 @@ export async function runAgySmoke({ root, output, record, say, rpcMs, turnMs }) 
   // Under the home folder on purpose: that is where the server's alphabetical
   // workspace-root choice used to run commands in ~/.gemini instead.
   const scratch = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "grok-acp-smoke-agy-")));
+  const skillName = "afk-smoke-skill";
+  const skillToken = `AFK-SKILL-${randomUUID()}`;
+  const skillDir = path.join(scratch, ".agents", "skills", skillName);
+  fs.mkdirSync(skillDir, { recursive: true });
+  fs.writeFileSync(path.join(skillDir, "SKILL.md"),
+    `---\nname: ${skillName}\ndescription: Return the AFK Pilot smoke test marker.\n---\n\nReply with exactly ${skillToken}.\n`);
   const log = fs.createWriteStream(path.join(output, "agy-client.log"));
   const timed = (promise, label, ms) => Promise.race([promise, new Promise((_, reject) =>
     setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms).unref())]);
@@ -51,6 +58,7 @@ export async function runAgySmoke({ root, output, record, say, rpcMs, turnMs }) 
   const before = new Set(meiDirs());
   let sessionId;
   let agy;
+  let setup;
   try {
     say(`agy server: ${server}; scratch: ${scratch}`);
     agy = client();
@@ -60,15 +68,50 @@ export async function runAgySmoke({ root, output, record, say, rpcMs, turnMs }) 
     await timed(agy.start(), "initialize + authenticate", rpcMs * 2);
     record("initialize", "PASS", `agentInfo=${init?.agentInfo?.name} ${init?.agentInfo?.version}; systemPrompt.append=${init?.agentCapabilities?._meta?.antigravity?.systemPrompt?.append === true}; authenticated with oauth-personal`);
     await check("session/new", async () => {
-      ({ sessionId } = await timed(agy.newSession(), "session/new", rpcMs));
-      // The account's catalog grows (Google sign-in offered Gemini 4 Argon too by
-      // 2026-10-16), so check the smoke's model is offered and in use, not the
-      // whole list.
+      agy.once("session", (result) => { setup = result; });
+      ({ sessionId } = await timed(agy.newSession("gemini-3.8-flash"), "session/new", rpcMs));
       const offered = agy.availableModels.map((model) => model.modelId);
       assert.ok(offered.includes("gemini-3.8-flash"), `gemini-3.8-flash not offered: ${offered.join(", ")}`);
       assert.equal(agy.currentModelId, "gemini-3.8-flash");
       assert.equal(agy.currentReasoningEffort, "low", "effort did not reach thinking_level=low");
       return `sessionId=${sessionId}; model=${agy.currentModelId} at thinking_level=${agy.currentReasoningEffort}`;
+    });
+    await check("model catalog", async () => {
+      const options = setup?.configOptions?.find(option => option.id === "model")?.options;
+      assert(options?.length, "server reported no model choices");
+      assert.deepEqual(agy.availableModels.map(({ modelId, name }) => [modelId, name]), options.map(({ value, name }) => [value, name]));
+      return agy.availableModels.map(({ name, reasoningEfforts }) => `${name} (${reasoningEfforts?.join("/") || "default effort"})`).join(", ");
+    });
+    await check("approval modes", async () => {
+      assert.equal(agy.nativeApprovalModes, true, "server did not advertise the three approval modes");
+      assert.equal(agy.supportsInterject(), false);
+      for (const mode of ["acceptEdits", "yolo", "agent"]) {
+        await timed(agy.setMode(mode), `mode ${mode}`, rpcMs);
+        assert.equal(agy.currentModeId, mode);
+      }
+      return "switched to Accept edits, Auto accept and back to Agent mode";
+    });
+    await check("subscription usage", async () => {
+      const windows = await timed(agy.getSubscriptionUsage(), "Google quota summary", rpcMs);
+      assert(windows.length, "no readable Google quota windows");
+      return windows.map(window => `${window.label} ${window.usedPercent.toFixed(1)}% used`).join(", ");
+    });
+    await check("slash skills", async () => {
+      await timed(agy.refreshCommands(), "skills discovery", rpcMs);
+      const { availableCommands } = agy;
+      assert(availableCommands.some(command => command.name === "usage"), "native /usage command is missing");
+      assert(!availableCommands.some(command => ["plan", "logout"].includes(command.name)), "a hidden native command was advertised");
+      assert(availableCommands.some(command => command.name === skillName && command._meta?.scope === "project"), "project skill is missing");
+      return `/${skillName} and native /usage advertised`;
+    });
+    await check("skill invocation", async () => {
+      const chunks = [];
+      const onChunk = (text) => chunks.push(text);
+      agy.on("messageChunk", onChunk);
+      try { await timed(agy.prompt(`/${skillName}`), "project skill turn", turnMs); }
+      finally { agy.off("messageChunk", onChunk); }
+      assert(chunks.join("").includes(skillToken), "reply did not include the marker from the skill instructions");
+      return "selected project skill produced the marker from SKILL.md";
     });
     await check("streaming", async () => {
       const chunks = [];

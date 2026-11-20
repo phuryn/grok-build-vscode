@@ -12,7 +12,7 @@ import { downloadCodexAsset, safeTarDestination, type CodexDownload, type Downlo
  * Google's download host when the pin was taken; a changed archive fails
  * verification rather than running.
  */
-export const AGY_MANAGED_VERSION = "1.4.0";
+export const AGY_MANAGED_VERSION = "1.5.2";
 export const AGY_MANAGED_BASE_URL = "https://dl.google.com/agy-extensions/releases";
 
 export interface AgyManagedRelease {
@@ -23,12 +23,12 @@ export interface AgyManagedRelease {
 }
 
 const RELEASES: Readonly<Record<string, { folder: string; target: string; sha256: string; size: number }>> = Object.freeze({
-  "win32-x64": { folder: "windows", target: "windows-x86_64", sha256: "d737aad2d6388e071bc907db415c129a256915d275f436e68f10dcdf6af896da", size: 125_646_049 },
-  "win32-arm64": { folder: "windows", target: "windows-arm64", sha256: "37fac14835f06caf05b4b93fed59a0e16e7c716e3ec95f03d4779a61abe3c2e6", size: 126_083_066 },
-  "darwin-arm64": { folder: "macos", target: "darwin-arm64", sha256: "21a32eeab85b394a515510c84539bda4b2504bf2917e0a201f5c4130b13581a5", size: 112_734_313 },
-  "darwin-x64": { folder: "macos", target: "darwin-x86_64", sha256: "407b6b8ef167bb207d1effdbd488bacf63ba7dab2b47d4a47d8ea3710a8c0f55", size: 118_343_529 },
-  "linux-x64": { folder: "linux", target: "linux-x86_64", sha256: "fbb2d54dd94fb897845308d3b6b46187c627f1c60078ded81adeeaf8b90c5d7a", size: 336_175_910 },
-  "linux-arm64": { folder: "linux", target: "linux-arm64", sha256: "3dc43a21f5402b23a4dba7b320a6745e9dbf4b6ead912ce9fc76011ea3a08a7e", size: 321_912_925 },
+  "win32-x64": { folder: "windows", target: "windows-x86_64", sha256: "5cbadd4f4df698572473d8890fc26ec2dc1724501f06e3a963941daec2bd21d6", size: 105_407_645 },
+  "win32-arm64": { folder: "windows", target: "windows-arm64", sha256: "8a4b2ea8df2ffefae33309348752e9119d21a6d36090c0eb48631c2e8f5781ab", size: 108_049_351 },
+  "darwin-arm64": { folder: "macos", target: "darwin-arm64", sha256: "123a16d5c40a8ac99e20f01a62b68dd860fd96b1c528dfb8eaa37ca8733d4845", size: 100_309_778 },
+  "darwin-x64": { folder: "macos", target: "darwin-x86_64", sha256: "92addb5580577b5356d35484d72d1a113d9c5312ad766bcb304983aa8e3fbb06", size: 106_351_992 },
+  "linux-x64": { folder: "linux", target: "linux-x86_64", sha256: "99dd8612450805011619d7b8447ce374c289e00549d8557f36790e1dd6256852", size: 273_964_075 },
+  "linux-arm64": { folder: "linux", target: "linux-arm64", sha256: "e729e05ef54ef0763e48900032466b47fa7c9939cde257f93ba49410ab577acb", size: 264_270_419 },
 });
 
 export function agyManagedRelease(
@@ -63,6 +63,13 @@ export function agyManagedVersionDir(storageRoot: string): string {
 
 export function agyManagedBinaryPath(storageRoot: string, platform: NodeJS.Platform = process.platform): string {
   return path.join(agyManagedVersionDir(storageRoot), agyManagedFileNames(platform).server);
+}
+
+export function isSupersededManagedAgy(storageRoot: string, binary: string, platform: NodeJS.Platform = process.platform): boolean {
+  const resolved = path.resolve(binary);
+  return path.basename(resolved) === agyManagedFileNames(platform).server
+    && path.dirname(path.dirname(resolved)) === path.resolve(agyManagedRoot(storageRoot))
+    && resolved !== path.resolve(agyManagedBinaryPath(storageRoot, platform));
 }
 
 export interface AgyLocatorOptions {

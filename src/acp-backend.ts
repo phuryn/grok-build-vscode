@@ -1,4 +1,5 @@
 import type { EffortLevel, PromptContentBlock, SlashCommand } from "./acp";
+import type { SubscriptionWindow } from "./subscription-usage";
 
 export const ACP_PROVIDERS = ["grok", "codex", "claude"] as const;
 // The legacy wire vocabulary above stays frozen for older receivers.
@@ -28,7 +29,7 @@ const PROVIDER_ACTIONS: Record<AcpProvider, {
   codex: { deleteHistory: true, compact: true, adapterHistory: true, modeSwitching: true, approvalModeSwitching: false, autoAccept: true, perCallContext: true, clientMcp: true, fork: true },
   claude: { deleteHistory: true, compact: true, adapterHistory: true, modeSwitching: true, approvalModeSwitching: false, autoAccept: true, perCallContext: true, clientMcp: true, fork: true },
   muse: { deleteHistory: false, compact: false, adapterHistory: true, modeSwitching: false, approvalModeSwitching: true, autoAccept: true, perCallContext: false, clientMcp: false, fork: false },
-  agy: { deleteHistory: false, compact: false, adapterHistory: true, modeSwitching: false, approvalModeSwitching: false, autoAccept: true, perCallContext: false, clientMcp: false, fork: false },
+  agy: { deleteHistory: false, compact: false, adapterHistory: true, modeSwitching: false, approvalModeSwitching: true, autoAccept: true, perCallContext: false, clientMcp: false, fork: false },
   deepseek: { deleteHistory: false, compact: false, adapterHistory: true, modeSwitching: false, approvalModeSwitching: false, autoAccept: true, perCallContext: false, clientMcp: false, fork: false },
 };
 
@@ -220,9 +221,14 @@ export interface AcpBackend<Provider extends string = AcpProvider> {
   spawn(options: BackendSpawnOptions): BackendSpawnSpec;
   normalizeSessionResponse(response: any): any;
   normalizePromptResult(result: any): any;
-  /** Host-supplied instruction shortcuts for a bridge without native commands. */
+  /** Host-discovered instruction shortcuts, optionally merged with native commands. */
   availableCommands?(cwd: string, log: (message: string) => void): Promise<SlashCommand[]>;
+  /** Discover on open/reopen without blocking session or prompt admission. */
+  readonly backgroundCommands?: boolean;
   rewritePrompt?(text: string, commands: readonly SlashCommand[]): string;
+  readonly nativeApprovalModes?: boolean;
+  subscriptionCredentialContext?(authMethod: string | undefined): string | undefined;
+  readSubscriptionUsage?(authMethod: string | undefined): Promise<SubscriptionWindow[]>;
   normalizeUpdate(update: any, meta: any): BackendUpdate;
   normalizePermissionParams(params: any): any;
   setModel(sessionId: string, modelId: string, reasoningEffort?: string): { method: string; params: any };

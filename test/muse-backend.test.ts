@@ -65,7 +65,7 @@ describe("Muse backend boundary", () => {
 
 
 it("keeps legacy wire ids frozen while internal capabilities distinguish Muse", () => {
-  for (const provider of INTERNAL_PROVIDERS) expect(supportsApprovalModeSwitching(provider)).toBe(provider === "muse");
+  for (const provider of INTERNAL_PROVIDERS) expect(supportsApprovalModeSwitching(provider)).toBe(provider === "muse" || provider === "agy");
   expect(ACP_PROVIDERS).toEqual(["grok", "codex", "claude"]);
   expect(INTERNAL_PROVIDERS).toEqual(["grok", "codex", "claude", "muse", "agy", "deepseek"]);
   expect(isAcpProvider("muse")).toBe(false);

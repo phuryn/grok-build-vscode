@@ -29,6 +29,20 @@ const started = (h: ReturnType<typeof bootWebview>, provider: string) => {
 };
 
 describe("subscription usage in the context popover", () => {
+  it("uses the existing meter only when a frame that opts out of the empty state has data", () => {
+    const h = bootWebview({ remote: true });
+    started(h, "agy");
+    dispatch(h.window, { type: "subscriptionUsage", windows: [], hideWhenEmpty: true } as any);
+    const pop = open(h);
+    expect(pop.querySelector(".subscription-usage")).toBeNull();
+    dispatch(h.window, { type: "subscriptionUsage", windows: [{ ...windowUsage, label: "Gemini · Weekly" }], hideWhenEmpty: true } as any);
+    expect(pop.querySelector(".subscription-usage")?.textContent).toContain("Gemini · Weekly");
+    dispatch(h.window, { type: "subscriptionUsage", windows: [], hideWhenEmpty: true } as any);
+    expect(pop.querySelector(".subscription-usage")).toBeNull();
+    started(h, "claude");
+    expect(pop.querySelector(".subscription-usage")?.textContent).toContain("Fills in after the next reply.");
+  });
+
   /**
    * The phone's client is always as new as the relay deploy while the host is
    * whatever the person installed, so this section meets hosts that have never

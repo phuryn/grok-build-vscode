@@ -159,7 +159,7 @@ describe("CLI startup compatibility", () => {
     const capture = fullSessionStart.indexOf("const replacedClient = session.client");
     const clear = fullSessionStart.indexOf("session.client = undefined", capture);
     const dispose = fullSessionStart.indexOf("await replacedClient.dispose()", clear);
-    const lookup = fullSessionStart.indexOf("const cliPath = this.locateProvider(session.provider)", dispose);
+    const lookup = fullSessionStart.indexOf("cliPath = this.locateProvider(session.provider)", dispose);
     expect(dispose).toBeGreaterThan(clear);
     expect(lookup).toBeGreaterThan(dispose);
     expect(fullSessionStart.slice(clear, dispose)).not.toMatch(/\breturn(?:\s+undefined)?;/);
