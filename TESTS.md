@@ -515,7 +515,7 @@ posted.
 
 `test/claude-task-preload.test.ts` compiles the host into a scratch directory and uses the shipped spawn arguments with the bundled Electron running as Node. The adapter's own AIR module must claim and settle the attributed background task. Missing files, a renamed export and an unsupported version still let the entry run. This suite uses no provider CLI or sign-in.
 
-The operator runs `npm run smoke:acp -- --provider=<claude|muse> --scenario=<stop-workflow|stop-subagent>` for each supported pair. The desktop lane presses the real card button while the original prompt is pending, checks the matching card settles stopped and the typed draft survives, then checks the parent reply and normal prompt completion. A model that never launches the requested kind leaves the scenario inconclusive.
+The operator runs `npm run smoke:acp -- --provider=<claude|muse> --scenario=<stop-workflow|stop-subagent>` for each supported pair: both for Claude, `stop-workflow` for Muse. Muse's `stop-subagent` reports N/A, because its subagents are workflow agents and stop with their workflow. The desktop lane presses the real card button, checks the matching card settles stopped and the typed draft survives, then checks normal prompt completion. For Claude it presses while the original prompt is pending and also checks the parent's reply; a Muse parent often ends its turn at launch, so there the press can come after. A model that never launches the requested kind leaves the scenario inconclusive.
 
 ### `test/media-subagent.dom.test.ts` — generated media + subagent card in a real DOM (10 tests)
 

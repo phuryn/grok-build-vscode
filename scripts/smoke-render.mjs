@@ -274,6 +274,10 @@ export async function runRenderSmoke(provider, evidenceParent, cliOverride, sele
         Object.assign(scenario, { result: "N/A", reason: provider === "codex" ? "Codex has no workflows" : "Muse delegation is a workflow" });
         continue;
       }
+      if (name === "stop subagent" && provider === "muse") {
+        Object.assign(scenario, { result: "N/A", reason: "Muse delegation is a workflow; its agents stop with the workflow" });
+        continue;
+      }
       try {
         scenario.model = await setup(name, !selectedScenario && name !== "plain reply");
         const client = status(), from = readEvents().length;

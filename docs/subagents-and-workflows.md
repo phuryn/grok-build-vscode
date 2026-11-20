@@ -51,9 +51,12 @@ more than it gains. The choice per provider is in `acpClientCapabilities`
 
 ### Subagents
 
-Muse Code 1.4.0 offered no plain subagent tool: asked for one, its model ran a
-one-agent workflow, which gets a Workflow card. (Muse's protocol defines
-subagent items, but none were sent.)
+Muse Code offers no plain subagent tool: asked for one, its model runs a
+one-agent workflow, which gets a Workflow card (1.4.0, and again 1.4.24). In
+1.4.24 the workflow's agents also arrive as subagent items, each with its own
+card. Those cards have no Stop: stopping one agent ended its whole workflow, so
+the Workflow card's Stop is the control. A subagent Muse spawns natively,
+outside a workflow, would carry Stop on its own card; none has been seen yet.
 
 | | Grok | Codex | Claude Code |
 |---|---|---|---|
@@ -65,7 +68,7 @@ subagent items, but none were sent.)
 | **Result** | from `subagent_finished`, the tool's completion, or for a background run the `get_command_or_subagent_output` result | the child's last message | cleaned foreground hand-back, or the background task's summary/result when supplied; never the launch receipt |
 | **Time** | reported (`duration_ms`) | not reported; the app measures it while it watches live | reported, or measured while observing live work; no clock for “in background” |
 | **Tokens** | `tokens_used`, at the finish only | not reported | reported, at the finish only |
-| **Controls** | none | none | none |
+| **Controls** | none | none | Stop, while a background task the host has observed is running |
 | **After reopening** | the card, result and time rebuild from the replayed tool call and lifecycle; the child's activity is not replayed | everything comes back, including the child's activity; no time | the host restores linked child transcripts. Foreground hand-backs and correlated background outcomes restore the results and usage Claude reported |
 
 Notes:
@@ -104,7 +107,7 @@ no command offers one. (`/goal` exists in Codex and is a different feature.)
 | **Agents** | one row per agent, with state and tokens | one row per agent seen in progress; no tokens, because usage is only a run total | `Agent 1`, `Agent 2` and so on, with state, and tokens when reported |
 | **Time** | reported; the card counts on between frames and holds while paused | reported | not reported; the app measures it while it watches live |
 | **Result in the card** | `result_summary`: prose, or the `report`, `summary` or `sentence` field of a JSON object; any other JSON shows as a JSON code block | the task's terminal `summary`, when Claude sends one, as sanitized Markdown; the `outputFilePath` is not shown, and Claude's own reply usually carries the answer too | Muse's final summary; a JSON value shows as a code block |
-| **Controls** | Pause or Resume, and Stop | none | none |
+| **Controls** | Pause or Resume, and Stop | Stop, while the run is live | Stop, while the run is live; its agents stop with it |
 | **Finish** | a terminal `workflow_updated`; the host also checks the run's own state file | a terminal task state; on reopen, the replayed `<task-notification>` | a terminal `workflow` item |
 | **After reopening** | the frames replay and the card is rebuilt where the run happened, with steps, agents, time and result | task events are not replayed; the card comes back from the launch acknowledgement and the task notification, with its name, the declared steps and the outcome | Muse's history carries the finished item: agent dots, agents and result; no time |
 
@@ -140,9 +143,11 @@ Notes:
   1.3.0 offers no public way to resolve, so the card shows only the overall
   result. The `workflow` tool row that launched the run is hidden; the card is
   the record.
-- **No controls for Claude or Muse yet.** Claude's adapter has a stop call and
-  Muse's protocol defines workflow cancel commands; neither is wired, so those
-  cards show no controls rather than controls that do nothing.
+- **Claude and Muse cards offer Stop only.** Claude stops a workflow or a
+  background Agent task through `_session/async_task/stop`; Muse cancels a
+  workflow with `workflow/cancel` and stops a natively spawned subagent with
+  `subagent/stop`. Neither offers Pause or Resume here. A card reopened from
+  history has no Stop.
 
 ### Results that arrive in a turn nobody started
 

@@ -125,8 +125,10 @@ export class Projection {
     const museStatus: string = item.status === "inProgress" && state.workflowRunId
       ? this.endedWorkflows.get(state.workflowRunId) ?? item.status : item.status;
     state.delegationTerminal = museStatus !== "inProgress";
+    // Stopping one agent of a workflow ended its whole run (observed, Muse 1.4.24),
+    // so a workflow's agents stop only with their run. A native spawn has no run id.
     const canStop = this.recordStopTarget("subagent", toolCallId,
-      live && this.stopSubagents && !state.delegationTerminal ? item.subagentId : undefined);
+      live && this.stopSubagents && !state.delegationTerminal && !state.workflowRunId ? item.subagentId : undefined);
     const cancelled = museStatus === "cancelled";
     const stoppedOrDone = cancelled || museStatus === "completed";
     const status = !state.delegationTerminal ? "in_progress" : stoppedOrDone ? "completed" : "failed";

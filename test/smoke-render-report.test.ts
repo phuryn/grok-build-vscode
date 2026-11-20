@@ -110,9 +110,15 @@ describe("recorded boundary samples and unknown net", () => {
     expect(completeRenderScenarios([], "claude", undefined, "subagent").find((s: any) => s.name === "subagent").result).toBe("FAIL");
   });
   it.each(["stop workflow", "stop subagent"])("reports a missing selected card stop scenario (%s)", name => {
-    expect(completeRenderScenarios([], "muse", "startup failed", name)).toEqual([
+    expect(completeRenderScenarios([], "claude", "startup failed", name)).toEqual([
       { name, result: "FAIL", reason: "startup failed", pageErrors: [] },
     ]);
+  });
+  it("marks Muse's subagent Stop N/A and still fails a missing Muse workflow Stop", () => {
+    expect(completeRenderScenarios([], "muse", "startup failed", "stop subagent")).toEqual([
+      { name: "stop subagent", result: "N/A", reason: "Muse delegation is a workflow; its agents stop with the workflow", pageErrors: [] },
+    ]);
+    expect(completeRenderScenarios([], "muse", "startup failed", "stop workflow")[0].result).toBe("FAIL");
   });
   it("accepts recorded Claude AIR and distinguishes a deliberate drop from a new kind", () => {
     const events = claude.map(update => ({ direction: "receive", message: { method: "session/update", params: { update } } }));

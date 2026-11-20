@@ -113,19 +113,23 @@ describe("Muse delegated work control", () => {
     }
   });
 
-  // Observed live (Muse 1.4.24): subagent/stop is accepted, the agent's own item
-  // stays inProgress, and only its workflow run reports "cancelled".
-  it("settles a workflow agent's card when its run ends, whichever arrives first", async () => {
+  // Observed live (Muse 1.4.24): subagent/stop on a workflow's agent cancelled the
+  // whole run, and after a stop the agent's own item can stay inProgress while only
+  // its run reports "cancelled".
+  it("stops a workflow's agents only with their run, and settles their cards when it ends", async () => {
     const { session, command, event, client } = await ready(["workflow/cancel", "subagent/stop"]);
     const agent = { itemId: "agent", kind: "subagent", subagentId: "native-agent", workflowRunId: "run",
       status: "inProgress", revision: 1 };
     const run = { itemId: "run-item", kind: "workflow", workflowRunId: "run", status: "inProgress", revision: 1 };
     const sibling = { ...agent, itemId: "sibling", subagentId: "other-agent", workflowRunId: "other-run" };
+    const spawned = { itemId: "spawned", kind: "subagent", subagentId: "spawned-agent", status: "inProgress", revision: 1 };
     event("item/started", { item: run });
     event("item/started", { item: agent });
     event("item/started", { item: sibling });
+    event("item/started", { item: spawned });
+    expect(await session.stopDelegatedWork("session", "subagent", "muse-subagent:agent")).toEqual({ stopped: false });
     command.mockResolvedValueOnce({ status: "accepted" });
-    expect(await session.stopDelegatedWork("session", "subagent", "muse-subagent:agent")).toEqual({ stopped: true });
+    expect(await session.stopDelegatedWork("session", "workflow", "run")).toEqual({ stopped: true });
     event("item/updated", { item: { ...agent, revision: 2 } });
     event("item/completed", { item: { ...run, revision: 2, status: "cancelled" } });
     // A late inProgress revision of the agent changes nothing.
@@ -136,11 +140,12 @@ describe("Muse delegated work control", () => {
     const updates = client.notify.mock.calls.map(([, params]: any) => params.update);
     const card = (id: string) => updates.filter(update => update?.toolCallId === id);
     expect(card("muse-subagent:agent").map(update => [update.status, update._meta["muse/cancelled"], update._meta["muse/canStop"]]))
-      .toEqual([["in_progress", false, true], ["in_progress", false, true], ["completed", true, false]]);
-    expect(card("muse-subagent:sibling")).toMatchObject([{ status: "in_progress", _meta: { "muse/canStop": true } }]);
+      .toEqual([["in_progress", false, false], ["in_progress", false, false], ["completed", true, false]]);
+    expect(card("muse-subagent:sibling")).toMatchObject([{ status: "in_progress", _meta: { "muse/canStop": false } }]);
+    expect(card("muse-subagent:spawned")).toMatchObject([{ status: "in_progress", _meta: { "muse/canStop": true } }]);
     expect(card("muse-subagent:late")).toMatchObject([{ sessionUpdate: "tool_call", status: "completed",
       _meta: { "muse/cancelled": true, "muse/canStop": false } }]);
-    expect(await session.stopDelegatedWork("session", "subagent", "muse-subagent:agent")).toEqual({ stopped: false });
+    expect(command.mock.calls.map(([name]) => name).filter(name => name !== "session/start")).toEqual(["workflow/cancel"]);
   });
 
   it("does not advertise stop for methods absent from the installed method index", async () => {
