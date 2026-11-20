@@ -346,6 +346,7 @@ export interface PromptUsage {
 }
 
 export interface PromptResultMeta {
+  compactOutcome?: "compacted" | "noop";
   totalTokens?: number;
   inputTokens?: number;
   outputTokens?: number;
@@ -389,6 +390,7 @@ export function extractPromptMeta(result: any): PromptResultMeta {
     reasoningTokens: m.reasoningTokens,
     modelId: m.modelId,
     usage: extractPromptUsage(m),
+    ...(m.compactOutcome === "compacted" || m.compactOutcome === "noop" ? { compactOutcome: m.compactOutcome } : {}),
   };
 }
 

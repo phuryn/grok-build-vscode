@@ -5,6 +5,8 @@ const boundary = vi.hoisted(() => ({
   requests: new Map<string, any[]>(),
   setReasoningEffort: vi.fn(async () => ({})),
   setMode: vi.fn(async () => ({ _meta: { modes: { currentModeId: "yolo" } } })),
+  steer: vi.fn(async () => ({ outcome: "injected" })),
+  fork: vi.fn(async () => ({ sessionId: "copy" })),
   connect: undefined as undefined | ((connection: any) => void),
 }));
 vi.mock("node:stream", () => ({ Readable: { toWeb: vi.fn() }, Writable: { toWeb: vi.fn() } }));
@@ -25,7 +27,12 @@ vi.mock("@agentclientprotocol/sdk", () => ({
 }));
 vi.mock("../adapters/muse/session.mts", async importOriginal => ({
   ...await importOriginal<typeof import("../adapters/muse/session.mts")>(),
-  MuseSession: class { setReasoningEffort = boundary.setReasoningEffort; setMode = boundary.setMode; },
+  MuseSession: class {
+    setReasoningEffort = boundary.setReasoningEffort;
+    setMode = boundary.setMode;
+    steer = boundary.steer;
+    fork = boundary.fork;
+  },
 }));
 
 beforeAll(async () => {
@@ -38,6 +45,17 @@ beforeAll(async () => {
 afterAll(() => vi.restoreAllMocks());
 
 describe("Muse effort ACP registration", () => {
+  it("routes the backend's steering content and reply ID through the entry point", async () => {
+    const backend = new MuseBackend();
+    const steering = backend.interject("session", "continue");
+    const [validate, steer] = boundary.requests.get(steering.method)!;
+    await expect(steer({ params: validate(steering.params) })).resolves.toEqual({ outcome: "injected" });
+    expect(boundary.steer).toHaveBeenCalledWith("session", [{ type: "text", text: "continue" }]);
+    const fork = backend.fork("session", "/workspace", "reply-id");
+    const [handle] = boundary.requests.get(fork.method)!;
+    await expect(handle({ params: fork.params })).resolves.toEqual({ sessionId: "copy" });
+    expect(boundary.fork).toHaveBeenCalledWith("session", "/workspace", "reply-id");
+  });
   it("registers the standard Agent/Auto accept mode command and preserves its effective mode", async () => {
     const backend = new MuseBackend();
     const call = backend.setMode("session", "yolo");

@@ -705,6 +705,7 @@
     // The host normalizes backend capability at initialize. Grok starts
     // optimistic; Codex requires its advertisement; -32601 latches either off.
     steerSupported: false,
+    steeringOwnsQueue: false,
     steeringProvider: null,
     // Grok thumbs (#114). Off until the host advertises feedbackAvailability.
     // Only the live-process turn that just finished is rateable (not session/load).
@@ -2742,6 +2743,7 @@
       };
     }
     if (globalThis.GrokWebviewHelpers.providerSupports(state.activeProvider, "compact")) lead.appendChild(act);
+    if (state.commands.some(cmd => cmd?.name === "compact" && cmd._meta?.["afk/compact"] === true)) lead.appendChild(act);
     if (state.activeProvider === "deepseek") {
       const note = document.createElement("div");
       note.className = "popover-fineprint";
@@ -11126,6 +11128,7 @@
     state.feedbackAvailable = false;
     state.turnRating = 0;
     state.steerSupported = false;
+    state.steeringOwnsQueue = false;
     state.steeringProvider = null;
     state.turnForkSessionId = null;
     document.body.classList.remove("turn-fork-supported");
@@ -20026,7 +20029,7 @@ ${fullText}`
         const msg = { type: "steerSend", text, fromQueue: true };
         if (chips.length) msg.chips = chips;
         vscode.postMessage(msg);
-        vscode.postMessage({ type: "clearQueuedSends" });
+        if (!state.steeringOwnsQueue) vscode.postMessage({ type: "clearQueuedSends" });
       };
       actions.appendChild(steerBtn);
     }
@@ -21635,6 +21638,7 @@ ${fullText}`
       case "initialized": {
         state.steeringProvider = msg.info.provider || "grok";
         state.steerSupported = msg.info.steeringSupported === true;
+        state.steeringOwnsQueue = msg.info.init?.steeringOwnsQueue === true;
         renderQueuedBlocks();
         // The ACP handshake is done, but session/new or session/load may still be
         // running. Keep showing Starting until the startup lock clears.
@@ -21915,9 +21919,18 @@ ${fullText}`
       case "pasteTextSettled":
         settleTextPaste(msg.pasteId);
         break;
-      case "commandsUpdate":
+      case "commandsUpdate": {
+        const refreshCompact = [...state.commands, ...(msg.commands || [])].some(cmd => cmd?._meta?.["afk/compact"] === true);
         state.commands = msg.commands || [];
+        if (msg.steeringOwner) {
+          state.steerSupported = true;
+          state.steeringProvider = msg.steeringOwner;
+          state.steeringOwnsQueue = true;
+          renderQueuedBlocks();
+        }
+        if (refreshCompact && !contextPopover.hidden) renderContextPopover();
         break;
+      }
       case "mentionResults": {
         // Only render rows that answer the token still under the caret — the
         // popover may have closed (query null) or the user typed further (query
@@ -22816,6 +22829,7 @@ ${fullText}`
         addSessionContextBanner();
         break;
       case "clearMessages":
+        state.commands = state.commands.filter(cmd => !cmd?._meta?.["afk/compact"] && !cmd?._meta?.["muse/skill"]);
         recalledPrompt = null;
         removeProjectPrompt();
         for (const el of document.querySelectorAll(".confirm-overlay[data-confirm-req-id]")) {

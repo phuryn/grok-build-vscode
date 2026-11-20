@@ -570,6 +570,21 @@ describe("Steer — submit into the running turn (#52)", () => {
     expect(types(posted).indexOf("steerSend")).toBeLessThan(types(posted).indexOf("clearQueuedSends"));
   });
 
+  it.each(["initialize", "reconnect"])("lets a host that advertises queue ownership after %s preserve a refused steer", source => {
+    const { window, doc, posted } = bootWebview();
+    if (source === "initialize") {
+      dispatch(window, { type: "initialized", info: { steeringSupported: true, init: { steeringOwnsQueue: true } } });
+    } else {
+      dispatch(window, { type: "clearMessages" });
+      dispatch(window, { type: "commandsUpdate", commands: [], steeringOwner: "grok" });
+    }
+    dispatch(window, { type: "agentStart" });
+    seedQueue(window, ["preserve this correction"]);
+    press(window, steerBtn(doc)!);
+    expect(posted).toContainEqual({ type: "steerSend", text: "preserve this correction", fromQueue: true });
+    expect(types(posted)).not.toContain("clearQueuedSends");
+  });
+
   it("offers Steer when the queued item has an attachment and carries those chips", () => {
     const { window, doc, posted } = bootWebview();
     dispatch(window, { type: "agentStart" });

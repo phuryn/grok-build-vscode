@@ -622,8 +622,8 @@ async function main() {
   assert(selected.every(a => /^--provider=(codex|claude|muse|agy)$/.test(a) || a.startsWith("--scenario="))
     && selected.filter(a => a.startsWith("--provider=")).length <= 1, "usage: npm run smoke:acp -- --provider=codex|claude|muse|agy [--scenario=plain-reply|subagent|workflow|fork]");
   const chosenProvider = selected.find(a => a.startsWith("--provider="))?.slice(11);
-  assert(scenario !== "fork" || !chosenProvider || ["codex", "claude"].includes(chosenProvider),
-    "the fork scenario supports Claude and Codex");
+  assert(scenario !== "fork" || !chosenProvider || ["codex", "claude", "muse"].includes(chosenProvider),
+    "the fork scenario supports Claude, Codex and Muse Code");
   const requested = capability => {
     if (scenario === "fork") return ["initialize", "session/new", "model", "fork", "boundary audit"].includes(capability);
     return !scenario || ["initialize", "session/new", "model", "render", "boundary audit"].includes(capability)
@@ -681,10 +681,11 @@ async function main() {
     catch (error) { record("setup", "FAIL", errorText(error)); }
   }
   for (const [provider, Backend, locate] of [["codex", CodexBackend, locateCodexCli], ["claude", ClaudeBackend, locateClaudeCli], ["muse", MuseBackend, locateMuseCli]]) {
-    if ((chosenProvider && chosenProvider !== provider) || (scenario === "fork" && provider === "muse")) continue;
-    const steers = provider === "codex" || provider === "claude";
+    if (chosenProvider && chosenProvider !== provider) continue;
+    const muse = provider === "muse";
+    const steers = muse || provider === "codex" || provider === "claude";
     const required = [...capabilities, "model", "steering", "subagent", "workflow", "render",
-      ...(scenario === "fork" ? ["fork"] : []), ...(provider === "muse" ? ["delivery prompt"] : [])];
+      ...(scenario === "fork" || muse ? ["fork"] : []), ...(muse ? ["delivery prompt", "skills", "compact"] : [])];
     let scratch;
     let peer;
     let sessionId;
@@ -760,16 +761,17 @@ async function main() {
       }
       say(`${provider} adapter: ${manifest.version}; spawn=${JSON.stringify({ command: spec.command, args: spec.args, shell: spec.shell, cli, ELECTRON_RUN_AS_NODE: spec.env.ELECTRON_RUN_AS_NODE })}`);
       let connection = 0;
+      const createPeer = () => new Peer(spec, scratch, path.join(output, `${provider}-${++connection}.jsonl`), rpcMs, turnMs, TerminalManager,
+        new Backend(), new Backend(), parseRunProgressUpdate);
       const connect = () => {
-        peer = new Peer(spec, scratch, path.join(output, `${provider}-${++connection}.jsonl`), rpcMs, turnMs, TerminalManager,
-          new Backend(), new Backend(), parseRunProgressUpdate);
+        peer = createPeer();
         active = peer;
       };
-      const initialize = async () => {
-        const result = await peer.request("initialize", { protocolVersion: 1, clientCapabilities: acpClientCapabilities(provider) });
+      const initialize = async (target = peer) => {
+        const result = await target.request("initialize", { protocolVersion: 1, clientCapabilities: acpClientCapabilities(provider) });
         assert.equal(result.protocolVersion, 1, "initialize.protocolVersion must be 1");
         if (steers) assert.equal(result._meta?.steering?.supported, true, "initialize._meta.steering.supported must be true");
-        if (scenario === "fork") assert(advertisedFork(result), "initialize did not advertise sessionCapabilities.fork");
+        if (scenario === "fork" || muse) assert(advertisedFork(result), "initialize did not advertise sessionCapabilities.fork");
         return result;
       };
       connect();
@@ -783,7 +785,17 @@ async function main() {
         return `sessionId=${sessionId}`;
       });
       if (!created) throw new Error("session/new failed; no session available for remaining checks");
-      const selectedModel = await check("model", async () => {
+      if (muse) await check("skills", async () => {
+        const commands = peer.received(0, "session/update", sessionId)
+          .map(p => p.update).findLast(u => u?.sessionUpdate === "available_commands_update")?.availableCommands;
+        assert(Array.isArray(commands), "no command catalog on Muse session start");
+        const skills = commands.filter(c => c?._meta?.["muse/skill"] === true);
+        if (!skills.length) throw inconclusive("NOT_OBSERVED", "No invocable Muse skills were advertised in this workspace");
+        assert(skills.every(c => /^[a-z0-9][\w.:-]*$/i.test(c.name) && typeof c.description === "string"), "invalid skill menu row");
+        assert.equal(new Set(skills.map(c => c.name)).size, skills.length, "duplicate skill shortcuts");
+        return `${skills.length} unique invocable skill shortcut(s) advertised before the first prompt`;
+      });
+      const configureModel = async () => {
         const selection = selectSmokeModel(sessionResponse, process.env[`ACP_SMOKE_${provider.toUpperCase()}_MODEL`]);
         const call = backend.setModel(sessionId, selection.modelId);
         const response = await peer.request(call.method, call.params);
@@ -798,7 +810,8 @@ async function main() {
           await peer.request(effort.method, effort.params);
         }
         return `model=${selection.modelId}; effort=${selection.effort ?? "N/A (not advertised)"}; ${selection.basis}`;
-      });
+      };
+      const selectedModel = await check("model", configureModel);
       if (!selectedModel) throw new Error("model selection failed; refusing paid prompts with an unknown/default model");
       let completedPrompt = false;
       const updates = (turn) => {
@@ -876,6 +889,15 @@ async function main() {
         await finish(recovery);
         assert(updates(recovery).some((u) => u?.sessionUpdate === "agent_message_chunk" && nonempty(u.content?.text)), "post-cancel prompt returned without an agent message");
         return "live turn cancelled; same session completed a subsequent prompt";
+      });
+      if (muse) await check("compact", async () => {
+        const commands = peer.received(0, "session/update", sessionId)
+          .map(p => p.update).findLast(u => u?.sessionUpdate === "available_commands_update")?.availableCommands;
+        assert(commands?.some(c => c.name === "compact" && c._meta?.["afk/compact"] === true), "Compact was not advertised");
+        const result = await finish(peer.prompt(sessionId, "/compact"));
+        if (result._meta?.compactOutcome === "noop") throw inconclusive("NOT_OBSERVED", "Muse accepted Compact but had no compactable history");
+        assert.equal(result._meta?.compactOutcome, "compacted", "compact did not reach a successful terminal outcome");
+        return "the advertised /compact reached a successful Muse terminal outcome";
       });
       if (provider !== "muse") await check("subagent", async () => {
         if (provider === "codex") {
@@ -958,7 +980,17 @@ async function main() {
         assert(updates(recovery).some(u => u?.sessionUpdate === "agent_message_chunk" && nonempty(u.content?.text)), "reopened session returned no answer");
         return `fresh adapter replayed ${users.length} user and ${agents.length} agent chunks for ${sessionId}`;
       });
-      if (scenario === "fork") await check("fork", async () => {
+      if (scenario === "fork" || muse) await check("fork", async () => {
+        if (muse && !scenario) {
+          await peer.stop();
+          connect();
+          await initialize();
+          const result = await peer.request("session/new", { cwd: scratch, mcpServers: [] });
+          assert(nonempty(result.sessionId), "fork probe returned no new source ID");
+          sessionId = result.sessionId;
+          sessionResponse = backend.normalizeSessionResponse(result);
+          await configureModel();
+        }
         const words = ["APPLE", "BANANA", "CHERRY"];
         const replyIds = frames => [...new Set(frames.filter(u =>
           u?.sessionUpdate === "agent_message_chunk" && nonempty(u.content?.text),
@@ -971,10 +1003,10 @@ async function main() {
           assert(ids.length && ids.every(nonempty), "live reply is missing its message ID");
           live.push(...ids);
         }
-        const load = async id => {
-          const from = peer.events.length;
-          await peer.request("session/load", { sessionId: id, cwd: scratch, mcpServers: [] });
-          return peer.received(from, "session/update", id).map(p => p.update);
+        const load = async (id, target = peer) => {
+          const from = target.events.length;
+          await target.request("session/load", { sessionId: id, cwd: scratch, mcpServers: [] });
+          return target.received(from, "session/update", id).map(p => p.update);
         };
         const userWords = frames => {
           const texts = frames.filter(u => u?.sessionUpdate === "user_message_chunk").map(u => u.content?.text).join("\n");
@@ -995,18 +1027,35 @@ async function main() {
         const firstTurnIds = replyIds(replay.slice(0, nextPrompt));
         const point = firstTurnIds.at(-1);
         assert(nonempty(point), "replay did not show the first turn's last reply");
-        const { method, params } = backend.fork(sessionId, scratch, point);
-        const { sessionId: forkId } = await peer.request(method, params);
-        assert(nonempty(forkId) && forkId !== sessionId, "fork did not return a new session ID");
-        const fork = await load(forkId);
+        const forkAt = async messageId => {
+          const { method, params } = backend.fork(sessionId, scratch, messageId);
+          const { sessionId: forkId } = await peer.request(method, params);
+          assert(nonempty(forkId) && forkId !== sessionId, "fork did not return a new session ID");
+          if (!muse) return load(forkId);
+          const copy = createPeer();
+          try {
+            await initialize(copy);
+            const loaded = await load(forkId, copy);
+            const listing = await backend.listSessions((method, params) => copy.request(method, params), scratch);
+            assert(listing.sessions.some(s => s.sessionId === forkId && s.cwd === scratch), "fork is missing from Muse workspace history");
+            return loaded;
+          } finally { await copy.stop(); }
+        };
+        if (muse) {
+          const whole = await forkAt(undefined);
+          assert.deepEqual(userWords(whole), words, "whole fork is missing source prompts");
+          assert.deepEqual(replyIds(whole), live, "whole fork did not preserve stable reply IDs");
+        }
+        const fork = await forkAt(point);
         assert.deepEqual(userWords(fork), [words[0]], "fork must stop before turn 2");
         assert.equal(replyIds(fork).length, firstTurnIds.length, "fork replay contains replies beyond turn 1");
+        if (muse) assert.deepEqual(replyIds(fork), firstTurnIds, "reply fork did not preserve stable reply IDs");
         await reopen();
         const original = await load(sessionId);
         assert.deepEqual(replyIds(original), live, "fork changed the original replies");
         assert.deepEqual(userWords(original), words, "fork changed the original prompts");
         return "stable live and replayed IDs; fork replay stops at turn 1; original still has all three turns";
-      }, 3 * turnMs + 8 * rpcMs);
+      }, 3 * turnMs + (muse ? 16 : 8) * rpcMs);
       await peer.stop();
       peer = undefined;
       active = undefined;

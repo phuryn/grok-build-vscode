@@ -77,6 +77,8 @@ function museToolKind(tool: unknown): "execute" | "search" | "other" {
 
 export class Projection {
   private readonly items = new Map<string, ItemState>();
+  private readonly replyTurns = new Map<string, string>();
+  forkIds = false;
   /** The reasoning item that last emitted thinking, if any. */
   private lastThoughtItem?: string;
   constructor(
@@ -84,7 +86,9 @@ export class Projection {
     private readonly log: (message: string) => void,
   ) {}
 
-  clear(): void { this.items.clear(); this.lastThoughtItem = undefined; }
+  clear(): void { this.items.clear(); this.replyTurns.clear(); this.lastThoughtItem = undefined; }
+
+  replyTurnId(messageId: string): string | undefined { return this.replyTurns.get(messageId); }
 
   private append(state: ItemState, id: string, field: "text" | "output", text: string): void {
     const previous = state[field];
@@ -97,7 +101,8 @@ export class Projection {
     const suffix = text.slice(previous.length);
     state[field] = text;
     if (field === "text" && (state.kind === "agentMessage" || state.kind === undefined)) {
-      this.emit({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: suffix } });
+      this.emit({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: suffix },
+        ...(this.forkIds ? { messageId: id } : {}) });
     } else if (field === "output" && state.kind === "toolCall") {
       // ACP tool content is a replacement snapshot, unlike assistant chunks.
       this.emit({ sessionUpdate: "tool_call_update", toolCallId: state.toolCallId!,
@@ -130,7 +135,11 @@ export class Projection {
 
   acceptHistory(item: Record<string, any>): void {
     if (item.kind === "userMessage" && typeof item.text === "string") {
-      this.emit({ sessionUpdate: "user_message_chunk", content: { type: "text", text: item.text } });
+      // Reuse the host's replay-only steer envelope and keep the authored text
+      // out of the fork boundary logic for ordinary prompts.
+      const text = item.steered ? `The user sent a message while you were working:\n${item.text}` : item.text;
+      this.emit({ sessionUpdate: "user_message_chunk", content: { type: "text", text },
+        ...(this.forkIds && typeof item.itemId === "string" ? { messageId: item.itemId } : {}) });
     }
     this.accept("item/completed", { item });
   }
@@ -171,6 +180,9 @@ export class Projection {
     if (item.revision <= state.revision) return;
     state.revision = item.revision;
     state.kind = item.kind;
+    if (this.forkIds && item.kind === "agentMessage" && typeof item.turnId === "string" && item.turnId) {
+      this.replyTurns.set(id, item.turnId);
+    }
     if (item.kind === "reminderChild") return;
     if (item.kind === "workflow") {
       const workflow = workflowUpdate(item);

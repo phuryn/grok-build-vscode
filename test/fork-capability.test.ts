@@ -5,6 +5,7 @@ import { expect, it, vi } from "vitest";
 import { AcpClient } from "../src/acp";
 import { ClaudeBackend } from "../src/claude-backend";
 import { CodexBackend } from "../src/codex-backend";
+import { MuseBackend } from "../src/muse-backend";
 import { GrokSidebar } from "../src/sidebar";
 import { RemoteClientState } from "../src/remote-client-state";
 import { beginTurn, Session } from "../src/session";
@@ -46,8 +47,8 @@ function startedSession(provider: Session["provider"]) {
   return session;
 }
 
-it("implements fork only on the three supported providers", () => {
-  expect(INTERNAL_PROVIDERS.filter((provider) => supportsFork(provider))).toEqual(["grok", "codex", "claude"]);
+it("implements forks on the four supported providers", () => {
+  expect(INTERNAL_PROVIDERS.filter((provider) => supportsFork(provider))).toEqual(["grok", "codex", "claude", "muse"]);
 });
 
 it.each(INTERNAL_PROVIDERS.filter((provider) => provider !== "grok"))(
@@ -99,7 +100,7 @@ function fakeAdapter(fork: unknown) {
   return { requests, reply };
 }
 
-it.each([ClaudeBackend, CodexBackend])("%p negotiates, preserves reply IDs and forks on the ACP wire", async (Backend) => {
+it.each([ClaudeBackend, CodexBackend, MuseBackend])("%p negotiates, preserves reply IDs and forks on the ACP wire", async (Backend) => {
   const adapter = fakeAdapter({});
   const client = new AcpClient({ cliPath: "unused", cwd: "/work/repo", backend: new Backend({ adapterPath: "fake.cjs" }), log() {} });
   try {
@@ -265,10 +266,32 @@ it.each(["local", "remote"])("opens the adapter fork and stores only the edit te
   );
 });
 
+it("leaves a refused Muse edit on the original conversation", async () => {
+  const session = startedSession("muse");
+  const host = hostWith(session);
+  const draft = "keep this prompt";
+  const parent = session.activeSessionId;
+  const client = Object.assign(session.client!, {
+    supportsTurnFork: () => true,
+    forkSession: vi.fn(async () => { throw { code: -32602 }; }),
+  });
+  host.openSession = vi.fn();
+  host.updateSessionMeta = vi.fn();
+  session.forkPoints.reply("first", false);
+  session.forkPoints.settle(true);
+  await host.onMessage({ type: "forkAtReply", sessionId: parent, messageId: "first", draft }, "local");
+  expect(client.forkSession).toHaveBeenCalledWith("/work/repo", "first");
+  expect(host.focused).toBe(session);
+  expect(session.activeSessionId).toBe(parent);
+  expect(host.openSession).not.toHaveBeenCalled();
+  expect(host.updateSessionMeta).not.toHaveBeenCalled();
+  expect(host.reportRequester).toHaveBeenLastCalledWith(undefined, "warning", "This reply is no longer available as a fork point.");
+});
+
 // Codex keeps a conversation its process opened locked to that process, a
 // fork's copy included ("already has an active writer"), and only the process
 // exiting lifts it at once. The new chat opens the copy in a fresh process.
-it.each(["codex", "claude"] as const)("lets go of the original's process before opening a %s copy only where the adapter locks it", async (provider) => {
+it.each(["codex", "claude", "muse"] as const)("lets go of the original's process before opening a %s copy only where the adapter locks it", async (provider) => {
   const session = startedSession(provider);
   const host = hostWith(session);
   host.post = vi.fn();

@@ -16,6 +16,16 @@ const OFFERED_MODES = {
 };
 
 describe("sessionUiSnapshot", () => {
+  it("restores only the current Muse commands and steering capability after replay", () => {
+    const session = new Session();
+    session.provider = "muse";
+    const commands = [{ name: "compact", _meta: { "afk/compact": true } }];
+    session.client = { availableCommands: commands, supportsInterject: () => true } as any;
+    expect(sessionUiSnapshot(session, "agent")).toContainEqual({
+      type: "commandsUpdate", commands, steeringOwner: "muse",
+    });
+  });
+
   it("omits On request on Windows even before the Muse process starts", () => {
     Object.defineProperty(process, "platform", { value: "win32" });
     const session = new Session();
