@@ -19,6 +19,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const readline = require("node:readline");
+const usageText = require("./agy-usage-text.json");
 
 const home = process.env.GEMINI_HOME;
 const acpDir = path.join(home, "antigravity-acp");
@@ -153,6 +154,15 @@ async function prompt(id, params) {
   if (loggedOut) return write({ id, error: { code: -32000, message: "Logged out. Sign in again to continue." } });
   commands(sessionId);
   const session = sessions.get(sessionId);
+  if (text === "/usage") {
+    await request("session/request_permission", { sessionId, options: [{ optionId: "allow", kind: "allow_once" }] });
+    update("unrelated-session", { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Foreign output" } });
+    const middle = usageText.indexOf("- **Claude");
+    update(sessionId, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: usageText.slice(0, middle) } });
+    write({ id, result: { stopReason: "end_turn" } });
+    setTimeout(() => update(sessionId, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: usageText.slice(middle) } }), 15);
+    return;
+  }
   if (session.gatewayModels) {
     await gatewayTurn(sessionId, session, text);
   } else if (/subagent/i.test(text)) {
@@ -220,6 +230,7 @@ rl.on("line", async (line) => {
   let message;
   try { message = JSON.parse(line); } catch { return; }
   if (message.id !== undefined && !message.method) {
+    if (message.error) sink("refusedRequest", message.error);
     waiting.get(message.id)?.(message.result);
     waiting.delete(message.id);
     return;
@@ -280,17 +291,24 @@ rl.on("line", async (line) => {
       const session = await newSessionState(params.cwd);
       sessions.set(sessionId, session);
       remember(sessionId, params.cwd);
+      if (process.env.FAKE_AGY_LOSE_METER_CREATE && params.cwd.endsWith("afk-pilot-meter")) process.exit(1);
       write({ id, result: sessionResult(sessionId, session) });
       if (version152) commands(sessionId);
       return;
     }
+    case "session/resume":
     case "session/load": {
       if (!signedIn()) return write({ id, error: authRequired() });
+      if (method === "session/resume" && !fs.existsSync(path.join(conversations, `${params.sessionId}.db`))) {
+        return write({ id, error: { code: -32002, message: "Resource not found" } });
+      }
       const session = await newSessionState(params.cwd);
       try { session.mode = JSON.parse(fs.readFileSync(path.join(conversations, `${params.sessionId}.meta`), "utf8")).mode; } catch { /* older fixture */ }
       sessions.set(params.sessionId, session);
-      update(params.sessionId, { content: { type: "text", text: "Remember 41." }, sessionUpdate: "user_message_chunk" });
-      update(params.sessionId, { content: { type: "text", text: "OK" }, sessionUpdate: "agent_message_chunk" });
+      if (method === "session/load") {
+        update(params.sessionId, { content: { type: "text", text: "Remember 41." }, sessionUpdate: "user_message_chunk" });
+        update(params.sessionId, { content: { type: "text", text: "OK" }, sessionUpdate: "agent_message_chunk" });
+      }
       write({ id, result: sessionResult(undefined, session) });
       if (version152) commands(params.sessionId);
       return;

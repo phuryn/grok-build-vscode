@@ -16,10 +16,15 @@ Google sign-in on November 11. Recheck triggers are collected under
 
 ## What runs
 
-Google's official ACP server from the ACP registry entry `antigravity-acp`
-(publisher Google LLC), spawned directly by `AgyBackend` -- it speaks ACP
-itself, so there is no adapter. Not the `agy` CLI: headless `agy -p` cannot ask
-permission (commands are auto-denied) and cannot be interrupted.
+`AgyBackend` spawns either `agy acp` or Google's ACP registry server
+(`agy_acp_server`) directly. New Google sessions prefer the installed CLI.
+The host checks the installer location and PATH using filesystem lookups,
+then permits the managed fallback if the CLI fails before opening a new
+conversation and the managed server has a Google sign-in. Gemini API keys
+saved in AFK use the managed gateway. Reopening stays with the originating
+program, recorded with the conversation in host state. A CLI conversation
+requires the CLI again if the binary is removed. See [Google's CLI install
+locations](https://antigravity.google/docs/getting-started?tab=cli).
 
 - Archives: `https://dl.google.com/agy-extensions/releases/{macos|linux|windows}/agy-acp-server-1.5.2-<target>.zip`.
   The registry publishes no checksums; `agy-managed-installer.ts` pins the
@@ -32,7 +37,7 @@ permission (commands are auto-denied) and cannot be interrupted.
   superseded managed install attempts the pinned download once per host process.
   The old installation stays available if the download or verification fails.
   Successful installation prunes superseded versions best-effort.
-  `grok.agyServerPath` overrides the managed path. There is no PATH lookup.
+  `grok.agyServerPath` overrides the managed server path.
 - Cold start: 13-25 s on Windows before `initialize` answers (PyInstaller
   unpacks itself every start), about 50 s with three starting at once; 2.8 s on
   Linux. The startup strip waits 60 s before calling an Antigravity start slow.
@@ -146,7 +151,7 @@ aistudio.google.com/apikey). Vertex AI and Enterprise sign-in are not offered.
   client's outbox is outside this checkout: its exclusion of key messages,
   including a socket-drop race, still requires verification.
 
-## Sessions
+## Managed server sessions
 
 - `initialize`: `loadSession`, `sessionCapabilities {list, resume}`,
   `auth {logout}`, `_meta.antigravity.systemPrompt.append`. The host advertises
@@ -199,16 +204,66 @@ aistudio.google.com/apikey). Vertex AI and Enterprise sign-in are not offered.
 
 ### Subscription usage
 
-`agy-usage.ts` reads Google OAuth file credentials and refreshes against
-`oauth2.googleapis.com`. It queries `retrieveUserQuotaSummary` on the daily
-Cloud Code host with the production host as fallback, reversed for business
-OAuth. AFK authenticates its Google sessions as `oauth-personal`. The User-Agent
-is `AFK-Pilot`. The file is read-only, the access token is held during the read,
-and only quota windows leave the host. The read runs in the background using
-the existing one-minute refresh cache, keyed to the effective file credential.
-Empty or unreadable quota replies, missing file credentials, and key or gateway
-sessions leave the account meter hidden. A keychain-only sign-in has no file
-credential to read. `/usage` remains available for a manual check.
+`AgyUsageMeter` runs `/usage` in a dedicated managed-server process, with its
+own conversation under `antigravity-acp/afk-pilot-meter`. The same process is
+reused while active and expires after five minutes without a read. The meter
+checks for a saved managed Google file credential, uses its fingerprint as
+the existing one-minute cache key, and authenticates the auxiliary server
+as `oauth-personal`. All server requests on this connection are refused.
+CLI chats use that managed Google sign-in for quota when available. Key and
+keychain-only sessions and hosts without the managed sign-in keep the meter
+hidden, as do replies with no recognized quota windows.
+
+The November 20 Windows capture opened one meter conversation, then resumed
+it three times, including after a server restart. The store stayed at 50
+databases after its initial increase from 49. The meter database stayed at
+393,216 bytes. `/usage` returned in 456–570 ms, with output collected for
+another 1.5 seconds. Cold initialization took 16–20 seconds. AFK keeps the
+same collection interval and runs the refresh in the background. The
+parser shows Gemini and Claude & GPT, each with Weekly and 5-hour windows,
+when their remaining percentages and UTC resets can be read. Only the parsed
+windows go to the account meter.
+
+`session.json` remembers the meter ID. `listAgyCatalog` excludes that ID and
+the dedicated folder, including before the ID is saved. A create claim is
+written before `session/new`, once for the initial meter and once per
+confirmed deletion. If the response is lost, AFK finds the conversation by
+its folder in the store. If the outcome is still unknown and there is no
+identifiable disk row, the meter stays hidden. A resume error alone leaves
+the original ID in place. `/usage` remains available for a manual check in a
+managed conversation.
+
+## CLI sessions
+
+The November 20 Windows 1.5.8 capture used the CLI's existing sign-in with
+`initialize` and `session/new`. Its model list included Gemini 4, Gemini 3.8
+Flash, three Orchestrators, Claude Opus 5.5, Claude Sonnet 5.5, and GPT-OSS
+120B. Effort uses `thought_level`. The CLI's `default`, `accept-edits`,
+`auto`, and `plan` map to the shared mode picker. The CLI enforces its own
+permissions. The host follows native mode updates as they arrive.
+
+A Plan turn on 1.5.8 (Windows, November 20) sent no permission request and
+no plan update. The model wrote the plan into the CLI's own
+`brain/<conversation>/` folder with a `write_file` call: Gemini 4 Neon named it
+`implementation_plan.md` and Gemini 3.8 Flash `plan.md`. The completed update
+carries the plan as a diff, so it renders as an ordinary edit card. The reply
+then asked for review in text; Flash's reply mentions a **Proceed** button,
+which belongs to Google's own client, and also accepts a reply. A "proceed" reply while
+still in Plan implemented through the ordinary edit approval, and the CLI
+stayed in Plan. There is no native review request, so AFK adds no approval
+step of its own. A refused shell permission during Plan research ends the
+turn, as it does in other modes.
+
+The slash menu follows the advertised CLI commands, including `/goal`,
+`/plan`, and `/compact`. The native `/compact` reply goes through chat.
+The CLI has no advertised `/usage` or fork. The CLI's installed sign-in
+remains independent of the managed server's Google and key setup.
+
+The CLI accepts a second `session/prompt` to steer the running turn. The
+earlier request returns `end_turn` while work continues. `AcpClient` waits
+for the final steering response before ending the turn. The live
+`user_message_chunk` echo is suppressed, and ordinary held sends still wait
+for turn settlement. Attachments use the regular send queue.
 
 ### Skills in the slash menu
 
@@ -312,7 +367,7 @@ the parent's text unbroken, the card done at the turn's end.
 
 ### History
 
-`session/list` is a directory listing with placeholder titles
+The managed server's `session/list` is a directory listing with placeholder titles
 ("Session 453a5a5a"), no recency, and an exact-string `cwd` filter.
 `listAgySessions` reads the same store directly -- `<id>.db` transcripts with
 `<id>.meta` sidecars naming the folder -- so listing starts no server, recency
@@ -322,10 +377,17 @@ project (`listAgyCatalog`, split by folder with `agySessionsFor`), and a transcr
 30-day history horizon is skipped before its `.meta` is read, pinned ids
 excepted.
 
+CLI 1.5.8 stores databases in `antigravity-cli/conversations` without the
+managed server's `.meta` sidecars. AFK pages the advertised ACP `session/list`
+and matches returned working directories to authorized projects. CLI history
+reopens through `session/load`. The owner smoke checks the actual listing and
+replay returned by the CLI. AFK can identify its previously seen CLI sessions
+from host metadata and the remaining databases if the CLI is uninstalled.
+
 ## Other surfaces
 
-AFK's feature set on this route excludes client MCP connectors, Plan mode,
-Vertex AI and Enterprise sign-in. Subagent cards show their child's tool calls
+AFK's own setup excludes client MCP connectors, Vertex AI and Enterprise
+sign-in. Subagent cards show their child's tool calls
 as described in [Subagents](#subagents).
 
 ## Decisions to revisit
@@ -440,7 +502,7 @@ These choices have explicit recheck triggers.
 - **Revisit when:** Google fixes the workspace ordering (the smoke passes
   without the append), or the server lets a client name its working root.
 
-### Desktop and cloud setup; no MCP connectors or Plan
+### Desktop and cloud setup
 
 - **Decision:** offer Antigravity to everyone. Install and key entry work
   locally or remotely. Cloud Google sign-in uses a pasted loopback address
@@ -456,7 +518,7 @@ These choices have explicit recheck triggers.
   and token path were measured on a cloud host. The complete phone paste flow
   still needs a live run; unit tests cover validation, local HTTP, adoption,
   routing, expiry and client persistence.
-- **Unchanged:** `mcpServers: []`, no Plan mode. Advertising client fs swaps
+- **Managed server:** `mcpServers: []`. Advertising client fs swaps
   the server's file tools for ours; MCP through it is unmeasured; `/plan` waits
   for a "Proceed" click ACP cannot deliver.
 - **Revisit when:** the server's MCP path is measured; ACP can deliver a plan

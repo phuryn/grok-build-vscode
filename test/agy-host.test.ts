@@ -50,6 +50,7 @@ function host(opts: { connected?: boolean; experimental?: boolean; method?: "goo
   sidebar.sendRemoteClient = vi.fn();
   sidebar.remoteClients = { active: () => session, cwd: () => home, detachedActiveValues: () => [], clients: () => [], tabToken: () => undefined, cwdIfPresent: () => undefined };
   sidebar.locateProvider = vi.fn(() => FAKE);
+  sidebar.installedAgyCli = vi.fn(() => undefined);
   sidebar.locatedProviders = () => ({ agy: true });
   sidebar.workspaceRoot = vi.fn(() => home);
   const config = { inspect: () => undefined, update: vi.fn(async () => {}) };

@@ -56,6 +56,7 @@ export interface SessionMetaOverride {
   provider?: AcpProvider;
   /** Provider-reported cwd for stores that are not laid out under the Grok home. */
   providerCwd?: string;
+  agyProgram?: import("./agy-backend").AgyProgram;
   /** Settled reply IDs observed live, matched by ID on adapter replay. */
   forkReplyIds?: string[];
   deepseekHarness?: "default" | "minimal";

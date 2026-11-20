@@ -101,6 +101,9 @@ export interface AcpClientOptions {
   env?: NodeJS.ProcessEnv;
   log: (msg: string) => void;
   backend?: AcpBackend;
+  /** Read-only auxiliary ACP connections never service agent requests. */
+  refuseServerRequests?: boolean;
+  initializeTimeoutMs?: number;
   /** Banner or `X.Y.Z` from the grok version probe. Ignored for other providers. */
   grokVersion?: string;
   /**
@@ -583,7 +586,7 @@ export class AcpClient extends EventEmitter {
         this.opts.grokVersion,
         this.opts.grokVersionVerified === true,
       ),
-    });
+    }, undefined, this.opts.initializeTimeoutMs);
     this.steering = this.backend.steeringCapabilities(init, this.opts);
     this.forkAdvertised = advertisedFork(init);
     this.emit("initialized", init);
@@ -704,7 +707,7 @@ export class AcpClient extends EventEmitter {
     return { sessionId: res.sessionId };
   }
 
-  async loadSession(sessionId: string, modelId?: string): Promise<{ sessionId: string }> {
+  async loadSession(sessionId: string, modelId?: string, resumeOnly = false): Promise<{ sessionId: string }> {
     this.delegatedStops.clear();
     if (this.contextWindowChanging) throw new Error("Wait for the context-window change to finish.");
     const mcpServers = await this.mcpServersForSession();
@@ -723,7 +726,7 @@ export class AcpClient extends EventEmitter {
           this.opts.log(`[acp] Could not read child history for session ${sessionId}: ${(error as Error).message}`);
         }
       }
-      raw = await this.request(this.provider === "deepseek" ? "session/resume" : "session/load", { sessionId, cwd: this.opts.cwd, mcpServers, ...this.backend.sessionParams?.(this.opts.cwd) });
+      raw = await this.request(resumeOnly || this.provider === "deepseek" ? "session/resume" : "session/load", { sessionId, cwd: this.opts.cwd, mcpServers, ...this.backend.sessionParams?.(this.opts.cwd) });
       // The replay is the session's past turns; whatever the backend still
       // holds open from it is settled, inside the host's replay window.
       this.endTurn("completed");
@@ -778,6 +781,11 @@ export class AcpClient extends EventEmitter {
   }
 
   get nativeApprovalModes(): boolean { return this.backend.nativeApprovalModes === true; }
+  get pickerModes() { return this.backend.pickerModes; }
+  get hasNativeCompactCommand(): boolean {
+    return this.backend.nativeCompactCommand === true && this.availableCommands.some(command => command.name === "compact");
+  }
+  get ownsSteeringQueue(): boolean { return this.backend.ownsSteeringQueue === true; }
 
   private readNativeApprovalMode(response: unknown): void {
     if (!this.nativeApprovalModes) return;
@@ -985,14 +993,26 @@ export class AcpClient extends EventEmitter {
       prompt = [{ ...prompt[0], text: appendPastedTextContext(prompt[0].text, pastedText) }, ...prompt.slice(1)];
     }
     let raw: any;
+    const turn: { latest?: Promise<any> } = {};
+    if (this.ownsSteeringQueue) this.replaceablePrompt = turn;
     try {
-      raw = await this.request("session/prompt", {
+      let reply = this.request("session/prompt", {
         sessionId: this.sessionId,
         prompt,
       });
+      turn.latest = reply;
+      for (;;) {
+        // A steering prompt hands back the preceding response before its own
+        // turn finishes. Only the latest dispatched prompt can close it.
+        raw = await reply;
+        if (turn.latest === reply) break;
+        reply = turn.latest;
+      }
     } catch (error) {
       this.endTurn("failed");
       throw error;
+    } finally {
+      if (this.replaceablePrompt === turn) this.replaceablePrompt = undefined;
     }
     const result = this.backend.normalizePromptResult(raw);
     this.lastPromptStopReason = result?.stopReason;
@@ -1086,6 +1106,29 @@ export class AcpClient extends EventEmitter {
     if (!this.sessionId) throw new Error("no session");
     const call = this.backend.interject(this.sessionId, text, content);
     if (!call) return "unsupported";
+    if (this.ownsSteeringQueue) {
+      const turn = this.replaceablePrompt;
+      if (!turn?.latest) return "failed";
+      const previous = turn.latest;
+      let dispatched = false;
+      const reply = this.request(call.method, call.params, undefined, undefined, () => { dispatched = true; });
+      if (dispatched) {
+        turn.latest = reply.catch(error => {
+          if (typeof error?.code === "number") return previous;
+          throw error;
+        });
+        // The original prompt may still be waiting when this request fails.
+        void turn.latest.catch(() => {});
+      }
+      try {
+        return this.backend.steerDelivered(await reply) ? "ok" : "failed";
+      } catch (error) {
+        // A JSON-RPC refusal leaves the previous prompt responsible for the
+        // turn. A disconnect has unknown delivery and must never resend it.
+        if (dispatched && typeof (error as any)?.code !== "number") return "ok";
+        return "failed";
+      }
+    }
     try {
       const result = await this.request(
         call.method,
@@ -1584,6 +1627,7 @@ export class AcpClient extends EventEmitter {
     params: any,
     onResolve?: (value: any) => void,
     timeoutMs?: number,
+    onDispatched?: () => void,
   ): Promise<any> {
     if (this.opts.signal?.aborted) return Promise.reject(this.opts.signal.reason);
     const id = this.nextId++;
@@ -1604,6 +1648,7 @@ export class AcpClient extends EventEmitter {
         reject(new Error(`Grok process is not running (${method})`));
         return;
       }
+      onDispatched?.();
       // Tracked on the pending entry so the response/exit paths can clear it.
       // session/prompt uses idle+absolute policy (#117); other methods keep a
       // fixed cap. A live timer must not outlive the request.
@@ -1708,7 +1753,10 @@ export class AcpClient extends EventEmitter {
     void this.handleServerRequest({ id: ev.id, method: ev.method, params: ev.params });
   }
 
+  private replaceablePrompt?: { latest?: Promise<any> };
+
   private handleSessionUpdate(u: any, meta?: any, sessionId?: string): void {
+    if (this.replaceablePrompt && u?.sessionUpdate === "user_message_chunk") return;
     const delegationSession = this.loadingSessionId ?? this.sessionId;
     if (this.routeHookUpdate(u, meta, sessionId)) return;
     if (this.loadingChildSessionIds && u?.sessionUpdate === "subagent_spawned") {
@@ -1946,6 +1994,13 @@ export class AcpClient extends EventEmitter {
   }
 
   private async handleServerRequest(msg: any): Promise<void> {
+    if (this.opts.refuseServerRequests) {
+      if (msg.id != null) {
+        this.respondError(msg.id, -32601, "Client requests are disabled");
+        this.emit("refusedServerRequest", msg.method, msg.params);
+      }
+      return;
+    }
     const { method, id, params } = msg;
     try {
       if (method === "_x.ai/session/setup") {

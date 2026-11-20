@@ -126,6 +126,7 @@ describe("Antigravity's disk listing", () => {
       env: {}, home: "/home/me", fs: fakeFs, since: now - HISTORY_HORIZON_MS, keepIds: new Set(["pinned"]),
     });
     expect(listed.map((e) => e.sessionId)).toEqual(["new", "pinned"]);
-    expect(reads).toEqual(["new.meta", "pinned.meta"]);
+    // One read of the usage meter's remembered id, then only the kept conversations' sidecars.
+    expect(reads).toEqual(["session.json", "new.meta", "pinned.meta"]);
   });
 });

@@ -1,5 +1,6 @@
 import type { EffortLevel, PromptContentBlock, SlashCommand } from "./acp";
 import type { SubscriptionWindow } from "./subscription-usage";
+import type { ModeId } from "./mode-prefs";
 
 export const ACP_PROVIDERS = ["grok", "codex", "claude"] as const;
 // The legacy wire vocabulary above stays frozen for older receivers.
@@ -190,6 +191,7 @@ export function normalizeSessionInfoUpdate(update: any): BackendUpdate {
 export interface BackendSessionListEntry {
   sessionId: string;
   cwd: string;
+  agyProgram?: "cli" | "server";
   title?: string;
   updatedAt?: string | number;
   createdAt?: string | number;
@@ -230,6 +232,10 @@ export interface AcpBackend<Provider extends string = AcpProvider> {
   readonly backgroundCommands?: boolean;
   rewritePrompt?(text: string, commands: readonly SlashCommand[]): string;
   readonly nativeApprovalModes?: boolean;
+  readonly pickerModes?: readonly ModeId[];
+  readonly nativeCompactCommand?: boolean;
+  /** A new prompt can take over the response that closes the same turn. */
+  readonly ownsSteeringQueue?: boolean;
   subscriptionCredentialContext?(authMethod: string | undefined): string | undefined;
   readSubscriptionUsage?(authMethod: string | undefined): Promise<SubscriptionWindow[]>;
   normalizeUpdate(update: any, meta: any, foreignSessionId?: string): BackendUpdate;
