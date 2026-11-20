@@ -18,6 +18,7 @@ import { grokBackend } from "../src/grok-backend";
 import { CodexBackend } from "../src/codex-backend";
 import { ClaudeBackend } from "../src/claude-backend";
 import { MuseBackend } from "../src/muse-backend";
+import { AgyBackend } from "../src/agy-backend";
 
 const PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
@@ -157,15 +158,22 @@ describe("steerSend carries attachments", () => {
     expect(sidebar.reportRequester).toHaveBeenCalledWith(undefined, "warning", expect.stringContaining("could not confirm delivery"));
   });
 
-  it("does not dispatch a queued Muse steer after that text has already flushed", async () => {
-    const sidebar = makeSidebar();
-    const { session, request } = attachBackend(sidebar, new MuseBackend());
-    session.queuedSends = enqueueQueuedSend([], "newly queued text", []);
-    await sidebar.steerSend("already sent text", session, undefined, undefined, true);
-    expect(request).not.toHaveBeenCalled();
-    expect(session.queuedSends).toEqual([{ text: "newly queued text", chips: [] }]);
-    expect(sidebar.posted).toEqual([]);
-  });
+  it.each([new MuseBackend(), new AgyBackend({ program: "cli" })])(
+    "does not dispatch a queued steer after that text has already flushed (%s)", async (backend) => {
+      const sidebar = makeSidebar();
+      const { session, request } = attachBackend(sidebar, backend);
+      session.queuedSends = enqueueQueuedSend([], "newly queued text", []);
+      await sidebar.steerSend("already sent text", session, undefined, undefined, true);
+      expect(request).not.toHaveBeenCalled();
+      expect(session.queuedSends).toEqual([{ text: "newly queued text", chips: [] }]);
+      // The queue drained before the tap arrived: the text already went, so nothing goes again.
+      session.queuedSends = [];
+      await sidebar.steerSend("already sent text", session, undefined, undefined, true);
+      expect(request).not.toHaveBeenCalled();
+      expect(session.queuedSends).toEqual([]);
+      expect(sidebar.posted).toEqual([]);
+    },
+  );
 
   it("holds a Muse correction when its starting turn is replaced during preparation", async () => {
     const sidebar = makeSidebar();

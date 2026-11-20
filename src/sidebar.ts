@@ -5243,7 +5243,7 @@ Only continue if you trust this code.`,
       || queuedSendsContainChipIds(session.queuedSends, requestedChips);
     // The original queue may already have flushed while the tap crossed the
     // relay. Treat a queued steer as a claim on that text, never a fresh send.
-    if (session.provider === "muse" && fromQueue
+    if ((session.provider === "muse" || session.client?.ownsSteeringQueue) && fromQueue
       && (!takeQueue || authored !== queuedSendsText(session.queuedSends))) return;
 
     if (!session.client || !session.activeSessionId) {
