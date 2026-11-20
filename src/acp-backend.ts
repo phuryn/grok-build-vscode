@@ -213,6 +213,8 @@ export interface BackendSteeringOptions {
   grokVersionVerified?: boolean;
 }
 
+export type ChildHistoryReplay = (toolCallId: string) => Iterable<unknown>;
+
 export interface AcpBackend<Provider extends string = AcpProvider> {
   readonly provider: Provider;
   readonly processName: string;
@@ -224,6 +226,8 @@ export interface AcpBackend<Provider extends string = AcpProvider> {
   availableCommands?(cwd: string, log: (message: string) => void): Promise<SlashCommand[]>;
   rewritePrompt?(text: string, commands: readonly SlashCommand[]): string;
   normalizeUpdate(update: any, meta: any): BackendUpdate;
+  /** Supply child history at the position of its card in the parent replay. */
+  prepareChildReplay?(sessionId: string, cwd: string): Promise<ChildHistoryReplay>;
   normalizePermissionParams(params: any): any;
   setModel(sessionId: string, modelId: string, reasoningEffort?: string): { method: string; params: any };
   /** A relay-backed provider can apply effort locally without an ACP call. */

@@ -1005,7 +1005,7 @@ describe("acpClientCapabilities", () => {
     expect(acpClientCapabilities("codex", "1.0.4", true)).toEqual({ ...ACP_DELEGATED_FS_CAPABILITIES, subagents: {},
       _meta: { jetbrains: { air: { version: 1, capabilities: ["nativeSubagentSessions"] } } } });
     expect(acpClientCapabilities("claude")).toEqual({ ...ACP_DELEGATED_FS_CAPABILITIES,
-      _meta: { jetbrains: { air: { version: 1, capabilities: ["asyncTasks"] } } } });
+      _meta: { "subagent-transcript": true, jetbrains: { air: { version: 1, capabilities: ["asyncTasks"] } } } });
     for (const provider of ["grok", "muse"] as const) {
       expect(acpClientCapabilities(provider)).toEqual(ACP_DELEGATED_FS_CAPABILITIES);
     }

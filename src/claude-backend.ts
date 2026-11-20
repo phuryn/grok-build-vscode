@@ -1,5 +1,10 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
+import { compileFunction, constants as vmConstants } from "node:vm";
+import type { SessionMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { AcpClient as AdapterClient, ToolUseCache } from "@agentclientprotocol/claude-agent-acp/dist/acp-agent.js";
 import packageManifest from "../package.json";
 import { grokCliNeedsShell } from "./cli-process";
 import type { PromptContentBlock } from "./acp";
@@ -12,6 +17,7 @@ import type {
   BackendSpawnOptions,
   BackendSpawnSpec,
   BackendUpdate,
+  ChildHistoryReplay,
 } from "./acp-backend";
 import { adapterContextOccupancy } from "./acp-dispatch";
 import { ClaudeWorkflows } from "./claude-workflows";
@@ -210,9 +216,23 @@ const cleanClaudeError = (text: string) => text.replace(/^\s*<tool_use_error>([\
 
 /** Receipts and task edges arrive separately, sometimes in the opposite order. */
 class ClaudeSubagents {
-  private readonly calls = new Set<string>();
+  readonly calls = new Set<string>();
+  private readonly childCalls = new Map<string, string>();
   private readonly agents = new Map<string, string>();
   private readonly tasks = new Map<string, { toolCallId?: string; taskType?: string; state?: string; output?: string; durationMs?: number; tokens?: number }>();
+
+  agentCall(agentId: string): string | undefined { return this.agents.get(agentId); }
+
+  childStreamId(update: any): string | undefined {
+    const owner = update._meta?.claudeCode?.parentToolUseId;
+    const callId = update.toolCallId;
+    const known = this.childCalls.get(callId);
+    if (known) return known;
+    if (typeof owner !== "string" || !owner || (owner === callId && this.calls.has(callId))) return;
+    const root = this.childCalls.get(owner) ?? owner;
+    if (typeof callId === "string" && owner !== callId) this.childCalls.set(callId, root);
+    return root;
+  }
 
   accept(update: any): any {
     const claude = update._meta?.claudeCode;
@@ -263,7 +283,7 @@ class ClaudeSubagents {
   private snapshot(toolCallId: string, task: any): any {
     // The installed adapter omits local_agent task events. A receipt alone
     // settles as background, with no claim that work is still running.
-    return { sessionUpdate: "tool_call_update", toolCallId,
+    return { sessionUpdate: "tool_call_update", toolCallId, child_session_id: toolCallId,
       status: task.state === "completed" ? "completed" : task.state === "failed" ? "failed"
         : task.state === "stopped" || task.state === "cancelled" ? "cancelled" : task.state ? "in_progress" : "background",
       rawOutput: { output: task.output || "" }, content: [],
@@ -275,6 +295,13 @@ class ClaudeSubagents {
 
 export function normalizeClaudeUpdate(update: any, meta?: any, subagents = new ClaudeSubagents()): BackendUpdate {
   if (!update || typeof update !== "object") return { update, meta };
+  const childSessionId = subagents.childStreamId(update);
+  if (childSessionId !== undefined) {
+    // The child has its own prompt and accounting. Send only the activity the
+    // stream can display, without the parent's context-usage envelope.
+    const visible = ["agent_message_chunk", "agent_thought_chunk", "tool_call", "tool_call_update"].includes(update.sessionUpdate);
+    return { update: visible ? update : undefined, childSessionId };
+  }
   const subagent = subagents.accept(update);
   const text = update.content?.type === "text" ? update.content.text : undefined;
   if (update.sessionUpdate === "user_message_chunk" && typeof text === "string"
@@ -286,8 +313,9 @@ export function normalizeClaudeUpdate(update: any, meta?: any, subagents = new C
   }
   if (subagent) return { update: subagent, meta };
   const claude = update._meta?.claudeCode;
-  if (claude?.toolName === "Agent" || claude?.subagent === true) {
-    const response = claude.toolResponse;
+  if (subagents.calls.has(update.toolCallId) && (update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update")) {
+    update = { ...update, child_session_id: update.toolCallId };
+    const response = claude?.toolResponse;
     const raw = update.rawOutput;
     let output = claudeText(raw);
     if (output !== undefined && update.status === "failed") output = cleanClaudeError(output);
@@ -469,14 +497,74 @@ export class ClaudeBackend implements AcpBackend {
   private readonly workflows = new ClaudeWorkflows();
   private readonly subagents = new ClaudeSubagents();
   normalizeUpdate(update: any, meta: any): BackendUpdate {
-    this.workflows.toolInput(update);
     const result = normalizeClaudeUpdate(update, meta, this.subagents);
+    if (result.childSessionId !== undefined) return result;
+    this.workflows.toolInput(update);
     if (["async_task_spawned", "async_task_progress", "async_task_state_update"].includes(update?.sessionUpdate)) {
       return { update: result.update === update ? undefined : result.update, meta, workflowUpdate: this.workflows.accept(update) };
     }
     if (result.workflowUpdate) result.workflowUpdate = this.workflows.launch(update, result.workflowUpdate);
     if (result.notice) result.workflowUpdate = this.workflows.notification(update.content.text);
     return result;
+  }
+
+  async prepareChildReplay(sessionId: string, cwd: string): Promise<ChildHistoryReplay> {
+    const adapterPath = this.adapterPath();
+    // The host compiles to CommonJS. Use native import for the bundled ESM
+    // dependencies, including in desktop builds with an older Node runtime.
+    const importModule = compileFunction("return import(url)", ["url"], {
+      importModuleDynamically: vmConstants.USE_MAIN_CONTEXT_DEFAULT_LOADER,
+    });
+    const sdkPath = createRequire(adapterPath).resolve("@anthropic-ai/claude-agent-sdk");
+    const sdk: typeof import("@anthropic-ai/claude-agent-sdk") = await importModule(pathToFileURL(sdkPath).href);
+    const adapter: typeof import("@agentclientprotocol/claude-agent-acp/dist/lib.js") =
+      await importModule(pathToFileURL(path.join(path.dirname(adapterPath), "lib.js")).href);
+
+    // session/load reads the SDK's parent message chain. Child conversations
+    // live in separate transcripts, linked by the SDK's tool-use metadata.
+    const transcripts = new Map<string, SessionMessage[]>();
+    const unlinked = new Map<string, SessionMessage[]>();
+    for (const agentId of await sdk.listSubagents(sessionId)) {
+      const messages = await sdk.getSubagentMessages(sessionId, agentId);
+      const owner = messages[0]?.parent_tool_use_id;
+      if (owner) transcripts.set(owner, messages);
+      else if (messages.length) unlinked.set(agentId, messages);
+    }
+    const logger = { log() {}, error() {} };
+    const subagents = this.subagents;
+    function* replay(owner: string): Generator<unknown> {
+      let messages = transcripts.get(owner);
+      if (!messages && subagents.calls.has(owner)) {
+        for (const [agentId, candidate] of unlinked) {
+          if (subagents.agentCall(agentId) !== owner) continue;
+          unlinked.delete(agentId);
+          messages = candidate;
+          break;
+        }
+      }
+      if (!messages) return;
+      transcripts.delete(owner);
+      const tools: ToolUseCache = Object.create(null);
+      for (const { message, type } of messages) {
+        if (type !== "assistant" && type !== "user") continue;
+        const content = (message as { content?: unknown })?.content;
+        if (typeof content !== "string" && !Array.isArray(content)) continue;
+        // With hooks disabled the mapper only returns notifications.
+        let frames: ReturnType<typeof adapter.toAcpNotifications>;
+        try {
+          frames = adapter.toAcpNotifications(content, type, sessionId, tools, undefined as unknown as AdapterClient,
+            logger, { registerHooks: false, parentToolUseId: owner, cwd });
+        } catch {
+          // A malformed child record must leave the parent history readable.
+          continue;
+        }
+        for (const { update } of frames) {
+          yield update;
+          if (update.sessionUpdate === "tool_call") yield* replay(update.toolCallId);
+        }
+      }
+    }
+    return replay;
   }
   normalizePermissionParams(params: any): any { return normalizeClaudePermissionParams(params); }
 

@@ -20,8 +20,9 @@ describe("Claude background subagent receipts and task correlation", () => {
   it("settles the captured async launch in background with no model-facing receipt", () => {
     const backend = new ClaudeBackend();
     const updates = claudeBackground.launch.map(u => backend.normalizeUpdate(u, undefined).update);
+    expect(updates[0].child_session_id).toBe("agent-tool");
     for (const u of updates.slice(-2)) {
-      expect(u).toMatchObject({ status: "background", rawOutput: { output: "" }, content: [] });
+      expect(u).toMatchObject({ child_session_id: "agent-tool", status: "background", rawOutput: { output: "" }, content: [] });
       expect(JSON.stringify(u)).not.toMatch(/Async agent|agent-task|output_file|toolResponse/);
     }
   });
@@ -37,7 +38,7 @@ describe("Claude background subagent receipts and task correlation", () => {
     const progress = event({ sessionUpdate: "async_task_progress", summary: "Working", usage: { durationMs: 1200, totalTokens: 42 } });
     expect(progress.update).toMatchObject({ status: "in_progress", rawOutput: { output: "" } });
     const finished = event({ sessionUpdate: "async_task_state_update", state, summary: "## Report\n\nok" });
-    expect(finished.update).toMatchObject({ toolCallId: "agent-tool", status: state === "stopped" ? "cancelled" : state,
+    expect(finished.update).toMatchObject({ toolCallId: "agent-tool", child_session_id: "agent-tool", status: state === "stopped" ? "cancelled" : state,
       rawOutput: { output: "## Report\n\nok" }, _meta: { subagentUsage: { durationMs: 1200, tokens: 42 } } });
     expect(event({ sessionUpdate: "async_task_progress" }).update.status).toBe(finished.update.status);
     expect(backend.normalizeUpdate(claudeBackground.launch.at(-1), undefined).update.status).toBe(finished.update.status);
@@ -70,7 +71,7 @@ describe("Claude background subagent receipts and task correlation", () => {
     expect(wake("<task-id>agent-task</task-id><tool-use-id>other-tool</tool-use-id>").update).toBeUndefined();
     expect(backend.normalizeUpdate(claudeBackground.launch.at(-1), undefined).update.status).toBe("background");
     const done = wake("<task-id>agent-task</task-id><tool-use-id>agent-tool</tool-use-id>");
-    expect(done).toMatchObject({ notice: "Background task completed.", update: { status: "completed", rawOutput: { output: "ok" } } });
+    expect(done).toMatchObject({ notice: "Background task completed.", update: { child_session_id: "agent-tool", status: "completed", rawOutput: { output: "ok" } } });
     expect(done.update._meta.subagentUsage).toEqual({ durationMs: undefined, tokens: undefined });
   });
 
