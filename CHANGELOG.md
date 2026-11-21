@@ -1,5 +1,14 @@
 # Changelog
 
+## 4.17.1 — 2026-11-21
+
+**Two fixes: Antigravity's usage meter shows only your model's quota, and a message sent while a Codex chat forks is kept.**
+
+### Fixed
+
+- **Antigravity's usage meter shows the quota your model uses.** Antigravity counts Gemini models in one quota and Claude and GPT models in another. The context popover listed both, so a Gemini chat showed a "Claude & GPT" line that had nothing to do with it. It now shows only the quota of the model you picked, and switches when you move between a Gemini model and a Claude or GPT model.
+- **A message sent while a Codex chat opens in a new chat is no longer lost.** If you pressed Send while *Go back to here in a new chat* or *Edit in a new chat* was opening on Codex, the message disappeared. It now waits in the new chat's box, with its attached files, for you to send. On the desk and on a phone.
+
 ## 4.17.0 — 2026-11-20
 
 **Google's agy CLI with Plan mode and steering, Antigravity's usage meter, Stop for one subagent or workflow, live subagent activity on Claude Code, and steer, compact, skills and fork on Muse Code.**
