@@ -140,20 +140,23 @@ describe("locateCodexCli", () => {
   it("uses the managed copy only after PATH and every ChatGPT bundle", () => {
     const home = "C:\\Users\\Dev";
     const storage = "C:\\extension-storage";
-    const managed = path.join(storage, "codex-managed", CODEX_MANAGED_TAG, "bin", "codex.exe");
+    const root = path.join(storage, "codex-managed");
+    const managed = path.join(root, CODEX_MANAGED_TAG, "bin", "codex.exe");
+    const managedDirs = { [root]: [CODEX_MANAGED_TAG] };
     const extensions = path.join(home, ".vscode", "extensions");
     const bundleBin = path.join(extensions, "openai.chatgpt-3.0.0", "bin");
     const bundled = path.join(bundleBin, "windows-x86_64", "codex.exe");
     const fsWithBoth = fakeFs([managed, bundled], {
+      ...managedDirs,
       [extensions]: ["openai.chatgpt-3.0.0"],
       [bundleBin]: ["windows-x86_64"],
     });
 
     expect(locateCodexCli({ home, platform: "win32", managedStorageRoot: storage, fs: fsWithBoth, which: () => undefined }))
       .toBe(bundled);
-    expect(locateCodexCli({ home, platform: "win32", managedStorageRoot: storage, fs: fakeFs([managed]), which: () => undefined }))
+    expect(locateCodexCli({ home, platform: "win32", managedStorageRoot: storage, fs: fakeFs([managed], managedDirs), which: () => undefined }))
       .toBe(managed);
-    expect(locateCodexCli({ home, platform: "win32", managedStorageRoot: storage, fs: fakeFs([managed, "C:\\path\\codex.exe"]), which: () => "C:\\path\\codex.exe" }))
+    expect(locateCodexCli({ home, platform: "win32", managedStorageRoot: storage, fs: fakeFs([managed, "C:\\path\\codex.exe"], managedDirs), which: () => "C:\\path\\codex.exe" }))
       .toBe("C:\\path\\codex.exe");
   });
 
@@ -170,16 +173,20 @@ describe("locateCodexCli", () => {
     })).toBe(old);
   });
 
-  it("still prefers the pinned build over one left behind", () => {
+  it("selects the highest numeric managed version with a binary", () => {
     const storage = "C:\\extension-storage";
     const root = path.join(storage, "codex-managed");
-    const old = path.join(root, "rust-v0.147.0", "bin", "codex.exe");
+    const old = path.join(root, "rust-v0.99.0", "bin", "codex.exe");
     const pinned = path.join(root, CODEX_MANAGED_TAG, "bin", "codex.exe");
+    const latest = path.join(root, "rust-v0.171.0", "bin", "codex.exe");
+    const invalid = path.join(root, "rust-v9.0.0-alpha.1", "bin", "codex.exe");
     expect(locateCodexCli({
       home: "C:\\Users\\Dev", platform: "win32", managedStorageRoot: storage,
-      fs: fakeFs([old, pinned], { [root]: ["rust-v0.147.0", CODEX_MANAGED_TAG] }),
+      fs: fakeFs([old, pinned, latest, invalid], {
+        [root]: ["rust-v0.99.0", CODEX_MANAGED_TAG, "rust-v0.171.0", "rust-v0.172.0", "rust-v9.0.0-alpha.1"],
+      }),
       which: () => undefined,
-    })).toBe(pinned);
+    })).toBe(latest);
   });
 });
 

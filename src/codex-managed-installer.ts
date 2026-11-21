@@ -3,15 +3,19 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { createGunzip } from "node:zlib";
+import { versionIsOlder } from "./provider-ui";
 
-// 0.166.0: the server refuses the newest models (gpt-6.2-sol) to older CLIs on
-// a ChatGPT account, and the pinned codex-acp adapter has run on 0.166.0.
+// Offline floor. Move the tag and digest fixtures together.
 export const CODEX_MANAGED_TAG = "rust-v0.166.0";
 export const CODEX_MANAGED_VERSION = CODEX_MANAGED_TAG.replace(/^rust-v/, "");
-export const CODEX_MANAGED_BASE_URL =
-  `https://github.com/openai/codex/releases/download/${CODEX_MANAGED_TAG}`;
+const RELEASE_DOWNLOAD_ROOT = "https://github.com/openai/codex/releases/download/";
+const LATEST_RELEASE_URL = "https://api.github.com/repos/openai/codex/releases/latest";
+const SHA256_HEX = /^[0-9a-f]{64}$/i;
+export const CODEX_RELEASE_LOOKUP_TIMEOUT_MS = 4_000;
 
 export interface CodexManagedRelease {
+  tag: string;
+  version: string;
   target: string;
   sha256: string;
   asset: string;
@@ -48,16 +52,77 @@ export function codexManagedRelease(
   const sha256 = RELEASE_HASHES[target];
   if (!sha256) return undefined;
   const asset = `codex-package-${target}.tar.gz`;
-  return { target, sha256, asset, url: `${CODEX_MANAGED_BASE_URL}/${asset}` };
+  return { tag: CODEX_MANAGED_TAG, version: CODEX_MANAGED_VERSION, target, sha256, asset,
+    url: `${RELEASE_DOWNLOAD_ROOT}${CODEX_MANAGED_TAG}/${asset}` };
 }
 
-/** Every managed install, the pinned one and any a bump superseded. */
+function managedVersion(tag: string): string | undefined {
+  return /^rust-v((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))$/.exec(tag)?.[1];
+}
+
+export function isCodexManagedRelease(
+  release: CodexManagedRelease | undefined,
+  platform = process.platform,
+  arch: string = process.arch,
+): release is CodexManagedRelease {
+  if (!release || typeof release.tag !== "string" || typeof release.sha256 !== "string") return false;
+  const version = managedVersion(release.tag);
+  const target = codexManagedTarget(platform, arch);
+  const asset = `codex-package-${target}.tar.gz`;
+  return !!version && version === release.version && !!target && target === release.target
+    && release.asset === asset && release.url === `${RELEASE_DOWNLOAD_ROOT}${release.tag}/${asset}`
+    && SHA256_HEX.test(release.sha256);
+}
+
+interface CodexReleaseLookupOptions {
+  platform?: NodeJS.Platform;
+  arch?: string;
+  signal: AbortSignal;
+  fetchRelease?: typeof fetch;
+  onLookupFailure?: (error: unknown) => void;
+}
+
+export async function resolveCodexManagedRelease(options: CodexReleaseLookupOptions): Promise<CodexManagedRelease | undefined> {
+  const { signal, fetchRelease = fetch } = options;
+  signal.throwIfAborted();
+  const fallback = codexManagedRelease(options.platform, options.arch);
+  if (!fallback) return undefined;
+  try {
+    const deadline = AbortSignal.any([signal, AbortSignal.timeout(CODEX_RELEASE_LOOKUP_TIMEOUT_MS)]);
+    const response = await fetchRelease(LATEST_RELEASE_URL, { signal: deadline, redirect: "error" });
+    if (!response.ok) throw new Error(`GitHub release lookup failed (HTTP ${response.status}).`);
+    const data = await response.json() as {
+      tag_name?: unknown;
+      draft?: unknown;
+      prerelease?: unknown;
+      assets?: Array<{ name?: unknown; browser_download_url?: unknown; digest?: unknown } | null>;
+    } | null;
+    deadline.throwIfAborted();
+    const tag = typeof data?.tag_name === "string" ? data.tag_name : "";
+    const asset = Array.isArray(data?.assets) ? data.assets.find((item) => item?.name === fallback.asset) : undefined;
+    const digest = typeof asset?.digest === "string" && /^sha256:/i.test(asset.digest) ? asset.digest.slice(7) : "";
+    const resolved = {
+      ...fallback, tag, version: managedVersion(tag) ?? "",
+      url: typeof asset?.browser_download_url === "string" ? asset.browser_download_url : "",
+      sha256: digest.toLowerCase(),
+    };
+    if (data?.draft !== false || data.prerelease !== false || !isCodexManagedRelease(resolved, options.platform, options.arch)) {
+      throw new Error("GitHub did not provide a valid stable Codex package for this platform.");
+    }
+    return versionIsOlder(resolved.version, fallback.version) ? fallback : resolved;
+  } catch (error) {
+    signal.throwIfAborted();
+    options.onLookupFailure?.(error);
+    return fallback;
+  }
+}
+
 export function codexManagedRoot(storageRoot: string): string {
   return path.join(storageRoot, "codex-managed");
 }
 
-export function codexManagedVersionDir(storageRoot: string): string {
-  return path.join(codexManagedRoot(storageRoot), CODEX_MANAGED_TAG);
+export function codexManagedVersionDir(storageRoot: string, tag = CODEX_MANAGED_TAG): string {
+  return path.join(codexManagedRoot(storageRoot), tag);
 }
 
 export function codexManagedBinaryName(platform: NodeJS.Platform = process.platform): string {
@@ -67,8 +132,43 @@ export function codexManagedBinaryName(platform: NodeJS.Platform = process.platf
 export function codexManagedBinaryPath(
   storageRoot: string,
   platform: NodeJS.Platform = process.platform,
+  tag = CODEX_MANAGED_TAG,
 ): string {
-  return path.join(codexManagedVersionDir(storageRoot), "bin", codexManagedBinaryName(platform));
+  return path.join(codexManagedVersionDir(storageRoot, tag), "bin", codexManagedBinaryName(platform));
+}
+
+export function managedCodexBinaryVersion(storageRoot: string, binary: string, platform = process.platform): string | undefined {
+  const [tag, bin, name, ...rest] = path.relative(codexManagedRoot(storageRoot), binary).split(path.sep);
+  if (bin === "bin" && name === codexManagedBinaryName(platform) && rest.length === 0) return managedVersion(tag);
+  return undefined;
+}
+
+function managedCodexVersions(storageRoot: string, readDir: (dir: string) => string[]) {
+  let entries: string[];
+  try { entries = readDir(codexManagedRoot(storageRoot)); } catch { return []; }
+  return entries.flatMap((tag) => {
+    const version = managedVersion(tag);
+    return version ? [{ tag, version }] : [];
+  });
+}
+
+export function newestManagedCodex(
+  storageRoot: string,
+  platform = process.platform,
+  files: { readDir: (dir: string) => string[]; isFile: (file: string) => boolean } = {
+    readDir: fs.readdirSync,
+    isFile: (file) => {
+      try { return fs.statSync(file).isFile(); } catch { return false; }
+    },
+  },
+): { binary: string; version: string } | undefined {
+  const versions = managedCodexVersions(storageRoot, files.readDir)
+    .sort((a, b) => versionIsOlder(a.version, b.version) ? 1 : versionIsOlder(b.version, a.version) ? -1 : 0);
+  for (const { tag, version } of versions) {
+    const binary = codexManagedBinaryPath(storageRoot, platform, tag);
+    if (files.isFile(binary)) return { binary, version };
+  }
+  return undefined;
 }
 
 export interface TarHeader {
@@ -152,6 +252,7 @@ export async function extractTarFile(
   tarPath: string,
   destinationRoot: string,
   platform: NodeJS.Platform = process.platform,
+  signal?: AbortSignal,
 ): Promise<string[]> {
   await fs.promises.mkdir(destinationRoot, { recursive: true });
   const handle = await fs.promises.open(tarPath, "r");
@@ -161,6 +262,7 @@ export async function extractTarFile(
   try {
     const stat = await handle.stat();
     while (position + 512 <= stat.size) {
+      signal?.throwIfAborted();
       const header = parseTarHeader(await readExactly(handle, 512, position));
       position += 512;
       if (!header) break;
@@ -180,6 +282,7 @@ export async function extractTarFile(
         else await pipeline(
           fs.createReadStream(tarPath, { start: payloadPosition, end: payloadPosition + header.size - 1 }),
           fs.createWriteStream(target, { flags: "wx", ...mode }),
+          { signal },
         );
         extracted.push(target);
       } else if (header.type === "5") {
@@ -237,7 +340,7 @@ export async function downloadCodexAsset(
   const totalHeader = response.headers.get("content-length");
   const totalBytes = totalHeader && /^\d+$/.test(totalHeader) ? Number(totalHeader) : undefined;
   const reader = response.body.getReader();
-  const output = fs.createWriteStream(destination, { flags: "wx" });
+  const output = fs.createWriteStream(destination, { flags: "wx", signal });
   let rejectOutputError!: (error: Error) => void;
   const outputError = new Promise<never>((_resolve, reject) => { rejectOutputError = reject; });
   void outputError.catch(() => {});
@@ -272,46 +375,40 @@ export async function downloadCodexAsset(
   }
 }
 
-export interface ManagedCodexInstallOptions {
+export interface ManagedCodexInstallOptions extends CodexReleaseLookupOptions {
   storageRoot: string;
-  platform?: NodeJS.Platform;
-  arch?: string;
-  signal: AbortSignal;
   download?: CodexDownload;
   release?: CodexManagedRelease;
+  keepBinary?: string;
+  onRelease?: (release: CodexManagedRelease) => void;
   onProgress?: (phase: "downloading" | "verifying" | "installing", value?: DownloadProgress) => void;
 }
 
-/**
- * Remove version directories this build no longer uses.
- *
- * The install path carries the tag, so bumping the pin leaves the previous
- * ~100 MB package sitting in global storage for ever. Best-effort on purpose:
- * on Windows a running Codex holds its own executable open, and failing to
- * tidy must never fail an install that already succeeded. The next bump tries
- * again.
- */
-async function pruneOtherManagedCodex(parent: string): Promise<void> {
-  let entries: string[];
-  try { entries = await fs.promises.readdir(parent); } catch { return; }
-  await Promise.all(entries
-    .filter((entry) => entry !== CODEX_MANAGED_TAG && !entry.startsWith("."))
-    .map((entry) => fs.promises.rm(path.join(parent, entry), { recursive: true, force: true }).catch(() => {})));
+/** Keep the launch path selected before a background update and any newer install. */
+async function pruneOlderManagedCodex(storageRoot: string, version: string, keepVersion?: string): Promise<void> {
+  await Promise.all(managedCodexVersions(storageRoot, fs.readdirSync)
+    .filter((entry) => entry.version !== keepVersion && versionIsOlder(entry.version, version))
+    .map(({ tag }) => fs.promises.rm(codexManagedVersionDir(storageRoot, tag), { recursive: true, force: true }).catch(() => {})));
 }
 
 export async function installManagedCodex(options: ManagedCodexInstallOptions): Promise<string> {
+  const { storageRoot, signal } = options;
   const platform = options.platform ?? process.platform;
-  const release = options.release ?? codexManagedRelease(platform, options.arch ?? process.arch);
+  const release = options.release ?? await resolveCodexManagedRelease(options);
   if (!release) throw new Error(`Managed Codex is not available for ${platform}/${options.arch ?? process.arch}.`);
-  const finalDir = codexManagedVersionDir(options.storageRoot);
-  const finalBinary = codexManagedBinaryPath(options.storageRoot, platform);
-  if (fs.existsSync(finalBinary)) return finalBinary;
+  if (!isCodexManagedRelease(release, platform, options.arch)) throw new Error("Invalid Codex release metadata.");
+  signal.throwIfAborted();
+  options.onRelease?.(release);
+  const current = newestManagedCodex(storageRoot, platform);
+  if (current && !versionIsOlder(current.version, release.version)) return current.binary;
+  const finalDir = codexManagedVersionDir(storageRoot, release.tag);
+  const finalBinary = codexManagedBinaryPath(storageRoot, platform, release.tag);
   const parent = path.dirname(finalDir);
   await fs.promises.mkdir(parent, { recursive: true });
   const token = `${process.pid}-${randomUUID()}`;
-  const archive = path.join(parent, `.${CODEX_MANAGED_TAG}-${token}.download`);
-  const tar = path.join(parent, `.${CODEX_MANAGED_TAG}-${token}.tar`);
-  const unpacked = path.join(parent, `.${CODEX_MANAGED_TAG}-${token}.unpack`);
+  const archive = path.join(parent, `.${release.tag}-${token}.download`);
+  const tar = path.join(parent, `.${release.tag}-${token}.tar`);
+  const unpacked = path.join(parent, `.${release.tag}-${token}.unpack`);
   const download = options.download ?? downloadCodexAsset;
   try {
     options.onProgress?.("downloading", { receivedBytes: 0 });
@@ -323,8 +420,8 @@ export async function installManagedCodex(options: ManagedCodexInstallOptions): 
     }
     if (options.signal.aborted) throw options.signal.reason ?? new Error("Installation cancelled.");
     options.onProgress?.("installing");
-    await pipeline(fs.createReadStream(archive), createGunzip(), fs.createWriteStream(tar, { flags: "wx" }));
-    const files = await extractTarFile(tar, unpacked, platform);
+    await pipeline(fs.createReadStream(archive), createGunzip(), fs.createWriteStream(tar, { flags: "wx" }), { signal });
+    const files = await extractTarFile(tar, unpacked, platform, signal);
     const found = findExtractedCodex(files, platform);
     if (!found) throw new Error("The verified Codex package did not contain the Codex executable.");
     const packageRoot = findPackageRoot(files, found);
@@ -334,13 +431,16 @@ export async function installManagedCodex(options: ManagedCodexInstallOptions): 
       throw new Error("The verified archive contained an unexpected Codex executable layout.");
     }
     if (options.signal.aborted) throw options.signal.reason ?? new Error("Installation cancelled.");
+    const existing = newestManagedCodex(storageRoot, platform);
+    if (existing && !versionIsOlder(existing.version, release.version)) return existing.binary;
     try {
       await fs.promises.rename(packageRoot, finalDir);
     } catch (error) {
       if (!fs.existsSync(finalBinary)) throw error;
     }
-    await pruneOtherManagedCodex(parent);
-    return finalBinary;
+    const keepVersion = options.keepBinary ? managedCodexBinaryVersion(storageRoot, options.keepBinary, platform) : undefined;
+    await pruneOlderManagedCodex(storageRoot, release.version, keepVersion);
+    return newestManagedCodex(storageRoot, platform)?.binary ?? finalBinary;
   } finally {
     await Promise.all([
       fs.promises.rm(archive, { force: true }).catch(() => {}),

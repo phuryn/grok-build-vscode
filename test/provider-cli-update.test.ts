@@ -1,9 +1,15 @@
+import * as fs from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { GrokSidebar } from "../src/sidebar";
 import { Session } from "../src/session";
 import { execGrokCli } from "../src/cli-process";
 import { warmCodexModelCache } from "../src/codex-model-cache";
 import { warmClaudeModelCache } from "../src/claude-model-cache";
+import * as codexLocator from "../src/codex-cli-locator";
+import * as codexInstaller from "../src/codex-managed-installer";
+import * as codexUpgrade from "../src/codex-managed-upgrade";
 import { CODEX_MANAGED_VERSION } from "../src/codex-managed-installer";
 import { CLAUDE_PINNED_CLI_VERSION } from "../src/claude-backend";
 import { allowFromRemote, remoteRequiresBoundSession, transformHostMsgForRemote } from "../src/remote-policy";
@@ -471,4 +477,86 @@ it.each(["0.149.0", CODEX_MANAGED_VERSION, "1.0.0"])("observes Codex %s against 
   expect(codex.latestCliVersion).toBe(CODEX_MANAGED_VERSION);
   expect(codex.updateAvailable).toBe(version === "0.149.0");
   expect(exec).not.toHaveBeenCalled();
+});
+
+const latestCodex = () => {
+  const floor = codexInstaller.codexManagedRelease()!;
+  return { ...floor, version: "0.171.0", tag: "rust-v0.171.0", url: floor.url.replace(floor.tag, "rust-v0.171.0") };
+};
+
+it("uses the host's last seen Codex release for Settings and the managed Update button", async () => {
+  const { host, store } = harness("codex");
+  const latest = latestCodex();
+  store["grok.codexManagedRelease"] = latest;
+  host.providerCliVersions.codex = CODEX_MANAGED_VERSION;
+  const storage = path.resolve("storage");
+  const current = codexInstaller.codexManagedBinaryPath(storage);
+  const updated = codexInstaller.codexManagedBinaryPath(storage, process.platform, latest.tag);
+  host.context = { globalStorageUri: { fsPath: storage } };
+  host.locateProvider.mockReturnValue(current);
+  exec.mockImplementation(async (binary) => ({
+    stdout: `codex ${binary === current ? CODEX_MANAGED_VERSION : latest.version}`, stderr: "",
+  }));
+  const install = vi.spyOn(codexInstaller, "installManagedCodex").mockImplementation(async () => {
+    host.locateProvider.mockReturnValue(updated);
+    return updated;
+  });
+  try {
+    expect(host.providerStateMessage().providers.find((p: any) => p.id === "codex")).toMatchObject({
+      latestCliVersion: latest.version, updateAvailable: true,
+    });
+    await host.updateProviderCliOnDemand("codex");
+    expect(install).toHaveBeenCalledOnce();
+    expect(install).toHaveBeenCalledWith(expect.objectContaining({ release: latest, keepBinary: current }));
+    expect(exec.mock.calls.map(([binary, args]) => [binary, args])).toEqual([
+      [current, ["--version"]], [updated, ["--version"]],
+    ]);
+    expect(host.providerStateMessage().providers.find((p: any) => p.id === "codex")).toMatchObject({
+      cliVersion: latest.version, latestCliVersion: latest.version, updateAvailable: false,
+    });
+  } finally { install.mockRestore(); }
+});
+
+it("returns the installed Codex while the background update is pending and locates the new binary afterwards", async () => {
+  const { host, store } = harness("codex");
+  const storage = await fs.mkdtemp(path.join(os.tmpdir(), "afk-codex-selection-test-"));
+  const current = codexInstaller.codexManagedBinaryPath(storage);
+  const latest = latestCodex();
+  const updated = codexInstaller.codexManagedBinaryPath(storage, process.platform, latest.tag);
+  const locate = codexLocator.locateCodexCli;
+  const locator = vi.spyOn(codexLocator, "locateCodexCli").mockImplementation((options) =>
+    locate({ ...options, home: storage, which: () => undefined }));
+  const releaseDownload = defer();
+  const updater = vi.spyOn(codexUpgrade, "updateManagedCodexOnUpgrade").mockImplementation(async (options) => {
+    options.onRelease(latest);
+    await releaseDownload.promise;
+    await fs.mkdir(path.dirname(updated), { recursive: true });
+    await fs.writeFile(updated, "updated");
+    return updated;
+  });
+  try {
+    await fs.mkdir(path.dirname(current), { recursive: true });
+    await fs.writeFile(current, "working");
+    delete host.locateProvider;
+    host.context = { globalStorageUri: { fsPath: storage }, extensionVersion: "4.18.0" };
+    host.host.getConfiguration = () => ({ get: () => "" });
+    host.reprobeProviderVersion = vi.fn(async () => {});
+    host.refreshModelsIfCliChanged = vi.fn(async () => {});
+    expect(host.locateProvider("codex")).toBe(current);
+    expect(host.locateProvider("codex")).toBe(current);
+    expect(locator).toHaveBeenCalledOnce();
+    expect(updater).toHaveBeenCalledOnce();
+    expect(store["grok.codexManagedRelease"]).toEqual(latest);
+    releaseDownload.resolve();
+    await host.codexManagedUpgrade;
+    expect(host.locateProvider("codex")).toBe(updated);
+    expect(updater).toHaveBeenCalledOnce();
+    expect(await fs.readFile(current, "utf8")).toBe("working");
+  } finally {
+    releaseDownload.resolve();
+    await host.codexManagedUpgrade;
+    updater.mockRestore();
+    locator.mockRestore();
+    await fs.rm(storage, { recursive: true, force: true });
+  }
 });

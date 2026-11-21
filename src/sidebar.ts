@@ -47,7 +47,11 @@ import {
   codexOriginators,
 } from "./automated-sessions";
 import { readCodexSubscriptionWindows } from "./codex-usage";
-import { CODEX_MANAGED_VERSION, codexManagedRoot, installManagedCodex } from "./codex-managed-installer";
+import {
+  CODEX_MANAGED_VERSION, codexManagedRelease, installManagedCodex, isCodexManagedRelease,
+  managedCodexBinaryVersion, newestManagedCodex, type CodexManagedRelease,
+} from "./codex-managed-installer";
+import { CODEX_MANAGED_UPGRADE_TIMEOUT_MS, claimManagedCodexUpgrade, updateManagedCodexOnUpgrade } from "./codex-managed-upgrade";
 import { CLI_NPM_PACKAGE, cliUpdatePlan, selfUpdateArgs } from "./cli-update-plan";
 import { warmCodexModelCache } from "./codex-model-cache";
 import { CLAUDE_ACP_ADAPTER_VERSION, CLAUDE_PINNED_CLI_VERSION, ClaudeBackend, isClaudeCredentialError } from "./claude-backend";
@@ -568,6 +572,7 @@ const PROVIDER_MODEL_CACHE_KEY = "grok.providerModelCache";
 /** How Antigravity signs in on this machine: a preference, never a secret. */
 const AGY_SIGN_IN_METHOD_KEY = "grok.agySignInMethod";
 const AGY_CLI_UPDATE_VERSION_KEY = "grok.agyCliLastUpdateVersion";
+const CODEX_MANAGED_RELEASE_KEY = "grok.codexManagedRelease";
 /** HostSecrets key for the pasted Gemini API key. Nowhere else holds it. */
 const AGY_API_KEY_SECRET = "grok.agy.geminiApiKey";
 /** The last Gemini model listing the key relay saw: model names, never the key. */
@@ -1061,6 +1066,8 @@ export class GrokSidebar {
   ]);
   private cliPath?: string;
   private codexCliPath?: string;
+  private codexManagedUpgrade?: Promise<string | undefined>;
+  private codexManagedLatest?: CodexManagedRelease;
   private claudeCliPath?: string;
   private museCliPath?: string;
   private museCliChange?: Promise<void>;
@@ -1903,6 +1910,44 @@ export class GrokSidebar {
     return this.state.get<SessionMetaOverrides>(SESSION_META_KEY, {})[id]?.agyProgram ?? agyHistoryProgram(id);
   }
 
+  private managedCodexRelease(): CodexManagedRelease | undefined {
+    const floor = codexManagedRelease();
+    const latest = this.codexManagedLatest ?? this.state?.get<CodexManagedRelease>(CODEX_MANAGED_RELEASE_KEY);
+    return floor && isCodexManagedRelease(latest) && !versionIsOlder(latest.version, floor.version) ? latest : floor;
+  }
+
+  private rememberManagedCodexRelease(release: CodexManagedRelease): void {
+    const known = this.managedCodexRelease();
+    if (known && !versionIsOlder(known.version, release.version)) return;
+    this.codexManagedLatest = release;
+    void Promise.resolve(this.state.update(CODEX_MANAGED_RELEASE_KEY, release)).catch((error) =>
+      this.host.appendLine(`[codex] Could not save the managed release: ${errorDetail(error)}`));
+  }
+
+  private prepareManagedCodex(binary: string): void {
+    if (this.codexManagedUpgrade || this.codexInstallAbort || this.providerCliUpdate
+        || !this.isManagedCodexBinary("codex", binary) || !this.hasProviderConsent("codex")) return;
+    const signal = this.providerRunSignal("codex");
+    // The selected binary starts now. The next lookup sees the new path after
+    // the verified package is published, while running chats keep their binary.
+    this.codexManagedUpgrade = updateManagedCodexOnUpgrade({
+      storageRoot: this.context.globalStorageUri.fsPath,
+      binary,
+      afkVersion: this.context.extensionVersion,
+      signal,
+      onRelease: (release) => this.rememberManagedCodexRelease(release),
+      log: (line) => this.host.appendLine(line),
+    });
+    void this.codexManagedUpgrade.then(async (updated) => {
+      if (signal.aborted) return;
+      if (updated && !this.providerCliUpdate) {
+        await this.reprobeProviderVersion("codex");
+        await this.refreshModelsIfCliChanged("codex", this.providerCliVersions.codex ?? "");
+      }
+      this.postProviderState();
+    }).catch((error) => this.host.appendLine(`[codex] Could not refresh managed CLI state: ${errorDetail(error)}`));
+  }
+
   private locateProvider(provider: AcpProvider, serverOnly = false): string | undefined {
     if (provider === "grok") {
       if (this.cliPath && fs.existsSync(this.cliPath)) return this.cliPath;
@@ -1915,13 +1960,22 @@ export class GrokSidebar {
       return located;
     }
     if (provider === "codex") {
-      if (this.codexCliPath && fs.existsSync(this.codexCliPath)) return this.codexCliPath;
+      const cached = this.codexCliPath;
+      const cachedExists = !!cached && fs.existsSync(cached);
+      if (cachedExists && !this.isManagedCodexBinary("codex", cached)) return cached;
+      const storageRoot = this.context.globalStorageUri.fsPath;
+      const configuredPath = this.host.getConfiguration("grok").get<string>("codexCliPath", "");
+      if (cachedExists && (configuredPath?.trim() || newestManagedCodex(storageRoot)?.binary === cached)) {
+        this.prepareManagedCodex(cached);
+        return cached;
+      }
       const located = locateCodexCli({
-        configuredPath: this.host.getConfiguration("grok").get<string>("codexCliPath", ""),
-        managedStorageRoot: this.context.globalStorageUri.fsPath,
+        configuredPath,
+        managedStorageRoot: storageRoot,
         arch: process.arch,
       });
       this.codexCliPath = located;
+      if (located) this.prepareManagedCodex(located);
       return located;
     }
     if (provider === "muse") {
@@ -3145,9 +3199,12 @@ export class GrokSidebar {
     const controller = new AbortController();
     this.codexInstallAbort = controller;
     try {
+      this.postLocal({ type: "codexInstallProgress", phase: "downloading", receivedBytes: 0 });
       const binary = await installManagedCodex({
         storageRoot: this.context.globalStorageUri.fsPath,
         signal: controller.signal,
+        onLookupFailure: (error) => this.host.appendLine(`[codex] Managed release lookup failed: ${errorDetail(error)}`),
+        onRelease: (release) => this.rememberManagedCodexRelease(release),
         onProgress: (phase, value) => this.postLocal({
           type: "codexInstallProgress",
           phase,
@@ -3155,6 +3212,8 @@ export class GrokSidebar {
           totalBytes: value?.totalBytes,
         }),
       });
+      await claimManagedCodexUpgrade(this.context.globalStorageUri.fsPath, this.context.extensionVersion).catch((error) =>
+        this.host.appendLine(`[codex] Could not save the managed update attempt: ${errorDetail(error)}`));
       this.codexCliPath = binary;
       this.postProviderState();
       this.postLocal({ type: "codexInstallProgress", phase: "idle" });
@@ -3183,6 +3242,7 @@ export class GrokSidebar {
     const grokConnected = connected.grok === true && located.grok === true;
     const codexConnected = connected.codex === true && located.codex === true;
     const claudeConnected = connected.claude === true && located.claude === true;
+    const codexTarget = this.managedCodexRelease()?.version ?? CODEX_MANAGED_VERSION;
     const museConnected = connected.muse === true && located.muse === true;
     const agyConnected = connected.agy === true && located.agy === true;
     const agyCli = this.installedAgyCli();
@@ -3229,8 +3289,8 @@ export class GrokSidebar {
           ...(codexConnected ? {
             cliUpdate: this.providerCliUpdates?.codex ?? { status: "idle" as const },
             adapterVersion: CODEX_ACP_ADAPTER_VERSION,
-            latestCliVersion: CODEX_MANAGED_VERSION,
-            ...(versions.codex ? { updateAvailable: versionIsOlder(versions.codex, CODEX_MANAGED_VERSION) } : {}),
+            latestCliVersion: codexTarget,
+            ...(versions.codex ? { updateAvailable: versionIsOlder(versions.codex, codexTarget) } : {}),
           } : {}),
         },
         {
@@ -11245,8 +11305,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   private isManagedCodexBinary(provider: AcpProvider, cliPath: string): boolean {
     const storageRoot = this.context?.globalStorageUri?.fsPath;
     if (provider !== "codex" || !storageRoot) return false;
-    const relative = path.relative(codexManagedRoot(storageRoot), cliPath);
-    return !!relative && !relative.startsWith("..") && !path.isAbsolute(relative);
+    return !!managedCodexBinaryVersion(storageRoot, cliPath);
   }
 
   /** Explicit updates of user-owned CLIs. Keep Session identities (including
@@ -11305,7 +11364,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // acting on what we happened to know. Returning here deliberately skips the
     // try/finally below — that block reports "Update completed" and reopens
     // conversations, and neither is true of a no-op.
-    const target = provider === "codex" ? CODEX_MANAGED_VERSION : CLAUDE_PINNED_CLI_VERSION;
+    const codexRelease = provider === "codex" ? this.managedCodexRelease() : undefined;
+    const target = provider === "codex" ? codexRelease?.version ?? CODEX_MANAGED_VERSION : CLAUDE_PINNED_CLI_VERSION;
     const installed = await this.reReadProviderCliVersion(provider);
     if (installed && !versionIsOlder(installed, target)) {
       status("succeeded", `${name} is already on v${installed}. Nothing to update.`);
@@ -11359,21 +11419,17 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         managed: this.isManagedCodexBinary(provider, cliPath),
         realPath,
         packageName: CLI_NPM_PACKAGE[provider],
-        // The pin, not `@latest`. Settings has already told this person their
-        // target is `latestCliVersion` and computed "update available" against
-        // it; fetching whatever is newest installs a version they were never
-        // shown, and leaves the row still claiming an update is available.
+        // Use the target displayed by Settings when the action started.
         targetVersion: target,
       });
       if (plan.kind === "managed") {
-        // We put this binary here, so updating it means installing the pinned
-        // build with its verified digest — not asking a standalone binary to
-        // replace itself, which is the one shape we never measured. It also
-        // republishes the tag the locator prefers, retiring the older
-        // directory this fell back to.
+        if (!codexRelease) throw new Error("Managed Codex is not available for this platform.");
+        await this.codexManagedUpgrade;
         await installManagedCodex({
           storageRoot: this.context.globalStorageUri.fsPath,
-          signal: new AbortController().signal,
+          signal: AbortSignal.any([this.providerRunSignal("codex"), AbortSignal.timeout(CODEX_MANAGED_UPGRADE_TIMEOUT_MS)]),
+          release: codexRelease,
+          keepBinary: cliPath,
         });
       } else {
         // execGrokCli rejects on a nonzero exit; stdout is diagnostic text,

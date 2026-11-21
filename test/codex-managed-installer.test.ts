@@ -3,9 +3,11 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { gzipSync } from "node:zlib";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  CODEX_RELEASE_LOOKUP_TIMEOUT_MS,
   CODEX_MANAGED_TAG,
+  CODEX_MANAGED_VERSION,
   codexManagedBinaryPath,
   codexManagedRelease,
   codexManagedTarget,
@@ -13,11 +15,26 @@ import {
   extractTarFile,
   installManagedCodex,
   parseTarHeader,
+  resolveCodexManagedRelease,
   tarRegularFileMode,
   type CodexDownload,
 } from "../src/codex-managed-installer";
 
 const temporaryRoots: string[] = [];
+const floor = codexManagedRelease("linux", "x64")!;
+const latestTag = "rust-v0.171.0";
+const latestUrl = `https://github.com/openai/codex/releases/download/${latestTag}/${floor.asset}`;
+
+function latestMetadata(digest = "a".repeat(64)) {
+  return {
+    tag_name: latestTag, draft: false, prerelease: false,
+    assets: [
+      { name: "codex-package-aarch64-unknown-linux-musl.tar.gz", digest: `sha256:${"b".repeat(64)}` },
+      { name: floor.asset, browser_download_url: latestUrl, digest: `sha256:${digest}` },
+    ],
+  };
+}
+const lookupOptions = { platform: "linux", arch: "x64", signal: new AbortController().signal } as const;
 
 async function temporaryRoot(): Promise<string> {
   const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), "grok-codex-managed-test-"));
@@ -75,6 +92,8 @@ describe("managed Codex release selection", () => {
   it.each(releases)("pins %s/%s to the official target, URL, and digest", (platform, arch, target, sha256) => {
     expect(codexManagedTarget(platform, arch)).toBe(target);
     expect(codexManagedRelease(platform, arch)).toEqual({
+      tag: CODEX_MANAGED_TAG,
+      version: CODEX_MANAGED_VERSION,
       target,
       sha256,
       asset: `codex-package-${target}.tar.gz`,
@@ -85,6 +104,71 @@ describe("managed Codex release selection", () => {
   it("refuses unsupported targets instead of guessing", () => {
     expect(codexManagedRelease("freebsd", "x64")).toBeUndefined();
     expect(codexManagedRelease("linux", "ia32")).toBeUndefined();
+  });
+
+  it("resolves the stable release using the matching platform asset and digest", async () => {
+    const fetchRelease = vi.fn(async () => Response.json(latestMetadata("A".repeat(64))));
+    await expect(resolveCodexManagedRelease({ ...lookupOptions, fetchRelease })).resolves.toEqual({
+      ...floor, tag: latestTag, version: "0.171.0", url: latestUrl, sha256: "a".repeat(64),
+    });
+    expect(fetchRelease).toHaveBeenCalledOnce();
+    expect(fetchRelease).toHaveBeenCalledWith("https://api.github.com/repos/openai/codex/releases/latest",
+      { signal: expect.any(AbortSignal), redirect: "error" });
+  });
+
+  it.each([
+    ["missing digest", { digest: undefined }],
+    ["malformed digest", { digest: "sha256:short" }],
+    ["wrong algorithm", { digest: `sha512:${"a".repeat(64)}` }],
+    ["foreign host", { browser_download_url: latestUrl.replace("github.com", "example.invalid") }],
+    ["wrong repository", { browser_download_url: latestUrl.replace("/openai/codex/", "/other/codex/") }],
+    ["insecure URL", { browser_download_url: latestUrl.replace("https:", "http:") }],
+    ["wrong tag path", { browser_download_url: latestUrl.replace(latestTag, CODEX_MANAGED_TAG) }],
+    ["missing platform asset", { name: "other.tar.gz" }],
+  ])("falls back and reports invalid metadata for %s", async (_case, value) => {
+    const metadata = latestMetadata();
+    Object.assign(metadata.assets[1], value);
+    const onLookupFailure = vi.fn();
+    await expect(resolveCodexManagedRelease({
+      ...lookupOptions, fetchRelease: async () => Response.json(metadata), onLookupFailure,
+    })).resolves.toEqual(floor);
+    expect(onLookupFailure).toHaveBeenCalledOnce();
+  });
+
+  it("uses the pinned floor when the latest endpoint reports an older release", async () => {
+    const tag = "rust-v0.99.0";
+    const metadata = { ...latestMetadata(), tag_name: tag };
+    metadata.assets[1].browser_download_url = latestUrl.replace(latestTag, tag);
+    await expect(resolveCodexManagedRelease({
+      ...lookupOptions, fetchRelease: async () => Response.json(metadata),
+    })).resolves.toEqual(floor);
+  });
+
+  it("falls back on a rate-limited lookup and honors cancellation", async () => {
+    const fetchRelease = vi.fn(async () => new Response(null, { status: 403 }));
+    await expect(resolveCodexManagedRelease({ ...lookupOptions, fetchRelease })).resolves.toEqual(floor);
+    await expect(resolveCodexManagedRelease({
+      ...lookupOptions, fetchRelease, signal: AbortSignal.abort(new Error("cancelled")),
+    })).rejects.toThrow("cancelled");
+    expect(fetchRelease).toHaveBeenCalledOnce();
+  });
+
+  it("bounds a stalled release response body and falls back to the pin", async () => {
+    const timeout = new AbortController();
+    const deadline = vi.spyOn(AbortSignal, "timeout").mockReturnValue(timeout.signal);
+    try {
+      const pending = resolveCodexManagedRelease({
+        ...lookupOptions,
+        fetchRelease: async (_url, options) => new Response(new ReadableStream({
+          start(stream) {
+            options!.signal!.addEventListener("abort", () => stream.error(options!.signal!.reason));
+            timeout.abort(new Error("lookup deadline"));
+          },
+        })),
+      });
+      await expect(pending).resolves.toEqual(floor);
+      expect(deadline).toHaveBeenCalledWith(CODEX_RELEASE_LOOKUP_TIMEOUT_MS);
+    } finally { deadline.mockRestore(); }
   });
 });
 
@@ -166,7 +250,7 @@ describe("managed Codex atomic install", () => {
       platform: "linux",
       arch: "x64",
       signal: new AbortController().signal,
-      release: { target: "test", asset: "test.tar.gz", url: "https://example.invalid/test", sha256 },
+      release: { ...floor, sha256 },
       download: fakePackageDownload(packageBytes),
       onProgress: (phase) => phases.push(phase),
     });
@@ -178,6 +262,57 @@ describe("managed Codex atomic install", () => {
     expect(phases).toContain("verifying");
     expect(phases).toContain("installing");
     expect((await fs.promises.readdir(path.join(root, "codex-managed"))).sort()).toEqual([CODEX_MANAGED_TAG]);
+  });
+
+  it("installs the latest release into its own directory on a fresh install", async () => {
+    const root = await temporaryRoot();
+    const packageBytes = gzipSync(tar([
+      { name: "codex-package/codex-package.json", body: Buffer.from('{"version":"0.171.0"}') },
+      { name: "codex-package/bin/codex", body: Buffer.from("latest-binary") },
+    ]));
+    const sha256 = createHash("sha256").update(packageBytes).digest("hex");
+    const download = vi.fn(fakePackageDownload(packageBytes));
+    const installed = await installManagedCodex({
+      ...lookupOptions, storageRoot: root, download,
+      fetchRelease: async () => Response.json(latestMetadata(sha256)),
+    });
+    expect(download).toHaveBeenCalledWith(latestUrl, expect.any(String), lookupOptions.signal, expect.any(Function));
+    expect(installed).toBe(codexManagedBinaryPath(root, "linux", latestTag));
+    expect(await fs.promises.readFile(installed, "utf8")).toBe("latest-binary");
+    expect(fs.existsSync(codexManagedBinaryPath(root, "linux"))).toBe(false);
+  });
+
+  it("retains the binary selected for launch while pruning older unused versions", async () => {
+    const root = await temporaryRoot();
+    const running = codexManagedBinaryPath(root, "linux");
+    const stale = codexManagedBinaryPath(root, "linux", "rust-v0.99.0");
+    for (const binary of [running, stale]) {
+      await fs.promises.mkdir(path.dirname(binary), { recursive: true });
+      await fs.promises.writeFile(binary, "previous");
+    }
+    const bytes = gzipSync(tar([
+      { name: "package/codex-package.json", body: Buffer.from("{}") },
+      { name: "package/bin/codex", body: Buffer.from("next") },
+    ]));
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    await installManagedCodex({
+      ...lookupOptions, storageRoot: root, keepBinary: running, download: fakePackageDownload(bytes),
+      release: { ...floor, tag: latestTag, version: "0.171.0", url: latestUrl, sha256 },
+    });
+    expect(await fs.promises.readFile(running, "utf8")).toBe("previous");
+    expect(fs.existsSync(stale)).toBe(false);
+    expect(fs.existsSync(codexManagedBinaryPath(root, "linux", latestTag))).toBe(true);
+  });
+
+  it("returns an already installed newer binary without downloading the pin", async () => {
+    const root = await temporaryRoot();
+    const binary = codexManagedBinaryPath(root, "linux", latestTag);
+    await fs.promises.mkdir(path.dirname(binary), { recursive: true });
+    await fs.promises.writeFile(binary, "latest-binary");
+    const download = vi.fn();
+    await expect(installManagedCodex({ ...lookupOptions, storageRoot: root, release: floor, download })).resolves.toBe(binary);
+    expect(download).not.toHaveBeenCalled();
+    expect(await fs.promises.readFile(binary, "utf8")).toBe("latest-binary");
   });
 
   it.each([
@@ -203,7 +338,7 @@ describe("managed Codex atomic install", () => {
       platform: "linux",
       arch: "x64",
       signal: new AbortController().signal,
-      release: { target: "test", asset: "test.tar.gz", url: "https://example.invalid/test", sha256: "f".repeat(64) },
+      release: { ...floor, sha256: "f".repeat(64) },
       download,
     })).rejects.toThrow();
     const managed = path.join(root, "codex-managed");
@@ -223,7 +358,7 @@ describe("managed Codex atomic install", () => {
       platform: "linux",
       arch: "x64",
       signal: controller.signal,
-      release: { target: "test", asset: "test.tar.gz", url: "https://example.invalid/test", sha256: "f".repeat(64) },
+      release: { ...floor, sha256: "f".repeat(64) },
       download,
     })).rejects.toThrow("cancelled by user");
     expect(await fs.promises.readdir(path.join(root, "codex-managed"))).toEqual([]);
