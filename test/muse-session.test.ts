@@ -184,9 +184,11 @@ describe("Muse native steering, compaction, skills and forks", () => {
     const args = s.spawn.mock.calls[0][0].args;
     const at = args.indexOf("-c");
     expect(at).toBeGreaterThan(-1);
+    // Muse 1.4.25 names the setting without a `settings.` prefix and refuses an unknown key at startup (exit 2,
+    // measured 2026-11-21: "-c settings.context_compaction.soft_threshold: refusing run: unknown key").
     expect(args.slice(at, at + 4)).toEqual([
-      "-c", "settings.context_compaction.soft_threshold=0.28",
-      "-c", "settings.context_compaction.hard_threshold=0.29",
+      "-c", "context_compaction.soft_threshold=0.28",
+      "-c", "context_compaction.hard_threshold=0.29",
     ]);
     s.event("item/completed", { item: {
       kind: "compaction", itemId: "boundary", trigger: "auto", outcome: "compacted", tokensBefore: 304_000, tokensAfter: 38_000,

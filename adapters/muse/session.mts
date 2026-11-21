@@ -174,8 +174,8 @@ export class MuseSession {
     this.assertSandbox(this.approvalMode);
     const args = ["serve"];
     if (posture.compact) {
-      args.push("-c", `settings.context_compaction.soft_threshold=${posture.compact.soft}`,
-        "-c", `settings.context_compaction.hard_threshold=${posture.compact.hard}`);
+      args.push("-c", `context_compaction.soft_threshold=${posture.compact.soft}`,
+        "-c", `context_compaction.hard_threshold=${posture.compact.hard}`);
     }
     if (!this.shellSandbox) args.push("--disable-sandbox");
     if (!this.sandboxUnavailable && (posture.sandboxNetwork === "restricted" || posture.sandboxNetwork === "enabled")) {
