@@ -3,6 +3,7 @@ import { PassThrough } from "node:stream";
 import { spawn } from "node:child_process";
 import { expect, it, vi } from "vitest";
 import { AcpClient } from "../src/acp";
+import { makeExplicitChip } from "../src/chips";
 import { ClaudeBackend } from "../src/claude-backend";
 import { CodexBackend } from "../src/codex-backend";
 import { MuseBackend } from "../src/muse-backend";
@@ -321,6 +322,129 @@ it.each(["codex", "claude", "muse"] as const)("lets go of the original's process
     expect(dispose).not.toHaveBeenCalled();
   }
   expect(host.reportRequester).toHaveBeenLastCalledWith(undefined, "info", expect.stringContaining('Forked into "(Fork) Parent"'));
+});
+
+function prepareRacingSend(session: Session) {
+  const host = hostWith(session);
+  let overrides: Record<string, any> = {};
+  host.state = { get: () => overrides, update: async (_key: string, value: typeof overrides) => { overrides = value; } };
+  host.post = vi.fn();
+  host.emit = vi.fn();
+  host.refreshImplicitChip = vi.fn();
+  host.reportRemoteMessage = vi.fn();
+  host.dotForId = () => undefined;
+  const client = Object.assign(session.client!, {
+    supportsTurnFork: () => true,
+    dispose: vi.fn(async () => {}),
+    prompt: vi.fn(async () => ({})),
+    setHumanWaitActive: vi.fn(),
+    availableCommands: [],
+  });
+  session.forkPoints.reply("first", false);
+  session.forkPoints.settle(true);
+  return { host, client, meta: () => overrides.child };
+}
+
+it.each(["local", "remote"] as const)("restores sends racing a fork as one draft on the %s composer", async (origin) => {
+  const source = startedSession("codex");
+  const { host, client, meta } = prepareRacingSend(source);
+  const copy = startedSession("codex");
+  copy.activeSessionId = copy.client!.sessionId = "child";
+  const copyPrompt = vi.fn();
+  copy.client!.prompt = copyPrompt;
+  const chip = makeExplicitChip("/work/repo/notes.md", "notes.md");
+  const lateChip = makeExplicitChip("/work/repo/tasks.md", "tasks.md");
+  source.chips = [chip, lateChip];
+  const clientId = origin === "remote" ? "phone" : undefined;
+  const draft = clientId ? "Revise the earlier prompt" : undefined;
+  const send = (text: string, chip: typeof lateChip) => host.onMessage({ type: "send", text, chips: [chip] }, origin, clientId);
+  host.view = { webview: {} };
+  host.localizeHistoryMessage = (message: unknown) => message;
+  host.sendRemoteClient = vi.fn();
+  host.ensureClient = vi.fn();
+  client.forkSession = vi.fn(async () => {
+    expect(source.forkInFlight).toBe(true);
+    await send("Check the notes", chip);
+    expect(source.queuedSends).toEqual([{ text: "Check the notes", chips: [chip] }]);
+    return { newSessionId: "child" };
+  });
+  let finishPickerChange!: () => void;
+  const pickerChange = new Promise<void>((resolve) => { finishPickerChange = resolve; });
+  let lateSend: Promise<void> | undefined;
+  const openCopy = vi.fn(async () => {
+    expect(source.client).toBeUndefined();
+    expect(host.pool.has(source)).toBe(false);
+    expect(source.forkInFlight).toBe(true);
+    // Send reaches the host before the binding changes, while preflight could wait past it.
+    host.pickerChange = pickerChange;
+    lateSend = send("Check the tasks", lateChip);
+    host.pool.add(copy);
+    if (clientId) host.remoteClients.setActive(clientId, copy);
+    else host.focused = copy;
+    // The normal open path tries to restore the edit draft during startup.
+    host.restorePersistedDraft(copy);
+    await host.sessionMetaWrites;
+  });
+  host.openSession = clientId ? vi.fn() : openCopy;
+  host.openRemoteSession = clientId ? openCopy : vi.fn();
+  await host.onMessage({
+    type: "forkAtReply", sessionId: source.activeSessionId, messageId: "first",
+    draft,
+  }, origin, clientId);
+  finishPickerChange();
+  await lateSend;
+  await host.sessionMetaWrites;
+  expect(openCopy.mock.calls).toEqual([clientId ? [clientId, "child", "/work/repo"] : ["child", "/work/repo"]]);
+  const frames = clientId
+    ? host.sendRemoteClient.mock.calls.filter(([recipient]: [string]) => recipient === clientId).map((call: any[]) => call[1])
+    : host.postLocal.mock.calls.map((call: any[]) => call[0]);
+  expect(frames.filter((message: { type: string }) => message.type === "restoreComposer")).toEqual([{
+    type: "restoreComposer", sessionId: "child", draft: true,
+    text: [draft, "Check the notes", "Check the tasks"].filter(Boolean).join("\n\n"), chips: [chip, lateChip],
+  }]);
+  expect(meta().queuedDraft).toBeUndefined();
+  expect(copy.restoredChips).toEqual([chip, lateChip]);
+  expect(source.queuedSends).toEqual([]);
+  expect(source.forkInFlight).toBe(false);
+  expect(host.ensureClient).not.toHaveBeenCalled();
+  expect(client.prompt).not.toHaveBeenCalled();
+  expect(copyPrompt).not.toHaveBeenCalled();
+});
+
+it.each([
+  { provider: "claude", refused: false },
+  { provider: "muse", refused: false },
+  { provider: "codex", refused: true },
+] as const)("flushes a racing send when the original stays live ($provider, refused: $refused)", async ({ provider, refused }) => {
+  const source = startedSession(provider);
+  const { host, client, meta } = prepareRacingSend(source);
+  host.openSession = vi.fn();
+  host.pendingAttach = new Set();
+  host.startTurnDiffBaseline = vi.fn();
+  host.setStatus = vi.fn();
+  host.noteSessionActivity = vi.fn();
+  host.maybeAskToAddProject = vi.fn();
+  host.noteLiveTurnEnded = vi.fn();
+  host.setProviderNeedsLogin = vi.fn();
+  host.maybeGenerateTitle = vi.fn();
+  host.postSessionName = vi.fn();
+  client.forkSession = vi.fn(async () => {
+    await host.onMessage({ type: "send", text: "Keep this on the original" }, "local");
+    expect(source.queuedSends).toEqual([{ text: "Keep this on the original", chips: [] }]);
+    expect(client.prompt).not.toHaveBeenCalled();
+    if (refused) return "unsupported";
+    return { newSessionId: "child" };
+  });
+  const flush = vi.spyOn(host, "maybeFlushQueuedSends");
+  await host.onMessage({ type: "forkAtReply", sessionId: source.activeSessionId, messageId: "first" }, "local");
+  await flush.mock.results[1].value;
+  expect(client.prompt.mock.calls).toEqual([[[{ type: "text", text: "Keep this on the original" }]]]);
+  expect(source.queuedSends).toEqual([]);
+  expect(source.client).toBe(client);
+  expect(host.pool.has(source)).toBe(true);
+  expect(client.dispose).not.toHaveBeenCalled();
+  expect(host.openSession).toHaveBeenCalledTimes(refused ? 0 : 1);
+  expect(meta()?.queuedDraft).toBeUndefined();
 });
 
 it("requires the bound session and propose permission for a typed fork point", () => {
