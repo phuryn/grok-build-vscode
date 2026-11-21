@@ -1,8 +1,9 @@
 # OpenAI dictation (#124)
 
-The host implements `pickSttBackend` in `src/voice.ts`. Auto selects OpenAI for
-Codex and xAI for Grok/Claude, falling back only when the preferred credential
-is absent. Explicit settings are strict, including an unavailable selection.
+The host implements `pickSttBackend` in `src/voice.ts`. Auto prefers OpenAI for
+Codex, Google for Antigravity, and xAI for other agents. When the preferred
+credential is absent, Auto tries xAI, OpenAI, then Google. Explicit settings
+require the chosen backend's credential.
 Recording contexts retain the chosen backend and model across hands-free
 restarts. Key refresh reads only that backend. Speech summarization still uses
 the existing xAI-only `resolveVoiceApiKey`.

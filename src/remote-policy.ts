@@ -542,6 +542,7 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
   setVoiceKeyterms: "propose",
   setVoiceBackend: "propose",
   configureOpenAiVoice: "host-local",
+  configureGoogleVoice: "host-local",
   // Remote surface is read-only for telemetry; the desk owns the switch.
   setTelemetryEnabled: "host-local",
   // Same class as the other General host prefs: the desk owns the switch,
@@ -742,6 +743,7 @@ export const REMOTE_REQUIRES_BOUND_SESSION: Record<WebviewMsg["type"], boolean> 
   setVoiceKeyterms: false,
   setVoiceBackend: false,
   configureOpenAiVoice: false,
+  configureGoogleVoice: false,
   setTelemetryEnabled: false,
   setThumbsFeedback: false,
   setDesktopTray: false,

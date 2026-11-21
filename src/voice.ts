@@ -13,23 +13,39 @@ import type { AcpProvider } from "./acp-backend";
 
 export const STT_ENDPOINT = "https://api.x.ai/v1/stt";
 
-export type SttBackend = "xai" | "openai";
+export function redactVoiceStreamUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    const names = [...parsed.searchParams.keys()];
+    const query = names.map(name => `${encodeURIComponent(name)}=<redacted>`).join("&");
+    return `${parsed.origin}${parsed.pathname}${query ? `?${query}` : ""}`;
+  } catch {
+    return String(url).split("?")[0];
+  }
+}
+
+type LegacySttBackend = "xai" | "openai";
+export type SttBackend = LegacySttBackend | "google";
 export type SttPreference = "auto" | SttBackend;
+
+export function sttPreference(value: unknown): SttPreference {
+  return value === "xai" || value === "openai" || value === "google" ? value : "auto";
+}
 
 /** An explicit choice is strict. Automatic fallback is credential-based only. */
 export function pickSttBackend(opts: {
   provider: AcpProvider;
   hasXai: boolean;
   hasOpenAi: boolean;
+  hasGoogle?: boolean;
   preference?: SttPreference;
 }): SttBackend | undefined {
-  const available = { xai: opts.hasXai, openai: opts.hasOpenAi };
-  if (opts.preference === "xai" || opts.preference === "openai") {
+  const available = { xai: opts.hasXai, openai: opts.hasOpenAi, google: opts.hasGoogle };
+  if (opts.preference && opts.preference !== "auto") {
     return available[opts.preference] ? opts.preference : undefined;
   }
-  const preferred = opts.provider === "codex" ? "openai" : "xai";
-  const backup = preferred === "openai" ? "xai" : "openai";
-  return available[preferred] ? preferred : available[backup] ? backup : undefined;
+  const preferred = opts.provider === "codex" ? "openai" : opts.provider === "agy" ? "google" : "xai";
+  return ([preferred, "xai", "openai", "google"] as const).find(backend => available[backend]);
 }
 
 export function resolveOpenAiVoiceKey(opts: {
@@ -39,12 +55,30 @@ export function resolveOpenAiVoiceKey(opts: {
   return opts.setting?.trim() || opts.env?.OPENAI_API_KEY?.trim() || undefined;
 }
 
+export function resolveGoogleVoiceKey(opts: {
+  setting?: string;
+  savedKey?: string;
+  env?: Record<string, string | undefined>;
+}): string | undefined {
+  return opts.setting?.trim() || opts.savedKey?.trim()
+    || opts.env?.GEMINI_API_KEY?.trim() || opts.env?.GOOGLE_API_KEY?.trim() || undefined;
+}
+
+export function sttKeySetting(backend: SttBackend): string {
+  return backend === "google" ? "grok.voiceGoogleApiKey"
+    : backend === "openai" ? "grok.voiceOpenAiApiKey" : "grok.voiceApiKey";
+}
+
 export interface VoiceBackendState {
   provider: AcpProvider;
-  preference: SttPreference;
+  /** Legacy select values. An explicit Google choice projects to Auto here. */
+  preference: "auto" | LegacySttBackend;
+  googlePreference?: "google";
   backend?: SttBackend;
   hasXai: boolean;
   hasOpenAi: boolean;
+  /** Presence advertises Google support, even when no key is available. */
+  hasGoogle?: boolean;
   backends: Record<AcpProvider, SttBackend | null>;
 }
 

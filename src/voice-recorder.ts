@@ -17,6 +17,7 @@ import {
   SttBackend,
 } from "./voice";
 import { classifyOpenAiSttError } from "./openai-voice";
+import { transcribeGoogleVoiceWav } from "./google-voice";
 
 export interface StartOpts {
   ffmpegPath: string;
@@ -166,6 +167,7 @@ export async function transcribeAudio(
   if (bytes.length < 2048) {
     throw new Error("The recording was empty — no audio was captured. Check your microphone and try again.");
   }
+  if (backend === "google") return transcribeGoogleVoiceWav(bytes, { apiKey, log });
   const { url, headers } = backend === "openai"
     ? { url: "https://api.openai.com/v1/audio/transcriptions", headers: { Authorization: `Bearer ${apiKey}` } }
     : buildSttRequest({ key: apiKey });

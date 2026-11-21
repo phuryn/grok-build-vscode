@@ -498,6 +498,14 @@ posted.
 - API-key resolution order (`grok.voiceApiKey` → `GROK_VOICE_API_KEY` → `XAI_API_KEY`)
 - `parseVoiceCommand` / trailing send-phrase detection — the two-word "grok send", tolerant of the "send"→"sent" mishearing, with trailing punctuation kept-not-doubled
 
+### Voice backend coverage (in `npm test`)
+
+- `test/stt-backend.test.ts` covers Auto and strict choices for every provider and credential combination, plus the Google credential priority.
+- `test/google-voice.test.ts` uses an in-process loopback WebSocket server with a fake key. It exercises the production adapter, setup acknowledgement, redaction, raw PCM, transcript revisions, final-only sending, Stop and Cancel, and HTTP and WebSocket rejection. It also checks WAV decoding for recorded clips.
+- `test/voice-routing-host.test.ts` exercises desk and phone routing with fake capture and transcription. It checks the old and new renderer views of availability, saved-key reuse, scoped PCM ownership, setup guidance, and hands-free restarts.
+- `test/voice-settings.dom.test.ts` drives the shared Settings and composer in a simulated DOM. It covers the Google capability gate, desk-only key entry, free-tier disclosure, phone acknowledgement, and missing-key prompts.
+- The [Google file probe](research/google-voice.md#owner-probe) reaches the real Gemini API with an operator-supplied key and stays outside the automated suite.
+
 ### `test/voice-ui.dom.test.ts` — mic button + composer in a real DOM (28 tests)
 
 - The mic-button state machine (idle → connecting → listening → stopped), animated waves, and the brief "connecting…" spinner

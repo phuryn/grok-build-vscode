@@ -799,9 +799,13 @@
       actionLabel: "Open voice settings",
       describe: (s) => (s && s.voiceConfigured)
         ? "Voice is ready on this machine."
+        : typeof s?.voiceBackendState?.hasGoogle === "boolean"
+          ? "Voice needs a Gemini or OpenAI API key, an xAI key, or a signed-in Grok account before the mic can start."
         : "Voice needs a key or a signed-in Grok account before the mic can start.",
       visible: (s, env) => !!(env && !env.isRemote && !env.isDesktop),
-      message: () => ({ type: "openSettings", section: "grok.voiceApiKey" }),
+      message: s => ({ type: "openSettings", section: s?.voiceBackendState?.googlePreference === "google"
+        || (s?.voiceBackendState?.hasGoogle !== undefined && s.voiceBackendState.preference === "auto" && s.voiceBackendState.provider === "agy")
+        ? "grok.voiceGoogleApiKey" : "grok.voiceApiKey" }),
     },
     {
       id: "voiceConfiguredStatus",
@@ -3283,6 +3287,25 @@
     }
     title.appendChild(name);
     title.appendChild(desc);
+    // Optional "where to get it" links under the description, as the key
+    // connectors' "Get a token at" line does. Clicks open outside the webview.
+    const links = typeof row.links === "function" ? row.links(snapshot, env) : row.links;
+    if (Array.isArray(links) && links.length) {
+      const line = document.createElement("div");
+      line.className = "settings-row-links";
+      links.forEach((link, i) => {
+        if (i) line.appendChild(document.createTextNode(" · "));
+        const a = document.createElement("a");
+        a.className = "settings-row-link";
+        a.href = link.href;
+        a.dataset.href = link.href;
+        a.target = "_blank";
+        a.rel = "noopener noreferrer";
+        a.textContent = link.label;
+        line.appendChild(a);
+      });
+      title.appendChild(line);
+    }
     const control = document.createElement("div");
     control.className = "settings-row-control";
     const value = rowValue(row, snapshot);
@@ -3295,7 +3318,7 @@
       select.className = "settings-select";
       select.setAttribute("aria-label", row.title);
       select.disabled = !enabled;
-      for (const opt of row.options || []) {
+      for (const opt of row.optionsFor?.(snapshot) || row.options || []) {
         const option = document.createElement("option");
         option.value = opt.value;
         option.textContent = opt.label;
@@ -4386,6 +4409,14 @@
         });
       });
       body.querySelectorAll(".settings-connector-key-docs").forEach((link) => {
+        link.addEventListener("click", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const url = link.dataset.href || link.href;
+          if (url) openExternalHref(url);
+        });
+      });
+      body.querySelectorAll(".settings-row-link").forEach((link) => {
         link.addEventListener("click", (e) => {
           e.preventDefault();
           e.stopPropagation();

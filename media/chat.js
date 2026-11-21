@@ -15,6 +15,8 @@
       if (namesProvider(message, "muse") && !museAvailable) return false;
       if ((namesProvider(message, "deepseek") || ["installDeepSeek", "cancelDeepSeekInstall", "deepseekConnect", "setDeepSeekHarness"].includes(message.type)) && !deepseekAdvertised) return false;
       if (namesProvider(message, "agy") && !agyAdvertised) return false;
+      if ((message.type === "configureGoogleVoice" || (message.type === "setVoiceBackend" && message.value === "google"))
+        && typeof state.voiceBackendState?.hasGoogle !== "boolean") return false;
       if (IS_REMOTE && (message.type === "agySignIn" || message.type === "deepseekConnect"
         || message.type === "submitDeviceLoginCode" && message.provider === "agy")) {
         if (!hostWait.available()) {
@@ -124,6 +126,7 @@
         if (pending.field === "voiceSendPhrase") value = msg.sendPhrase;
         if (pending.field === "voiceKeyterms") value = msg.keyterms;
         if (pending.field === "voiceBackend") value = msg.backendState && msg.backendState.preference;
+        if (pending.field === "voiceBackend" && msg.backendState?.googlePreference === "google") value = "google";
       }
       if (msg.type === "repos" && pending.message.cwd) {
         const repo = (msg.entries || []).find((entry) => sameCwd(entry.cwd, pending.message.cwd));
@@ -19523,6 +19526,8 @@ ${fullText}`
         ? "Voice control"
         : voiceNeedsGrokAccount()
           ? "Voice needs Grok connected"
+          : typeof state.voiceBackendState?.hasGoogle === "boolean"
+            ? "Voice control — click to set up (needs a Gemini, OpenAI, or xAI credential)"
           : "Voice control — click to set up (needs an OpenAI or xAI credential)";
       micBtn.disabled = false;
     }
@@ -19539,6 +19544,7 @@ ${fullText}`
    *  because the host always sends that field now. */
   function voiceNeedsGrokAccount() {
     const backends = state.voiceBackendState;
+    if (typeof backends?.hasGoogle === "boolean" && (backends.hasGoogle || backends.googlePreference === "google" || state.activeProvider === "agy")) return false;
     if (backends && (backends.hasXai || backends.hasOpenAi)) return false;
     return !!state.providersKnown && !state.voiceConfigured
       && !state.providers.some((provider) => provider.id === "grok" && provider.connected);

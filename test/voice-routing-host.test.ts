@@ -19,7 +19,7 @@ import { Session } from "../src/session";
 import { RemoteClientState } from "../src/remote-client-state";
 import { DEFAULT_SEND_PHRASE } from "../src/voice";
 
-function host(provider: "grok" | "codex" | "claude" = "codex") {
+function host(provider: Session["provider"] = "codex") {
   const s = Object.create(GrokSidebar.prototype) as any;
   s.focused = new Session(); s.focused.cwd = "/repo"; s.focused.provider = provider;
   s.sessionCwd = (session: Session) => session.cwd;
@@ -30,14 +30,19 @@ function host(provider: "grok" | "codex" | "claude" = "codex") {
   s.remoteVoice = new Map(); s.lastVoiceConfiguredByCwd = new Map(); s.lastPostedVoiceConfigured = new Map();
   s.postLocal = vi.fn(); s.sendRemoteClient = vi.fn();
   s.voiceSetting = vi.fn((_cwd: string, _key: string, fallback: any) => fallback);
+  s.readDotEnv = () => ({});
   s.resolveSttApiKey = vi.fn((_cwd: string, backend: string) => backend + "-key");
   s.host = { appendLine: vi.fn(), showErrorMessage: vi.fn(), showWarningMessage: vi.fn() };
   s.voiceGeneration = 1; s.voiceRecorder = { cancel: vi.fn(), active: false };
   return s;
 }
 
-beforeEach(() => { mock.streams.length = 0; mock.startGate = mock.stopGate = undefined; });
-afterEach(() => { vi.restoreAllMocks(); });
+beforeEach(() => {
+  mock.streams.length = 0; mock.startGate = mock.stopGate = undefined;
+  vi.stubEnv("GEMINI_API_KEY", "");
+  vi.stubEnv("GOOGLE_API_KEY", "");
+});
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
 describe("backend-aware host readiness", () => {
   it.each(["grok", "codex", "claude"] as const)("OpenAI-only %s is configured, including its remote destination", provider => {
@@ -71,9 +76,60 @@ describe("backend-aware host readiness", () => {
     s.resolveSttApiKey = (_cwd: string, backend: string) => backend === "openai" ? "key" : undefined;
     s.postVoiceConfigured(); expect(s.postLocal.mock.calls[0][0].value).toBe(false);
   });
+
+  it("advertises Google to new renderers and preserves a valid legacy picker alongside actual mic readiness", () => {
+    const s = host("agy");
+    s.resolveSttApiKey = () => undefined;
+    s.voiceSetting = (_cwd: string, setting: string, fallback: unknown) => setting === "voiceBackend" ? "google" : fallback;
+    s.setStoredGoogleVoiceKeyAvailable(true);
+    const frame = s.postLocal.mock.calls[0][0];
+    expect(frame).toMatchObject({ type: "voiceConfigured", value: true, backendState: {
+      provider: "agy", preference: "auto", googlePreference: "google", hasGoogle: true, backend: "google",
+      backends: { grok: "google", codex: "google", claude: "google", muse: "google", agy: "google", deepseek: "google" },
+    } });
+    expect(s.sendRemoteClient).toHaveBeenCalledWith("phone", frame, "/repo");
+    s.setStoredGoogleVoiceKeyAvailable(false);
+    expect(s.postLocal.mock.calls[1][0]).toMatchObject({ value: false, backendState: { hasGoogle: false, googlePreference: "google", backends: { agy: null } } });
+  });
 });
 
 describe("remote PCM ownership and pinned backend", () => {
+  it("Auto uses the stored Gemini key for Antigravity PCM, including early chunks and finalized hands-free send", async () => {
+    const s = host("agy");
+    s.agySavedKey = vi.fn(async () => "stored-gemini-key");
+    s.setStoredGoogleVoiceKeyAvailable(true);
+    s.sendRemoteClient.mockClear();
+    const start = s.handleRemoteVoiceStart("phone", s.focused);
+    s.handleRemoteVoiceChunk("phone", "AQACAA==");
+    await start;
+    const stream = mock.streams.at(-1);
+    expect(stream.backend).toBe("google");
+    expect(stream.start).toHaveBeenCalledWith(expect.objectContaining({ apiKey: "stored-gemini-key", model: "gemini-3.5-transcribe-live" }));
+    expect(stream.writePcm).toHaveBeenCalledWith(Buffer.from([1, 0, 2, 0]));
+    stream.emit("partial", { text: "draft grok send", speechFinal: false });
+    expect(s.sendRemoteClient.mock.calls.map((call: any[]) => call[1].type)).not.toContain("voiceSubmit");
+    stream.emit("partial", { text: "final grok send", speechFinal: true });
+    await s.remoteVoice.get("phone").starting;
+    expect(s.sendRemoteClient).toHaveBeenCalledWith("phone", { type: "voiceSubmit", text: "final" }, "/repo");
+    expect(mock.streams.at(-1).backend).toBe("google");
+    expect(JSON.stringify(s.sendRemoteClient.mock.calls)).not.toContain("stored-gemini-key");
+    s.dropRemoteVoice("phone");
+  });
+
+  it("a missing Google key gives the desk the Gemini setting and tells the phone what the host needs", async () => {
+    const s = host("agy");
+    s.resolveSttApiKey = () => undefined;
+    s.host.showInformationMessage = vi.fn(async () => "Open Settings");
+    s.host.openSettings = vi.fn();
+    const prompted = vi.spyOn(s, "promptVoiceKeySetup");
+    await s.handleVoiceStart();
+    expect(s.host.showInformationMessage).toHaveBeenCalledWith(expect.stringContaining("Gemini API key"), "Open Settings", "Get a Key");
+    await prompted.mock.results[0].value;
+    expect(s.host.openSettings).toHaveBeenCalledWith("grok.voiceGoogleApiKey");
+    await s.handleRemoteVoiceStart("phone", s.focused);
+    expect(s.sendRemoteClient).toHaveBeenCalledWith("phone", { type: "error", text: expect.stringContaining("Gemini API key") });
+  });
+
   it.each([["codex", "openai"], ["grok", "xai"], ["claude", "xai"]] as const)("selects %s -> %s once and retains it over hands-free restart", async (provider, backend) => {
     const s = host(provider); await s.handleRemoteVoiceStart("phone", s.focused);
     const first = mock.streams.at(-1); expect(first.backend).toBe(backend);
@@ -137,6 +193,16 @@ describe("remote PCM ownership and pinned backend", () => {
 });
 
 describe("local recording backend", () => {
+  it("passes the Google backend and fresh key through the desk capture wrapper", async () => {
+    const s = host("agy");
+    s.localVoiceCredentialCwd = "/repo";
+    s.agySavedKey = vi.fn(async () => "stored-gemini-key");
+    s.voiceStreamCtx = { backend: "google", key: "old-key", model: "gemini-3.5-transcribe-live", ffmpegPath: "ffmpeg", phrase: DEFAULT_SEND_PHRASE, keyterms: [], generation: 1 };
+    await s.openVoiceStream();
+    expect(mock.streams.at(-1).start).toHaveBeenCalledWith(expect.objectContaining({ backend: "google", apiKey: "stored-gemini-key" }));
+    s.stopVoiceInput();
+  });
+
   it("keeps the backend across finalized send-phrase restarts and ignores partial commands", async () => {
     const s = host(); s.localVoiceCredentialCwd = "/repo";
     s.voiceStreamCtx = { backend: "openai", key: "openai-key", model: "gpt-live-transcribe", ffmpegPath: "ffmpeg", phrase: DEFAULT_SEND_PHRASE, keyterms: [], generation: 1 };

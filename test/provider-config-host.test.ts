@@ -7,6 +7,8 @@ import { Session } from "../src/session";
 import { RemoteClientState } from "../src/remote-client-state";
 import { Uri } from "../src/host";
 import { HOST_CAPABILITIES } from "../src/protocol";
+import { parseWebviewMsg } from "../src/desktop/webview-msg-validate";
+import { INBOUND_DISPOSITION, allowFromRemote, remoteRequiresBoundSession } from "../src/remote-policy";
 import { MISSING_PROVIDER_CONFIG_STAMP } from "../src/provider-config";
 import { GLOBAL_CONFIG_STUB } from "../src/grok-config";
 import { Window } from "happy-dom";
@@ -68,6 +70,34 @@ describe("provider config host dispatch", () => {
     expect(sidebar.host.showInputBox).toHaveBeenCalledWith(expect.objectContaining({ password: true }));
     expect(update).toHaveBeenCalledWith("voiceOpenAiApiKey", "test-key", "global");
     expect(sidebar.postLocal).not.toHaveBeenCalledWith(expect.objectContaining({ value: "test-key" }));
+  });
+
+  it("persists the Google selection and a write-only host key through standalone Settings", async () => {
+    const sidebar = host(); const update = vi.fn(async () => {});
+    sidebar.host.getConfiguration = () => ({ update, inspect: () => ({ workspaceValue: "auto" }) });
+    sidebar.host.isInWorkspace = () => true;
+    sidebar.host.showInputBox = vi.fn(async () => " fake-gemini-key ");
+    sidebar.postVoiceConfigured = vi.fn();
+    await sidebar.onSettingsPanelMessage({ type: "setVoiceBackend", value: "google" });
+    await sidebar.onSettingsPanelMessage({ type: "configureGoogleVoice" });
+    expect(update.mock.calls).toEqual([
+      ["voiceBackend", "google", "workspace"],
+      ["voiceGoogleApiKey", "fake-gemini-key", "workspace"],
+    ]);
+    expect(sidebar.host.showInputBox).toHaveBeenCalledWith(expect.objectContaining({ password: true, title: "Google voice API key" }));
+    expect(sidebar.postVoiceConfigured).toHaveBeenCalledTimes(2);
+    expect(sidebar.postLocal).not.toHaveBeenCalled();
+  });
+
+  it("allows the remote Google preference but keeps its key dialog local to the host", () => {
+    const select = { type: "setVoiceBackend", value: "google" } as const;
+    const configure = { type: "configureGoogleVoice" } as const;
+    expect(parseWebviewMsg(select)).toEqual(select);
+    expect(parseWebviewMsg(configure)).toEqual(configure);
+    expect(allowFromRemote(select.type, "propose")).toBe(true);
+    expect(INBOUND_DISPOSITION[configure.type]).toBe("host-local");
+    expect(allowFromRemote(configure.type, "full")).toBe(false);
+    expect(remoteRequiresBoundSession("setVoiceBackend")).toBe(false);
   });
 
   function settingsHost() {

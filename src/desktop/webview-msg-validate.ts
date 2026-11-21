@@ -80,9 +80,10 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
 
   switch (type as WebviewMsg["type"]) {
     case "setVoiceBackend":
-      if (raw.value !== "auto" && raw.value !== "xai" && raw.value !== "openai") return null;
+      if (raw.value !== "auto" && raw.value !== "xai" && raw.value !== "openai" && raw.value !== "google") return null;
       break;
     case "configureOpenAiVoice":
+    case "configureGoogleVoice":
       break;
     case "cloudHostUpdate":
       return Object.keys(raw).length === 1 ? { type: "cloudHostUpdate" } : null;

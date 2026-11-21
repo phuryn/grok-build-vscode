@@ -1,16 +1,16 @@
 # Voice control — setup & advanced configuration
 
-The microphone button dictates speech using OpenAI Realtime transcription or xAI Speech-to-Text. Click it, wait for the listening waves, and speak — words appear live. Say **"grok send"** to submit once the phrase is finalized and keep listening for the next message. Click the mic again to finalize the recording and keep the text.
+The microphone button dictates speech using xAI, OpenAI, or Google. Click it, wait for the listening waves, and speak. Words appear live. Say **"grok send"** to submit once the phrase is finalized and keep listening for the next message. Click the mic again to finalize the recording and keep the text.
 
 In Settings → Voice, **Transcription backend** defaults to Auto:
 
-| Agent | Preferred backend | When its credential is absent |
-|---|---|---|
-| Codex | OpenAI | xAI |
-| Grok | xAI | OpenAI |
-| Claude | xAI | OpenAI |
+| Agent | Preferred backend |
+|---|---|
+| Codex | OpenAI |
+| Antigravity | Google |
+| Other agents | xAI |
 
-Existing xAI-only Codex users keep working dictation. An explicit backend choice requires that backend's credential. The backend is pinned until recording ends, including hands-free restarts; a service error never switches vendors.
+If the preferred credential is unavailable, Auto checks xAI, OpenAI, then Google and uses the first available credential. An explicit backend choice requires that backend's credential. The recording keeps its backend through hands-free restarts and service errors.
 
 ## 1. Authentication
 
@@ -42,7 +42,34 @@ project's `.env` or the host environment — the setting wins, and a project `.e
 overrides the environment. For Codex- and Claude-only users this removes the need
 for an xAI key at all; the usage is billed to that OpenAI account either way.
 
-## 2. ffmpeg — required for the VS Code microphone
+### Google — Gemini API key
+
+Use **Set API key** next to **Google voice API key** in Settings → Voice to set
+`grok.voiceGoogleApiKey` on the host. If empty, the host reuses the Gemini API
+key already saved for Antigravity, then checks `GEMINI_API_KEY` and
+`GOOGLE_API_KEY` in that order. A project's `.env` overrides the host environment
+for each variable. Create a key in [Google AI Studio](https://aistudio.google.com/api-keys).
+
+**Which key?**
+
+- **A Google sign-in or a Google AI subscription is not a key.** Signing in to
+  Antigravity with Google, or a Google AI Pro or Ultra plan, gives voice
+  nothing on its own. Voice needs a Gemini API key from AI Studio.
+- **A free key works.** A key from a project without billing uses Google's free
+  tier, which costs nothing, but there Google may use your audio to improve its
+  products, and its limits are lower.
+- **A paid key keeps your audio out of that.** Link a billing account to the
+  key's project in AI Studio. Google may ask for a prepayment first. Live
+  transcription is billed per minute; see Cost below.
+- **Subscription credits can pay for it.** Google AI Pro and Ultra may include
+  monthly Google Cloud credits through the Google Developer Program. Once you
+  claim them in your Developer Program profile, they can pay for a paid key's
+  usage. Check your plan's benefits for the amount.
+- If Google refuses the key, the mic says why: a key Google does not accept,
+  or a project that is out of credits or over its spending cap (raise it in
+  AI Studio under Spend).
+
+## 2. ffmpeg — required for the desk microphone
 
 Recording the microphone uses [`ffmpeg`](https://ffmpeg.org). Most dev machines already have it; if voice reports it missing, install it:
 
@@ -59,10 +86,6 @@ If it's installed somewhere off `PATH`, point `grok.ffmpegPath` at the binary.
 
 ## 3. Cost
 
-Both backends are metered by audio duration, and the surprise worth avoiding is
-discovering that *after* wiring up a key — so the numbers are here rather than
-behind a link.
-
 **xAI**, measured end-to-end: **$0.10/hr** batch, **$0.20/hr** streaming. In
 practice ~500 words ≈ ½–1¢; a heavy 10,000-word day ≈ 10¢. Whether it draws on
 your subscription or is billed pay-as-you-go depends on the credential used. How
@@ -73,14 +96,18 @@ ChatGPT subscription, whatever plan you are on. Current per-minute rates are on
 the [OpenAI model page](https://developers.openai.com/api/docs/models/gpt-live-transcribe);
 they are not repeated here because they move.
 
+**Google** offers free and paid Gemini API tiers. On the free tier, Google may
+use your audio to improve its products. See [Gemini API pricing](https://aistudio.google.com/docs/pricing#gemini-3.5-transcribe).
+
 ## 4. Other settings
 
 | Setting | Default | What it does |
 |---|---|---|
-| `grok.voiceBackend` | `auto` | Credential-based routing above; `xai` or `openai` pins an explicit choice. |
+| `grok.voiceBackend` | `auto` | Credential-based routing above. Choose `xai`, `openai`, or `google` to require that backend. |
 | `grok.voiceOpenAiApiKey` | `""` | OpenAI API key override; empty uses `OPENAI_API_KEY`. |
 | `grok.voiceOpenAiModel` | `gpt-live-transcribe` | Realtime model; also supports `gpt-4o-transcribe`, `gpt-4o-mini-transcribe`, and final-only `whisper-1`. |
-| `grok.voiceStreaming` | `true` | Live transcription. Disable for local one-shot batch mode after Stop; OpenAI batch uses `gpt-4o-transcribe`. Browser capture always streams. On xAI, batch costs $0.10/hr against streaming's $0.20/hr. |
+| `grok.voiceGoogleApiKey` | `""` | Gemini API key override. Empty uses the saved Antigravity Gemini API key, then `GEMINI_API_KEY` or `GOOGLE_API_KEY`. |
+| `grok.voiceStreaming` | `true` | Live transcription. Disable for local transcription after Stop. OpenAI batch uses `gpt-4o-transcribe`. Google sends the recorded clip through its Live API. Browser capture always streams. On xAI, batch costs $0.10/hr against streaming's $0.20/hr. |
 | `grok.voiceSendPhrase` | `grok send` | Spoken phrase that auto-submits when it ends a transcription. Empty disables hands-free sending. |
 | `grok.voiceKeyterms` | `[]` | Words or phrases that help streaming recognition spell code and project vocabulary. The send phrase and `Grok` come first, up to 100 hints of 50 characters each. Each backend translates this list into its model's vocabulary format. |
 | `grok.voiceLanguage` | `""` | Recognition language hint; xAI also enables written formatting for numbers, currencies and units. Empty uses the backend default. |
@@ -88,4 +115,4 @@ they are not repeated here because they move.
 
 ## Privacy
 
-Voice is opt-in per use. Audio, the selected backend's credential, and streaming language/vocabulary hints go to that backend. Keys stay on the host. AFK Pilot microphone audio crosses the linked relay; the host performs transcription and sample-rate conversion. Streaming audio is never persisted or content-logged. Explicit local batch mode records a temporary WAV and deletes it afterward. See [privacy](privacy.md#voice-input-speech-to-text) and [adapter evidence](../research/openai-voice.md).
+Voice is opt-in per use. Audio, the selected backend's credential, and streaming language and vocabulary hints go to that backend. Keys stay on the host. AFK Pilot microphone audio crosses the linked relay. The host performs transcription and any sample-rate conversion. Streaming audio is never persisted or content-logged. Explicit local batch mode records a temporary WAV and deletes it afterward. See [privacy](privacy.md#voice-input-speech-to-text), [OpenAI adapter notes](../research/openai-voice.md), and [Google adapter notes](../research/google-voice.md).

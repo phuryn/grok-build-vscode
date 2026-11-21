@@ -24,24 +24,43 @@
     install(api) {
       if (!api || api.ROWS.some(row => row.id === "voiceBackend")) return;
       const known = s => !!(s && s.voiceBackendState);
+      const google = s => typeof s?.voiceBackendState?.hasGoogle === "boolean";
+      const googleDataUse = "On Google’s free tier, Google may use your audio to improve its products.";
       api.ROWS.splice(api.ROWS.findIndex(row => row.id === "voiceSendPhrase"), 0, {
         id: "voiceBackend", category: "voice", title: "Transcription backend", kind: "select",
         description: "Auto prefers OpenAI for Codex and xAI for Grok or Claude, using the other when its credential is available. A change applies to the next recording.",
+        describe(s) {
+          return google(s)
+            ? "Auto prefers Google for Antigravity, OpenAI for Codex, and xAI for other agents. If needed, it tries available credentials in this order: xAI, OpenAI, Google. A change applies to the next recording."
+            : this.description;
+        },
         options: [{ value: "auto", label: "Auto" }, { value: "xai", label: "xAI" }, { value: "openai", label: "OpenAI" }],
+        optionsFor(s) { return google(s) ? [...this.options, { value: "google", label: "Google" }] : this.options; },
         defaultValue: "auto", visible: known,
-        get: s => s.voiceBackendState.preference,
+        get: s => (google(s) && s.voiceBackendState.googlePreference) || s.voiceBackendState.preference,
         message: value => ({ type: "setVoiceBackend", value }),
       }, {
         id: "voiceBackendAvailability", category: "voice", title: "Transcription credentials", kind: "status",
         visible: known,
-        describe: s => "OpenAI: " + (s.voiceBackendState.hasOpenAi ? "key available" : "needs an API key")
+        describe: (s, env) => "OpenAI: " + (s.voiceBackendState.hasOpenAi ? "key available" : "needs an API key")
           + ". xAI: " + (s.voiceBackendState.hasXai ? "credential available" : "needs a key or Grok sign-in")
-          + ". Codex / ChatGPT sign-in does not include transcription API access. OpenAI API usage is billed separately.",
+          + (google(s) ? ". Google: " + (s.voiceBackendState.hasGoogle ? "key available" : "needs a Gemini API key") : "")
+          + ". Codex / ChatGPT sign-in does not include transcription API access. OpenAI API usage is billed separately."
+          + (google(s) && env?.isRemote ? " " + googleDataUse : ""),
       }, {
         id: "configureOpenAiVoice", category: "voice", title: "OpenAI voice API key", kind: "action",
         description: "Set the key on this host, or use OPENAI_API_KEY in its environment. The key is never sent to the chat or remote clients.",
         actionLabel: "Set API key", hostLocal: true, visible: known,
         message: () => ({ type: "configureOpenAiVoice" }),
+      }, {
+        id: "configureGoogleVoice", category: "voice", title: "Google voice API key", kind: "action",
+        description: "Uses the Gemini API key saved for Antigravity, or set one here. A free key works, but Google may then use your audio to improve its products. Google AI Pro and Ultra credits can pay for a paid key.",
+        links: [
+          { label: "Get a key in AI Studio", href: "https://aistudio.google.com/api-keys" },
+          { label: "Which key?", href: "https://github.com/phuryn/grok-build-vscode/blob/main/docs/voice-setup.md#google--gemini-api-key" },
+        ],
+        actionLabel: "Set API key", hostLocal: true, visible: google,
+        message: () => ({ type: "configureGoogleVoice" }),
       });
     },
   };
@@ -102,6 +121,7 @@
     "recheckConnection", "refreshProviders", "retryProviderSession", "listSessions", "listRepoSessions", "selectRepo", "toggleRepoPin", "setRepoArchived", "setRepoColor", "setRepoIcon", "toggleSessionPin", "resumeSession", "renameSession", "deleteSession",
       "clearAllSessions", "pickFile", "mentionQuery", "addMentionFile", "listProjectDir", "readProjectFile", "writeProjectFile", "gitStatus", "gitFileDiff", "turnFileDiff", "turnFileOpenDiff", "gitRun", "pasteImage", "pasteText", "uploadFile", "voiceStart", "voiceStop",
       "remoteVoiceStart", "remoteVoiceChunk", "remoteVoiceStop", "setVoiceBackend", "configureOpenAiVoice",
+      "configureGoogleVoice",
     "queueSend", "dequeueSend", "clearQueuedSends", "steerSend", "turnFeedback", "forkSession", "forkAtReply", "setSteerByDefault", "setPromptNav", "setAutoCompact", "setPinLiveWorkflows", "setExpandDiffCard",
     "setSoundNotifications", "setProcessingSound", "setInputNeededSound", "setReadRepliesAloud", "setSummarizeRepliesAloud", "setVoiceSendPhrase", "setVoiceKeyterms", "setTelemetryEnabled", "setThumbsFeedback", "setDesktopTray", "summarizeSpeech", "requestImageFull", "requestImageOriginal", "composerFocus",
     "newWorktreeSession", "applyWorktree", "removeWorktree", "rewindSession", "editLastMessage", "uiConfirmAnswer", "workflowControl", "refreshContextDetails",

@@ -129,7 +129,9 @@ import { buildReapCandidates, selectReapable, computeDot, Dot } from "./session-
 import { resolveVoiceKey, extractGrokAuthKey, parseVoiceCommand, buildSttKeyterms, voiceSettingForRepo, voiceSettingWriteTarget, sanitizeVoiceSendPhrase, sanitizeVoiceKeyterms, voiceConfiguredFingerprint, DEFAULT_SEND_PHRASE, MAX_RECORDING_SECONDS } from "./voice";
 import { VoiceRecorder, transcribeAudio, resolveWindowsAudioDevice } from "./voice-recorder";
 import { PcmVoiceStreamer, PcmSttStream, createPcmVoiceStreamer, VoiceStreamer } from "./voice-streamer";
-import { pickSttBackend, resolveOpenAiVoiceKey, SttBackend, SttPreference, VoiceBackendState, parseFinalVoiceCommand } from "./voice";
+import { pickSttBackend, resolveOpenAiVoiceKey, SttBackend, VoiceBackendState, parseFinalVoiceCommand } from "./voice";
+import { resolveGoogleVoiceKey, sttKeySetting, sttPreference } from "./voice";
+import { GOOGLE_STT_MODEL } from "./google-voice";
 import { OPENAI_STT_MODEL } from "./openai-voice";
 import { summarizeForSpeech } from "./speech-summary";
 import type { PromptResultMeta, PromptUsage, SessionInfoContext } from "./acp-dispatch";
@@ -945,6 +947,8 @@ export class GrokSidebar {
     },
   });
   private voiceRecorder = new VoiceRecorder();
+  /** Availability only. Read the stored key for the recording that uses it. */
+  private googleVoiceKeyAvailable?: boolean;
   private voiceTempPath?: string;
   private voiceBatchCtx?: { backend: SttBackend; key: string };
   private voiceStreamer?: VoiceStreamer;
@@ -1155,6 +1159,7 @@ export class GrokSidebar {
     "setVoiceKeyterms",
     "setVoiceBackend",
     "configureOpenAiVoice",
+    "configureGoogleVoice",
     "setTelemetryEnabled",
     "setThumbsFeedback",
     "setDesktopTray",
@@ -1372,6 +1377,9 @@ export class GrokSidebar {
     // default "auto" resolution and diverge from a configured `cmd` pref.
     this.applyTerminalShellPref();
     this.mcpConnectorKeysReady = this.loadMcpConnectorKeys();
+    void this.agySavedKey().then(key => {
+      if (this.googleVoiceKeyAvailable === undefined) this.setStoredGoogleVoiceKeyAvailable(!!key?.trim());
+    });
     this.routineRuns = new RoutineRunStore({
       dir: `${path.join(resolveGrokHome(process.env), "client-state").replace(/\\/g, "/")}/routine-runs`,
       fs,
@@ -3651,6 +3659,7 @@ export class GrokSidebar {
       if (
         e.affectsConfiguration("grok.voiceApiKey") ||
         e.affectsConfiguration("grok.voiceOpenAiApiKey") ||
+        e.affectsConfiguration("grok.voiceGoogleApiKey") ||
         e.affectsConfiguration("grok.voiceBackend") ||
         e.affectsConfiguration("grok.ffmpegPath") ||
         e.affectsConfiguration("grok.voiceSendPhrase") ||
@@ -10235,6 +10244,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         fail("Antigravity sign-out failed. The account remains connected.");
         return;
       }
+      this.setStoredGoogleVoiceKeyAvailable(false);
       await this.refreshAgySaved();
       await this.finishProviderLogout("agy", opts.report);
       return;
@@ -10285,6 +10295,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         return;
       }
     }
+    if (clearAll) this.setStoredGoogleVoiceKeyAvailable(false);
     await this.refreshAgySaved();
     await this.finishProviderLogout("agy", opts.report);
   }
@@ -14196,7 +14207,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         break;
       }
       case "setVoiceBackend": {
-        if (!["auto", "xai", "openai"].includes(msg.value)) break;
+        if (!["auto", "xai", "openai", "google"].includes(msg.value)) break;
         const cfg = this.host.getConfiguration("grok", messageCwd);
         await cfg.update("voiceBackend", msg.value,
           voiceSettingWriteTarget(cfg.inspect("voiceBackend"), this.host.isInWorkspace(messageCwd)));
@@ -14214,6 +14225,20 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         const cfg = this.host.getConfiguration("grok", messageCwd);
         await cfg.update("voiceOpenAiApiKey", value.trim(),
           voiceSettingWriteTarget(cfg.inspect("voiceOpenAiApiKey"), this.host.isInWorkspace(messageCwd)));
+        this.postVoiceConfigured();
+        break;
+      }
+      case "configureGoogleVoice": {
+        const value = await this.host.showInputBox({
+          title: "Google voice API key",
+          prompt: "Use a Gemini API key. Saved in host settings. Empty clears the override.",
+          password: true,
+          placeHolder: "Gemini API key",
+        });
+        if (value === undefined) break;
+        const cfg = this.host.getConfiguration("grok", messageCwd);
+        await cfg.update("voiceGoogleApiKey", value.trim(),
+          voiceSettingWriteTarget(cfg.inspect("voiceGoogleApiKey"), this.host.isInWorkspace(messageCwd)));
         this.postVoiceConfigured();
         break;
       }
@@ -14538,6 +14563,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
               await this.postAgyChoice("The key could not be saved on this machine.", requester);
               break;
             }
+            this.setStoredGoogleVoiceKeyAvailable(true);
           } else if (!(await this.agySavedKey())) {
             await this.postAgyChoice("Paste a Gemini API key.", requester);
             break;
@@ -17734,7 +17760,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   }
 
   /** Deliberately separate from the xAI resolver used by summarizeSpeech. */
-  private resolveSttApiKey(cwd: string, backend: SttBackend): string | undefined {
+  private resolveSttApiKey(cwd: string, backend: Exclude<SttBackend, "google">): string | undefined {
     if (backend === "xai") return this.resolveVoiceApiKey(cwd);
     return resolveOpenAiVoiceKey({
       setting: this.voiceSetting(cwd, "voiceOpenAiApiKey", ""),
@@ -17742,11 +17768,27 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     });
   }
 
+  private setStoredGoogleVoiceKeyAvailable(available: boolean): void {
+    const changed = available !== !!this.googleVoiceKeyAvailable;
+    this.googleVoiceKeyAvailable = available;
+    if (changed) this.postVoiceConfigured();
+  }
+
+  private async readGoogleVoiceKey(cwd: string): Promise<string | undefined> {
+    const setting = this.voiceSetting(cwd, "voiceGoogleApiKey", "").trim();
+    if (setting) return setting;
+    return resolveGoogleVoiceKey({ savedKey: await this.agySavedKey(), env: { ...process.env, ...this.readDotEnv(cwd) } });
+  }
+
   private voiceBackendState(cwd: string, provider: AcpProvider): VoiceBackendState {
     const raw = this.voiceSetting<string>(cwd, "voiceBackend", "auto");
-    const preference: SttPreference = raw === "xai" || raw === "openai" ? raw : "auto";
-    const state = { provider, preference, hasXai: !!this.resolveSttApiKey(cwd, "xai"), hasOpenAi: !!this.resolveSttApiKey(cwd, "openai") };
-    return { ...state, backend: pickSttBackend(state), backends: {
+    const preference = sttPreference(raw);
+    const hasGoogle = !!this.voiceSetting(cwd, "voiceGoogleApiKey", "").trim() || !!this.googleVoiceKeyAvailable
+      || !!resolveGoogleVoiceKey({ env: { ...process.env, ...this.readDotEnv(cwd) } });
+    const state = { provider, preference, hasGoogle, hasXai: !!this.resolveSttApiKey(cwd, "xai"), hasOpenAi: !!this.resolveSttApiKey(cwd, "openai") };
+    return { ...state, preference: preference === "google" ? "auto" : preference,
+      ...(preference === "google" ? { googlePreference: "google" } : {}),
+      backend: pickSttBackend(state), backends: {
       grok: pickSttBackend({ ...state, provider: "grok" }) ?? null,
       codex: pickSttBackend({ ...state, provider: "codex" }) ?? null,
       claude: pickSttBackend({ ...state, provider: "claude" }) ?? null,
@@ -18052,17 +18094,19 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   }
 
   /** Show actionable guidance for setting up the voice API key. */
-  private async promptVoiceKeySetup(): Promise<void> {
+  private async promptVoiceKeySetup(cwd: string, provider: AcpProvider): Promise<void> {
+    const preference = sttPreference(this.voiceSetting(cwd, "voiceBackend", "auto"));
+    const google = preference === "google" || (preference === "auto" && provider === "agy");
     const pick = await this.host.showInformationMessage(
-      "Voice needs a credential for the selected backend. Set an OpenAI API key (grok.voiceOpenAiApiKey / OPENAI_API_KEY), or use an xAI key / Grok sign-in. Codex and ChatGPT sign-in do not include transcription API access.",
+      "Voice needs a credential for the selected backend. Set a Gemini API key (grok.voiceGoogleApiKey), an OpenAI API key (grok.voiceOpenAiApiKey / OPENAI_API_KEY), or use an xAI key / Grok sign-in. Codex and ChatGPT sign-in do not include transcription API access.",
       "Open Settings",
       "Get a Key",
     );
     if (pick === "Open Settings") {
       if (this.host.canOpenSettingsEditor) await this.openSettingsEditor("voice");
-      else await this.host.openSettings("grok.voice");
+      else await this.host.openSettings(google ? sttKeySetting("google") : "grok.voice");
     } else if (pick === "Get a Key") {
-      await this.host.openExternal("https://platform.openai.com/api-keys");
+      await this.host.openExternal(google ? "https://aistudio.google.com/api-keys" : "https://platform.openai.com/api-keys");
     }
   }
 
@@ -18132,9 +18176,9 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     const cwd = this.sessionCwd(session);
     const credentialCwd = this.sessionCwd(session);
     const backend = this.voiceBackendState(credentialCwd, session.provider).backend;
-    const key = backend && this.resolveSttApiKey(credentialCwd, backend);
-    if (!key || !backend) {
-      void this.promptVoiceKeySetup();
+    let key = backend && backend !== "google" ? this.resolveSttApiKey(credentialCwd, backend) : undefined;
+    if (!backend || (backend !== "google" && !key)) {
+      void this.promptVoiceKeySetup(credentialCwd, session.provider);
       this.postLocal({ type: "voiceError" });
       return;
     }
@@ -18144,6 +18188,16 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     }
     const generation = ++this.voiceGeneration;
     this.localVoiceCredentialCwd = credentialCwd;
+    if (backend === "google") {
+      key = await this.readGoogleVoiceKey(credentialCwd);
+      if (generation !== this.voiceGeneration) return;
+    }
+    if (!key) {
+      this.stopVoiceInput();
+      void this.promptVoiceKeySetup(credentialCwd, session.provider);
+      this.postLocal({ type: "voiceError" });
+      return;
+    }
     const cfg = this.host.getConfiguration("grok");
     // Resolve before spawning. A stripped GUI PATH, a Cellar directory pasted
     // out of `brew info`, and "not installed at all" are three problems with
@@ -18230,15 +18284,15 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       try { resolved = await resolveWindowsAudioDevice(ffmpegPath, (m) => this.host.appendLine(m)); } catch { /* streamer surfaces it */ }
     }
     if (generation !== this.voiceGeneration) return;
-    const model = this.voiceSetting(cwd, "voiceOpenAiModel", OPENAI_STT_MODEL);
+    const model = backend === "google" ? GOOGLE_STT_MODEL : this.voiceSetting(cwd, "voiceOpenAiModel", OPENAI_STT_MODEL);
     this.voiceStreamCtx = { key, backend, model, ffmpegPath, device: resolved, phrase, keyterms, language, generation };
     this.voiceFinalizing = false;
-    await this.openVoiceStream();
+    await this.openVoiceStream(false);
   }
 
   /** Open (or re-open after a "grok send") a streaming session from the stored
    *  context. Late events from a superseded streamer are ignored via identity. */
-  private async openVoiceStream(): Promise<void> {
+  private async openVoiceStream(refreshGoogle = true): Promise<void> {
     const ctx = this.voiceStreamCtx;
     if (!ctx) return;
     // Re-resolve the credential on each (re)open so a "grok send" hands-free
@@ -18246,7 +18300,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // reusing a possibly-stale cached one (Codex #7). Keep the old key if the
     // fresh read comes back empty — it'll 401 with the source-aware guidance.
     const cwd = this.localVoiceCredentialCwd ?? this.workspaceRoot();
-    const fresh = this.resolveSttApiKey(cwd, ctx.backend);
+    const fresh = ctx.backend === "google"
+      ? refreshGoogle ? await this.readGoogleVoiceKey(cwd) : ctx.key
+      : this.resolveSttApiKey(cwd, ctx.backend);
+    if (this.voiceStreamCtx !== ctx || ctx.generation !== this.voiceGeneration) return;
     if (fresh) ctx.key = fresh;
     const streamer = new VoiceStreamer();
     this.voiceStreamer = streamer;
@@ -18274,7 +18331,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       if (!this.voiceFinalizing) {
         if (/\b(401|403)\b|rejected/i.test(e.message)) {
           void this.host.showErrorMessage(e.message, "Open Settings").then((pick) => {
-            if (pick === "Open Settings") void this.host.openSettings(ctx.backend === "openai" ? "grok.voiceOpenAiApiKey" : "grok.voiceApiKey");
+            if (pick === "Open Settings") void this.host.openSettings(sttKeySetting(ctx.backend));
           });
         } else {
           this.host.showErrorMessage(`Voice transcription failed: ${e.message}`);
@@ -18317,7 +18374,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         // (re-login or set a dedicated key); offer the settings shortcut.
         const pick = await this.host.showErrorMessage(msg, "Open Settings");
         if (pick === "Open Settings") {
-          await this.host.openSettings(ctx.backend === "openai" ? "grok.voiceOpenAiApiKey" : "grok.voiceApiKey");
+          await this.host.openSettings(sttKeySetting(ctx.backend));
         }
       } else {
         this.host.showErrorMessage(msg);
@@ -18431,7 +18488,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     }
     const cwd = this.localVoiceCredentialCwd ?? this.workspaceRoot();
     const batch = this.voiceBatchCtx;
-    const key = batch && (this.resolveSttApiKey(cwd, batch.backend) || batch.key);
+    const key = batch && (batch.backend === "google" ? batch.key : this.resolveSttApiKey(cwd, batch.backend) || batch.key);
     if (!key) {
       this.voiceRecorder.cancel();
       this.releaseVoice(this.localVoiceCwd);
@@ -18475,7 +18532,11 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     } catch (e) {
       if (generation !== this.voiceGeneration) return;
       this.host.appendLine(`[voice] transcription failed: ${(e as Error).message}`);
-      this.host.showErrorMessage((e as Error).message);
+      if (batch?.backend === "google" && /rejected/i.test((e as Error).message)) {
+        void this.host.showErrorMessage((e as Error).message, "Open Settings").then(pick => {
+          if (pick === "Open Settings") void this.host.openSettings(sttKeySetting("google"));
+        });
+      } else this.host.showErrorMessage((e as Error).message);
       this.postLocal({ type: "voiceError" });
     } finally {
       try { if (tempPath) fs.unlinkSync(tempPath); } catch { /* best effort */ }
@@ -18493,7 +18554,11 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     clientId: string,
     entry: RemoteVoiceEntry,
   ): Promise<void> {
-    const key = this.resolveSttApiKey(entry.credentialCwd, entry.backend) || entry.key;
+    const key = entry.backend === "google"
+      ? await this.readGoogleVoiceKey(entry.credentialCwd) || entry.key
+      : this.resolveSttApiKey(entry.credentialCwd, entry.backend) || entry.key;
+    if (this.remoteVoice.get(clientId) !== entry) return;
+    if (!key) throw new Error("Voice needs a Gemini API key on the host. Set it in Settings → Voice.");
     entry.key = key;
     const streamer = createPcmVoiceStreamer(entry.backend);
     entry.streamer = streamer;
@@ -18542,8 +18607,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   private async handleRemoteVoiceStart(clientId: string, session: Session): Promise<void> {
     const credentialCwd = this.sessionCwd(session);
     const backend = this.voiceBackendState(credentialCwd, session.provider).backend;
-    const key = backend && this.resolveSttApiKey(credentialCwd, backend);
-    if (!backend || !key) {
+    const key = backend && backend !== "google" ? this.resolveSttApiKey(credentialCwd, backend) : "";
+    if (!backend || (backend !== "google" && !key)) {
       this.rememberVoiceConfigured(credentialCwd, false);
       const payload = this.voiceConfiguredMsg(credentialCwd, false, session.provider);
       this.deliverVoiceConfigured(`remote:${clientId}`, payload, () => {
@@ -18552,7 +18617,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       this.sendRemoteClient(clientId, { type: "voiceError" });
       this.sendRemoteClient(clientId, {
         type: "error",
-        text: "Voice needs a credential for the selected backend on the host: an OpenAI API key, or an xAI key / Grok sign-in. Codex sign-in does not include transcription API access.",
+        text: "Voice needs a credential for the selected backend on the host: a Gemini API key, an OpenAI API key, or an xAI key / Grok sign-in. Codex sign-in does not include transcription API access.",
       });
       return;
     }
@@ -18578,8 +18643,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       session,
       streamer: createPcmVoiceStreamer(backend),
       backend,
-      key,
-      model: this.voiceSetting(credentialCwd, "voiceOpenAiModel", OPENAI_STT_MODEL),
+      key: key || "",
+      model: backend === "google" ? GOOGLE_STT_MODEL : this.voiceSetting(credentialCwd, "voiceOpenAiModel", OPENAI_STT_MODEL),
       ingress,
       phrase,
       keyterms,

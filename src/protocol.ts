@@ -1349,6 +1349,7 @@ export type WebviewMsg =
   | { type: "setVoiceKeyterms"; value: string[] }
   | { type: "setVoiceBackend"; value: SttPreference }
   | { type: "configureOpenAiVoice" }
+  | { type: "configureGoogleVoice" }
   /** Persist `grok.telemetry.enabled`. Desktop toggle; remotes do not send this. */
   | { type: "setTelemetryEnabled"; value: boolean }
   /** Persist `grok.thumbsFeedback`. Host-owned; remotes honour the desk value. */
@@ -1700,6 +1701,7 @@ const WEBVIEW_MESSAGE_TYPE_MAP: Record<WebviewMsg["type"], true> = {
   gitStatus: true, gitFileDiff: true, turnFileDiff: true, turnFileOpenDiff: true, gitRun: true,
   pasteImage: true, pasteText: true, uploadFile: true, voiceStart: true,
   voiceStop: true, setVoiceBackend: true, configureOpenAiVoice: true, remoteVoiceStart: true, remoteVoiceChunk: true,
+  configureGoogleVoice: true,
   remoteVoiceStop: true, queueSend: true, dequeueSend: true, clearQueuedSends: true,
   steerSend: true, turnFeedback: true, forkSession: true, forkAtReply: true,
   newWorktreeSession: true, applyWorktree: true, removeWorktree: true,

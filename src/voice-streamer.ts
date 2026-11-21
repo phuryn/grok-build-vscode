@@ -10,11 +10,13 @@ import {
   applySegment,
   joinSegments,
   classifySttError,
+  redactVoiceStreamUrl,
   TranscriptSegment,
   SttBackend,
 } from "./voice";
 import { resolveWindowsAudioDevice } from "./voice-recorder";
 import { OpenAiPcmVoiceStreamer } from "./openai-voice";
+import { GooglePcmVoiceStreamer } from "./google-voice";
 
 export interface PcmStreamStartOpts {
   apiKey: string;
@@ -30,16 +32,7 @@ export interface StreamStartOpts extends PcmStreamStartOpts {
   device?: string;
 }
 
-export function redactVoiceStreamUrl(url: string): string {
-  try {
-    const parsed = new URL(url);
-    const names = [...parsed.searchParams.keys()];
-    const query = names.map((name) => `${encodeURIComponent(name)}=<redacted>`).join("&");
-    return `${parsed.origin}${parsed.pathname}${query ? `?${query}` : ""}`;
-  } catch {
-    return String(url).split("?")[0];
-  }
-}
+export { redactVoiceStreamUrl } from "./voice";
 
 export interface PartialEvent {
   text: string;
@@ -58,6 +51,7 @@ export interface PcmSttStream extends EventEmitter {
 }
 
 export function createPcmVoiceStreamer(backend: SttBackend): PcmSttStream {
+  if (backend === "google") return new GooglePcmVoiceStreamer();
   return backend === "openai" ? new OpenAiPcmVoiceStreamer() : new PcmVoiceStreamer();
 }
 

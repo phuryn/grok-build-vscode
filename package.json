@@ -532,7 +532,7 @@
         "grok.summarizeRepliesAloud": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Read simplified summaries of spoken replies. Each reply costs an extra xAI call and adds network delay; the full reply is used if summarization fails. Uses the same credential resolution as Voice input. AFK Pilot keeps its own per-device browser preference."
+          "markdownDescription": "Read simplified summaries of spoken replies. Each reply costs an extra xAI call and adds network delay; the full reply is used if summarization fails. Uses the same credential resolution as xAI dictation. AFK Pilot keeps its own per-device browser preference."
         },
         "grok.remote.keepAwake": {
           "type": "boolean",
@@ -559,7 +559,7 @@
         "grok.voiceApiKey": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Optional xAI override key for speech-to-text. Empty uses `GROK_VOICE_API_KEY`, `XAI_API_KEY`, or the cached `grok login` token. For OpenAI dictation use `grok.voiceOpenAiApiKey` or `OPENAI_API_KEY`. See [voice setup](https://github.com/PawelHuryn/grok-vscode/blob/main/docs/voice-setup.md)."
+          "markdownDescription": "Optional xAI override key for speech-to-text. Empty uses `GROK_VOICE_API_KEY`, `XAI_API_KEY`, or the cached `grok login` token. OpenAI uses `grok.voiceOpenAiApiKey` or `OPENAI_API_KEY`. Google uses `grok.voiceGoogleApiKey`, the saved Antigravity Gemini API key, `GEMINI_API_KEY`, or `GOOGLE_API_KEY`. See [voice setup](https://github.com/PawelHuryn/grok-vscode/blob/main/docs/voice-setup.md)."
         },
         "grok.ffmpegPath": {
           "type": "string",
@@ -587,7 +587,7 @@
         "grok.voiceLanguage": {
           "type": "string",
           "default": "",
-          "description": "Optional recognition language code (for example en, pl, fr). OpenAI uses it as a language hint; xAI also enables written formatting of numbers, currencies and units. Empty uses the backend default. Supports User and Workspace scope."
+          "description": "Optional recognition language code (for example en, pl, fr). OpenAI and Google use it as a language hint. xAI also enables written formatting of numbers, currencies and units. Empty uses the backend default. Supports User and Workspace scope."
         },
         "grok.voiceStreaming": {
           "type": "boolean",
@@ -599,10 +599,11 @@
           "enum": [
             "auto",
             "xai",
-            "openai"
+            "openai",
+            "google"
           ],
           "default": "auto",
-          "description": "Speech-to-text backend. Auto prefers OpenAI for Codex and xAI for Grok or Claude, using the other when only its credential is available. An explicit choice requires its credential. Applies to the next recording."
+          "description": "Speech-to-text backend. Auto prefers Google for Antigravity, OpenAI for Codex, and xAI for other agents. If the preferred credential is unavailable, it tries xAI, OpenAI, then Google. An explicit choice requires its credential. Applies to the next recording."
         },
         "grok.voiceOpenAiApiKey": {
           "type": "string",
@@ -619,6 +620,11 @@
           ],
           "default": "gpt-live-transcribe",
           "description": "OpenAI Realtime transcription model. Dictionary terms become model-specific vocabulary hints. The explicit batch mode uses gpt-4o-transcribe."
+        },
+        "grok.voiceGoogleApiKey": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Gemini API key for Google dictation. Empty uses the saved Antigravity Gemini API key, then `GEMINI_API_KEY` or `GOOGLE_API_KEY` from the workspace `.env` or host environment. On Google's free tier, Google may use your audio to improve its products."
         },
         "grok.deepseekPath": {
           "type": "string",

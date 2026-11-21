@@ -1,6 +1,6 @@
 # Privacy
 
-**Privacy by design.** The extension sends **no** background data about you or your code — the only thing it reports on its own is an anonymous usage count, with no content and no identity, and you can turn even that off. Data leaves your machine only at your request: **voice input** (you send audio to SpaceXAI to transcribe it), optional **spoken-reply summarization** (you send one reply to SpaceXAI to shorten what is spoken), optional **thumbs on a Grok turn** (you send a rating to SpaceXAI), and **Remote Control** (you link this machine to [AFK Pilot](https://afkpilot.com) so your own devices can reach it) — all disclosed in full below, separate from telemetry.
+**Privacy by design.** The extension sends **no** background data about you or your code — the only thing it reports on its own is an anonymous usage count, with no content and no identity, and you can turn even that off. Data leaves your machine only at your request: **voice input** (you send audio to xAI, OpenAI, or Google to transcribe it), optional **spoken-reply summarization** (you send one reply to SpaceXAI to shorten what is spoken), optional **thumbs on a Grok turn** (you send a rating to SpaceXAI), and **Remote Control** (you link this machine to [AFK Pilot](https://afkpilot.com) so your own devices can reach it) — all disclosed in full below, separate from telemetry.
 
 ## Telemetry — what is sent
 
@@ -84,17 +84,14 @@ Separate from telemetry: when **Thumbs feedback to SpaceXAI** is on (`grok.thumb
 
 ## Voice input (Speech-to-Text)
 
-Separate from telemetry: **voice input** sends data to one transcription vendor —
-**SpaceXAI** (formerly xAI) or **OpenAI** — but only when you use it. It is
-**opt-in per use**: nothing is captured until you click the microphone button. In
+**Voice input** sends data to the selected transcription vendor (xAI, OpenAI, or
+Google) and is **opt-in per use**. Capture starts when you click the mic. In
 VS Code and on the desktop, ffmpeg captures locally in the extension host. In AFK
 Pilot, the browser sends ephemeral raw PCM through the linked relay connection to
 that same host; it is never persisted or content-logged. Explicit local batch mode
 writes a temporary WAV and removes it after transcription.
 
-The host then sends the following to the selected backend — SpaceXAI's
-Speech-to-Text endpoint (`api.x.ai/v1/stt`) or OpenAI's realtime transcription
-endpoint (`api.openai.com/v1/realtime`) — to produce the transcript:
+The host sends the following to the selected backend to produce the transcript:
 
 - your **audio** (the recording, streamed live or as a clip);
 - an **STT credential**, and which one depends on the backend:
@@ -106,6 +103,9 @@ endpoint (`api.openai.com/v1/realtime`) — to produce the transcript:
     Your **Codex sign-in is never read or forwarded**: there is no fallback to
     those OAuth credentials, so with no key set this backend is simply
     unavailable;
+  - **Google** uses `grok.voiceGoogleApiKey`, the saved Antigravity Gemini API key,
+    `GEMINI_API_KEY`, or `GOOGLE_API_KEY`, in that order. On the free tier, Google
+    may use your audio to improve its products. See [Gemini API pricing](https://aistudio.google.com/docs/pricing#gemini-3.5-transcribe).
 - for streaming voice, the configured **language code** (`grok.voiceLanguage`),
   when set; and
 - for streaming voice, the **recognition keyterms**: the send phrase, `Grok`, and
@@ -120,17 +120,14 @@ connection diagnostics log the endpoint and query-parameter names, but redact al
 query values, including language and vocabulary. If you never use voice, none of
 this happens.
 
-**To avoid sending your `grok login` token to SpaceXAI specifically, set a
-dedicated `grok.voiceApiKey`** — or pick the OpenAI backend, which never has a
-login token to fall back on.
+To use a dedicated xAI key instead of your `grok login` token, set
+`grok.voiceApiKey`. OpenAI and Google use their own API keys.
 
-Which vendor gets the audio: Auto prefers OpenAI on Codex and SpaceXAI on
-Grok/Claude, falling back to the other when the preferred one's credential is
-absent. An explicit choice in settings takes precedence and is never overridden —
-if that backend has no credential, voice is unavailable rather than silently sent
-elsewhere. The chosen vendor is fixed for the whole of a recording, including
-hands-free restarts and errors. Setup + details:
-[docs/voice-setup.md](voice-setup.md).
+Auto prefers Google for Antigravity, OpenAI for Codex, and xAI for other agents.
+If the preferred credential is unavailable, Auto checks xAI, OpenAI, and Google
+in that order. An explicit choice requires that backend's credential. The
+recording keeps its backend through hands-free restarts and service errors.
+See the [voice setup guide](voice-setup.md).
 
 ## Read simplified summaries
 
