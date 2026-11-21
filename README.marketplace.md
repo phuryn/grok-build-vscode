@@ -130,7 +130,7 @@ How it works: [research/deepseek-acp.md](https://github.com/phuryn/grok-build-vs
 <details>
 <summary><strong>Codex</strong> (OpenAI): GPT-6.2 Sol with Ask for approval, plan review in one card, and an install AFK Pilot manages</summary>
 
-- **Setup.** **Settings → Providers** installs Codex if you do not have it, and offers to update a Codex you installed yourself. From a phone, sign in with a short code; Codex needs device-code login enabled on your OpenAI account first, and the flow walks you through it.
+- **Setup.** **Settings → Providers** installs Codex's latest release if you do not have it, checked against the release's SHA-256, and keeps that copy current: after each AFK Pilot update it fetches a newer release in the background while your chats keep running. A Codex you installed yourself is never updated in the background; Providers offers the update instead. From a phone, sign in with a short code; Codex needs device-code login enabled on your OpenAI account first, and the flow walks you through it.
 - **Modes.** **Agent** (Codex's auto-review mode, the default), **Ask for approval** (Codex stays in its sandbox and asks before it acts outside it; remembered for your next Codex chats), **Plan** (the plan comes back in the same review card as `/plan`), and **Auto accept**, which is Codex's own full access.
 - **Branch and edit**, as on Claude Code.
 - **Subagent cards** stream their activity and bring it back when you reopen the conversation.
