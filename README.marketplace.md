@@ -50,7 +50,7 @@ AFK Pilot runs each agent through its vendor's own program, signed in with your 
 - **Your phone as a remote for every agent.** Follow a running turn, approve a permission, answer a question, steer, or connect an agent, from [afkpilot.com](https://afkpilot.com). The computer dials out, so there is no port to open, and it stays awake while a phone is linked.
 - **Steer without stopping.** A message you send mid-turn queues by default, and **Steer** puts it into the running turn without losing the tool work in flight.
 - **One compaction limit for every agent.** Choose 200K to 750K tokens once in Settings, and Grok Build, Muse Code, DeepSeek, Claude Code and Codex each compact by that point through their own settings.
-- **Voice for every agent.** Dictate with live transcription and say *"grok send"* to submit hands-free.
+- **Voice for every agent.** Dictate with live transcription from xAI, OpenAI or Google, and say *"grok send"* to submit hands-free.
 - **One answer to "is my work safe to walk away from?"** The Changes view says whether anything is uncommitted or unpushed, with one button to commit and push.
 
 #### Each agent in AFK Pilot
@@ -78,6 +78,7 @@ _Click an agent to expand._
 - **Usage meter.** With a Google sign-in, the context popover shows the 5-hour and weekly limits of the quota your model uses.
 - **Subagents and skills.** Delegated work shows as a subagent card with its tool calls, and your skills appear in the slash menu.
 - **Log Out** of a Google sign-in also signs out the agy CLI.
+- **Voice.** Auto dictates with Google's speech-to-text when you have a Gemini API key: the one saved for Antigravity, or a separate one in **Settings → Voice**. A Google sign-in alone does not include it, so voice then uses xAI or OpenAI if you have them.
 - **Not yet:** connectors, forking, editing an earlier prompt, and compacting at your limit (Antigravity keeps its own schedule).
 
 How it works, and the choices behind it: [research/antigravity-acp.md](https://github.com/phuryn/grok-build-vscode/blob/main/research/antigravity-acp.md).
@@ -186,9 +187,9 @@ In **Settings → General**, **Compact at a token limit** lets you choose 200K, 
 <details>
 <summary><strong>Voice control</strong> — hands-free dictation with live transcription</summary>
 
-The **microphone button** dictates speech through [xAI's](https://docs.x.ai/developers/model-capabilities/audio/speech-to-text) or OpenAI's speech-to-text — words appear live as you talk. Say **"grok send"** to submit hands-free and keep dictating; messages spoken while Grok responds queue and flush when it finishes.
+The **microphone button** dictates speech through [xAI's](https://docs.x.ai/developers/model-capabilities/audio/speech-to-text), OpenAI's or Google's speech-to-text — words appear live as you talk. Say **"grok send"** to submit hands-free and keep dictating; messages spoken while Grok responds queue and flush when it finishes.
 
-Use your existing Grok sign-in or an OpenAI API key. Auto prefers OpenAI for Codex and xAI for every other agent, with credential-based fallback. Local recording requires [`ffmpeg`](https://ffmpeg.org). Setup, devices, and costs: **[docs/voice-setup.md](https://github.com/phuryn/grok-build-vscode/blob/main/docs/voice-setup.md)**.
+Use your existing Grok sign-in, an OpenAI API key or a Gemini API key. Auto prefers OpenAI for Codex, Google for Antigravity and xAI for every other agent, and falls back to whichever credential you have. A Google sign-in or a Google AI subscription does not include voice; a free Gemini key works, but on Google's free tier Google may use the audio to improve its products. Local recording requires [`ffmpeg`](https://ffmpeg.org). Setup, devices, and costs: **[docs/voice-setup.md](https://github.com/phuryn/grok-build-vscode/blob/main/docs/voice-setup.md)**.
 
 ![Voice control with live transcription in the composer](https://raw.githubusercontent.com/phuryn/grok-build-vscode/main/docs/screenshots/voice_mode.png)
 
@@ -371,7 +372,7 @@ A ` ```mermaid ` block renders as a real diagram via [Mermaid](https://mermaid.j
 - **VS Code** 1.106+ (or a compatible editor on the same base — Cursor 3.x qualifies; an editor on an older base keeps the last extension version that supports it).
 - **At least one agent** on macOS, Linux, or Windows: Grok Build, Google Antigravity, Muse Code, DeepSeek, Claude Code or Codex. Onboarding installs Grok Build, and **Settings → Providers** installs Antigravity, Muse Code, DeepSeek and Codex; Claude Code uses the `claude` CLI you have installed. Every agent runs natively on all three, no WSL required (WSL2 + Remote-WSL still works if you prefer it).
 - **A login:** any X or Grok account tries **Grok Build** free, with usage limits (`grok login`). For sustained use, a **SuperGrok or X Premium+** subscription or an xAI API key; with an API key you also get the **grok-4.x** models and **grok-imagine**.
-- **Voice control** is optional and uses Grok sign-in or an OpenAI API key (Codex sign-in alone does not include transcription) — it just needs [`ffmpeg`](https://ffmpeg.org) to record. Setup + advanced options: [docs/voice-setup.md](https://github.com/phuryn/grok-build-vscode/blob/main/docs/voice-setup.md).
+- **Voice control** is optional and uses Grok sign-in, an OpenAI API key or a Gemini API key (a Codex or Google sign-in alone does not include transcription) — it just needs [`ffmpeg`](https://ffmpeg.org) to record. Setup + advanced options: [docs/voice-setup.md](https://github.com/phuryn/grok-build-vscode/blob/main/docs/voice-setup.md).
 
 ---
 
@@ -433,16 +434,17 @@ AFK Pilot defaults to the **Secondary Side Bar** (right side, next to other AI t
 | `grok.autoCompactAt` | `300000` | The token limit to compact at when enabled (200K, 300K, 400K, 500K or 750K). |
 | `grok.telemetry.enabled` | `true` | Send anonymous, privacy-first usage telemetry (see [Privacy](#privacy)). Also honors VS Code's global `telemetry.telemetryLevel`. |
 | `grok.chatFontScale` | `100` | Zoom for the chat panel only, as a percent (`150`, `200`, …). Scales the whole chat UI without rescaling the rest of VS Code (unlike `Ctrl/Cmd+Shift+=`). Applies live; supports User (global) and Workspace (local) scope. |
-| `grok.voiceBackend` | `"auto"` | Prefer the agent vendor when its credential is available, otherwise use the other. Explicit `xai` / `openai` choices require that credential. |
+| `grok.voiceBackend` | `"auto"` | Prefer the agent's vendor when its credential is available (OpenAI for Codex, Google for Antigravity, xAI for the rest), otherwise xAI, OpenAI, then Google. Explicit `xai` / `openai` / `google` choices require that credential. |
 | `grok.voiceOpenAiApiKey` | `""` | OpenAI API-platform key override; empty uses `OPENAI_API_KEY`. Codex / ChatGPT sign-in does not include transcription API access. |
 | `grok.voiceOpenAiModel` | `"gpt-live-transcribe"` | OpenAI Realtime transcription model. |
+| `grok.voiceGoogleApiKey` | `""` | Gemini API key for Google dictation. Empty uses the Gemini API key saved for Antigravity, then `GEMINI_API_KEY` / `GOOGLE_API_KEY`. A Google sign-in does not include transcription API access. |
 | `grok.voiceApiKey` | `""` | Optional xAI key override. Empty = `GROK_VOICE_API_KEY` / `XAI_API_KEY` from `.env` or the host environment, then your cached `grok login` token. See [docs/voice-setup.md](https://github.com/phuryn/grok-build-vscode/blob/main/docs/voice-setup.md). |
 | `grok.ffmpegPath` | `""` | Path to `ffmpeg` for microphone recording. Empty = use `ffmpeg` from `PATH`. |
 | `grok.voiceInputDevice` | `""` | Microphone device override. Empty = system default (Windows auto-detects the first DirectShow audio device). |
 | `grok.voiceSendPhrase` | `"grok send"` | Spoken phrase that auto-submits when it ends a transcription. Empty = disable hands-free sending. |
 | `grok.voiceKeyterms` | `[]` | Words or phrases that bias streaming recognition toward code and project vocabulary. Sent to the selected backend with each streaming connection; up to 100 terms of 50 characters, including the send phrase and `Grok`. |
-| `grok.voiceLanguage` | `""` | Optional language code (for example `en`, `fr`, `de`, or `ja`). Controls xAI text formatting and supplies an OpenAI transcription language hint. |
-| `grok.voiceStreaming` | `true` | Stream transcription live as you speak. `false` = one-shot batch mode. Costs depend on backend and model; OpenAI API usage is billed separately. |
+| `grok.voiceLanguage` | `""` | Optional language code (for example `en`, `fr`, `de`, or `ja`). Controls xAI text formatting and supplies an OpenAI and Google transcription language hint. |
+| `grok.voiceStreaming` | `true` | Stream transcription live as you speak. `false` = one-shot batch mode. Costs depend on backend and model; OpenAI and Google API usage is billed separately. |
 
 </details>
 
