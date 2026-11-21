@@ -3477,8 +3477,9 @@ describe("context popover (donut click, #39)", () => {
     expect(pop.hidden).toBe(false);
     expect(tick()?.style.left).toBe("30%");
     expect(rows().map(row => row.lastChild?.textContent)).toEqual(["300K"]);
+    // A real session/info frame carries addends with the percent; the "In this window" group needs one to render.
     dispatch(window, { type: "contextUsage", used: 170_000, window: 256_000, autoCompactThresholdPercent: 80,
-      autoCompact: { tokens: 204_800, source: "agent" } });
+      messageTokens: 150_000, autoCompact: { tokens: 204_800, source: "agent" } });
     expect(tick()?.style.left).toBe("80%");
     expect(rows().map(row => row.lastChild?.textContent)).toEqual(["205K · Grok's own"]);
     dispatch(window, { type: "contextUsage", used: 175_000 });

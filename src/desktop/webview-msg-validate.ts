@@ -264,6 +264,9 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
         if (!isBoolean(raw.value)) return null;
       } else return null;
       return { type, key: raw.key, value: raw.value } as WebviewMsg;
+    case "setAutoCompact":
+      if (raw.key === "enabled" ? !isBoolean(raw.value) : raw.key !== "tokens" || !isAutoCompactPreset(raw.value)) return null;
+      break;
     case "setShowThinking":
     case "setExperimentalDeepSeek":
     case "setExperimentalAntigravity":
@@ -275,9 +278,6 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
     case "setSummarizeRepliesAloud":
     case "setExpandCommandOutputs":
     case "setSteerByDefault":
-    case "setAutoCompact":
-      if (raw.key === "enabled" ? !isBoolean(raw.value) : raw.key !== "tokens" || !isAutoCompactPreset(raw.value)) return null;
-      break;
     case "setPromptNav":
     case "setPinLiveWorkflows":
     case "setExpandDiffCard":
