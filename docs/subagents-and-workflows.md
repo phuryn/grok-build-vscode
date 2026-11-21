@@ -22,6 +22,14 @@ differences: the host maps every provider onto one of two card shapes, a
 messages reach VS Code, the desktop app and a phone or browser connected
 remotely, so all of them draw the same cards.
 
+Antigravity and DeepSeek came later and are not in the measurements below.
+Antigravity's subagents use the Subagent card with their tool calls, and the
+card settles when the turn ends because Antigravity reports no result of its
+own. DeepSeek's card shows only the launch, because dsh delivers the child's
+result to the parent agent rather than to the tool call. Details:
+[Antigravity ACP](../research/antigravity-acp.md) and
+[DeepSeek ACP](../research/deepseek-acp.md).
+
 ## What each CLI sends
 
 The behaviour below was measured on 2026-09-26–27 with these versions. Newer
