@@ -429,7 +429,7 @@ describe("projects rail", () => {
     expect(dead.disabled).toBe(true);
     // Host-neutral: this page drives the VS Code extension OR the desktop app,
     // and cannot tell which, so it must not name one of them.
-    expect(dead.title).toContain("Update AFK Pilot (previously Grok Build)");
+    expect(dead.title).toContain("Update AFK Pilot on your computer");
     expect(dead.title).not.toContain("the Grok extension");
     click(window, dead);
     expect(posted.filter((p) => p.type === "clearAllSessions")).toEqual([]);

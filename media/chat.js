@@ -9524,7 +9524,7 @@
         danger: true,
         disabled: !repo.available || knownEmpty || !reachable,
         title: !reachable
-          ? "Update AFK Pilot (previously Grok Build) on your computer to clear another project's history from here"
+          ? "Update AFK Pilot on your computer to clear another project's history from here"
           : knownEmpty
             ? "This project has no history"
             : "Delete supported providers' conversations in this repository",
@@ -9903,7 +9903,7 @@
       danger: true,
       disabled: activeUndeletable,
       title: activeUndeletable
-        ? "Update AFK Pilot (previously Grok Build) on your computer to delete the conversation you have open"
+        ? "Update AFK Pilot on your computer to delete the conversation you have open"
         : "Delete",
       onSelect: () => {
         uiConfirm({

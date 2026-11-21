@@ -1693,7 +1693,6 @@ body.thinking-hidden .msg.thinking.find-reveal { display: block; }
   mask: var(--welcome-mark) center / contain no-repeat;
 }
 .welcome h2 { margin: 0; font-weight: 600; }
-.welcome-byline { margin: 0; font-size: 11px; }
 /* The move-view hint. Quiet by design: advice in an empty state, not a call to
    action, and it retires itself once taken.
    Left-aligned inside a centered block ÔÇö it is a short instruction list, and

@@ -147,9 +147,10 @@
   const GITHUB_ISSUE_FEATURE_URL = GITHUB_REPO_URL + "/issues/new?labels=enhancement";
   const SUPPORT_MAILTO = "mailto:contact@afkpilot.com";
   const ABOUT_DISCLAIMER =
-    "Unofficial · community-built · MIT | " +
-    "A VS Code UI for SpaceXAI’s Grok Build CLI - not affiliated with or endorsed by SpaceXAI (formerly xAI). " +
-    "Grok, Grok Build, and xAI are trademarks of xAI; this project uses those names only to describe what it’s compatible with.";
+    "Unofficial · community-built · Fair Source (FSL-1.1-MIT) | " +
+    "One chat for Grok Build, Muse Code, DeepSeek, Codex, Claude Code and Google Antigravity - " +
+    "not affiliated with or endorsed by SpaceXAI (formerly xAI), Meta, DeepSeek, OpenAI, Anthropic or Google. " +
+    "Product names are trademarks of their owners; this project uses them only to describe what it’s compatible with.";
 
   const TELEMETRY_COPY =
     "Anonymous usage stats only: a single session-start event with an anonymous install id — never prompts, code, file paths or names, and no identity. The IP address is discarded, never stored.";
