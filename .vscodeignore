@@ -72,7 +72,7 @@ node_modules/**
 !out/muse-adapter/*.mjs
 # Desktop Electron app — never ship in the VS Code extension vsix.
 out/desktop/**
-# …except the two modules the EXTENSION itself requires at runtime. Not a
+# …except the modules the EXTENSION itself requires at runtime. Not a
 # convenience: out/sidebar.js requires ./desktop/desktop-policy, which requires
 # ./file-tree, and 3.2.0-3.2.5 all shipped without them. Activation threw
 # "Cannot find module './desktop/desktop-policy'" before a single command was
@@ -85,6 +85,8 @@ out/desktop/**
 # shipping a dead release.
 !out/desktop/desktop-policy.js
 !out/desktop/file-tree.js
+# out/deepseek-backend.js writes its compaction patch with writeFileAtomic.
+!out/desktop/safe-secrets.js
 src/desktop/**
 vitest.desktop.config.ts
 scripts/run-desktop.cjs
