@@ -54,7 +54,7 @@ describe("DeepSeek official ACP contract (fake subprocess only)", () => {
     expect(received()[0].params.clientCapabilities).toEqual({ fs: { readTextFile: false, writeTextFile: false }, terminal: false });
     expect(received().find(v => v.method === "session/new").params.mcpServers).toEqual([]);
     expect(client.availableModels).toHaveLength(1);
-    expect(client.availableModels[0]).toMatchObject({ name: "DeepSeek V4 Flash", totalContextTokens: 1000000 });
+    expect(client.availableModels[0]).toMatchObject({ name: "DeepSeek V4 Flash", totalContextTokens: 1048576 });
     expect(client.currentModelId).toBe('["deepseek-official","deepseek-v4-flash"]');
     await expect(client.setModel('["deepseek-official","deepseek-v4-pro"]')).rejects.toThrow();
     await client.setReasoningEffort("max");

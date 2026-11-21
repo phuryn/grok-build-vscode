@@ -178,6 +178,25 @@ describe("Muse delegated work control", () => {
 });
 
 describe("Muse native steering, compaction, skills and forks", () => {
+  it("passes compaction ratios to the MSP process and forwards a successful automatic boundary", async () => {
+    vi.stubEnv("GROK_MUSE_POSTURE", JSON.stringify({ compact: { soft: 0.28, hard: 0.29 } }));
+    const s = await ready();
+    const args = s.spawn.mock.calls[0][0].args;
+    const at = args.indexOf("-c");
+    expect(at).toBeGreaterThan(-1);
+    expect(args.slice(at, at + 4)).toEqual([
+      "-c", "settings.context_compaction.soft_threshold=0.28",
+      "-c", "settings.context_compaction.hard_threshold=0.29",
+    ]);
+    s.event("item/completed", { item: {
+      kind: "compaction", itemId: "boundary", trigger: "auto", outcome: "compacted", tokensBefore: 304_000, tokensAfter: 38_000,
+    } });
+    await vi.waitFor(() => expect(s.client.notify).toHaveBeenCalledWith("session/update", {
+      sessionId: "session",
+      update: { sessionUpdate: "session_info_update", _meta: { "muse/autoCompact": { id: "boundary", before: 304_000, after: 38_000 } } },
+    }));
+  });
+
   // The official installer's target is %LOCALAPPDATA%\Programs\muse\muse.cmd, so
   // a user name with a space puts one in the shim path and in %TEMP% alike.
   it.runIf(process.platform === "win32")("reads the method list when the shim and the temp folder both contain a space", async () => {

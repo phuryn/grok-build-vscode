@@ -3446,6 +3446,8 @@ describe("context popover (donut click, #39)", () => {
     expect(text).toContain("Messages");
     expect(text).toContain("Free");
     expect(text).toContain("Auto-compact at");
+    expect(text).toContain("92%");
+    expect($(doc, "context-popover").querySelector(".context-compact-tick")).toBeNull();
     expect(text).toContain("Already counted above");
     expect(text).toContain("Tool definitions");
     expect(text).not.toContain("Tool definitions (");
@@ -3461,6 +3463,29 @@ describe("context popover (donut click, #39)", () => {
     expect(text.indexOf("Reasoning/overhead")).toBeLessThan(countedAt);
     expect(text.indexOf("Tool definitions")).toBeGreaterThan(countedAt);
     expect(text.indexOf("Skills")).toBeGreaterThan(countedAt);
+  });
+
+  it.each([false, true])("shows a single compaction threshold and positions its tick (remote=%s)", remote => {
+    const { window, doc } = bootWebview({ remote });
+    dispatch(window, { type: "initialState", appPurpose: "coding", capabilities: {} } as never);
+    dispatch(window, { type: "contextUsage", used: 241_000, window: 1_000_000,
+      autoCompact: { tokens: 300_000, source: "limit" } });
+    click(window, $(doc, "donut"));
+    const pop = $(doc, "context-popover");
+    const tick = () => pop.querySelector<HTMLElement>(".context-fullness .context-compact-tick");
+    const rows = () => [...pop.querySelectorAll(".popover-info")].filter(row => row.firstChild?.textContent === "Auto-compact at");
+    expect(pop.hidden).toBe(false);
+    expect(tick()?.style.left).toBe("30%");
+    expect(rows().map(row => row.lastChild?.textContent)).toEqual(["300K"]);
+    dispatch(window, { type: "contextUsage", used: 170_000, window: 256_000, autoCompactThresholdPercent: 80,
+      autoCompact: { tokens: 204_800, source: "agent" } });
+    expect(tick()?.style.left).toBe("80%");
+    expect(rows().map(row => row.lastChild?.textContent)).toEqual(["205K · Grok's own"]);
+    dispatch(window, { type: "contextUsage", used: 175_000 });
+    expect(tick()?.style.left).toBe("80%");
+    dispatch(window, { type: "contextUsage", autoCompact: null });
+    expect(tick()).toBeNull();
+    expect(rows().map(row => row.lastChild?.textContent)).toEqual(["80%"]);
   });
 
   it("does not mix a used-only occupancy update into a stale session/info snapshot", () => {

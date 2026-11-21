@@ -702,6 +702,32 @@
       message: (value) => ({ type: "setPromptNav", value }),
     },
     {
+      id: "autoCompactEnabled",
+      category: "general",
+      title: "Compact at a token limit",
+      kind: "toggle",
+      defaultValue: false,
+      visible: (s) => !!s?.autoCompactSettings,
+      describe: (s) => (s?.autoCompactSettings?.enabled
+        ? "On. Supported agents compact at the limit below or at their own earlier threshold."
+        : "Off. Each agent uses its own compaction settings.") + " This setting does not apply to Antigravity.",
+      get: (s) => s?.autoCompactSettings?.enabled === true,
+      message: (value) => ({ type: "setAutoCompact", key: "enabled", value }),
+    },
+    {
+      id: "autoCompactAt",
+      category: "general",
+      title: "Compact at",
+      description: "Tokens of context. Applies to conversations you start or reopen after changing it.",
+      kind: "select",
+      defaultValue: "300000",
+      visible: (s) => !!s?.autoCompactSettings,
+      enabled: (s) => s?.autoCompactSettings?.enabled === true,
+      options: [200, 300, 400, 500, 750].map(k => ({ value: String(k * 1000), label: k + "K tokens" })),
+      get: (s) => String(s?.autoCompactSettings?.tokens ?? 300000),
+      message: (value) => ({ type: "setAutoCompact", key: "tokens", value: Number(value) }),
+    },
+    {
       id: "thumbsFeedback",
       category: "general",
       title: "Thumbs feedback to SpaceXAI",
@@ -1767,6 +1793,12 @@
       case "promptNav":
         next.promptNav = !!value;
         break;
+      case "autoCompactEnabled":
+      case "autoCompactAt": {
+        const enabled = row.id === "autoCompactEnabled";
+        next.autoCompactSettings = { ...snapshot.autoCompactSettings, [enabled ? "enabled" : "tokens"]: enabled ? !!value : Number(value) };
+        break;
+      }
       case "readRepliesAloud":
         next.readRepliesAloud = !!value;
         if (!next.readRepliesAloud) next.summarizeRepliesAloud = false;
@@ -3241,10 +3273,12 @@
 
     if (row.kind === "toggle") {
       control.innerHTML = switchMarkup(!!value, !enabled);
+      if (row.id === "autoCompactEnabled") control.firstElementChild.setAttribute("aria-label", row.title);
     } else if (row.kind === "select") {
       const select = document.createElement("select");
       select.className = "settings-select";
       select.setAttribute("aria-label", row.title);
+      select.disabled = !enabled;
       for (const opt of row.options || []) {
         const option = document.createElement("option");
         option.value = opt.value;

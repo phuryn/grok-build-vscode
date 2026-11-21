@@ -33,6 +33,16 @@ import { pathsEqual } from "../src/worktree";
 const sorted = (a: readonly string[]) => [...a].sort();
 
 describe("remote-policy classification tables", () => {
+  it("shares machine compaction settings and scopes the live threshold to its conversation", () => {
+    expect(allowFromRemote("setAutoCompact", "full")).toBe(true);
+    expect(allowFromRemote("setAutoCompact", "propose")).toBe(false);
+    expect(remoteRequiresBoundSession("setAutoCompact")).toBe(false);
+    expect(OUTBOUND_DISPOSITION.autoCompactSettings).toBe("mirror");
+    expect(OUTBOUND_PROJECT_AUTH.autoCompactSettings).toBe("none");
+    const usage: HostMsg = { type: "contextUsage", window: 1_000_000, autoCompact: { tokens: 300_000, source: "limit" } };
+    expect(OUTBOUND_PROJECT_AUTH.contextUsage).toBe("scope");
+    expect(transformHostMsgForRemote(usage, {} as MediaInlineDeps)).toEqual(usage);
+  });
   it("keeps desk alert preferences off the remote wire", () => {
     expect(allowFromRemote("setDeskAlerts", "full")).toBe(false);
     expect(allowFromRemote("setDeskAlerts", "full", { isCloud: true })).toBe(false);

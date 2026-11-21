@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Compact at a token limit** in Settings → General. Choose a ceiling from 200K to 750K for new or reopened conversations and see the active threshold in the context meter.
+
 ## 4.17.1 — 2026-11-21
 
 **Two fixes: Antigravity's usage meter shows only your model's quota, and a message sent while a Codex chat forks is kept.**

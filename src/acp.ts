@@ -1,4 +1,5 @@
 import { contextWindowSizes, type ContextWindowSelection } from "./context-selection";
+import type { RunAutoCompact } from "./auto-compact";
 import { advertisedFork, supportsSessionDeletion, type SessionGoal } from "./acp-backend";
 import type { ChildHistoryReplay, DelegatedWorkKind } from "./acp-backend";
 import type { WebviewMsg } from "./protocol";
@@ -99,6 +100,9 @@ export interface AcpClientOptions {
   cwd: string;
   effort?: EffortLevel;
   env?: NodeJS.ProcessEnv;
+  compactAt?: number;
+  modelId?: string;
+  modelWindow?: number;
   log: (msg: string) => void;
   backend?: AcpBackend;
   /** Read-only auxiliary ACP connections never service agent requests. */
@@ -357,6 +361,20 @@ export class AcpClient extends EventEmitter {
   lastMeta?: PromptResultMeta;
   private lastContextUsed?: number;
   private lastContextWindow?: number;
+  private autoCompact?: RunAutoCompact;
+  private autoCompactPercent?: number;
+  private autoCompactContextWindow?: number;
+  private manualCompactPrompt = false;
+  private readonly reportedCompactions = new Set<string>();
+
+  autoCompactThreshold(window?: number, reportedPercent?: number) {
+    if (!this.autoCompact) return undefined;
+    if (reportedPercent !== undefined) this.autoCompactPercent = reportedPercent;
+    if (typeof window === "number" && Number.isFinite(window) && window > 0) this.autoCompactContextWindow = window;
+    const size = this.autoCompactContextWindow ?? this.lastContextWindow
+      ?? this.availableModels.find(model => model.modelId === this.currentModelId)?.totalContextTokens;
+    return this.autoCompact(size, this.autoCompactPercent);
+  }
   private contextGeneration = 0;
   private selectedContextWindow?: number;
   private contextWindowChanging = false;
@@ -432,6 +450,8 @@ export class AcpClient extends EventEmitter {
   }
 
   private resetContextSelection(): void {
+    this.autoCompactPercent = undefined;
+    this.autoCompactContextWindow = undefined;
     if (this.provider !== "grok") return;
     this.contextSelectionStale = false;
     this.contextGeneration++;
@@ -520,7 +540,11 @@ export class AcpClient extends EventEmitter {
       cwd: this.opts.cwd,
       effort: this.opts.effort,
       env: this.opts.env ?? process.env,
+      compactAt: this.opts.compactAt,
+      modelId: this.opts.modelId,
+      modelWindow: this.opts.modelWindow,
     });
+    this.autoCompact = spawnSpec.autoCompact;
     const { args } = spawnSpec;
     const needsShell = this.provider === "grok"
       ? grokCliNeedsShell(this.opts.cliPath)
@@ -844,6 +868,7 @@ export class AcpClient extends EventEmitter {
         if (current) current.reasoningEffort = this.currentReasoningEffort;
       }
       this.resetContextSelection();
+      if (this.autoCompact && this.provider !== "grok") this.lastContextWindow = undefined;
       this.emit("modelChanged", this.currentModelId);
       await this.refreshContextSelection();
     }
@@ -994,6 +1019,8 @@ export class AcpClient extends EventEmitter {
     }
     let raw: any;
     const turn: { latest?: Promise<any> } = {};
+    const manualCompact = /^\/compact(?:\s|$)/i.test(firstText);
+    if (manualCompact) this.manualCompactPrompt = true;
     if (this.ownsSteeringQueue) this.replaceablePrompt = turn;
     try {
       let reply = this.request("session/prompt", {
@@ -1012,6 +1039,7 @@ export class AcpClient extends EventEmitter {
       this.endTurn("failed");
       throw error;
     } finally {
+      if (manualCompact) this.manualCompactPrompt = false;
       if (this.replaceablePrompt === turn) this.replaceablePrompt = undefined;
     }
     const result = this.backend.normalizePromptResult(raw);
@@ -1342,6 +1370,7 @@ export class AcpClient extends EventEmitter {
       const parsed = parseSessionInfoRpcResult(r);
       if (!parsed) throw new Error("session/info returned no usable context");
       if (generation !== this.contextGeneration || sessionId !== this.sessionId) throw new Error("Session context changed during refresh; retry session-info.");
+      this.autoCompactPercent = parsed.autoCompactThresholdPercent;
       if (this.contextWindowSelection.sizes.length > 1) {
         this.selectedContextWindow = parsed.window;
         this.contextSelectionStale = false;
@@ -1770,6 +1799,12 @@ export class AcpClient extends EventEmitter {
     if (this.provider === "grok" && typeof updateGeneration === "number" && updateGeneration !== this.contextGeneration) return;
     const foreignSessionId = isForeignSessionUpdate(sessionId, delegationSession) ? sessionId : undefined;
     const normalized = this.backend.normalizeUpdate(u, meta, foreignSessionId);
+    const compact = normalized.autoCompaction;
+    if (this.autoCompact && compact && !foreign && !this.loadingSessionId && !this.manualCompactPrompt
+        && (!compact.id || !this.reportedCompactions.has(compact.id))) {
+      if (compact.id) this.reportedCompactions.add(compact.id);
+      this.emit("autoCompaction", compact);
+    }
     if (this.backend.stopDelegatedWork && !foreign && delegationSession && sessionId === delegationSession) {
       const workflow = normalized.workflowUpdate;
       if (workflow) this.tagDelegatedStop("workflow", workflow.run_id, workflow,

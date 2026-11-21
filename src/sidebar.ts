@@ -1,4 +1,5 @@
 import { decideDefaultModeCohort } from "./default-mode-cohort";
+import { autoCompactNotice, DEFAULT_AUTO_COMPACT_AT, isAutoCompactPreset, type AutoCompactSettings, type ReportedAutoCompaction } from "./auto-compact";
 import { workspaceGrokHome } from "./workspace-grok-home";
 import { parseContextWindowSize, type ContextWindowSelection } from "./context-selection";
 import { remoteHandoffUrl, remoteHandoffQr, type HandoffSession } from "./remote-handoff";
@@ -1034,7 +1035,7 @@ export class GrokSidebar {
   // remote turn. `grok.remote.keepAwake` is the opt-out. See src/keep-awake.ts.
   private readonly keepAwake = new KeepAwake((l) => this.host.appendLine(l), process.platform, process.pid, os.release());
   private static readonly DEVICE_GLOBAL_REMOTE_TYPES = new Set<HostMsg["type"]>([
-    "cloudHostUpdateState", "showThinking", "appPurpose", "fontScale", "grokUpdateStatus", "cliUpdating",
+    "cloudHostUpdateState", "showThinking", "appPurpose", "autoCompactSettings", "fontScale", "grokUpdateStatus", "cliUpdating",
     "onboarding", "providerState", "mcpServers", "mcpConnectors", "expandCommandOutputs", "steerByDefault", "soundNotifications",
     "mcpConnectorAuthorization",
     // Device-global, not session-scoped: a phone reading conversation B asked
@@ -1125,6 +1126,7 @@ export class GrokSidebar {
     "setExpandCommandOutputs",
     "setSteerByDefault",
     "setPromptNav",
+    "setAutoCompact",
     "setMuseSetting",
     "setPinLiveWorkflows",
     "setExpandDiffCard",
@@ -1954,6 +1956,13 @@ export class GrokSidebar {
   private allAdapterCatalogs(): Iterable<readonly SessionListEntry[]> {
     return INTERNAL_PROVIDERS.filter(usesAdapterHistory)
       .flatMap(provider => [...(this.adapterHistory(provider)?.cache?.values() ?? [])]);
+  }
+
+  private autoCompactSettings(): AutoCompactSettings {
+    const cfg = this.host.getConfiguration("grok");
+    const tokens = cfg.get("autoCompactAt", DEFAULT_AUTO_COMPACT_AT);
+    return { enabled: cfg.get<boolean>("autoCompactEnabled", false) === true,
+      tokens: isAutoCompactPreset(tokens) ? tokens : DEFAULT_AUTO_COMPACT_AT };
   }
 
   private museSettings(): MuseSettings {
@@ -3510,6 +3519,11 @@ export class GrokSidebar {
           type: "promptNav",
           value: this.host.getConfiguration("grok").get<boolean>("promptNav", true),
         });
+      }
+      if (e.affectsConfiguration("grok.autoCompactEnabled") || e.affectsConfiguration("grok.autoCompactAt")) {
+        const message: HostMsg = { type: "autoCompactSettings", value: this.autoCompactSettings() };
+        this.post(message);
+        void this.settingsEditor?.webview.postMessage(message);
       }
       if (e.affectsConfiguration("grok.pinLiveWorkflows")) {
         this.post({
@@ -11839,6 +11853,18 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     if (this.mcpConnectorKeysReady) await this.mcpConnectorKeysReady;
     if (gen !== session.gen) return undefined;
     const env = session.provider === "grok" ? this.buildEnv(cwd) : { ...process.env, ...(deepseekCredential?.key ? { DEEPSEEK_API_KEY: deepseekCredential.key } : {}) };
+    const defaultModel = opts.modelId ?? this.providerDefaultForProject(cwd, session.provider) ?? "";
+    const compaction = this.autoCompactSettings();
+    const compactAt = compaction.enabled ? compaction.tokens : undefined;
+    let modelWindow: number | undefined;
+    let modelId: string | undefined;
+    if (compactAt !== undefined && (session.provider === "grok" || session.provider === "muse")) {
+      const catalog = this.state.get<ProviderModelCache>(PROVIDER_MODEL_CACHE_KEY, {})[session.provider];
+      const resumedWindow = resumeId && session.provider === "grok"
+        ? readContextUsage({ fs: defaultFs, grokHome: resolveGrokHome(env), cwd, id: resumeId })?.window : undefined;
+      modelId = defaultModel || catalog?.currentModelId;
+      modelWindow = resumedWindow ?? catalog?.models.find(model => model.modelId === modelId)?.totalContextTokens;
+    }
     const effortStr = this.defaultEffortForProvider(session.provider);
     const effort = effortStr ? (effortStr as EffortLevel) : undefined;
     // Transient spawn/init after an update can throw once; retry the plain
@@ -11861,6 +11887,9 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       cliPath,
       cwd,
       env: relay ? agyGatewayEnv(env) : env,
+      compactAt,
+      modelId,
+      modelWindow,
       effort,
       log: (msg) => this.host.appendLine(redact(msg)),
       timeouts: this.acpClientTimeouts(),
@@ -11962,6 +11991,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         provider: session.provider,
       });
       postSessionGoal();
+      if (compactAt !== undefined && client.autoCompactThreshold?.() !== undefined) this.emit(session, { type: "contextUsage" });
       if (session.provider === "deepseek") this.emit(session, sessionModeMessage(session, this.displayMode(session)));
       if (session.provider === "grok") {
         const metaEnabled = parseFeedbackEnabledMeta(res);
@@ -12002,6 +12032,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     client.on("modelChanged", (id) => {
       if (gen !== session.gen) return;
       this.emit(session, { type: "modelChanged", modelId: id });
+      if (compactAt !== undefined && client.autoCompactThreshold?.() !== undefined) this.emit(session, { type: "contextUsage" });
       if (session.provider === "deepseek") this.emit(session, sessionModeMessage(session, this.displayMode(session)));
       // Antigravity's meter shows the quota of the model in use; another model may draw on the other one.
       if (session.provider === "agy") this.publishSubscriptionUsage(session);
@@ -12368,6 +12399,12 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       if (gen !== session.gen) return;
       this.applyMcpNotification(session, method, params);
     });
+    const postAutoCompaction = (report: ReportedAutoCompaction) => {
+      if (gen !== session.gen || session.replaying) return;
+      this.emit(session, { type: "autoCompactNotice", text: autoCompactNotice(report, client.autoCompactThreshold()) });
+    };
+    client.on("autoCompaction", postAutoCompaction);
+    let grokAutoCompaction = false;
     client.on("xaiNotification", (u) => {
       if (gen !== session.gen) return;
       // The post-compaction context size rides this live rail
@@ -12387,7 +12424,9 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       // context is unchanged, so the donut needs no refresh; flag it so a manual
       // /compact paints the failure instead of a false "Compacted.", and surface
       // a note.
+      if (kind === "auto_compact_cancelled") grokAutoCompaction = false;
       if (kind === "auto_compact_failed") {
+        grokAutoCompaction = false;
         session.sawCompactNotification = true;
         session.sawCompactFailed = true;
         const err = (u as { error?: unknown })?.error;
@@ -12409,7 +12448,14 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       // from the slash path). Dedicated (not a messageChunk) so it finalizes any
       // active bubble and can't reorder the agent's answer. Not persisted.
       const autoCompactNote = autoCompactStartedNote(u);
-      if (autoCompactNote) this.emit(session, { type: "autoCompactNotice", text: autoCompactNote });
+      if (autoCompactNote) {
+        if (compactAt !== undefined) grokAutoCompaction = true;
+        else this.emit(session, { type: "autoCompactNotice", text: autoCompactNote });
+      }
+      if (kind === "auto_compact_completed" && grokAutoCompaction) {
+        grokAutoCompaction = false;
+        postAutoCompaction({ before: u.tokens_before, after: compactUsed ?? undefined });
+      }
       // NB: the raw `xaiNotification` forward to the webview was removed — the
       // webview ignores it, so buffering every notification (incl. ~2s-cadence
       // subagent_progress) only bloated the session replay buffer. The kinds we
@@ -12544,7 +12590,6 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       await client.start();
       clock.record("spawn+init", clock.elapsed(spawnAt));
       if (gen !== session.gen) { client.dispose(); return undefined; }
-      const defaultModel = opts.modelId ?? this.providerDefaultForProject(cwd, session.provider) ?? "";
       if (resumeId) {
         replayBegan = true;
         // Queue any saved plans BEFORE replay starts so the webview can interleave
@@ -12736,6 +12781,9 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       // the startup window (#37).
       session.priming = false;
       session.needsProvider = false;
+      if (!resumeId && compactAt !== undefined && session.provider === "grok") {
+        void this.refreshContextFromSessionInfo(session, gen, { force: true });
+      }
       this.pool.add(session);
       this.touch(session);
       this.reapPool(); // enforce the LRU cap now that the pool grew
@@ -13818,6 +13866,12 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         await this.host.getConfiguration("grok")
           .update("promptNav", !!msg.value, "global");
         break;
+      case "setAutoCompact": {
+        const cfg = this.host.getConfiguration("grok");
+        if (msg.key === "enabled" && typeof msg.value === "boolean") await cfg.update("autoCompactEnabled", msg.value, "global");
+        if (msg.key === "tokens" && isAutoCompactPreset(msg.value)) await cfg.update("autoCompactAt", msg.value, "global");
+        break;
+      }
       case "setPinLiveWorkflows":
         await this.host.getConfiguration("grok")
           .update("pinLiveWorkflows", !!msg.value, "global");
@@ -19782,6 +19836,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       steerByDefault: cfg.get("steerByDefault", false),
       expandDiffCard: cfg.get("expandDiffCard", false),
       promptNav: cfg.get("promptNav", true),
+      autoCompactSettings: this.autoCompactSettings(),
       museSettings: this.museSettings(),
       museSandboxUnavailable: !!museSandboxUnavailable(isCloudEnvironment()),
       pinLiveWorkflows: cfg.get("pinLiveWorkflows", true),
@@ -20825,6 +20880,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
    * focused one, so this is behaviorally identical to `post`.)
    */
   private emit(session: Session, message: HostMsg): void {
+    if (message.type === "contextUsage") {
+      const autoCompact = session.client?.autoCompactThreshold?.(message.window, message.autoCompactThresholdPercent);
+      if (autoCompact !== undefined) message = { ...message, autoCompact };
+    }
     if (message.type === "setBusy") {
       if (message.value && message.locked) this.setStartupStage(session, "starting");
       else if (!message.value && session.startup) this.setStartupStage(session, null);
@@ -24285,6 +24344,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         steerByDefault: cfg.get("steerByDefault", false),
         expandDiffCard: cfg.get("expandDiffCard", false),
         promptNav: cfg.get("promptNav", true),
+        autoCompactSettings: this.autoCompactSettings(),
         museSettings: this.museSettings(),
         museSandboxUnavailable: !!museSandboxUnavailable(isCloudEnvironment()),
         pinLiveWorkflows: cfg.get("pinLiveWorkflows", true),
@@ -24391,6 +24451,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
             remoteHandoffSupported: typeof msg.handoffReady === "boolean" });
         }
         if (msg.type === "museSettings") surface.update({ museSettings: msg.value });
+        if (msg.type === "autoCompactSettings") surface.update({ autoCompactSettings: msg.value });
         if (msg.type === "deskAlerts") surface.update({ deskAlerts: msg.value });
         if (msg.type === "voiceConfigured") {
           surface.update({ voiceConfigured: !!msg.value, voiceBackendState: msg.backendState,

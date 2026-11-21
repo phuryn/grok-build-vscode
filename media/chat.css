@@ -4580,6 +4580,16 @@ textarea#input {
   margin: 2px 8px 8px; overflow: hidden;
 }
 .context-fullness > i { display: block; height: 100%; background: var(--context-fill); }
+.context-fullness.has-compact-tick { position: relative; overflow: visible; }
+.context-fullness.has-compact-tick > i { border-radius: inherit; }
+.context-compact-tick {
+  position: absolute; inset-block: -3px; width: 2px; border-radius: 1px;
+  background: var(--vscode-foreground); opacity: .75;
+  transform: translateX(-50%);
+}
+@media (hover: none), (pointer: coarse), (max-width: 480px) {
+  #context-popover .context-compact-guide { display: none; }
+}
 .context-compact {
   display: block; width: calc(100% - 16px); margin: 2px 8px 8px;
   text-align: center; padding: 0 10px; height: 28px; border: 0; border-radius: 4px;

@@ -42,6 +42,8 @@ export const CONFIG_DEFAULTS: Readonly<Record<string, unknown>> = {
   "grok.expandDiffCard": false,
   "grok.steerByDefault": false,
   "grok.promptNav": true,
+  "grok.autoCompactEnabled": false,
+  "grok.autoCompactAt": 300_000,
   "grok.pinLiveWorkflows": true,
   "grok.soundNotifications": false,
   "grok.deskAlerts": true,

@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import * as os from "node:os";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { compileFunction, constants as vmConstants } from "node:vm";
@@ -22,6 +23,39 @@ import type {
 } from "./acp-backend";
 import { adapterContextOccupancy } from "./acp-dispatch";
 import { ClaudeWorkflows } from "./claude-workflows";
+import { compactCeiling } from "./auto-compact";
+
+const CLAUDE_COMPACT_RESERVE = 33_000;
+const CLAUDE_COMPACT_WINDOW = "CLAUDE_CODE_AUTO_COMPACT_WINDOW";
+
+function claudeCompactWindow(value: unknown): number {
+  if (typeof value === "number") return value;
+  if (typeof value !== "string") return NaN;
+  const match = /^([\d.]+)\s*([km]?)$/i.exec(value.trim());
+  if (!match) return NaN;
+  const scale = match[2].toLowerCase() === "m" ? 1_000_000 : match[2] ? 1_000 : 1;
+  return Number(match[1]) * scale;
+}
+
+function claudeCompactionSettings(cwd: string, env: NodeJS.ProcessEnv) {
+  const home = env.CLAUDE_CONFIG_DIR || path.join(env.HOME || env.USERPROFILE || os.homedir(), ".claude");
+  let disabled = false;
+  let window = claudeCompactWindow(env[CLAUDE_COMPACT_WINDOW]);
+  if (!(window > CLAUDE_COMPACT_RESERVE)) window = Infinity;
+  const envDisables = (values: NodeJS.ProcessEnv) =>
+    [values.DISABLE_COMPACT, values.DISABLE_AUTO_COMPACT].some(value => /^(1|true|on|yes)$/i.test(String(value)));
+  for (const file of [path.join(home, "settings.json"), path.join(cwd, ".claude", "settings.json"),
+    path.join(cwd, ".claude", "settings.local.json")]) {
+    try {
+      if (fs.statSync(file).size > 256 * 1024) continue;
+      const settings = JSON.parse(fs.readFileSync(file, "utf8").replace(/^\uFEFF/, ""));
+      disabled ||= settings.autoCompactEnabled === false || envDisables(settings.env ?? {});
+      const configured = claudeCompactWindow(settings.env?.[CLAUDE_COMPACT_WINDOW] ?? settings.autoCompactWindow);
+      if (configured > CLAUDE_COMPACT_RESERVE) window = Math.min(window, configured);
+    } catch { /* Claude reads settings itself, including managed settings. */ }
+  }
+  return { disabled: disabled || envDisables(env), window };
+}
 
 export const CLAUDE_ACP_ADAPTER_PACKAGE = "@agentclientprotocol/claude-agent-acp";
 export const CLAUDE_ACP_ADAPTER_VERSION = packageManifest.dependencies[CLAUDE_ACP_ADAPTER_PACKAGE];
@@ -503,6 +537,18 @@ export class ClaudeBackend implements AcpBackend {
   readonly usesClientPlanGate = false;
 
   constructor(private readonly options: ClaudeBackendOptions = {}) {}
+  private compactWindow?: number;
+  private compactModelConfig?: string;
+
+  sessionParams() {
+    if (this.compactWindow === undefined) return {};
+    const env = { [CLAUDE_COMPACT_WINDOW]: String(this.compactWindow) };
+    // The SDK applies env from settings after the subprocess environment.
+    // Keep the adapter's model configuration when adding the higher tier.
+    const model = this.compactModelConfig ? JSON.parse(this.compactModelConfig) : {};
+    const settings = { modelOverrides: model?.modelOverrides, availableModels: model?.availableModels, env };
+    return { _meta: { claudeCode: { options: { env, settings } } } };
+  }
 
   private adapterPath(): string {
     if (this.options.adapterPath) return this.options.adapterPath;
@@ -514,6 +560,11 @@ export class ClaudeBackend implements AcpBackend {
   }
 
   spawn(options: BackendSpawnOptions): BackendSpawnSpec {
+    const limit = options.compactAt;
+    const own = limit === undefined ? undefined : claudeCompactionSettings(options.cwd, options.env);
+    this.compactWindow = limit !== undefined && own && !own.disabled && limit + CLAUDE_COMPACT_RESERVE < own.window
+      ? limit + CLAUDE_COMPACT_RESERVE : undefined;
+    this.compactModelConfig = options.env.CLAUDE_MODEL_CONFIG;
     const command = this.options.nodePath || process.execPath;
     const bridgeUrl = pathToFileURL(path.join(__dirname, "claude-async-task-bridge.mjs")).href;
     // Even a missing or unreadable preload must leave the adapter launchable.
@@ -536,6 +587,11 @@ export class ClaudeBackend implements AcpBackend {
         ELECTRON_RUN_AS_NODE: "1",
       },
       shell: grokCliNeedsShell(command),
+      ...(limit !== undefined && own ? { autoCompact: (window: number | undefined) => {
+        if (!window || own.disabled) return null;
+        const native = Math.min(window, own.window) - CLAUDE_COMPACT_RESERVE;
+        return native > 0 ? compactCeiling(limit, native) : null;
+      } } : {}),
     };
   }
 
@@ -567,6 +623,10 @@ export class ClaudeBackend implements AcpBackend {
     }
     const result = normalizeClaudeUpdate(update, meta, subagents);
     if (result.childSessionId !== undefined) return result;
+    const compact = update?._meta?.contextCompaction;
+    if (compact?.trigger === "automatic" && (update.status === "completed" || update.status === undefined)) {
+      result.autoCompaction = { id: update.toolCallId, before: compact.preTokens, after: compact.postTokens };
+    }
     workflows.toolInput(update);
     if (["async_task_spawned", "async_task_progress", "async_task_state_update"].includes(update?.sessionUpdate)) {
       return { update: result.update === update ? undefined : result.update, meta, workflowUpdate: workflows.accept(update) };

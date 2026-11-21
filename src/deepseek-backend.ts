@@ -6,6 +6,12 @@ import { isDeepSeekCredentialError } from "./deepseek-auth";
 import { deepseekRuntimePaths } from "./deepseek-managed-installer";
 import { DEEPSEEK_GOAL_COMMANDS, discoverDeepSeekSkills, rewriteDeepSeekPrompt } from "./deepseek-commands";
 import type { SlashCommand } from "./acp";
+import { writeFileAtomic } from "./desktop/safe-secrets";
+import { compactCeiling, type RunAutoCompact } from "./auto-compact";
+
+const DEEPSEEK_CONTEXT_WINDOW = 1_048_576;
+const DEEPSEEK_COMPACT_HEADROOM = 65_536;
+const DEEPSEEK_DEFAULT_MAX_OUTPUT = 256_000;
 
 export type DeepSeekHarness = "default" | "minimal";
 export const DEEPSEEK_COLD_REOPEN = "Conversation resumed. DeepSeek retains its context, but earlier messages are unavailable in this view.";
@@ -39,7 +45,7 @@ export function normalizeDeepSeekSession(response: any): any {
     currentModelId: model.currentValue,
     availableModels: choices(model).filter((v) => typeof v.value === "string" && v.value.length > 0).map((v) => ({
       modelId: v.value, name: deepseekModelName(v.name ?? v.value, v.value), description: v.description,
-      _meta: { totalContextTokens: 1_000_000, supportsReasoningEffort: !!effort, reasoningEffort: effort?.currentValue,
+      _meta: { totalContextTokens: DEEPSEEK_CONTEXT_WINDOW, supportsReasoningEffort: !!effort, reasoningEffort: effort?.currentValue,
         reasoningEfforts: choices(effort).map((e) => ({ value: e.value })) },
     })),
   } };
@@ -86,7 +92,19 @@ export class DeepSeekBackend implements AcpBackend<"deepseek"> {
       if (!fs.existsSync(patch) || !fs.readFileSync(patch).equals(content)) fs.writeFileSync(patch, content);
       args.push("--patch", patch);
     }
-    return { command: this.options.nodePath ?? runtime.node, args, env, shell: false };
+    const limit = options.compactAt;
+    let autoCompact: RunAutoCompact | undefined;
+    if (limit !== undefined) {
+      const ratio = limit / DEEPSEEK_CONTEXT_WINDOW;
+      const patch = path.join(this.dshHome, `afk-compact-${limit}.patch.yml`);
+      const content = `- id: compaction-basic\n  config:\n    thresholdRatio: ${ratio}\n`;
+      if (!fs.existsSync(patch) || fs.readFileSync(patch, "utf8") !== content) writeFileAtomic(patch, content);
+      args.push("--patch", patch);
+      autoCompact = window => window === DEEPSEEK_CONTEXT_WINDOW
+        ? compactCeiling(limit, window - DEEPSEEK_COMPACT_HEADROOM - DEEPSEEK_DEFAULT_MAX_OUTPUT)
+        : null;
+    }
+    return { command: this.options.nodePath ?? runtime.node, args, env, shell: false, autoCompact };
   }
   private models = new Set<string>();
   normalizeSessionResponse(response: any) {

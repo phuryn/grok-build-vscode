@@ -122,6 +122,9 @@ export interface BackendSpawnOptions {
   cwd: string;
   effort?: EffortLevel;
   env: NodeJS.ProcessEnv;
+  compactAt?: number;
+  modelId?: string;
+  modelWindow?: number;
 }
 
 export interface BackendSpawnSpec {
@@ -129,6 +132,7 @@ export interface BackendSpawnSpec {
   args: string[];
   env: NodeJS.ProcessEnv;
   shell: boolean;
+  autoCompact?: import("./auto-compact").RunAutoCompact;
 }
 
 export interface BackendConfigState {
@@ -143,6 +147,7 @@ export interface SessionGoal {
 }
 
 export interface BackendUpdate {
+  autoCompaction?: import("./auto-compact").ReportedAutoCompaction;
   update?: any;
   meta?: any;
   /** Provider progress projected onto the existing lifecycle presentation rail. */

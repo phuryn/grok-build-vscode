@@ -1,4 +1,5 @@
 import { isModeId } from "../mode-prefs";
+import { isAutoCompactPreset } from "../auto-compact";
 import { isPastedText, isPasteTextId } from "../chips";
 
 /**
@@ -274,6 +275,9 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
     case "setSummarizeRepliesAloud":
     case "setExpandCommandOutputs":
     case "setSteerByDefault":
+    case "setAutoCompact":
+      if (raw.key === "enabled" ? !isBoolean(raw.value) : raw.key !== "tokens" || !isAutoCompactPreset(raw.value)) return null;
+      break;
     case "setPromptNav":
     case "setPinLiveWorkflows":
     case "setExpandDiffCard":

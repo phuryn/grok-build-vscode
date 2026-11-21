@@ -51,6 +51,7 @@ is read when you are deciding something, not on every turn — and this file was
 | What each subsystem does and why | [architecture.md § Subsystem notes](docs/architecture.md#subsystem-notes) |
 | Which file holds what | [architecture.md § Module map](docs/architecture.md#module-map) |
 | Which ACP methods are wired, and how | [architecture.md § ACP surfaces implemented](docs/architecture.md#acp-surfaces-implemented) |
+| Host setting, per-run overrides and effective compaction threshold | [architecture.md § Automatic compaction ceiling](docs/architecture.md#automatic-compaction-ceiling) |
 | Session pool / Agent Dashboard | [architecture.md § Subsystem notes](docs/architecture.md#subsystem-notes) |
 | History windowing and pagination | [architecture.md § Subsystem notes](docs/architecture.md#subsystem-notes) |
 | Dictation backends, routing, credentials and streaming contract | [research/openai-voice.md](research/openai-voice.md) |

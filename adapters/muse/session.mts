@@ -173,6 +173,10 @@ export class MuseSession {
     this.shellSandbox = !this.sandboxUnavailable && (posture.mode === "onRequest" || (posture.mode !== "yolo" && posture.shellSandbox !== false));
     this.assertSandbox(this.approvalMode);
     const args = ["serve"];
+    if (posture.compact) {
+      args.push("-c", `settings.context_compaction.soft_threshold=${posture.compact.soft}`,
+        "-c", `settings.context_compaction.hard_threshold=${posture.compact.hard}`);
+    }
     if (!this.shellSandbox) args.push("--disable-sandbox");
     if (!this.sandboxUnavailable && (posture.sandboxNetwork === "restricted" || posture.sandboxNetwork === "enabled")) {
       args.push("--sandbox-network", posture.sandboxNetwork);
@@ -704,8 +708,14 @@ export class MuseSession {
     }
     this.assertSandbox(this.approvalMode);
     if (method === "skill/changed" && this.capabilities().skills) void this.refreshSkills().catch(error => this.fail(error));
-    if (method === "item/completed" && params.item?.kind === "compaction" && params.item.trigger === "manual") {
-      this.pendingCompact?.resolve(params.item);
+    if (method === "item/completed" && params.item?.kind === "compaction") {
+      const item = params.item;
+      if (item.trigger === "manual") this.pendingCompact?.resolve(item);
+      if (item.trigger === "auto" && item.outcome === "compacted") {
+        this.publish({ sessionUpdate: "session_info_update", _meta: { "muse/autoCompact": {
+          id: item.itemId, before: item.tokensBefore, after: item.tokensAfter,
+        } } });
+      }
     }
     if (method === "turn/started" && this.pending && typeof params.turnId === "string") {
       if (!this.pending.turnId) this.pending.started.add(params.turnId);

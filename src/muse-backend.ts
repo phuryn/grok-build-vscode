@@ -4,6 +4,11 @@ import { acpForkRequest } from "./acp-backend";
 import type { PromptContentBlock } from "./acp";
 import type { MusePosture, MuseSandboxUnavailable } from "./mode-prefs";
 import { isMuseModeId } from "./mode-prefs";
+import type { RunAutoCompact } from "./auto-compact";
+
+const MUSE_DEFAULT_CONTEXT_WINDOW = 1_048_576;
+const MUSE_SOFT_COMPACT_RATIO = 0.5;
+const MUSE_HARD_COMPACT_RATIO = 0.9;
 
 /**
  * Muse 1.4.0 saves a new sign-in to the OS keychain on Windows and Linux too,
@@ -30,13 +35,23 @@ export class MuseBackend implements AcpBackend<"muse"> {
   constructor(private readonly posture?: MusePosture, private readonly sandboxUnavailable?: MuseSandboxUnavailable) {}
 
   spawn(options: BackendSpawnOptions) {
+    const window = options.modelWindow ?? MUSE_DEFAULT_CONTEXT_WINDOW;
+    const hard = options.compactAt === undefined ? undefined : options.compactAt / window;
+    const compact = hard !== undefined && hard < MUSE_HARD_COMPACT_RATIO
+      ? { hard, soft: Math.min(MUSE_SOFT_COMPACT_RATIO, hard - 1 / window) } : undefined;
+    const autoCompact: RunAutoCompact | undefined = options.compactAt === undefined ? undefined : size => {
+      if (!size) return null;
+      return { tokens: Math.round(size * (compact?.hard ?? MUSE_HARD_COMPACT_RATIO)), source: compact ? "limit" : "agent" };
+    };
     return {
       command: process.execPath,
       args: [path.join(__dirname, "muse-adapter", "main.mjs")],
       env: { ...withMuseCredentialBackend(options.env), ELECTRON_RUN_AS_NODE: "1", MUSE_CODE_EXECUTABLE: options.cliPath,
         GROK_MUSE_POSTURE: JSON.stringify({ ...this.posture, sandboxUnavailable: this.sandboxUnavailable,
-          ...(this.sandboxUnavailable ? { shellSandbox: false } : {}) }) },
+          ...(this.sandboxUnavailable ? { shellSandbox: false } : {}),
+          ...(compact ? { compact } : {}) }) },
       shell: false,
+      autoCompact,
     };
   }
 
@@ -58,6 +73,9 @@ export class MuseBackend implements AcpBackend<"muse"> {
     }
     if (update?.sessionUpdate === "session_info_update" && update._meta?.["muse/workflow"]) {
       return { workflowUpdate: update._meta["muse/workflow"] };
+    }
+    if (update?.sessionUpdate === "session_info_update" && update._meta?.["muse/autoCompact"]) {
+      return { autoCompaction: update._meta["muse/autoCompact"] };
     }
     if (update?.sessionUpdate === "usage_update") return { update,
       meta, contextUsed: update.used, contextWindow: update.size };

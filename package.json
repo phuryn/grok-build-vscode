@@ -490,6 +490,19 @@
           "default": true,
           "markdownDescription": "Show a **Previous prompt** button above the message box: it jumps back to the prompt before the one you are reading and highlights it, so you can find what you asked without scrolling. On a phone or browser this is a per-device preference and this setting does not apply."
         },
+        "grok.autoCompactEnabled": {
+          "type": "boolean",
+          "default": false,
+          "scope": "machine",
+          "description": "Compact at a token limit. Applies to conversations you start or reopen after changing it. This setting does not apply to Antigravity."
+        },
+        "grok.autoCompactAt": {
+          "type": "number",
+          "enum": [200000, 300000, 400000, 500000, 750000],
+          "default": 300000,
+          "scope": "machine",
+          "description": "Tokens of context. Applies to conversations you start or reopen after changing it."
+        },
         "grok.deskAlerts": {
           "type": "boolean",
           "default": true,

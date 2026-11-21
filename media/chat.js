@@ -47,6 +47,13 @@
   const queuedWaits = new Set();
 
   function preferenceSpec(message) {
+    if (message.type === "setAutoCompact") {
+      const enabled = message.key === "enabled";
+      const key = enabled ? "autoCompactEnabled" : "autoCompactAt";
+      const target = enabled ? "the compaction limit to " + (message.value ? "on" : "off")
+        : "the compaction limit to " + compactTokens(message.value);
+      return { key, field: "autoCompactSettings", subfield: message.key, value: message.value, target };
+    }
     const fields = {
       setAppPurpose: ["appPurpose", "this app to " + (message.value === "coding" ? "Coding" : "Knowledge work")],
       setVoiceSendPhrase: ["voiceSendPhrase", "the voice send phrase to “" + message.value + "”"],
@@ -112,6 +119,7 @@
       let value;
       if (msg.type === "initialState") value = msg[pending.field];
       if (msg.type === pending.field) value = msg.value;
+      if (pending.subfield) value = value?.[pending.subfield];
       if (msg.type === "voiceConfigured") {
         if (pending.field === "voiceSendPhrase") value = msg.sendPhrase;
         if (pending.field === "voiceKeyterms") value = msg.keyterms;
@@ -725,6 +733,7 @@
     // Structured session/info addends, bound to the `used` they arrived with.
     // Occupancy-only frames keep this; an open popover re-fetches session/info.
     contextBreakdown: null,
+    autoCompact: null,
     activeAgentEl: null,
     activeAgentRaw: "",
     activeUserEl: null,
@@ -2731,6 +2740,23 @@
     fill.style.setProperty("--context-fill", contextFullnessColor(pct));
     bar.appendChild(fill);
     lead.appendChild(bar);
+    const compact = state.autoCompact;
+    if (compact && compact.tokens > 0 && compact.tokens < state.contextWindow) {
+      const agent = providerDisplayName(state.activeProvider);
+      const own = compact.source === "agent";
+      const mark = document.createElement("b");
+      mark.className = "context-compact-tick";
+      mark.setAttribute("aria-hidden", "true");
+      mark.style.left = (compact.tokens / state.contextWindow * 100) + "%";
+      bar.classList.add("has-compact-tick");
+      bar.appendChild(mark);
+      info("Auto-compact at", tok(compact.tokens) + (own ? " · " + agent + "'s own" : ""), lead);
+      const details = document.createElement("div");
+      details.className = "popover-fineprint context-compact-guide";
+      details.textContent = own ? "This is the active compaction threshold for " + agent + "."
+        : "Your limit, set in Settings › General.";
+      lead.appendChild(details);
+    }
 
     const act = document.createElement("button");
     act.type = "button";
@@ -2885,7 +2911,7 @@
       if (breakdown.messageTokens != null) info("Messages", tok(breakdown.messageTokens));
       if (overheadTokens != null) info("Reasoning/overhead", tok(overheadTokens));
       if (breakdown.freeTokens != null) info("Free", tok(breakdown.freeTokens));
-      if (breakdown.autoCompactPct != null) info("Auto-compact at", `${breakdown.autoCompactPct}%`);
+      if (!compact && breakdown.autoCompactPct != null) info("Auto-compact at", `${breakdown.autoCompactPct}%`);
       const hasCounted =
         breakdown.toolDefinitionsTokens != null ||
         (breakdown.categories && breakdown.categories.length);
@@ -3720,6 +3746,7 @@
       traySupported: !!state.traySupported,
       desktopTray: state.desktopTray !== false,
       promptNav: !!state.promptNav,
+      autoCompactSettings: state.autoCompactSettings,
       expandDiffCard: !!state.expandDiffCard,
       providers: state.providers || [],
       museSettings: state.museSettings,
@@ -3800,6 +3827,10 @@
             vscode.postMessage({ type: "setSummarizeRepliesAloud", value: false });
           }
         }
+        break;
+      case "autoCompactEnabled":
+      case "autoCompactAt":
+        state.autoCompactSettings = { ...state.autoCompactSettings, [message.key]: message.value };
         break;
       case "summarizeRepliesAloud":
         if (IS_REMOTE) {
@@ -11143,6 +11174,7 @@
     state.sessionUsage = null;
     state.subscriptionWindows = [];
     state.contextBreakdown = null;
+    state.autoCompact = null;
     if (!contextPopover.hidden) renderContextPopover();
     state.suppressReplayTurn = false;
     state.skipUserBubble = false;
@@ -20967,6 +20999,7 @@ ${fullText}`
 
   const SETTINGS_LIVE_MSGS = new Set([
     "museSettings",
+    "autoCompactSettings",
     "cloudHostUpdateState", "initialState", "showThinking", "appPurpose", "expandCommandOutputs",
     "steerByDefault", "promptNav", "expandDiffCard", "steerUnavailable", "soundNotifications", "processingSound", "inputNeededSound", "deskAlerts",
     "readRepliesAloud", "summarizeRepliesAloud", "fontScale", "voiceConfigured",
@@ -21032,6 +21065,8 @@ ${fullText}`
         // suppressed on the way out, but initialState is mirrored wholesale.
         if (!IS_REMOTE) applyPinLiveWorkflows(msg.pinLiveWorkflows !== false);
         if (!IS_REMOTE && typeof msg.promptNav === "boolean") state.promptNav = msg.promptNav;
+        state.autoCompactSettings = msg.autoCompactSettings;
+        if (!state.autoCompactSettings) state.autoCompact = null;
         state.museSettings = msg.museSettings;
         state.museSandboxUnavailable = msg.museSandboxUnavailable;
         if (!IS_REMOTE) {
@@ -21360,6 +21395,9 @@ ${fullText}`
         break;
       case "museSettings":
         state.museSettings = msg.value;
+        break;
+      case "autoCompactSettings":
+        state.autoCompactSettings = msg.value;
         break;
       case "promptNav":
         // Arrives after the host writes grok.promptNav, which is how a
@@ -21746,6 +21784,7 @@ ${fullText}`
         if (m?.totalContextTokens) state.contextWindow = m.totalContextTokens;
         setModelCatalogPending(false);
         state.contextBreakdown = null;
+        state.autoCompact = null;
         updateDonut(0);
         reportRemotePreferences();
         break;
@@ -22556,6 +22595,7 @@ ${fullText}`
         // Structured addends are one snapshot (`nextContextBreakdown`). A
         // used-only frame keeps them; currency is `contextBreakdownIsCurrent`.
         state.contextBreakdown = nextContextBreakdown(state.contextBreakdown, msg);
+        if (Object.hasOwn(msg, "autoCompact")) state.autoCompact = msg.autoCompact;
         if (msg.window) state.contextWindow = msg.window;
         if (msg.used != null) updateDonut(msg.used);
         else updateDonut();

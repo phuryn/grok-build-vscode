@@ -3350,7 +3350,7 @@ describe("the Previous-prompt row (#150)", () => {
     expect(row.visible).toBeUndefined();
   });
 
-  it("sits in General, immediately above the SpaceXAI feedback rows", () => {
+  it("sits in General, immediately above the compaction settings", () => {
     // It started under Advanced while it was experimental. It is on by
     // default now, so the place it is looked for is the same list as every
     // other everyday toggle -- and Advanced is where a person goes to change
@@ -3363,7 +3363,7 @@ describe("the Previous-prompt row (#150)", () => {
     expect(at).toBeGreaterThan(-1);
     // The neighbour is named rather than the index, so inserting a row
     // above this pair does not fail a test about something else.
-    expect(general[at + 1]).toBe("thumbsFeedback");
+    expect(general.slice(at + 1, at + 4)).toEqual(["autoCompactEnabled", "autoCompactAt", "thumbsFeedback"]);
   });
 
   it("is on by default in all four places a default lives, and no longer says Experimental", () => {
@@ -3393,6 +3393,61 @@ describe("the Previous-prompt row (#150)", () => {
     expect(row.title).toBe("Previous prompt button");
     expect(contributed.markdownDescription).not.toMatch(/Experimental/i);
     expect(contributed.markdownDescription).not.toMatch(/Off by default/i);
+  });
+});
+
+describe("host-backed compaction settings", () => {
+  const disabled = { enabled: false, tokens: 300_000 };
+  const toggle = '[data-id="autoCompactEnabled"] .settings-switch';
+  const preset = '[data-id="autoCompactAt"] select';
+
+  it("posts from the standalone Settings page and enables the preset from host state", () => {
+    const h = mountAt("general", { env: { isDesktop: false }, snapshot: { autoCompactSettings: disabled } });
+    const select = () => h.root.querySelector<HTMLSelectElement>(preset)!;
+    expect(select().disabled).toBe(true);
+    expect(select().value).toBe("300000");
+    expect([...select().options].map(option => option.textContent)).toEqual([
+      "200K tokens", "300K tokens", "400K tokens", "500K tokens", "750K tokens",
+    ]);
+    click(h.window, h.root.querySelector(toggle)!);
+    expect(h.posted).toContainEqual({ type: "setAutoCompact", key: "enabled", value: true });
+    h.surface.update({ autoCompactSettings: { enabled: true, tokens: 400_000 } });
+    expect(select().disabled).toBe(false);
+    expect(select().value).toBe("400000");
+  });
+
+  it.each([false, true])("mirrors host changes and posts from the chat overlay (remote=%s)", remote => {
+    const h = bootWebview({ remote });
+    seedChat(h, { autoCompactSettings: disabled });
+    openSettings(h);
+    expect(h.doc.querySelector(toggle)?.getAttribute("aria-checked")).toBe("false");
+    dispatch(h.window, { type: "autoCompactSettings", value: { enabled: true, tokens: 500_000 } });
+    const select = h.doc.querySelector<HTMLSelectElement>(preset)!;
+    expect(select.value).toBe("500000");
+    select.value = "750000";
+    select.dispatchEvent(new h.window.Event("change"));
+    expect(h.posted).toContainEqual({ type: "setAutoCompact", key: "tokens", value: 750_000 });
+  });
+
+  it("hides host-backed controls when an old remote host omits the setting", () => {
+    const h = bootWebview({ remote: true });
+    seedChat(h);
+    openSettings(h);
+    expect(h.doc.querySelector('[data-id="promptNav"]')).toBeTruthy();
+    expect(h.doc.querySelector(toggle)).toBeNull();
+    expect(h.doc.querySelector(preset)).toBeNull();
+  });
+
+  it("validates both desktop setters", () => {
+    for (const msg of [
+      { type: "setAutoCompact", key: "enabled", value: false },
+      { type: "setAutoCompact", key: "tokens", value: 300_000 },
+    ]) expect(parseWebviewMsg(msg)).toEqual(msg);
+    for (const msg of [
+      { type: "setAutoCompact", key: "enabled", value: 1 },
+      { type: "setAutoCompact", key: "tokens", value: 300_001 },
+      { type: "setAutoCompact", key: "other", value: true },
+    ]) expect(parseWebviewMsg(msg)).toBeNull();
   });
 });
 

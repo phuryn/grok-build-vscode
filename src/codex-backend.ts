@@ -1,4 +1,5 @@
 import * as path from "node:path";
+import * as fs from "node:fs";
 import packageManifest from "../package.json";
 import { grokCliNeedsShell } from "./cli-process";
 import type { PromptContentBlock } from "./acp";
@@ -13,6 +14,35 @@ import type {
   BackendUpdate,
 } from "./acp-backend";
 import { adapterContextOccupancy } from "./acp-dispatch";
+import { compactCeiling } from "./auto-compact";
+import { resolveCodexHome } from "./codex-cli-locator";
+
+function codexAutoCompact(env: NodeJS.ProcessEnv, limit: number | undefined) {
+  if (limit === undefined) return {};
+  let config: Record<string, unknown>;
+  try { config = JSON.parse(env.CODEX_CONFIG || "{}"); }
+  catch { return {}; } // Keep the adapter's existing config error.
+  if (!config || typeof config !== "object" || Array.isArray(config)) return {};
+  let userConfig = "";
+  try {
+    const file = path.join(resolveCodexHome(env), "config.toml");
+    if (fs.statSync(file).size <= 256 * 1024) userConfig = fs.readFileSync(file, "utf8").split(/^\s*\[/m, 1)[0];
+  } catch { /* Optional global config. */ }
+  const configuredLimit = userConfig.match(/^\s*model_auto_compact_token_limit\s*=\s*([\d_]+)\s*(?:#.*)?$/m)?.[1];
+  const inherited = config.model_auto_compact_token_limit ?? Number(configuredLimit?.replaceAll("_", ""));
+  const ceiling = typeof inherited === "number" && inherited > 0 ? Math.min(limit, inherited) : limit;
+  // Codex reports the usable window (95% by default), while its own
+  // compaction cap is 90% of the full model window.
+  const totalScope = config.model_auto_compact_token_limit_scope !== undefined
+    || /^\s*model_auto_compact_token_limit_scope\s*=/m.test(userConfig);
+  return {
+    env: { CODEX_CONFIG: JSON.stringify({ ...config, model_auto_compact_token_limit: ceiling,
+      ...(totalScope ? { model_auto_compact_token_limit_scope: "total" } : {}) }) },
+    autoCompact: (window: number | undefined) => window
+      ? compactCeiling(limit, Math.min(Math.floor(Math.round(window * 100 / 95) * 0.9), ceiling < limit ? ceiling : Infinity))
+      : null,
+  };
+}
 
 export const CODEX_ACP_ADAPTER_VERSION = packageManifest.dependencies["@agentclientprotocol/codex-acp"];
 
@@ -183,6 +213,7 @@ export function normalizeCodexUpdate(update: any, meta?: any): BackendUpdate {
       : mcp && update.sessionUpdate === "tool_call" ? codexMcpTitle(update) : undefined;
     const kind = mcp && update.kind === "execute" ? "other" : update.kind;
     return {
+      ...(update._meta?.contextCompaction && update.status === "completed" ? { autoCompaction: { id: update.toolCallId } } : {}),
       update: {
         ...update,
         ...(normalizedRawOutput === undefined ? {} : { rawOutput: normalizedRawOutput }),
@@ -347,15 +378,18 @@ export class CodexBackend implements AcpBackend {
 
   spawn(options: BackendSpawnOptions): BackendSpawnSpec {
     const command = this.options.nodePath || process.execPath;
+    const compact = codexAutoCompact(options.env, options.compactAt);
     return {
       command,
       args: [this.adapterPath()],
       env: {
         ...options.env,
+        ...compact.env,
         CODEX_PATH: options.cliPath,
         ELECTRON_RUN_AS_NODE: "1",
       },
       shell: grokCliNeedsShell(command),
+      autoCompact: compact.autoCompact,
     };
   }
 

@@ -1,4 +1,5 @@
 import type { ContextWindowSelection } from "./context-selection";
+import type { AutoCompactSettings, AutoCompactThreshold } from "./auto-compact";
 export type RemoteHandoffSource = "topbar" | "rail" | "projects" | "settings" | "palette";
 
 import type { AcpProvider, SessionGoal } from "./acp-backend";
@@ -420,6 +421,7 @@ export type HostMsg =
       commandLanguage?: string;
       /** Present when this host can show desk alerts. */
       deskAlerts?: boolean;
+      autoCompactSettings?: AutoCompactSettings;
       museSettings?: MuseSettings;
       museSandboxUnavailable?: boolean;
       /** Which GUI is on the other end. A phone is looking at neither the
@@ -894,6 +896,8 @@ export type HostMsg =
   // The structured fields are only populated by Grok's `_x.ai/session/info`.
   | {
       type: "contextUsage";
+      /** Effective threshold for this run. Null clears a previous prediction. */
+      autoCompact?: AutoCompactThreshold | null;
       used?: number;
       window?: number;
       categories?: { label: string; tokens: number; detail?: string }[];
@@ -1023,6 +1027,7 @@ export type HostMsg =
   // only: a remote keeps its own per-device preference, so this frame is
   // `host-local` outbound and never crosses the relay.
   | { type: "promptNav"; value: boolean }
+  | { type: "autoCompactSettings"; value: AutoCompactSettings }
   | { type: "museSettings"; value: MuseSettings }
   | { type: "pinLiveWorkflows"; value: boolean }
   // Host-backed on desk; a remote keeps its own default (host-local outbound).
@@ -1330,6 +1335,8 @@ export type WebviewMsg =
   | { type: "setExpandCommandOutputs"; value: boolean }
   | { type: "setSteerByDefault"; value: boolean }
   | { type: "setPromptNav"; value: boolean }
+  | { type: "setAutoCompact"; key: "enabled"; value: boolean }
+  | { type: "setAutoCompact"; key: "tokens"; value: number }
   | { type: "setMuseSetting"; key: "museShellSandbox" | "museTrustWorkspaces"; value: boolean }
   | { type: "setMuseSetting"; key: "museSandboxNetwork"; value: MuseSettings["sandboxNetwork"] }
   | { type: "setPinLiveWorkflows"; value: boolean }
@@ -1660,7 +1667,7 @@ const HOST_MESSAGE_TYPE_MAP: Record<HostMsg["type"], true> = {
   planNotice: true, autoCompactNotice: true, planBlocked: true, promptComplete: true, contextUsage: true, agentReset: true,
   agentError: true, agentEnd: true, exit: true, setBusy: true, summarizing: true,
   sessionContext: true, clearMessages: true, onboarding: true, error: true, hostNotice: true,
-  xaiNotification: true, subagentUpdate: true, childStream: true, runProgress: true, commandOutput: true, expandCommandOutputs: true, steerByDefault: true, promptNav: true, pinLiveWorkflows: true, expandDiffCard: true,
+  xaiNotification: true, subagentUpdate: true, childStream: true, runProgress: true, commandOutput: true, expandCommandOutputs: true, steerByDefault: true, promptNav: true, autoCompactSettings: true, pinLiveWorkflows: true, expandDiffCard: true,
   soundNotifications: true, processingSound: true, inputNeededSound: true, deskAlerts: true, readRepliesAloud: true, summarizeRepliesAloud: true, speechSummary: true, imageFull: true, imageOriginal: true, moveComposerCaret: true, remoteStatus: true, showRemoteHandoff: true, remoteHandoff: true, hostReachable: true, hostLink: true,
   setAllToolDetails: true, focusInput: true, findInSession: true, restoreComposer: true, truncateMessages: true, uiConfirmRequest: true, uiConfirmResolved: true,
   sessions: true, sessionRemoved: true, sessionOpening: true, projectPrompt: true, repoSessions: true, pinnedSessions: true, recentSessions: true, repos: true, sessionDot: true, queuedSends: true, submitQueuedSend: true,
@@ -1669,6 +1676,7 @@ const HOST_MESSAGE_TYPE_MAP: Record<HostMsg["type"], true> = {
 
 const WEBVIEW_MESSAGE_TYPE_MAP: Record<WebviewMsg["type"], true> = {
   setMuseSetting: true,
+  setAutoCompact: true,
   setContextWindow: true, ready: true, remotePreferences: true, send: true, newSession: true, cancel: true, pickModel: true,
   setMode: true, removeChip: true, toggleChip: true, openFile: true, showInFolder: true, openUrl: true,
   openText: true, openDiff: true, exportExpr: true, setEffort: true, openGlobalConfig: true, openProviderConfig: true,

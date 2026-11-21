@@ -525,6 +525,7 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
   setExpandCommandOutputs: "host-local",
   setSteerByDefault: "host-local",
   setPromptNav: "host-local",
+  setAutoCompact: "full",
   setMuseSetting: "host-local",
   setPinLiveWorkflows: "host-local",
   setExpandDiffCard: "host-local",
@@ -727,6 +728,7 @@ export const REMOTE_REQUIRES_BOUND_SESSION: Record<WebviewMsg["type"], boolean> 
   setExpandCommandOutputs: false,
   setSteerByDefault: false,
   setPromptNav: false,
+  setAutoCompact: false,
   setMuseSetting: false,
   setPinLiveWorkflows: false,
   setExpandDiffCard: false,
@@ -1116,6 +1118,7 @@ export const OUTBOUND_DISPOSITION: Record<HostMsg["type"], OutboundDisposition> 
   // Not mirrored: a remote holds its OWN Previous-prompt preference in its
   // own storage, so the desk's value would silently overwrite the phone's.
   promptNav: "host-local",
+  autoCompactSettings: "mirror",
   museSettings: "host-local",
   pinLiveWorkflows: "host-local",
   // The phone owns its diff-card default too; never overwrite it from desk.
@@ -1222,6 +1225,7 @@ export const OUTBOUND_PROJECT_AUTH: Record<HostMsg["type"], OutboundProjectAuth>
   expandCommandOutputs: "none",
   steerByDefault: "none",
   promptNav: "none",
+  autoCompactSettings: "none",
   museSettings: "none",
   pinLiveWorkflows: "none",
   expandDiffCard: "none",
