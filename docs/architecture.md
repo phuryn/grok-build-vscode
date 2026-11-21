@@ -1,6 +1,6 @@
 # Architecture
 
-Grok session context-window choices use `AcpClient.contextWindowSelection` and the identity-checked `setContextWindow` control. A size is chosen in the context popup's dropdown or with host-routed `/context-window <size>`; both track the last size `session/info` confirmed, except that while a change is in flight the dropdown shows the size just requested. A model change only changes the model. See [native context-window selection](../research/context-window-selection.md).
+Grok session context-window choices use `AcpClient.contextWindowSelection` and the identity-checked `setContextWindow` control. A size is chosen in the context popup's dropdown or with host-routed `/context-window <size>`; both track the last size `session/info` confirmed, except that while a change is in flight the dropdown shows the size just requested. A model change only changes the model and requests no window size; if the new model's window differs, the compaction limit's launch percentage maps to a different token count. See [native context-window selection](../research/context-window-selection.md).
 
 
 How the Grok Build VS Code and desktop clients are put together, and the places
@@ -1238,7 +1238,7 @@ Settings → General stores `grok.autoCompactEnabled` and `grok.autoCompactAt` o
 
 `startSession` captures the setting for the agent process. Each backend translates it into a launch override. Claude gets a per-session window with a 33,000-token reserve. Codex receives a thread config override and retains its native model cap. Grok uses a percentage calculated from its cached catalog or saved context window and confirms the effective value through session info. A launch with no known window uses Grok's native threshold. A live model or window change can move the token threshold because the launch override is a percentage. Muse passes soft and hard ratios through `muse serve -c`. DeepSeek layers a threshold ratio over its managed profile and retains its output and headroom limits. Antigravity continues with its own behavior.
 
-`AcpClient.autoCompactThreshold` gives the host one effective token value and a source. `contextUsage.autoCompact` is optional and scoped to the active conversation. The webview uses its existing meter when the field is absent and clears the marker when the host sends null. Claude and Codex provide compaction tool updates through their pinned adapters. Grok reports a native notification lifecycle, and Muse reports a terminal compaction item. Those live reports drive the compaction notice when available. DeepSeek's ACP stream provides occupancy.
+`AcpClient.autoCompactThreshold` gives the host one effective token value and a source. `contextUsage.autoCompact` is optional and scoped to the active conversation. The webview uses its existing meter when the field is absent and clears the marker when the host sends null. Claude and Codex provide compaction tool updates through their pinned adapters. Grok reports a native notification lifecycle, and Muse reports a terminal compaction item. With the limit enabled, eligible live automatic-compaction reports from Claude, Codex and Muse drive the shared completion notice (manual, replayed, foreign and duplicate reports are filtered out); Grok's notifications take their own path. DeepSeek's ACP stream provides occupancy.
 
 ### DeepSeek provider
 

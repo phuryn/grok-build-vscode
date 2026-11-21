@@ -1,10 +1,16 @@
 # Changelog
 
-## Unreleased
+## 4.17.2 — 2026-11-21
+
+**Compact at a token limit for every agent but Antigravity, and the chat drops the previous name.**
 
 ### Added
 
-- **Compact at a token limit** in Settings → General. Choose a ceiling from 200K to 750K for new or reopened conversations and see the active threshold in the context meter.
+- **Compact at a token limit** in Settings → General. Turn it on and choose 200K, 300K, 400K, 500K or 750K (300K to start): Grok Build, Muse Code, DeepSeek, Codex and Claude Code are set through their own compaction settings to compact by that point, or at their own threshold if it comes first. An agent picks the setting up when its process starts, so a new conversation or one reopened from history gets it, while a conversation that is still running keeps the setting it started with. You can set it from a linked phone too. When the host can work the threshold out, the context popover marks it and says whose it is. Antigravity keeps its own compaction.
+
+### Changed
+
+- **The chat no longer says "previously Grok Build".** About now names the licence correctly (Fair Source, FSL-1.1-MIT) and lists every agent AFK Pilot works with.
 
 ## 4.17.1 — 2026-11-21
 
