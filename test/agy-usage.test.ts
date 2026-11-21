@@ -4,7 +4,8 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AcpClient } from "../src/acp";
 import { AgyBackend, listAgyCatalog } from "../src/agy-backend";
-import { agyMeterDirectory, agySubscriptionWindows, agyUsageCredentialContext, AgyUsageMeter } from "../src/agy-usage";
+import { agyMeterDirectory, agySubscriptionWindows, agyUsageCredentialContext, AgyUsageMeter, agyWindowsForModel } from "../src/agy-usage";
+import { Session, subscriptionUsageMessage } from "../src/session";
 
 const usageText: string = require("./fixtures/agy-usage-text.json");
 const FAKE = path.join(__dirname, "fixtures", "fake-agy-acp.cjs");
@@ -28,6 +29,40 @@ describe("Antigravity quota windows", () => {
     expect(agySubscriptionWindows(usageText.replace("(resets Nov 25, 2026, 23:12 UTC)", "")).map(w => w.periodType))
       .toEqual(["gemini_5h", "claude-gpt_weekly", "claude-gpt_5h"]);
     expect(agySubscriptionWindows(usageText.replace("Quota Limits", "Something else"))).toEqual([]);
+  });
+});
+
+describe("Antigravity quota for the model in use", () => {
+  const windows = agySubscriptionWindows(usageText);
+  const gemini = ["gemini_weekly", "gemini_5h"];
+  const claudeGpt = ["claude-gpt_weekly", "claude-gpt_5h"];
+
+  it.each([
+    ["gemini-4-argon", gemini], ["gemini-3.8-flash", gemini], ["gemini-pro-orchestrator", gemini],
+    ["claude-opus-5-5", claudeGpt], ["claude-sonnet-5-5", claudeGpt], ["gpt-oss-120b-medium", claudeGpt],
+    [undefined, [...gemini, ...claudeGpt]], ["", [...gemini, ...claudeGpt]], ["a-new-family", [...gemini, ...claudeGpt]],
+  ] as const)("%j shows %j", (modelId, expected) => {
+    expect(agyWindowsForModel(windows, modelId).map((w) => w.periodType)).toEqual(expected);
+  });
+
+  it("the usage message follows the session's model, and only for Antigravity", () => {
+    const session = new Session();
+    session.provider = "agy";
+    session.subscriptionUsage = { snapshot: () => windows } as any;
+    session.client = { currentModelId: "gemini-4-argon" } as any;
+    expect(subscriptionUsageMessage(session)).toEqual({ type: "subscriptionUsage", windows: windows.slice(0, 2), hideWhenEmpty: true });
+    session.client!.currentModelId = "claude-opus-5-5";
+    expect(subscriptionUsageMessage(session).windows.map((w) => w.label)).toEqual(["Claude & GPT · Weekly", "Claude & GPT · 5-hour"]);
+    session.provider = "grok";
+    expect(subscriptionUsageMessage(session)).toEqual({ type: "subscriptionUsage", windows });
+  });
+
+  it("a model change republishes Antigravity's meter", () => {
+    const sidebar = fs.readFileSync(path.join(__dirname, "..", "src", "sidebar.ts"), "utf8");
+    const start = sidebar.indexOf('client.on("modelChanged"');
+    expect(start).toBeGreaterThan(-1);
+    const handler = sidebar.slice(start, sidebar.indexOf("client.on(", start + 1));
+    expect(handler).toMatch(/session\.provider === "agy"\) this\.publishSubscriptionUsage\(session\)/);
   });
 });
 

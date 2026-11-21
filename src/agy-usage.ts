@@ -65,6 +65,17 @@ export function agySubscriptionWindows(text: string, now = Date.now()): Subscrip
   return [...result.values()];
 }
 
+/**
+ * The quota the model in use draws on. Antigravity meters Gemini models in one
+ * pool and its Claude and GPT-OSS models in another, so a Gemini conversation
+ * showing the second pool reads as another product's subscription. An id that
+ * names neither family (or no model yet) keeps every window.
+ */
+export function agyWindowsForModel(windows: readonly SubscriptionWindow[], modelId: string | undefined): SubscriptionWindow[] {
+  const group = !modelId ? undefined : /^gemini-/.test(modelId) ? "gemini" : /^(?:claude|gpt)-/.test(modelId) ? "claude-gpt" : undefined;
+  return group ? windows.filter((window) => window.periodType.startsWith(`${group}_`)) : [...windows];
+}
+
 function usableId(id: unknown): id is string {
   return typeof id === "string" && /^[a-zA-Z0-9_-]{1,128}$/.test(id);
 }

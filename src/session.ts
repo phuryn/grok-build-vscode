@@ -1,4 +1,5 @@
 import { AcpClient } from "./acp";
+import { agyWindowsForModel } from "./agy-usage";
 import type { HostMsg } from "./protocol";
 import type { FileChip } from "./chips";
 import { ForkPoints } from "./fork-points";
@@ -712,7 +713,9 @@ export function sessionModeMessage(session: Session, modeId: string): Extract<Ho
 }
 
 export function subscriptionUsageMessage(session: Session): Extract<HostMsg, { type: "subscriptionUsage" }> & { hideWhenEmpty?: true } {
-  return { type: "subscriptionUsage", windows: session.subscriptionUsage?.snapshot() ?? [],
+  const windows = session.subscriptionUsage?.snapshot() ?? [];
+  return { type: "subscriptionUsage",
+    windows: session.provider === "agy" ? agyWindowsForModel(windows, session.client?.currentModelId) : windows,
     ...(session.provider === "agy" ? { hideWhenEmpty: true } : {}) };
 }
 

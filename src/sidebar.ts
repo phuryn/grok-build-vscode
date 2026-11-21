@@ -11970,6 +11970,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       if (gen !== session.gen) return;
       this.emit(session, { type: "modelChanged", modelId: id });
       if (session.provider === "deepseek") this.emit(session, sessionModeMessage(session, this.displayMode(session)));
+      // Antigravity's meter shows the quota of the model in use; another model may draw on the other one.
+      if (session.provider === "agy") this.publishSubscriptionUsage(session);
     });
     client.on("modeChanged", (id) => {
       if (gen !== session.gen) return;
