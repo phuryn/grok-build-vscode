@@ -6,7 +6,7 @@
 
 ### Added
 
-- **Compact at a token limit** in Settings → General. Turn it on and choose 200K, 300K, 400K, 500K or 750K (300K to start): Grok Build, Muse Code, DeepSeek, Codex and Claude Code are set through their own compaction settings to compact by that point, or at their own threshold if it comes first. An agent picks the setting up when its process starts, so a new conversation or one reopened from history gets it, while a conversation that is still running keeps the setting it started with. You can set it from a linked phone too. When the host can work the threshold out, the context popover marks it and says whose it is. Antigravity keeps its own compaction.
+- **Compact at a token limit** in Settings → General. Turn it on and choose 200K, 300K, 400K, 500K or 750K (300K to start): Grok Build, Muse Code, DeepSeek, Codex and Claude Code are set through their own compaction settings to compact by that point, or at their own threshold if it comes first. Two exceptions: Grok Build takes the limit as a share of the model's context window, so it applies once that window is known and moves if you widen the window later, and Claude Code keeps automatic compaction off if you turned it off there. An agent picks the setting up when its process starts, so a new conversation or one reopened from history gets it, while a conversation that is still running keeps the setting it started with. You can set it from a linked phone too. When the host can work the threshold out, the context popover marks it and says whose it is. Antigravity keeps its own compaction.
 
 ### Changed
 
