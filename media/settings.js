@@ -1155,10 +1155,18 @@
       id: "providerAgy", category: "providers", logo: "agy", provider: "agy",
       title: "Antigravity", vendor: "Google", description: "", kind: "action", keepOpen: true,
       visible: (s, env) => !!(env && (!env.isRemote || providerOf(s, "agy").remoteSetup === true) && env.providersKnown && agyAdvertised(s)),
-      describe: (s) => providerDescription(providerOf(s, "agy")),
-      local: (s, env) => env && (env.isRemote || env.isDesktop) && !providerConnectedNow(s, "agy") ? "connectWizard:agy" : "",
-      actionLabel: (s) => providerAction(providerOf(s, "agy")),
-      message: (s, env) => ({ type: providerConnectedNow(s, "agy") ? (env.isRemote && providerOf(s, "agy").keepsCliSignIn === true ? "disconnectProvider" : "logout") : "runGrokLogin", provider: "agy" }),
+      describe: (s) => {
+        const provider = providerOf(s, "agy");
+        const cli = provider.agyCli;
+        if (cli?.installing) return "Installing the Antigravity CLI…";
+        const description = providerDescription(provider);
+        if (cli?.reason) return description + " " + cli.reason;
+        return cli?.version ? "Antigravity CLI v" + cli.version + ". " + description : description;
+      },
+      local: (s, env) => env && (env.isRemote || env.isDesktop) && !providerOf(s, "agy").agyCli?.installing && !providerConnectedNow(s, "agy") ? "connectWizard:agy" : "",
+      actionLabel: (s) => providerOf(s, "agy").agyCli?.installing ? "Cancel" : providerAction(providerOf(s, "agy")),
+      message: (s, env) => providerOf(s, "agy").agyCli?.installing ? { type: "cancelAgyInstall" }
+        : ({ type: providerConnectedNow(s, "agy") ? (env.isRemote && providerOf(s, "agy").keepsCliSignIn === true ? "disconnectProvider" : "logout") : "runGrokLogin", provider: "agy" }),
     },
     {
       id: "providerAgyStatus", category: "providers", logo: "agy", provider: "agy",
@@ -3266,6 +3274,13 @@
     const desc = document.createElement("div");
     desc.className = "settings-row-desc";
     desc.textContent = rowDescription(row, snapshot, env);
+    if (row.id === "providerAgy" && providerOf(snapshot, "agy").agyCli?.installing) {
+      desc.setAttribute("role", "status");
+      const progress = document.createElement("progress");
+      progress.className = "settings-install-progress";
+      progress.setAttribute("aria-label", "Installing the Antigravity CLI");
+      desc.appendChild(progress);
+    }
     title.appendChild(name);
     title.appendChild(desc);
     const control = document.createElement("div");
@@ -4073,7 +4088,7 @@
               paint();
               return;
             }
-            if (row.provider && !(env && env.isRemote)
+            if (row.provider && !(env && env.isRemote) && !(row.provider === "agy" && providerOf(snapshot, "agy").agyCli?.installing)
               && providerOf(snapshot, row.provider).connected
               && !providerConnectedNow(snapshot, row.provider)) {
               PROVIDER_TERMINAL.id = row.provider;

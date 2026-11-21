@@ -16,15 +16,37 @@ Google sign-in on November 11. Recheck triggers are collected under
 
 ## What runs
 
-`AgyBackend` spawns either `agy acp` or Google's ACP registry server
-(`agy_acp_server`) directly. New Google sessions prefer the installed CLI.
-The host checks the installer location and PATH using filesystem lookups,
-then permits the managed fallback if the CLI fails before opening a new
-conversation and the managed server has a Google sign-in. Gemini API keys
-saved in AFK use the managed gateway. Reopening stays with the originating
-program, recorded with the conversation in host state. A CLI conversation
-requires the CLI again if the binary is removed. See [Google's CLI install
-locations](https://antigravity.google/docs/getting-started?tab=cli).
+`AgyBackend` spawns `agy acp` for new Google conversations. When agy is missing
+and the managed server has a Google sign-in, the next new chat announces and
+starts the CLI install. Concurrent chats share one installer per host window.
+An install or startup failure before the conversation opens can use the signed-in
+server, with a transcript notice. A phone connected to a desk also uses this
+fallback when the CLI requires a browser sign-in. Each conversation reopens on
+its original program. A managed conversation whose server is missing offers
+to set the server up again. Gemini API keys use the managed gateway and install
+`agy_acp_server` on first key setup when needed.
+
+### CLI installation
+
+`agy-cli-lifecycle.ts` runs Google's installer with a three-minute deadline.
+Windows uses noninteractive PowerShell and `irm https://antigravity.google/cli/install.ps1 | iex`.
+macOS and Linux use Bash with `pipefail` and `curl -fsSL https://antigravity.google/cli/install.sh | bash`.
+The installer downloads from Google's update manifest and checks SHA-512.
+Discovery looks in `%LOCALAPPDATA%\agy\bin` or `~/.local/bin` first, then PATH.
+Success requires a discovered executable and an answering `agy --version`.
+Cancel kills the process tree on Windows and the process group on POSIX.
+The Providers row shows indeterminate progress and the installed version
+through `providerState.agyCli`. The existing `agyInstallProgress` frame also
+feeds the requesting setup panel.
+
+The CLI can update itself. AFK also attempts bare `agy update` once per
+observed AFK upgrade, before any version probe, conversation, history list,
+sign-in or sign-out it launches on the CLI. The attempt has a 20-second deadline,
+logs failure, and records the AFK version even on failure. A host window shares
+the same pending updater across callers. The first version observation records
+a baseline when no earlier host version is available.
+
+### Managed server
 
 - Archives: `https://dl.google.com/agy-extensions/releases/{macos|linux|windows}/agy-acp-server-1.5.2-<target>.zip`.
   The registry publishes no checksums; `agy-managed-installer.ts` pins the
@@ -130,16 +152,20 @@ aistudio.google.com/apikey). Vertex AI and Enterprise sign-in are not offered.
   CLI ACP `logout` (initialize and logout only, no session): new Google chats
   prefer the CLI, which keeps its own sign-in, so leaving it would keep them on
   the old account. A CLI failure after the server signed out is reported.
-- A remote desk may paste a key or adopt an existing Google sign-in
-  (`agyGoogleSignInPresent`), without starting `authenticate`. A local desk
-  still offers browser sign-in (`googleSignIn`). Cloud hosts additionally
-  advertise `googleSignInPaste`: `authenticate` prints the Google OAuth URL
+- New Google setup and a desk chat that gets an ACP auth-required error use
+  the CLI's own `authenticate` with `oauth-personal`. The CLI keeps its Google
+  sign-in separately. Reopening a managed Google conversation can still
+  use the managed server's browser sign-in. A remote desk can use a saved
+  Google server sign-in and can set up a Gemini API key. It leaves the CLI
+  browser sign-in to the workspace computer.
+- Cloud hosts advertise `googleSignInPaste`. The existing sign-in card reads the Google OAuth URL
   with a random loopback redirect port, state and PKCE challenge, then waits
   300 seconds. After signing in on the phone, its loopback page cannot load;
   the person copies the whole address into the existing paste-code card.
   `agySignInCallback` validates HTTP loopback, the printed port, code and state
   before requesting the path/query at fixed 127.0.0.1. The server retains its
-  PKCE verifier and exchanges the code; Linux stores `acp_token.json`. Invalid
+  PKCE verifier and exchanges the code. The managed server on Linux stores
+  `acp_token.json`. Invalid
   addresses keep waiting with a static message, expiry offers a fresh run.
   Pasted addresses are never echoed or persisted; cloud sign-in ACP logs and
   error output are suppressed because the server can print callback codes.
@@ -242,8 +268,11 @@ The November 20 Windows 1.5.8 capture used the CLI's existing sign-in with
 `initialize` and `session/new`. Its model list included Gemini 4, Gemini 3.8
 Flash, three Orchestrators, Claude Opus 5.5, Claude Sonnet 5.5, and GPT-OSS
 120B. Effort uses `thought_level`. The CLI's `default`, `accept-edits`,
-`auto`, and `plan` map to the shared mode picker. The CLI enforces its own
-permissions. The host follows native mode updates as they arrive.
+`auto`, and `plan` map to the shared mode picker. Auto accept (`yolo` in AFK)
+uses the CLI's `default` underneath. AFK answers incoming and pending tool
+permissions with `allow_once` and leaves plan review cards for the person.
+New chats honor the remembered Auto accept preference and the new-install
+default. The CLI's native Auto mode makes its own approval decisions.
 
 A Plan turn on 1.5.8 (Windows, November 20) sent no permission request and
 no plan update. The model wrote the plan into the CLI's own

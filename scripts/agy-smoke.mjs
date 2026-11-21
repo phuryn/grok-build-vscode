@@ -3,11 +3,12 @@
 // Reached from `npm run smoke:acp -- --provider=agy`; opt-in, never part of a
 // default run, `npm test` or CI.
 //
-// Needs a signed-in server (Settings -> Providers -> Antigravity -> Connect).
+// The server smoke needs a signed-in server (Settings -> Providers -> Antigravity -> Connect).
 // It NEVER calls `logout`: that would sign the machine's account out.
 // Server path: AGY_SERVER_PATH, else the copy the app installed
 // (AGY_STORAGE_ROOT, the extension's global storage, to find it).
 // AGY_SMOKE_PROGRAM=cli exercises a signed-in agy CLI (AGY_CLI_PATH or discovery).
+// AGY_SMOKE_SCENARIO=auto-accept runs only the CLI permission and edit check.
 // Model: gemini-3.8-flash at the `low` thinking level (= gemini-3.8-flash-low).
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -24,10 +25,13 @@ export async function runAgySmoke({ root, output, record, say, rpcMs, turnMs }) 
   const { AgyUsageMeter } = require("../out/agy-usage.js");
   const { agyGoogleAuth, agyGoogleSignInPresent } = require("../out/agy-auth.js");
   const { locateAgyServer } = require("../out/agy-managed-installer.js");
-  const server = process.env.AGY_SERVER_PATH || locateAgyServer({ managedStorageRoot: process.env.AGY_STORAGE_ROOT });
-  assert(server && fs.existsSync(server), "no Antigravity server: set AGY_SERVER_PATH, or AGY_STORAGE_ROOT to the extension's global storage");
-  assert(await agyGoogleSignInPresent(), "Antigravity is not signed in with Google on this machine; connect it in the app first (this smoke never signs in or out)");
   const program = process.env.AGY_SMOKE_PROGRAM === "cli" ? "cli" : "server";
+  const autoAcceptOnly = program === "cli" && process.env.AGY_SMOKE_SCENARIO === "auto-accept";
+  const server = process.env.AGY_SERVER_PATH || locateAgyServer({ managedStorageRoot: process.env.AGY_STORAGE_ROOT });
+  if (!autoAcceptOnly) {
+    assert(server && fs.existsSync(server), "no Antigravity server: set AGY_SERVER_PATH, or AGY_STORAGE_ROOT to the extension's global storage");
+    assert(await agyGoogleSignInPresent(), "Antigravity server is not signed in with Google on this machine");
+  }
   const binary = program === "cli" ? process.env.AGY_CLI_PATH || locateAgyCli() : server;
   assert(binary && fs.existsSync(binary), "no Antigravity CLI: install agy or set AGY_CLI_PATH");
   // Under the home folder on purpose: that is where the server's alphabetical
@@ -44,12 +48,13 @@ export async function runAgySmoke({ root, output, record, say, rpcMs, turnMs }) 
     setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms).unref())]);
   const meiDirs = () => process.platform !== "win32" ? [] : fs.readdirSync(os.tmpdir()).filter((name) => name.startsWith("_MEI"));
   const clients = [];
-  const meter = new AgyUsageMeter(server, process.env);
+  const meter = autoAcceptOnly ? undefined : new AgyUsageMeter(server, process.env);
   const client = () => {
     const made = new AcpClient({
-      cliPath: binary, cwd: scratch, effort: "low", env: { ...process.env },
+      cliPath: binary, cwd: scratch, effort: "low",
+      env: { ...process.env, ...(program === "cli" ? { AGY_CLI_DISABLE_AUTO_UPDATE: "1" } : {}) },
       backend: new AgyBackend({ program, usageMeter: meter }), log: (line) => log.write(`${new Date().toISOString()} ${line}\n`),
-      refuseServerRequests: program === "cli",
+      refuseServerRequests: program === "cli" && !autoAcceptOnly,
       timeouts: { requestTimeoutMs: rpcMs, promptIdleTimeoutMs: turnMs },
       // As the host starts it: the chosen method, stated on every start. With
       // the stored token the server refreshes silently; it never opens a browser.
@@ -76,6 +81,13 @@ export async function runAgySmoke({ root, output, record, say, rpcMs, turnMs }) 
     await timed(agy.start(), "initialize + authenticate", rpcMs * 2);
     record("initialize", "PASS", `agentInfo=${init?.agentInfo?.name} ${init?.agentInfo?.version}; systemPrompt.append=${init?.agentCapabilities?._meta?.antigravity?.systemPrompt?.append === true}`);
     if (program === "cli") {
+      if (autoAcceptOnly) {
+        await check("CLI Auto accept edit", async () => {
+          await timed(agy.newSession(), "CLI session/new", rpcMs);
+          return exerciseAutoAccept({ agy, timed, rpcMs, turnMs, scratch });
+        });
+        return;
+      }
       await exerciseCli({ agy, client, check, timed, rpcMs, turnMs, scratch });
       return;
     }
@@ -232,7 +244,7 @@ export async function runAgySmoke({ root, output, record, say, rpcMs, turnMs }) 
       return `session/load replayed the transcript; listed from disk with updatedAt=${new Date(listed.find((e) => e.sessionId === sessionId).updatedAt).toISOString()}`;
     });
   } finally {
-    await meter.dispose();
+    await meter?.dispose();
     await Promise.all(clients.map((made) => made.dispose().catch(() => undefined)));
     log.end();
     if (process.platform === "win32") {
@@ -247,6 +259,33 @@ export async function runAgySmoke({ root, output, record, say, rpcMs, turnMs }) 
     } catch (error) { record("cleanup", "FAIL", `scratch: ${error?.message ?? error}`); }
   }
   void root;
+}
+
+async function exerciseAutoAccept({ agy, timed, rpcMs, turnMs, scratch }) {
+  const { pickAutoAcceptOption } = require("../out/session.js");
+  const { isPlanReviewPermission } = require("../out/plan-gate.js");
+  assert(agy.pickerModes.includes("yolo"), "the CLI picker omitted Auto accept");
+  await timed(agy.setMode("yolo"), "CLI Auto accept", rpcMs);
+  assert.equal(agy.currentModeId, "agent", "the underlying CLI must stay in default mode");
+  const answers = [];
+  const answer = (request) => {
+    const option = !isPlanReviewPermission(request.toolCall?.kind) && pickAutoAcceptOption(request.options, "agy");
+    answers.push(option?.kind ?? "cancelled");
+    if (option) agy.respondPermission(request.id, option.optionId);
+    else agy.respondPermissionCancelled(request.id);
+  };
+  const marker = "AFK-AUTO-ACCEPT-OK";
+  const file = path.join(scratch, "auto-accept.txt");
+  fs.writeFileSync(file, "BEFORE\n");
+  agy.on("permissionRequest", answer);
+  try {
+    await timed(agy.prompt(`Use your file editing tool now to replace BEFORE in auto-accept.txt with ${marker}. Then reply DONE.`),
+      "CLI Auto accept edit", turnMs);
+  } finally { agy.off("permissionRequest", answer); }
+  assert(answers.length > 0, "no permission request arrived");
+  assert(answers.every(kind => kind === "allow_once"), `unexpected permission answers: ${answers.join(", ")}`);
+  assert.equal(fs.readFileSync(file, "utf8").trim(), marker);
+  return `${answers.length} permission requests answered with allow_once; scratch file edited`;
 }
 
 async function exerciseCli({ agy, client, check, timed, rpcMs, turnMs, scratch }) {
@@ -270,7 +309,7 @@ async function exerciseCli({ agy, client, check, timed, rpcMs, turnMs, scratch }
   });
   const opened = await check("CLI session and model catalog", async () => {
     ({ sessionId } = await timed(agy.newSession("gemini-3.8-flash"), "CLI session/new", rpcMs));
-    assert.deepEqual(agy.pickerModes, ["agent", "acceptEdits", "auto", "plan"]);
+    assert.deepEqual(agy.pickerModes, ["agent", "acceptEdits", "auto", "plan", "yolo"]);
     assert.equal(agy.currentReasoningEffort, "low");
     assert(agy.supportsInterject());
     for (const mode of ["acceptEdits", "auto", "agent"]) {

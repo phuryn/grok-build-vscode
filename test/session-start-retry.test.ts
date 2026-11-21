@@ -9,6 +9,7 @@ import { Session, sessionUiSnapshot } from "../src/session";
 import type { HostMsg } from "../src/protocol";
 import { CLOUD_ENVIRONMENT_ENV } from "../src/remote-frames";
 import { bootWebview, click, dispatch } from "./webview-harness";
+import * as agyLifecycle from "../src/agy-cli-lifecycle";
 
 const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
 beforeEach(() => Object.defineProperty(process, "platform", { value: "linux" }));
@@ -33,6 +34,9 @@ const startControl = {
   startEnvs: [] as Array<NodeJS.ProcessEnv | undefined>,
   setModes: [] as string[],
   claudeAutoUnsupported: false,
+  agyPrograms: [] as string[],
+  agyCliNeedsLogin: false,
+  agyCliInitialMode: "agent",
 };
 
 vi.mock("../src/acp", async (importOriginal) => {
@@ -40,7 +44,10 @@ vi.mock("../src/acp", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/acp")>();
   class FakeAcpClient extends EventEmitter {
     setHumanWaitActive = vi.fn();
-    provider: "grok" | "codex" | "claude" | "muse";
+    provider: "grok" | "codex" | "claude" | "muse" | "agy";
+    pickerModes?: string[];
+    nativeApprovalModes = false;
+    respondPermission = vi.fn(() => true);
     currentModeId?: string;
     usesClientPlanGate = false;
     sessionId: string | undefined;
@@ -49,7 +56,7 @@ vi.mock("../src/acp", async (importOriginal) => {
     fsRead?: unknown;
     fsWrite?: unknown;
     terminal?: unknown;
-    constructor(opts: { log: (msg: string) => void; effort?: string; backend?: any; startupAuth?: unknown; env?: NodeJS.ProcessEnv }) {
+    constructor(private opts: { log: (msg: string) => void; effort?: string; backend?: any; startupAuth?: unknown; env?: NodeJS.ProcessEnv }) {
       super();
       startControl.startupAuths.push(opts.startupAuth);
       startControl.startEnvs.push(opts.env);
@@ -62,6 +69,7 @@ vi.mock("../src/acp", async (importOriginal) => {
     async start(): Promise<void> {
       await startControl.startWait;
       startControl.starts += 1;
+      if (this.provider === "agy") startControl.agyPrograms.push(this.opts.backend.program);
       if (startControl.failuresRemaining > 0) {
         startControl.failuresRemaining -= 1;
         throw new Error(startControl.failWith);
@@ -69,6 +77,15 @@ vi.mock("../src/acp", async (importOriginal) => {
       this.emit("initialized", { protocolVersion: 1, serverInfo: { version: "0.2.117" } });
     }
     async newSession(): Promise<{ sessionId: string }> {
+      if (this.provider === "agy" && this.opts.backend.program === "cli") {
+        if (startControl.agyCliNeedsLogin) throw Object.assign(new Error("Authentication required"), { code: -32000 });
+        this.opts.backend.normalizeSessionResponse({ configOptions: [{ id: "mode", currentValue: "default",
+          options: ["default", "accept-edits", "auto", "plan"].map(value => ({ name: value, value })) }] });
+        this.pickerModes = this.opts.backend.pickerModes;
+        this.nativeApprovalModes = this.opts.backend.nativeApprovalModes;
+        this.currentModeId = startControl.agyCliInitialMode;
+        this.emit("modeChanged", this.currentModeId);
+      }
       // A process death mid-startup: the exit event fires while startSession
       // is still awaiting a step that will SUCCEED (the swallowed-error class).
       if (startControl.exitDuringNewSessionRemaining > 0) {
@@ -104,6 +121,11 @@ vi.mock("../src/acp", async (importOriginal) => {
     async deleteSession(): Promise<void> {}
     async setMode(mode: string): Promise<void> {
       startControl.setModes.push(`${this.provider}:${mode}`);
+      if (this.provider === "agy" && this.pickerModes) {
+        const native = this.opts.backend.setMode(this.sessionId, mode).params.value;
+        this.currentModeId = ({ default: "agent", "accept-edits": "acceptEdits" } as Record<string, string>)[native] ?? native;
+        this.emit("modeChanged", this.currentModeId);
+      }
       if (this.provider === "muse" && mode === "yolo" && startControl.museRefusesFullAccess) {
         throw new Error("approval mode allowAll was not accepted");
       }
@@ -119,8 +141,8 @@ vi.mock("../src/acp", async (importOriginal) => {
       }
     }
     supportsInterject(): boolean { return this.provider === "grok"; }
-    isCredentialError(): boolean {
-      return /auth|unauthor|401|api[_\s-]?key|credential|sign.?in/i.test(startControl.failWith);
+    isCredentialError(error?: unknown): boolean {
+      return /auth|unauthor|401|api[_\s-]?key|credential|sign.?in/i.test(String(error ?? startControl.failWith));
     }
   }
   return { ...actual, AcpClient: FakeAcpClient };
@@ -177,6 +199,8 @@ function makeSidebar(cwd: string): any {
   sidebar.workspaceRoot = vi.fn(() => cwd);
   sidebar.sessionCwd = vi.fn((session: Session) => session.cwd || cwd);
   sidebar.locateProvider = vi.fn(() => "grok");
+  sidebar.installedAgyCli = vi.fn(() => sidebar.agyCliLookup?.path);
+  sidebar.agyGoogleSignedIn = vi.fn(async () => false);
   sidebar.providerDefaultForProject = vi.fn(() => "");
   sidebar.configForcesAutoApprove = vi.fn(() => false);
   sidebar.confirmRepoForcedAutoApprove = vi.fn(async () => true);
@@ -828,11 +852,15 @@ describe("startSession bounded spawn retry", () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.unstubAllEnvs();
     startControl.failuresRemaining = 0;
     startControl.failWith = "Internal error";
     startControl.starts = 0;
     startControl.disposes = 0;
+    startControl.agyPrograms = [];
+    startControl.agyCliNeedsLogin = false;
+    startControl.agyCliInitialMode = "agent";
   });
 
   it.each([undefined, "saved-session"])("a new/load start (%s) clears grants even when reusing a Session object", async (resumeId) => {
@@ -1044,6 +1072,153 @@ describe("startSession bounded spawn retry", () => {
     expect(startErrors(sidebar)).toEqual([]);
   });
 
+  function googleAgySidebar() {
+    const sidebar = makeSidebar("/repo");
+    sidebar.connectedProviders = sidebar.usableProviders = () => ["agy"];
+    sidebar.providerConnectionState = { agy: true };
+    sidebar.focused.provider = "agy";
+    sidebar.agyGoogleSignedIn.mockResolvedValue(true);
+    sidebar.context.extensionVersion = "4.17.3";
+    sidebar.postLocal = vi.fn();
+    sidebar.deviceLogins = new Map();
+    sidebar.startDeviceLogin = vi.fn(async () => {});
+    vi.stubEnv(CLOUD_ENVIRONMENT_ENV, "");
+    return sidebar;
+  }
+
+  it("installs at the next Google chat and shares the running install across two chats", async () => {
+    const sidebar = googleAgySidebar();
+    let complete!: (installed: { binary: string; version: string }) => void;
+    const install = vi.spyOn(agyLifecycle, "installAgyCli").mockImplementation(() => new Promise(resolve => { complete = resolve; }));
+    const other = new Session();
+    other.provider = "agy";
+    other.cwd = "/repo";
+    const first = sidebar.startSession(undefined, sidebar.focused);
+    const second = sidebar.startSession(undefined, other);
+    await vi.waitFor(() => expect(other.buffer).toContainEqual({
+      type: "planNotice", text: "Installing Google's Antigravity CLI. Antigravity chats run on it from now on.",
+    }));
+    expect(startControl.agyPrograms).toEqual([]);
+    expect(install).toHaveBeenCalledOnce();
+    complete({ binary: "fake agy", version: "1.5.8" });
+    expect((await Promise.all([first, second])).map(client => client.pickerModes)).toEqual([
+      ["agent", "acceptEdits", "auto", "plan", "yolo"], ["agent", "acceptEdits", "auto", "plan", "yolo"],
+    ]);
+    expect(startControl.agyPrograms).toEqual(["cli", "cli"]);
+  });
+
+  it("falls back with the installer error and retries on a later Google chat", async () => {
+    const sidebar = googleAgySidebar();
+    const install = vi.spyOn(agyLifecycle, "installAgyCli").mockRejectedValueOnce(new Error("Disk full."))
+      .mockResolvedValueOnce({ binary: "fake agy", version: "1.5.8" });
+    expect(await sidebar.startSession()).toBeDefined();
+    expect(startControl.agyPrograms).toEqual(["server"]);
+    expect(sidebar.focused.buffer.filter((m: HostMsg) => m.type === "planNotice").at(-1)).toEqual({
+      type: "planNotice", text: "Couldn't install Google's Antigravity CLI: Disk full. This chat runs on the Antigravity server.",
+    });
+    const next = new Session();
+    next.provider = "agy";
+    next.cwd = "/repo";
+    expect(await sidebar.startSession(undefined, next)).toBeDefined();
+    expect(startControl.agyPrograms).toEqual(["server", "cli"]);
+    expect(install).toHaveBeenCalledTimes(2);
+  });
+
+  it("offers server setup for an existing managed chat when its binary is missing", async () => {
+    const sidebar = googleAgySidebar();
+    sidebar.locateProvider.mockReturnValue(undefined);
+    sidebar.connectedProviders = sidebar.usableProviders = () => [];
+    await sidebar.state.update("grok.sessionMeta", { "server-history": { agyProgram: "server" } });
+    const install = vi.spyOn(agyLifecycle, "installAgyCli").mockRejectedValue(new Error("Unexpected CLI install"));
+    expect(await sidebar.startSession("server-history")).toBeUndefined();
+    expect(onboardings(sidebar)).toEqual([expect.objectContaining({ type: "onboarding", provider: "agy",
+      state: "agy-login", agyChoice: true, reason: expect.stringContaining("uses the Antigravity server") })]);
+    expect(sidebar.focused.activeSessionId).toBe("server-history");
+    expect(install).not.toHaveBeenCalled();
+  });
+
+  it("waits for a single upgrade before another operation or chat can spawn agy", async () => {
+    const sidebar = googleAgySidebar();
+    sidebar.installedAgyCli.mockReturnValue("fake agy");
+    await sidebar.state.update("grok.agyCliLastUpdateVersion", "4.17.2");
+    let finish!: () => void;
+    const update = vi.spyOn(agyLifecycle, "updateAgyCliOnUpgrade").mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    const version = vi.spyOn(agyLifecycle, "readAgyCliVersion").mockResolvedValue("1.5.8");
+    const prepare = vi.spyOn(sidebar, "prepareAgyCli");
+    const reading = sidebar.refreshAgyCliVersion();
+    const chat = sidebar.startSession();
+    await vi.waitFor(() => expect(prepare).toHaveBeenCalledTimes(2));
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(update).toHaveBeenCalledOnce();
+    expect(update).toHaveBeenCalledWith("fake agy", "4.17.3", "4.17.2", expect.any(Function), expect.any(Function), undefined);
+    expect(startControl.agyPrograms).toEqual([]);
+    expect(version).not.toHaveBeenCalled();
+    finish();
+    await reading;
+    expect(await chat).toBeDefined();
+    expect(startControl.agyPrograms).toEqual(["cli"]);
+    expect(version).toHaveBeenCalledWith("fake agy");
+  });
+
+  it("starts CLI sign-in at the desk and falls back with a notice for a phone at an unattended desk", async () => {
+    startControl.agyCliNeedsLogin = true;
+    const phone = googleAgySidebar();
+    phone.installedAgyCli.mockReturnValue("fake agy");
+    expect(await phone.startSession(undefined, phone.focused, "replace", undefined, { agyRemoteClientId: "phone" })).toBeDefined();
+    expect(startControl.agyPrograms).toEqual(["cli", "server"]);
+    expect(phone.startDeviceLogin).not.toHaveBeenCalled();
+    expect(phone.focused.buffer).toContainEqual({ type: "planNotice",
+      text: "Sign in to the Antigravity CLI on the workspace computer. This chat runs on the Antigravity server." });
+    const desk = googleAgySidebar();
+    desk.installedAgyCli.mockReturnValue("fake agy");
+    expect(await desk.startSession()).toBeUndefined();
+    expect(startControl.agyPrograms).toEqual(["cli", "server", "cli"]);
+    expect(desk.startDeviceLogin).toHaveBeenCalledWith("agy", "fake agy", undefined, { remote: false, agyProgram: "cli" });
+  });
+
+  it.each(["remembered", "new install"])("applies %s Auto accept to a CLI chat without changing native mode", async source => {
+    const sidebar = googleAgySidebar();
+    sidebar.installedAgyCli.mockReturnValue("fake agy");
+    sidebar.defaultModeCohort = source === "new install" ? "new" : "existing";
+    if (source === "remembered") {
+      startControl.agyCliInitialMode = "auto";
+      sidebar.host.getConfiguration.mockReturnValue({
+        get: (key: string, fallback: unknown) => key === "defaultMode" ? "yolo" : fallback,
+        inspect: () => undefined, update: vi.fn(async () => {}),
+      });
+    }
+    const client = await sidebar.startSession();
+    expect(client.pickerModes).toEqual(["agent", "acceptEdits", "auto", "plan", "yolo"]);
+    expect(client.currentModeId).toBe("agent");
+    expect(sidebar.displayMode(sidebar.focused)).toBe("yolo");
+  });
+
+  it("answers only allow once in CLI Auto accept and leaves plan reviews for the person", async () => {
+    const sidebar = googleAgySidebar();
+    sidebar.installedAgyCli.mockReturnValue("fake agy");
+    const client = await sidebar.startSession();
+    const session = sidebar.focused;
+    await sidebar.setMode("auto", session);
+    expect(client.currentModeId).toBe("auto");
+    expect(session.autoApprove).toBe(false);
+    await sidebar.setMode("yolo", session);
+    expect(client.currentModeId).toBe("agent");
+    expect(sidebar.displayMode(session)).toBe("yolo");
+    const request = (id: number, kind: string, allowOnce = true) => client.emit("permissionRequest", {
+      id, toolCall: { toolCallId: "tool-" + id, kind, title: "Please review", rawInput: { plan: "Plan text" } },
+      options: [
+        { optionId: "always", kind: "allow_always", name: "Always" },
+        ...(allowOnce ? [{ optionId: "once", kind: "allow_once", name: "Once" }] : []),
+        { optionId: "deny", kind: "reject_once", name: "Deny" },
+      ],
+    });
+    request(1, "edit");
+    request(2, "switch_mode");
+    request(3, "edit", false);
+    expect(client.respondPermission.mock.calls).toEqual([[1, "once"]]);
+    expect([...session.pendingPermissions.keys()]).toEqual([2, 3]);
+  });
+
   // A key's server gets the relay's address and the rollout flag -- never the
   // key -- and holds a lease on the relay until it exits.
   it("starts a key's Antigravity server in gateway mode at the relay", async () => {
@@ -1052,6 +1227,8 @@ describe("startSession bounded spawn retry", () => {
     sidebar.connectedProviders = vi.fn(() => ["agy"]);
     sidebar.usableProviders = vi.fn(() => ["agy"]);
     sidebar.focused.provider = "agy";
+    await sidebar.state.update("grok.agySignInMethod", "api-key");
+    sidebar.installedAgyCli.mockReturnValue("fake agy");
     sidebar.agyCredentialFor = vi.fn(async () => ({ method: "api-key", key: "AIza-session-key" }));
     const release = vi.fn();
     sidebar.agyRelay = {
@@ -1062,6 +1239,7 @@ describe("startSession bounded spawn retry", () => {
     startControl.startEnvs = [];
     const client = await sidebar.startSession(undefined, sidebar.focused);
     expect(client?.provider).toBe("agy");
+    expect(startControl.agyPrograms).toEqual(["server"]);
     // No default effort here, so the lease leaves the model's own default alone.
     expect(sidebar.agyRelay.acquire).toHaveBeenCalledWith("AIza-session-key", undefined);
     expect(startControl.startupAuths).toEqual([{ methodId: "gateway", meta: { gateway: { baseUrl: "http://127.0.0.1:4321/prefix" } } }]);

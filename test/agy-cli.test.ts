@@ -58,7 +58,7 @@ describe("Antigravity CLI (real ACP transport)", () => {
     await cli.start();
     await cli.newSession();
     expect(cli.supportsInterject()).toBe(true);
-    expect(cli.pickerModes).toEqual(["agent", "acceptEdits", "auto", "plan"]);
+    expect(cli.pickerModes).toEqual(["agent", "acceptEdits", "auto", "plan", "yolo"]);
     expect(cli.availableModels.map(model => model.modelId)).toEqual(["claude-sonnet-5-5", "gpt-oss-120b-medium"]);
     for (const mode of ["acceptEdits", "auto", "plan"]) {
       await cli.setMode(mode);

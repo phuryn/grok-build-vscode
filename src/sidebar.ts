@@ -10,6 +10,7 @@ import { locateMuseCli, parseMuseVersionOutput } from "./muse-cli-locator";
 import { museInstallCommand } from "./muse-install";
 import { AgyBackend, agyAcpDir, agySessionsFor, agyThinkingLevel, listAgyCatalog } from "./agy-backend";
 import { agyHistoryProgram, agyProgramCandidates, locateAgyCli, type AgyProgram } from "./agy-backend";
+import { installAgyCli, readAgyCliVersion, updateAgyCliOnUpgrade } from "./agy-cli-lifecycle";
 import { AgyUsageMeter } from "./agy-usage";
 import { agyGatewayAuth, agyGatewayEnv, agyGoogleAuth, agyGoogleSignInPresent, isAgySignInMethod, normalizeAgyApiKey, runAgySignIn, type AgySignInMethod } from "./agy-auth";
 import { AgyKeyRelay, type AgyModelListing, type AgyRelayLease } from "./agy-key-relay";
@@ -566,6 +567,7 @@ const PROVIDER_CONNECTIONS_KEY = "grok.providerConnections.v2";
 const PROVIDER_MODEL_CACHE_KEY = "grok.providerModelCache";
 /** How Antigravity signs in on this machine: a preference, never a secret. */
 const AGY_SIGN_IN_METHOD_KEY = "grok.agySignInMethod";
+const AGY_CLI_UPDATE_VERSION_KEY = "grok.agyCliLastUpdateVersion";
 /** HostSecrets key for the pasted Gemini API key. Nowhere else holds it. */
 const AGY_API_KEY_SECRET = "grok.agy.geminiApiKey";
 /** The last Gemini model listing the key relay saw: model names, never the key. */
@@ -1067,6 +1069,11 @@ export class GrokSidebar {
   private museSessionCache = new Map<string, SessionListEntry[]>();
   private agyServerPath?: string;
   private agyCliLookup?: { at: number; path: string | undefined };
+  private agyCliInstall?: Promise<string>;
+  private agyCliInstallError?: string;
+  private agyCliUpdate?: Promise<void>;
+  private agyCliVersion?: { binary: string; version: string };
+  private agyCliAuthenticated?: boolean;
   private agyMeter?: { binary: string; signal: AbortSignal; meter: AgyUsageMeter };
   private managedAgyUpgrade?: Promise<string | undefined>;
   /** The one place a Gemini API key goes; see agy-key-relay.ts. */
@@ -1122,6 +1129,7 @@ export class GrokSidebar {
     "runRoutineNow",
     "setShowThinking",
     "setExperimentalAntigravity", "setExperimentalDeepSeek", "installDeepSeek", "cancelDeepSeekInstall", "deepseekConnect", "disconnectProvider",
+    "cancelAgyInstall",
     "setAppPurpose",
     "setExpandCommandOutputs",
     "setSteerByDefault",
@@ -1846,6 +1854,55 @@ export class GrokSidebar {
     return this.agyCliLookup.path;
   }
 
+  private async prepareAgyCli(binary: string, signal?: AbortSignal): Promise<void> {
+    this.agyCliUpdate ??= updateAgyCliOnUpgrade(
+      // agy's own marker only. Grok's is written by its own updater, so
+      // reading it here would skip agy's update whenever Grok's ran first.
+      // The first run records a baseline; agy also updates itself.
+      binary, this.context.extensionVersion, this.state.get<string>(AGY_CLI_UPDATE_VERSION_KEY),
+      (version) => this.state.update(AGY_CLI_UPDATE_VERSION_KEY, version),
+      (line) => this.host.appendLine(line),
+      signal ? { signal } : undefined,
+    );
+    await this.agyCliUpdate;
+  }
+
+  private async refreshAgyCliVersion(): Promise<void> {
+    if (this.agyCliInstall || !this.hasProviderConsent("agy")) return;
+    const binary = this.installedAgyCli();
+    if (!binary) return;
+    await this.prepareAgyCli(binary);
+    try { this.agyCliVersion = { binary, version: await readAgyCliVersion(binary) }; }
+    catch (error) { this.host.appendLine(`[agy] Version check failed: ${errorDetail(error)}`); }
+  }
+
+  private async agyChatPrograms(session: Session, server: string | undefined, history?: AgyProgram,
+    requester?: RemoteRequester, silent?: boolean): Promise<ReturnType<typeof agyProgramCandidates>> {
+    const keyMode = this.agyMethod() === "api-key";
+    let binary = this.agyCliInstall ? undefined : this.installedAgyCli();
+    const gen = session.gen;
+    if (!binary && !history && !keyMode && !silent && server && await this.agyGoogleSignedIn() && session.gen === gen) {
+      const notice = (text: string) => this.emit(session, { type: "planNotice", text });
+      notice("Installing Google's Antigravity CLI. Antigravity chats run on it from now on.");
+      try { binary = await this.ensureAgyCli(requester); }
+      catch (error) {
+        if (session.gen === gen) notice(`Couldn't install Google's Antigravity CLI: ${errorDetail(error).replace(/[.!?]+$/, "")}. This chat runs on the Antigravity server.`);
+      }
+    }
+    const programs = agyProgramCandidates(binary, server, history, keyMode);
+    if (programs[0]?.program === "cli" && session.gen === gen) await this.prepareAgyCli(programs[0].cliPath);
+    return programs;
+  }
+
+  private agyChatRequester(session: Session, clientId?: string): RemoteRequester | undefined {
+    if (!clientId && session !== this.focused) clientId = this.remoteClients.clientsForActiveValue(session)[0];
+    return clientId ? this.captureRemoteRequester(clientId) : undefined;
+  }
+
+  private agyHistoryForResume(id: string): AgyProgram {
+    return this.state.get<SessionMetaOverrides>(SESSION_META_KEY, {})[id]?.agyProgram ?? agyHistoryProgram(id);
+  }
+
   private locateProvider(provider: AcpProvider, serverOnly = false): string | undefined {
     if (provider === "grok") {
       if (this.cliPath && fs.existsSync(this.cliPath)) return this.cliPath;
@@ -2272,6 +2329,13 @@ export class GrokSidebar {
     // costs a 15-25 s start on Windows, and with a saved method but no token
     // its session/new opens the browser.
     if (provider === "agy") {
+      if (this.agyMethod() === "google" && this.installedAgyCli()) {
+        const ready = this.agyCliAuthenticated ?? await this.agyGoogleSignedIn();
+        if (signal.aborted) return false;
+        if (ready || this.agyCliAuthenticated === false) this.setProviderNeedsLogin("agy", !ready);
+        void this.refreshAgySaved();
+        return ready;
+      }
       const present = !!(await this.agyCredentialFor());
       if (signal.aborted) return false;
       this.setProviderNeedsLogin("agy", !present);
@@ -2347,10 +2411,12 @@ export class GrokSidebar {
     provider: AcpProvider,
     cliPath: string,
     clientId?: string,
-    opts: { remote: boolean } = { remote: true },
+    opts: { remote: boolean; agyProgram?: AgyProgram } = { remote: true },
   ): Promise<void> {
     if (!this.hasProviderConsent(provider)) return;
     if (provider === "agy" && !isCloudEnvironment() && (opts.remote || clientId)) return;
+    if (provider === "agy" && opts.agyProgram === "cli") await this.prepareAgyCli(cliPath);
+    if (!this.hasProviderConsent(provider)) return;
     const displayName = providerDisplayName(provider);
     // The entry is created before the runner so `send` reads the CURRENT
     // client off it: a phone that visits the vendor's code page and comes
@@ -2534,7 +2600,7 @@ export class GrokSidebar {
           // during a silent 30s probe was the owner's very first retest note.
           send({ status: "verifying" });
           void this.confirmDeviceLogin(provider, send, displayName, workId,
-            () => ({ clientId: entry.clientId, tabToken: entry.tabToken }), signal);
+            () => ({ clientId: entry.clientId, tabToken: entry.tabToken }), signal, opts.agyProgram);
           return;
         }
         this.host.appendLine(`[${provider}] device login failed (${result.failure}) after ${elapsed}s: ${result.output.slice(-2000)}`);
@@ -2545,7 +2611,7 @@ export class GrokSidebar {
       },
     };
     handle = provider === "agy"
-      ? runAgySignIn(this.agySignInClient(cliPath, signal), callbacks, { pasteRedirect: isCloud })
+      ? runAgySignIn(this.agySignInClient(cliPath, signal, opts.agyProgram), callbacks, { pasteRedirect: isCloud, program: opts.agyProgram })
       : runDeviceLogin(cliPath, plan.args, callbacks, undefined,
         provider === "muse" ? withMuseCredentialBackend(process.env) : undefined,
         { needsCode: !!plan.needsCode });
@@ -2613,9 +2679,10 @@ export class GrokSidebar {
     workId: number,
     currentClient: () => { clientId?: string; tabToken?: string },
     signal: AbortSignal,
+    agyProgram?: AgyProgram,
   ): Promise<void> {
     try {
-      await this.confirmDeviceLoginInner(provider, send, displayName, currentClient, signal);
+      await this.confirmDeviceLoginInner(provider, send, displayName, currentClient, signal, agyProgram);
     } finally {
       // One door out, whatever happened above — and only this operation's.
       this.endDeviceLoginWork(workId);
@@ -2628,14 +2695,20 @@ export class GrokSidebar {
     displayName: string,
     currentClient: () => { clientId?: string; tabToken?: string } = () => ({}),
     signal: AbortSignal = this.providerRunSignal(provider),
+    agyProgram?: AgyProgram,
   ): Promise<void> {
     const delays = [0, 2_000, 5_000, 10_000, 20_000];
     for (const delay of delays) {
       if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
       if (signal.aborted || !this.hasProviderConsent(provider)) return;
-      const ready = await this.deviceLoginCredentialReady(provider);
+      // The CLI's authenticate result comes from its own credential store.
+      // The server's token file cannot confirm a CLI sign-in.
+      const ready = agyProgram === "cli" || await (provider === "agy"
+        ? this.agyGoogleSignedIn() : this.deviceLoginCredentialReady(provider));
       if (signal.aborted || !this.hasProviderConsent(provider)) return;
       if (ready) {
+        if (agyProgram === "cli") this.agyCliAuthenticated = true;
+        if (provider === "agy") void this.refreshAgySaved();
         this.host.appendLine(`[${provider}] device login: credential verified`);
         // Say it about the needs-login flag too, and not only about `connected`.
         // For grok and codex this is a no-op -- `reprobeProviderCredentials`
@@ -2798,8 +2871,14 @@ export class GrokSidebar {
   }
 
   /** The server names its version in `initialize`; there is no other probe. */
-  private noteAgyVersion(init: any): void {
+  private noteAgyVersion(init: any, cli?: string): void {
     const version = init?.agentInfo?.version;
+    if (cli && typeof version === "string" && version.trim()) {
+      if (this.agyCliVersion?.binary === cli && this.agyCliVersion.version === version.trim()) return;
+      this.agyCliVersion = { binary: cli, version: version.trim() };
+      this.postProviderState();
+      return;
+    }
     if (typeof version !== "string" || !version.trim() || this.providerCliVersions.agy === version.trim()) return;
     this.providerCliVersions.agy = version.trim();
     this.postProviderState();
@@ -2824,8 +2903,8 @@ export class GrokSidebar {
   /** Re-read what is stored for each way of signing in, for the choice card
    *  and Settings. Booleans only; the key itself never leaves secrets. */
   private async refreshAgySaved(): Promise<void> {
-    const [google, key] = await Promise.all([this.agyGoogleSignedIn().catch(() => false), this.agySavedKey()]);
-    const next = { google, apiKey: !!key };
+    const [serverGoogle, key] = await Promise.all([this.agyGoogleSignedIn().catch(() => false), this.agySavedKey()]);
+    const next = { google: serverGoogle || this.agyCliAuthenticated === true, apiKey: !!key };
     if (next.google === this.agySaved?.google && next.apiKey === this.agySaved?.apiKey) return;
     this.agySaved = next;
     this.postProviderState();
@@ -2912,6 +2991,7 @@ export class GrokSidebar {
    *  "API key not valid" would otherwise reject every new key on resume. */
   private onAgyCredentialRejected(session: Session, gen: number): void {
     if (gen !== session.gen || session.replaying) return;
+    if (session.client?.pickerModes) this.agyCliAuthenticated = false;
     void this.rejectAgyCredential();
   }
 
@@ -2937,6 +3017,64 @@ export class GrokSidebar {
       // The server can print the loopback request (including its code) to stderr.
       log: isCloudEnvironment() ? () => {} : (message) => this.host.appendLine(message),
     });
+  }
+
+  private ensureAgyCli(requester?: RemoteRequester): Promise<string> {
+    if (this.agyCliInstall) return this.agyCliInstall;
+    const installed = this.installedAgyCli();
+    if (installed) return Promise.resolve(installed);
+    if (this.agyInstallAbort) return Promise.reject(new Error("Another Antigravity installation is in progress."));
+    const controller = new AbortController();
+    this.agyInstallAbort = controller;
+    this.agyCliInstallError = undefined;
+    const post = (phase: "installing" | "idle", reason?: string) =>
+      this.postProviderSetup({ type: "agyInstallProgress", provider: "agy", phase, ...(reason ? { reason } : {}) }, requester);
+    const task = installAgyCli({
+      signal: controller.signal,
+      beforeVersion: (binary) => this.prepareAgyCli(binary, controller.signal),
+      log: (line) => this.host.appendLine(`[agy installer] ${line}`),
+    }).then(({ binary, version }) => {
+      this.agyCliLookup = { at: Date.now(), path: binary };
+      this.agyCliVersion = { binary, version };
+      return binary;
+    }).catch((error) => {
+      const reason = controller.signal.aborted ? "Installation cancelled." : errorDetail(error);
+      this.agyCliLookup = undefined;
+      this.agyCliInstallError = reason;
+      this.host.appendLine(`[agy] CLI installation failed: ${reason}`);
+      throw new Error(reason);
+    }).finally(() => {
+      this.agyCliInstall = undefined;
+      if (this.agyInstallAbort === controller) this.agyInstallAbort = undefined;
+      this.postProviderState();
+      post("idle", this.agyCliInstallError);
+    });
+    this.agyCliInstall = task;
+    this.postProviderState();
+    post("installing");
+    return task;
+  }
+
+  private async connectAgyCli(session: Session, requester?: RemoteRequester): Promise<void> {
+    if (requester && !isCloudEnvironment()) {
+      if (this.agyCliAuthenticated === true || await this.agyGoogleSignedIn()) {
+        await this.state.update(AGY_SIGN_IN_METHOD_KEY, "google");
+        this.agySignInError = undefined;
+        await this.setProviderConnected("agy", true);
+        this.setProviderNeedsLogin("agy", false);
+        await this.adoptSessionsForConnectedProvider("agy", session);
+        this.postProviderSetup({ type: "onboarding", state: "provider-connected", provider: "agy", platform: process.platform }, requester);
+      } else await this.postAgyChoice("Sign in to the Antigravity CLI on the workspace computer.", requester);
+      return;
+    }
+    let binary: string;
+    try { binary = await this.ensureAgyCli(requester); }
+    catch (error) { await this.postAgyChoice(`Couldn't install Google's Antigravity CLI: ${errorDetail(error)}`, requester); return; }
+    await this.state.update(AGY_SIGN_IN_METHOD_KEY, "google");
+    this.agySignInError = undefined;
+    this.setProviderNeedsLogin("agy", true);
+    await this.setProviderConnected("agy", true);
+    await this.startDeviceLogin("agy", binary, requester?.clientId, { remote: !!requester, agyProgram: "cli" });
   }
 
   /** Shared installer UI and progress for Antigravity and DeepSeek. */
@@ -3047,6 +3185,7 @@ export class GrokSidebar {
     const claudeConnected = connected.claude === true && located.claude === true;
     const museConnected = connected.muse === true && located.muse === true;
     const agyConnected = connected.agy === true && located.agy === true;
+    const agyCli = this.installedAgyCli();
     this.lastProviderConnected = { grok: grokConnected, codex: codexConnected, claude: claudeConnected };
     // What the account button does on THIS host, so no page labels it
     // Disconnect for a host that would clear the CLI's credentials (`logout`).
@@ -3060,6 +3199,10 @@ export class GrokSidebar {
           ...(museConnected && versions.muse ? { cliVersion: versions.muse } : {}),
           ...(needsLogin.muse ? { needsLogin: true } : {}) },
         { id: "agy", connected: agyConnected, ...button, remoteSetup: true, googleSignIn: !isCloudEnvironment(),
+          agyCli: { installed: !!agyCli,
+            ...(this.agyCliVersion && this.agyCliVersion.binary === agyCli ? { version: this.agyCliVersion.version } : {}),
+            ...(this.agyCliInstall ? { installing: true } : {}),
+            ...(this.agyCliInstallError ? { reason: this.agyCliInstallError } : {}) },
           ...(isCloudEnvironment() ? { googleSignInPaste: true } : {}),
           ...(agyConnected && versions.agy ? { cliVersion: versions.agy } : {}),
           ...(agyConnected && needsLogin.agy ? { needsLogin: true } : {}),
@@ -3171,6 +3314,7 @@ export class GrokSidebar {
       this.agyServerPath = undefined;
       // Installation discovery is always local and remains available before Connect.
       const located = this.locatedProviders();
+      const agyVersion = this.refreshAgyCliVersion();
       await Promise.all(INTERNAL_PROVIDERS.map(async provider => {
         if (!located[provider] || !this.hasProviderConsent(provider)) return;
         if (opts.credentials === true) await this.reprobeProviderCredentials(provider).catch(() => false);
@@ -3178,6 +3322,7 @@ export class GrokSidebar {
         // `--version` for a server that takes 15-25 s to start on Windows.
         if (provider !== "grok" && provider !== "agy" && provider !== "deepseek") await this.reprobeProviderVersion(provider);
       }));
+      await agyVersion;
     } finally {
       this.providerRefreshInFlight = false;
       this.postProviderState();
@@ -4036,6 +4181,7 @@ See design doc for the full state machine diagram.`;
     if (!session.client && !session.priming && !session.activeSessionId && !session.hasHistory
       && !session.planActive && !session.autoApprove && !session.nativeAuto) return this.newSessionMode(session.provider);
     if (session.provider === "muse") return session.client?.currentModeId ?? session.musePosture?.mode ?? "agent";
+    if (session.provider === "agy" && session.client?.pickerModes && session.autoApprove && !session.planActive) return "yolo";
     if (session.client?.nativeApprovalModes && session.client.currentModeId) return session.client.currentModeId;
     if (session.planActive) return "plan";
     if (session.provider === "codex" && session.client?.currentModeId === "askApproval") return "askApproval";
@@ -4270,6 +4416,25 @@ Only continue if you trust this code.`,
     }
   }
 
+  private async setAgyCliMode(session: Session, client: AcpClient, modeId: ModeId, requester?: RemoteRequester, remember = true): Promise<void> {
+    if (!client.pickerModes?.includes(modeId)) return;
+    const wireMode = modeId === "yolo" ? "agent" : modeId;
+    try {
+      if (client.currentModeId !== wireMode) await client.setMode(modeId);
+    } catch (error) {
+      if (session.client === client) this.reportRequester(requester, "error", `Couldn't switch mode: ${errorDetail(error)}`);
+      return;
+    }
+    if (session.client !== client || client.currentModeId !== wireMode) return;
+    session.autoApprove = modeId === "yolo";
+    this.setPlanActive(session, modeId === "plan");
+    if (session.autoApprove) this.autoApprovePendingPermissions(session);
+    if (remember && (modeId === "yolo" || modeId === "agent")) {
+      void this.rememberGrokConfig("defaultMode", modeId);
+      await this.state.update(AGY_ACCEPT_EDITS_PREF_KEY, undefined);
+    }
+  }
+
   private async setCodexPickerMode(modeId: ModeId, session: Session, client: AcpClient, requester?: RemoteRequester): Promise<void> {
     // Codex implements an approved plan with the access its planning turn
     // started with, so a stricter mode picked while the review waits would show
@@ -4325,6 +4490,12 @@ Only continue if you trust this code.`,
     }
     // Backstop the picker for stale clients and direct/remote commands.
     if (!sessionPickerModes(session).includes(modeId) && modeId !== "plan") return;
+    if (session.provider === "agy" && session.client.pickerModes) {
+      const client = session.client;
+      await this.trackPickerChange((this.pickerChange ?? Promise.resolve()).then(() =>
+        session.client === client ? this.setAgyCliMode(session, client, modeId, requester) : undefined));
+      return;
+    }
     if (session.client.pickerModes) {
       const client = session.client;
       if (!client.pickerModes?.includes(modeId)) return;
@@ -9988,7 +10159,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     fail: (text: string) => void,
   ): Promise<void> {
     const clearAll = isCloudEnvironment();
-    const keyOnly = clearAll ? !(await this.agyGoogleSignedIn()) : this.agyMethod() === "api-key";
+    const serverGoogleSignedIn = clearAll ? await this.agyGoogleSignedIn() : undefined;
+    const keyOnly = clearAll ? !serverGoogleSignedIn && !this.installedAgyCli() : this.agyMethod() === "api-key";
     if (keyOnly) {
       if (!opts.fromRemote && !clearAll) {
         const choice = await this.host.showWarningMessage(
@@ -10007,12 +10179,12 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       await this.finishProviderLogout("agy", opts.report);
       return;
     }
-    const cliPath = this.locateProvider("agy", true);
-    if (!cliPath) {
-      fail("Antigravity sign-out could not run because the Antigravity server is not installed. The account remains connected.");
+    const cliPath = serverGoogleSignedIn === false ? undefined : this.locateProvider("agy", true);
+    const agyCli = this.installedAgyCli();
+    if (!cliPath && !agyCli) {
+      fail("Antigravity sign-out could not run because Antigravity is not installed. The account remains connected.");
       return;
     }
-    const agyCli = this.installedAgyCli();
     if (!opts.fromRemote && !clearAll) {
       const choice = await this.host.showWarningMessage(
         `Sign out of Antigravity? This clears the Google sign-in Antigravity stored on this machine${agyCli ? ", including the agy CLI's" : ""}.`,
@@ -10021,24 +10193,27 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       );
       if (choice !== "Sign Out") return;
     }
-    const client = this.agySignInClient(cliPath, new AbortController().signal);
+    const client = cliPath ? this.agySignInClient(cliPath, new AbortController().signal) : undefined;
     try {
-      await client.start();
-      await client.logout();
+      await client?.start();
+      await client?.logout();
     } catch (error) {
       fail(`Antigravity sign-out failed: ${errorDetail(error)}. The account remains connected.`);
       this.postProviderState();
       return;
     } finally {
-      await client.dispose();
+      await client?.dispose();
     }
     if (agyCli) {
+      await this.prepareAgyCli(agyCli);
       const cliClient = this.agySignInClient(agyCli, new AbortController().signal, "cli");
       try {
         await cliClient.start();
         await cliClient.logout();
+        this.agyCliAuthenticated = false;
       } catch (error) {
-        fail(`Antigravity is signed out, but the agy CLI could not be: ${errorDetail(error)}. New Antigravity chats may still use the CLI's account.`);
+        fail(`Could not sign out of the Antigravity CLI: ${errorDetail(error)}. New Antigravity chats may still use its account.`);
+        if (!cliPath && !clearAll) return;
       } finally {
         await cliClient.dispose();
       }
@@ -10504,7 +10679,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
 
   // ---------- internals ----------
 
-  private async ensureClient(session: Session = this.focused): Promise<AcpClient | undefined> {
+  private async ensureClient(session: Session = this.focused, agyRemoteClientId?: string): Promise<AcpClient | undefined> {
     if (session.client) return session.client;
     // After a CLI crash the focused session keeps its grok id but loses its
     // client — respawn by RESUMING that id, so the next send continues the same
@@ -10513,7 +10688,9 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // clean as before.
     await this.waitForSessionStart(session);
     if (session.client) return session.client;
-    return this.startSession(session.activeSessionId, session, "ensure");
+    return agyRemoteClientId
+      ? this.startSession(session.activeSessionId, session, "ensure", undefined, { agyRemoteClientId })
+      : this.startSession(session.activeSessionId, session, "ensure");
   }
 
   /** Read `grok --version` for policy checks. Returns "" on failure (logged). */
@@ -11432,7 +11609,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     target: Session = this.focused,
     intent: SessionStartIntent = "replace",
     clock?: OpenClock,
-    opts: { silent?: boolean; canReplace?: () => boolean; modelId?: string; deepseekHarness?: DeepSeekHarness } = {},
+    opts: { silent?: boolean; canReplace?: () => boolean; modelId?: string; deepseekHarness?: DeepSeekHarness; agyRemoteClientId?: string } = {},
   ): Promise<AcpClient | undefined> {
     return this.withCloudHostWork(async () => {
       if (target.provider === "muse") await this.museCliChange;
@@ -11449,7 +11626,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     /** A start the PERSON did not ask for. Its failure belongs wherever the
      *  caller is reporting, never as a red banner in a conversation they were
      *  only looking at. The caller reads the undefined return instead. */
-    opts: { silent?: boolean; canReplace?: () => boolean; modelId?: string; deepseekHarness?: DeepSeekHarness } = {},
+    opts: { silent?: boolean; canReplace?: () => boolean; modelId?: string; deepseekHarness?: DeepSeekHarness; agyRemoteClientId?: string } = {},
   ): Promise<AcpClient | undefined> {
     // Read the caller's clock BEFORE this function can add to it: the load
     // reservation, the workspace-switch queue, the cwd resolution, the
@@ -11523,7 +11700,9 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         this.postProviderState();
       }
     }
-    if (!this.connectedProviders().includes(target.provider)) {
+    const missingAgyHistoryServer = target.provider === "agy" && resumeId && this.hasProviderConsent("agy")
+      && this.agyHistoryForResume(resumeId) === "server" && !this.locateProvider("agy", true);
+    if (!this.connectedProviders().includes(target.provider) && !missingAgyHistoryServer) {
       const testDelay = this.testSessionStartDelay;
       if (testDelay && testDelay.resumeId === resumeId) {
         this.testSessionStartDelay = undefined;
@@ -11740,13 +11919,23 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
 
     const cfg = this.host.getConfiguration("grok");
     let cliPath = this.locateProvider(session.provider);
-    const agyCli = session.provider === "agy" ? this.installedAgyCli() : undefined;
     let agyServer = session.provider === "agy" ? this.locateProvider("agy", true) : undefined;
     const agyHistory = session.provider === "agy" && resumeId
-      ? (this.state.get<SessionMetaOverrides>(SESSION_META_KEY, {})[resumeId]?.agyProgram ?? agyHistoryProgram(resumeId)) : undefined;
-    const agyCandidates = session.provider === "agy" ? agyProgramCandidates(agyCli, agyServer, agyHistory, this.agyMethod() === "api-key") : [];
+      ? this.agyHistoryForResume(resumeId) : undefined;
+    const agyRequester = session.provider === "agy" ? this.agyChatRequester(session, opts.agyRemoteClientId) : undefined;
+    const agyCandidates = session.provider === "agy" ? await this.agyChatPrograms(session, agyServer, agyHistory, agyRequester, opts.silent) : [];
+    if (gen !== session.gen) return undefined;
     let agyProgram = agyCandidates.shift();
     if (session.provider === "agy") cliPath = agyProgram?.cliPath;
+    if (!cliPath && agyHistory === "server") {
+      session.activeSessionId = resumeId;
+      this.pool.delete(session);
+      session.priming = false;
+      this.emit(session, { type: "setBusy", value: false });
+      if (!opts.silent) this.emit(session, { type: "onboarding", state: "agy-login", provider: "agy", platform: process.platform,
+        agyChoice: true, reason: "This conversation uses the Antigravity server. Choose how to connect to set it up again." });
+      return undefined;
+    }
     if (session.provider === "agy" && !cliPath && agyHistory === "cli") {
       this.pool.delete(session);
       session.priming = false;
@@ -11944,7 +12133,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         this.providerCliVersions.grok = handshakeVersion.trim().replace(/^v/i, "");
         this.postProviderState();
       }
-      if (session.provider === "agy") this.noteAgyVersion(init);
+      if (session.provider === "agy") this.noteAgyVersion(init, useAgyCli ? cliPath : undefined);
       this.emit(session, {
         type: "initialized",
         info: {
@@ -12041,7 +12230,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       if (gen !== session.gen) return;
       if (client.pickerModes) {
         session.planModeAvailable = client.pickerModes.includes("plan");
-        session.autoApprove = false;
+        if (id !== "agent" || !client.pickerModes.includes("yolo")) session.autoApprove = false;
         this.setPlanActive(session, id === "plan");
         return;
       }
@@ -12725,6 +12914,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         // line started accounting for its own total; `new` says which call.
         const newAt = clock.now();
         await client.newSession(defaultModel || undefined);
+        if (agyProgram?.program === "cli" && gen === session.gen) {
+          const mode = this.defaultModeForProvider("agy");
+          if (mode === "yolo") await this.setAgyCliMode(session, client, mode, undefined, false);
+        }
         if (nativeAutoStart && gen === session.gen) await this.startNativeAuto(session, client);
         if (rememberedYolo && session.provider === "codex" && gen === session.gen) await this.startCodexFullAccess(session, client);
         if (session.provider === "codex" && gen === session.gen) await this.restoreCodexApproval(session, client);
@@ -12739,6 +12932,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         session.activeSessionId = client.sessionId;
       }
       if (gen !== session.gen) { client.dispose(); session.client = undefined; return undefined; }
+      if (agyProgram?.program === "cli") this.agyCliAuthenticated = true;
       this.host.appendLine(clock.summary(session.historyEventCount));
       this.postSessionName(session);
 
@@ -12809,7 +13003,11 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       return client;
     } catch (err) {
       if (gen !== session.gen) { client.dispose(); return undefined; }
-      if (agyProgram?.program === "cli" && !client.sessionId && !replayBegan && agyCandidates.length) {
+      const agyCliAuthRequired = agyProgram?.program === "cli" && client.isCredentialError(err);
+      const agyDeskRemote = !!agyRequester && !isCloudEnvironment();
+      if (agyCliAuthRequired) this.agyCliAuthenticated = false;
+      if (agyProgram?.program === "cli" && !client.sessionId && !replayBegan && agyCandidates.length &&
+        (!agyCliAuthRequired || agyDeskRemote)) {
         agyCredential = await this.agyCredentialFor();
         if (gen !== session.gen) { client.dispose(); return undefined; }
         if (agyCredential?.method === "google") {
@@ -12822,12 +13020,28 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           if (gen !== session.gen) return undefined;
           if (pinned && !cfg.get<string>("agyServerPath", "").trim()) cliPath = this.agyServerPath = pinned;
           agyServer = cliPath;
+          if (!opts.silent) this.emit(session, { type: "planNotice", text: agyCliAuthRequired
+            ? "Sign in to the Antigravity CLI on the workspace computer. This chat runs on the Antigravity server."
+            : "The Antigravity CLI couldn't start. This chat runs on the Antigravity server." });
           continue;
         }
       }
-      if (agyProgram?.program === "cli" && !client.sessionId && client.isCredentialError(err)) {
+      if (agyCliAuthRequired) {
+        if (!opts.silent && !agyDeskRemote) {
+          client.removeAllListeners("exit");
+          await client.dispose();
+          if (gen !== session.gen) return undefined;
+          session.client = undefined;
+          this.pool.delete(session);
+          session.priming = false;
+          this.emit(session, { type: "setBusy", value: false });
+          if (!this.deviceLogins.has("agy")) {
+            await this.startDeviceLogin("agy", cliPath, agyRequester?.clientId, { remote: !!agyRequester, agyProgram: "cli" });
+          }
+          return undefined;
+        }
         this.agySignInError = "Sign in to the Antigravity CLI on the workspace computer, then try again.";
-        if (!opts.silent) this.emit(session, { type: "error", text: this.agySignInError });
+        if (!opts.silent && agyDeskRemote) this.emit(session, { type: "planNotice", text: this.agySignInError });
       }
       const msg = (err as any).message ?? String(err);
       // Decide the branch first: only the plain-failure path retries. Auth
@@ -13688,7 +13902,13 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         this.deepseekInstallAbort?.abort(new Error("Installation cancelled."));
         break;
       case "installAgy":
-        await this.installManagedAgyServer("agy", requester);
+        try {
+          await this.ensureAgyCli(requester);
+          await this.postAgyChoice(undefined, requester);
+        } catch (error) {
+          this.postProviderSetup({ type: "onboarding", state: "missing-agy", provider: "agy", platform: process.platform,
+            reason: errorDetail(error) }, requester);
+        }
         break;
       case "cancelAgyInstall":
         this.agyInstallAbort?.abort(new Error("Installation cancelled."));
@@ -14219,6 +14439,29 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       }
       case "agySignIn": {
         if (!isAgySignInMethod(msg.method)) break;
+        if (msg.method === "google") {
+          const id = session.hasHistory ? session.activeSessionId : undefined;
+          const serverHistory = id && this.agyHistoryForResume(id) === "server";
+          if (!serverHistory) {
+            await this.connectAgyCli(session, requester);
+            break;
+          }
+          if (!this.locateProvider("agy", true)) {
+            await this.installManagedAgyServer("agy", requester);
+            if (!this.locateProvider("agy", true)) break;
+          }
+        }
+        if (msg.method === "api-key" && !this.locateProvider("agy", true)) {
+          if (msg.key !== undefined) {
+            const parsed = normalizeAgyApiKey(msg.key);
+            if ("error" in parsed) { await this.postAgyChoice(parsed.error, requester); break; }
+          } else if (!(await this.agySavedKey())) {
+            await this.postAgyChoice("Paste a Gemini API key.", requester);
+            break;
+          }
+          await this.installManagedAgyServer("agy", requester);
+          if (!this.locateProvider("agy", true)) break;
+        }
         const cliPath = this.locateProvider("agy");
         if (!cliPath) {
           this.postProviderSetup({ type: "onboarding", state: "missing-agy", platform: process.platform, provider: "agy",
@@ -16074,6 +16317,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       const nativeCli = this.installedAgyCli();
       let cliRows: BackendSessionListEntry[] | undefined;
       if (nativeCli) {
+        await this.prepareAgyCli(nativeCli);
         const client = new AcpClient({ signal, cliPath: nativeCli, cwd: this.projectHomeDir(),
           backend: new AgyBackend({ program: "cli" }), refuseServerRequests: true, log: () => {},
           initializeTimeoutMs: 4_000, timeouts: { requestTimeoutMs: 4_000 } });
@@ -19278,8 +19522,12 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       if (!queuedSendCommit) this.divertRacingSend(session, text, bare, this.composerChipsForSend(session, requestedChips));
       return;
     }
-    const client = session.client ?? await this.ensureClient(session);
-    if (!client) return;
+    const client = session.client ?? await this.ensureClient(session, session.provider === "agy" && origin === "remote"
+      ? this.remoteClients.clientsForActiveValue(session)[0] : undefined);
+    if (!client) {
+      if (session.provider === "agy") onPreflightFailure?.();
+      return;
+    }
     // ensureClient may return mid-startSession; re-check before committing work.
     if (!sessionReadyForPrompt(session)) {
       if (!queuedSendCommit) this.divertRacingSend(session, text, bare, this.composerChipsForSend(session, requestedChips));
@@ -22525,7 +22773,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     session.provider = this.defaultProviderForProject(cwd);
     this.remoteClients.setActive(clientId, session);
     this.emit(session, { type: "clearMessages" });
-    await this.startSession(undefined, session, "replace");
+    await this.startSession(undefined, session, "replace", undefined, { agyRemoteClientId: clientId });
     if (session.activeSessionId) onCreated?.(session.activeSessionId);
     await this.persistWorktreeBinding(session);
     this.sweepEmptySessions(this.sessionCwd(session));

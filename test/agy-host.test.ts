@@ -17,6 +17,7 @@ import { CLOUD_ENVIRONMENT_ENV, parseRelayFrame } from "../src/remote-frames";
 import { AGY_PASTE_ADDRESS_ERROR } from "../src/agy-auth";
 import { parseWebviewMsg } from "../src/desktop/webview-msg-validate";
 import * as installer from "../src/agy-managed-installer";
+import * as agyLifecycle from "../src/agy-cli-lifecycle";
 
 const FAKE = path.join(__dirname, "fixtures", "fake-agy-acp.cjs");
 const KEY = "AIza-host-test-key";
@@ -105,6 +106,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllEnvs();
   fs.rmSync(home, { recursive: true, force: true });
 });
@@ -167,7 +169,7 @@ describe("Antigravity in providerState", () => {
     const sidebar = host({ connected: true });
     sidebar.providerCliVersions = { agy: "1.4.0" };
     sidebar.providerNeedsLogin = { agy: true };
-    expect(row(sidebar)).toEqual({ id: "agy", connected: true, keepsCliSignIn: true, cliVersion: "1.4.0", needsLogin: true, signInMethod: "google", remoteSetup: true, googleSignIn: true });
+    expect(row(sidebar)).toEqual({ id: "agy", connected: true, keepsCliSignIn: true, cliVersion: "1.4.0", needsLogin: true, signInMethod: "google", remoteSetup: true, googleSignIn: true, agyCli: { installed: false } });
   });
 
   it("names the way it is signed in and what is stored, never the key", async () => {
@@ -251,11 +253,28 @@ describe("Connect offers the choice of how to sign in", () => {
 
   it("accepts local and remote install requests", async () => {
     const sidebar = host();
-    sidebar.installManagedAgyServer = vi.fn(async () => {});
+    sidebar.ensureAgyCli = vi.fn(async () => FAKE);
     await sidebar.onMessage({ type: "installAgy" }, "remote");
-    expect(sidebar.installManagedAgyServer).toHaveBeenCalledTimes(1);
+    expect(sidebar.ensureAgyCli).toHaveBeenCalledTimes(1);
     await sidebar.onMessage({ type: "installAgy" }, "local");
-    expect(sidebar.installManagedAgyServer).toHaveBeenCalledTimes(2);
+    expect(sidebar.ensureAgyCli).toHaveBeenCalledTimes(2);
+  });
+
+  it("mirrors an indeterminate CLI install and its version through the provider and progress frames", async () => {
+    const sidebar = host();
+    let finish!: (value: { binary: string; version: string }) => void;
+    const install = vi.spyOn(agyLifecycle, "installAgyCli").mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    const requester = { clientId: "phone", tabToken: "tab" };
+    const started = sidebar.ensureAgyCli(requester);
+    expect(row(sidebar).agyCli).toEqual({ installed: false, installing: true });
+    expect(sidebar.sendRemoteRequester).toHaveBeenCalledWith(requester, { type: "agyInstallProgress", provider: "agy", phase: "installing" });
+    sidebar.installedAgyCli.mockReturnValue("fake-agy");
+    finish({ binary: "fake-agy", version: "1.5.8" });
+    await expect(started).resolves.toBe("fake-agy");
+    expect(install).toHaveBeenCalledOnce();
+    expect(row(sidebar).agyCli).toEqual({ installed: true, version: "1.5.8" });
+    expect(sidebar.sendRemoteRequester).toHaveBeenLastCalledWith(requester, { type: "agyInstallProgress", provider: "agy", phase: "idle" });
+    expect(sidebar.postProviderState).toHaveBeenCalledTimes(2);
   });
 
   it("accepts a remote key into host secret storage", async () => {
@@ -267,6 +286,21 @@ describe("Connect offers the choice of how to sign in", () => {
 });
 
 describe("Sign in with Google", () => {
+  it("reinstalls the managed server when Google setup is requested for its existing history", async () => {
+    signIn();
+    const sidebar = host({ connected: true });
+    sidebar.focused.hasHistory = true;
+    sidebar.focused.activeSessionId = "server-history";
+    await sidebar.state.update("grok.sessionMeta", { "server-history": { agyProgram: "server" } });
+    sidebar.locateProvider.mockReturnValue(undefined);
+    sidebar.connectAgyCli = vi.fn();
+    sidebar.installManagedAgyServer = vi.fn(async () => { sidebar.locateProvider.mockReturnValue(FAKE); });
+    await sidebar.onMessage({ type: "agySignIn", method: "google" }, "local");
+    expect(sidebar.installManagedAgyServer).toHaveBeenCalledWith("agy", undefined);
+    expect(sidebar.connectAgyCli).not.toHaveBeenCalled();
+    expect(sidebar.adoptSessionsForConnectedProvider).toHaveBeenCalledWith("agy", sidebar.focused);
+  });
+
   it("refuses browser sign-in from a remote desk but may adopt an existing token", async () => {
     const sidebar = host();
     sidebar.startDeviceLogin = vi.fn();
@@ -274,7 +308,7 @@ describe("Sign in with Google", () => {
     expect(sidebar.startDeviceLogin).not.toHaveBeenCalled();
     expect(sidebar.providerConnectionState.agy).toBeUndefined();
     expect(row(sidebar)).not.toHaveProperty("googleSignInPaste");
-    expect(sidebar.sendRemoteRequester).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ agyChoice: true, reason: expect.stringContaining("API key") }));
+    expect(sidebar.sendRemoteRequester).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ agyChoice: true, reason: expect.stringContaining("workspace computer") }));
     signIn();
     await sidebar.onMessage({ type: "agySignIn", method: "google" }, "remote", "phone");
     expect(sidebar.providerConnectionState.agy).toBe(true);
@@ -285,13 +319,14 @@ describe("Sign in with Google", () => {
   it.each(["local", "remote"])("a cloud host starts paste sign-in from %s and advertises it", async origin => {
     vi.stubEnv(CLOUD_ENVIRONMENT_ENV, "1");
     const sidebar = host(); sidebar.startDeviceLogin = vi.fn();
+    sidebar.installedAgyCli.mockReturnValue("fake-agy");
     await sidebar.onMessage({ type: "agySignIn", method: "google" }, origin, origin === "remote" ? "phone" : undefined);
-    expect(sidebar.startDeviceLogin).toHaveBeenCalledWith("agy", FAKE, origin === "remote" ? "phone" : undefined, { remote: origin === "remote" });
+    expect(sidebar.startDeviceLogin).toHaveBeenCalledWith("agy", "fake-agy", origin === "remote" ? "phone" : undefined, { remote: origin === "remote", agyProgram: "cli" });
     expect(row(sidebar)).toMatchObject({ remoteSetup: true, googleSignIn: false, googleSignInPaste: true });
     sidebar.startDeviceLogin.mockClear();
     signIn();
     await sidebar.onMessage({ type: "agySignIn", method: "google" }, origin, origin === "remote" ? "phone" : undefined);
-    expect(sidebar.startDeviceLogin).not.toHaveBeenCalled();
+    expect(sidebar.startDeviceLogin).toHaveBeenCalledOnce();
     expect(sidebar.providerConnectionState.agy).toBe(true);
   });
 
@@ -321,9 +356,10 @@ describe("Sign in with Google", () => {
     expect(sidebar.sendRemoteClient).toHaveBeenCalledWith("phone", expect.objectContaining({ type: "error" }));
   });
 
-  it("a phone's invalid paste stays waiting, then a valid callback adopts the stored Google token without echoing it", async () => {
+  it("a phone's invalid paste stays waiting, then a valid callback completes CLI sign-in without echoing it", async () => {
     vi.stubEnv(CLOUD_ENVIRONMENT_ENV, "1");
     const sidebar = host();
+    sidebar.installedAgyCli.mockReturnValue("fake-agy");
     let approve!: () => void;
     const client = Object.assign(new EventEmitter(), {
       start: vi.fn(async () => {}),
@@ -331,12 +367,9 @@ describe("Sign in with Google", () => {
       dispose: vi.fn(async () => {}),
     });
     sidebar.agySignInClient = () => client;
-    // Credential verification still uses the host's token-file check.
-    sidebar.reprobeProviderCredentials = vi.fn(async () => sidebar.agyGoogleSignedIn());
     const callbacks: string[] = [];
     const server = http.createServer((req, res) => {
       callbacks.push(req.url!);
-      signIn();
       res.end("Signed in");
       approve();
     });
@@ -346,7 +379,7 @@ describe("Sign in with Google", () => {
       await vi.waitFor(() => expect(client.authenticate).toHaveBeenCalled());
       const port = (server.address() as any).port;
       const url = "https://accounts.google.com/o/oauth2/v2/auth?" + new URLSearchParams({ redirect_uri: `http://127.0.0.1:${port}/`, state: "this-run" });
-      client.emit("stderr", `Open the following link to authenticate the ACP server: ${url}\n`);
+      client.emit("stderr", `Open this URL in your local browser to sign in: ${url}\n`);
       const device = () => sidebar.sendRemoteClient.mock.calls.map((c: any[]) => c[1].device).filter(Boolean).at(-1);
       expect(device()).toMatchObject({ status: "waiting", needsCode: true, url });
       const address = `http://127.0.0.1:${port}/?state=this-run&code=sentinel-callback-code&scope=email`;
@@ -360,6 +393,8 @@ describe("Sign in with Google", () => {
       await vi.waitFor(() => expect(sidebar.adoptSessionsForConnectedProvider).toHaveBeenCalledWith("agy", sidebar.focused));
       expect(callbacks).toEqual([new URL(address).pathname + new URL(address).search]);
       expect(sidebar.providerNeedsLogin.agy).toBe(false);
+      expect(sidebar.agyCliAuthenticated).toBe(true);
+      expect(fs.existsSync(token())).toBe(false);
       const outbound = [...frames(sidebar.post), ...frames(sidebar.postLocal), ...sidebar.sendRemoteClient.mock.calls.map((c: any[]) => c[1]), ...sidebar.sendRemoteRequester.mock.calls.map((c: any[]) => c[1]), sidebar.providerStateMessage()];
       expect(JSON.stringify(outbound)).not.toContain("sentinel-callback-code");
       expect(JSON.stringify(sidebar.host.appendLine.mock.calls)).not.toContain("sentinel-callback-code");
@@ -373,7 +408,7 @@ describe("Sign in with Google", () => {
   it("adopts a stored Google sign-in without starting a server", async () => {
     signIn();
     const sidebar = host({ method: "api-key" });
-    await sidebar.onMessage({ type: "agySignIn", method: "google" }, "local");
+    await sidebar.connectAgy("google", FAKE, sidebar.focused);
     expect(sidebar.memento["grok.agySignInMethod"]).toBe("google");
     expect(sidebar.providerConnectionState.agy).toBe(true);
     expect(sidebar.providerNeedsLogin.agy).toBe(false);
@@ -384,7 +419,7 @@ describe("Sign in with Google", () => {
 
   it("runs Google's browser sign-in through the server when nothing is stored, and connects", async () => {
     const sidebar = host();
-    await sidebar.onMessage({ type: "agySignIn", method: "google" }, "local");
+    await sidebar.connectAgy("google", FAKE, sidebar.focused);
     await vi.waitFor(() => expect(deviceFrames(sidebar).at(-1)).toEqual({ status: "done" }), { timeout: 15_000 });
     const statuses = deviceFrames(sidebar).map((device: any) => device.status);
     expect(statuses[0]).toBe("starting");
@@ -399,7 +434,7 @@ describe("Sign in with Google", () => {
   it("cancels a sign-in that is waiting on the browser, back to the choice", async () => {
     vi.stubEnv("FAKE_AGY_SIGN_IN", "hang");
     const sidebar = host();
-    await sidebar.onMessage({ type: "agySignIn", method: "google" }, "local");
+    await sidebar.connectAgy("google", FAKE, sidebar.focused);
     await vi.waitFor(() => expect(deviceFrames(sidebar).some((device: any) => device.status === "waiting")).toBe(true), { timeout: 15_000 });
     await sidebar.onMessage({ type: "cancelDeviceLogin", provider: "agy" }, "local");
     expect(sidebar.deviceLogins.size).toBe(0);
@@ -410,6 +445,17 @@ describe("Sign in with Google", () => {
 });
 
 describe("Use a Gemini API key", () => {
+  it("installs only the managed server on first key entry, then saves the key and connects", async () => {
+    const sidebar = host();
+    sidebar.locateProvider.mockReturnValue(undefined);
+    sidebar.ensureAgyCli = vi.fn();
+    sidebar.installManagedAgyServer = vi.fn(async () => { sidebar.locateProvider.mockReturnValue(FAKE); });
+    await sidebar.onMessage({ type: "agySignIn", method: "api-key", key: KEY }, "remote", "phone");
+    expect(sidebar.installManagedAgyServer).toHaveBeenCalledWith("agy", { clientId: "phone", tabToken: "tab" });
+    expect(sidebar.ensureAgyCli).not.toHaveBeenCalled();
+    expect(await sidebar.agyCredentialFor()).toEqual({ method: "api-key", key: KEY });
+    expect(sidebar.providerConnectionState.agy).toBe(true);
+  });
   it("keeps a pasted key in HostSecrets only, and hands it to a server start as a credential", async () => {
     const sidebar = host();
     await sidebar.onMessage({ type: "agySignIn", method: "api-key", key: `  ${KEY}  ` }, "local");

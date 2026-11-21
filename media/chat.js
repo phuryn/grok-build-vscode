@@ -1544,6 +1544,9 @@
     // "YOLO" is Grok Build's own word for it; elsewhere the provider's name
     // for the mode this runs in, or none.
     if (id === "yolo") {
+      if (state.activeProvider === "agy" && state.offeredModes?.some(mode => mode === "auto" || mode === "plan")) {
+        return "AFK Pilot approves tool requests once and leaves plan reviews for you";
+      }
       const native = AUTO_ACCEPT_NATIVE_NAMES[state.activeProvider];
       return `${name} automatically approves all permission requests${native ? ` (${native})` : ""}`;
     }
@@ -11825,6 +11828,10 @@
    * desk, so it says where to do it instead.
    */
   function managedAgentInstallPanel(provider, info) {
+      if (provider === "agy") {
+        const cli = (state.providers || []).find(p => p.id === "agy")?.agyCli;
+        if (cli && (cli.installing || state.agyInstall.phase === "idle")) return agyCliInstallPanel(cli, info);
+      }
       const name = provider === "deepseek" ? "DeepSeek" : "Antigravity";
       const suffix = provider === "deepseek" ? "DeepSeek" : "Agy";
       const install = state[provider === "deepseek" ? "deepseekInstall" : "agyInstall"];
@@ -11847,6 +11854,20 @@
           : `<button class="onb-action" type="button" data-act="install${suffix}">Install ${name}</button>`)
         + `<button class="onb-action onb-secondary" type="button" data-act="recheckProvider" data-provider="${provider}">Re-check</button></div>`;
     }
+
+  function agyCliInstallPanel(cli, info) {
+    const reason = cli.reason || info?.reason;
+    return `<div class="onb"><p class="onb-heading">Install Antigravity</p>`
+      + `<p class="onb-desc">Google sign-in uses the Antigravity CLI.</p>`
+      + (reason ? `<p class="onb-install-error" role="alert">${escapeHtml(reason)}</p>` : "")
+      + (cli.installing
+        ? `<div class="onb-install-progress" role="status"><span>Installing the Antigravity CLI${BLINK_DOTS}</span>`
+          + `<progress aria-label="Installing the Antigravity CLI"></progress>`
+          + `<button class="onb-action onb-secondary" type="button" data-act="cancelAgyInstall">Cancel</button></div>`
+        : `<button class="onb-action" type="button" data-act="installAgy">Install Antigravity</button>`
+          + `<button class="onb-action onb-secondary" type="button" data-act="agyChooseKey">Use a Gemini API key</button>`)
+      + `<button class="onb-action onb-secondary" type="button" data-act="recheckProvider" data-provider="agy">Re-check</button></div>`;
+  }
 
   function paintDeepSeekCard(mode, info, onb) {
     if (mode !== "missing-deepseek" && mode !== "deepseek-login") return false;
@@ -11905,6 +11926,9 @@
    */
   function agyChoicePanel(info) {
     const provider = (state.providers || []).find(p => p.id === "agy") || {};
+    if (provider.agyCli?.installing || (provider.agyCli && state.agyInstall.phase !== "idle")) {
+      return managedAgentInstallPanel("agy", info);
+    }
     const saved = Array.isArray(provider.savedSignIns) ? provider.savedSignIns : [];
     const last = provider.signInMethod;
     const reason = info && info.reason;
@@ -11912,8 +11936,10 @@
     return `<div class="onb onb-agy-choice"><p class="onb-heading">Connect Antigravity</p>`
       + (reason ? `<p class="onb-install-error" role="alert">${escapeHtml(reason)}</p>` : "")
       + `<p class="onb-desc">Choose how Antigravity signs in on this computer.</p>`
-      + (agyGoogleAvailable() ? `<button class="onb-action" type="button" data-act="agySignInGoogle">Sign in with Google${lastUsed("google")}</button>`
-      + `<p class="onb-desc">${saved.includes("google")
+      + (!info?.agyKeyOnly && agyGoogleAvailable() ? `<button class="onb-action" type="button" data-act="agySignInGoogle">Sign in with Google${lastUsed("google")}</button>`
+      + `<p class="onb-desc">${provider.agyCli && saved.includes("google")
+        ? "The Antigravity CLI may ask you to sign in once."
+        : saved.includes("google")
         ? "Already signed in on this computer, so no browser is needed."
         : provider.googleSignInPaste === true
           ? "Open Google's sign-in page, then paste the full address from the page that does not load."
@@ -11922,6 +11948,7 @@
       + `<p class="onb-desc"><strong>Gemini API key${lastUsed("api-key")}</strong> &mdash; get one at `
       + `<a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">aistudio.google.com/apikey</a>. `
       + `It is kept in this app's secure storage on the workspace machine.</p>`
+      + (provider.agyCli ? `<p class="onb-desc">AFK Pilot installs the Antigravity server when needed to use a key.</p>` : "")
       + (saved.includes("api-key")
         ? `<button class="onb-action onb-secondary" type="button" data-act="agySignInSavedKey">Use the saved key</button>`
           + `<p class="onb-desc">Or replace it:</p>`
@@ -21225,6 +21252,7 @@ ${fullText}`
         // sends no frame at all, and a locally-set flag would spin forever.
         // Absent means idle, which is also what every pre-refresh host means.
         state.providersChecking = msg.checking === true;
+        if (connectWizard?.agyOnboarding && state.providers.some(p => p.id === "agy" && p.agyCli?.installing)) renderConnectWizard();
         if (connectWizard && (!IS_REMOTE || providerRemoteSetup(connectWizard.provider)) && state.providers.some(p => p.id === connectWizard.provider && p.connected && p.needsLogin !== true)) {
           closeConnectWizard();
         }
@@ -21333,6 +21361,7 @@ ${fullText}`
           connectWizard.agyOnboarding.info = { ...connectWizard.agyOnboarding.info, reason: state.agyInstall.reason };
           renderConnectWizard();
         }
+        if (connectWizard?.agyOnboarding?.mode === "agy-login" && state.providers.some(p => p.id === "agy" && p.agyCli)) renderConnectWizard();
         break;
       case "planModeAvailability":
         state.planModeAvailable = msg.available !== false;
@@ -24233,6 +24262,11 @@ ${fullText}`
         vscode.postMessage({ type: "deepseekConnect", ...(key ? { key } : {}) });
       }
       else if (act === "installAgy" && providerSetupAvailable("agy") && agyAdvertised) vscode.postMessage({ type: "installAgy" });
+      else if (act === "agyChooseKey" && providerSetupAvailable("agy") && state.providers.some(p => p.id === "agy" && p.agyCli)) {
+        openConnectWizard("agy");
+        connectWizard.agyOnboarding = { mode: "agy-login", info: { agyKeyOnly: true } };
+        renderConnectWizard();
+      }
       else if (act === "agySignInGoogle" && providerSetupAvailable("agy") && agyAdvertised && agyGoogleAvailable()) vscode.postMessage({ type: "agySignIn", method: "google" });
       else if (act === "agySignInSavedKey" && providerSetupAvailable("agy") && agyAdvertised) vscode.postMessage({ type: "agySignIn", method: "api-key" });
       else if (act === "agySignInKey" && providerSetupAvailable("agy") && agyAdvertised) {

@@ -433,6 +433,12 @@ body.settings-page .settings-surface {
   line-height: 1.4;
 }
 
+.settings-install-progress {
+  display: block;
+  max-width: 100%;
+  accent-color: var(--vscode-progressBar-background);
+}
+
 .settings-mcp {
   display: grid;
   gap: 12px;

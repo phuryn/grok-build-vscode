@@ -96,10 +96,11 @@ export async function agyGoogleSignInPresent(probe: AgyCredentialProbe = {}): Pr
 }
 
 const SIGN_IN_PROMPT = /Open the following link to authenticate the ACP server:\s*(https:\/\/\S+)/;
+const CLI_SIGN_IN_PROMPT = /https:\/\/accounts\.google\.com\/o\/oauth2\/[^\s"'<>]+/;
 
 /** The sign-in link the server prints to stderr while it waits. */
-export function agySignInUrl(stderr: string): string | undefined {
-  return SIGN_IN_PROMPT.exec(stderr)?.[1];
+export function agySignInUrl(stderr: string, program: "cli" | "server" = "server"): string | undefined {
+  return program === "cli" ? CLI_SIGN_IN_PROMPT.exec(stderr)?.[0] : SIGN_IN_PROMPT.exec(stderr)?.[1];
 }
 
 /** What the sign-in needs from an ACP client; `AcpClient` satisfies it. */
@@ -155,6 +156,7 @@ function requestAgyCallback(target: { port: number; path: string }, signal: Abor
  * exchanges the code itself. Desk browser sign-in retains its existing flow.
  */
 export function runAgySignIn(client: AgySignInClient, callbacks: DeviceLoginCallbacks, opts: {
+  program?: "cli" | "server";
   pasteRedirect?: boolean;
   requestCallback?: typeof requestAgyCallback;
 } = {}): DeviceLoginHandle {
@@ -177,7 +179,7 @@ export function runAgySignIn(client: AgySignInClient, callbacks: DeviceLoginCall
   client.on("stderr", (text) => {
     if (prompted || settled) return;
     stderr = (stderr + text).slice(-16_384);
-    const url = agySignInUrl(stderr);
+    const url = agySignInUrl(stderr, opts.program);
     if (!url) return;
     prompted = true;
     signInUrl = url;

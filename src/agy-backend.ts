@@ -245,7 +245,7 @@ export function configStateFromAgyOptions(response: any, fallback: BackendConfig
 }
 
 const AGY_MODE_IDS = { agent: "default", acceptEdits: "auto_edit", yolo: "yolo" } as const;
-const AGY_CLI_MODE_IDS = { agent: "default", acceptEdits: "accept-edits", auto: "auto", plan: "plan" } as const;
+const AGY_CLI_MODE_IDS = { agent: "default", acceptEdits: "accept-edits", auto: "auto", plan: "plan", yolo: "default" } as const;
 
 /**
  * Google refusing the credential DURING a turn. The server does not fail the
@@ -917,7 +917,8 @@ export class AgyBackend implements AcpBackend<"agy"> {
       if (this.thinkingLevels.length === 0) state.reasoningEffort = undefined;
     }
     if (this.nativeApprovalModes) {
-      state.modeId = this.pickerMode(optionValue(configOption(response?.configOptions, "mode")) ?? response?.modes?.currentModeId) ?? state.modeId;
+      const fallbackMode = this.program === "cli" && state.modeId === "yolo" ? "agent" : state.modeId;
+      state.modeId = this.pickerMode(optionValue(configOption(response?.configOptions, "mode")) ?? response?.modes?.currentModeId) ?? fallbackMode;
     }
     const relay = this.options.keyRelay;
     if (relay) state.reasoningEffort = state.modelId && relay.supportsThinking(state.modelId) ? relay.thinkingLevel : undefined;

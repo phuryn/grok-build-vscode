@@ -2,12 +2,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { GrokSidebar } from "../src/sidebar";
 import { Session } from "../src/session";
 import { CLOUD_ENVIRONMENT_ENV } from "../src/remote-frames";
-import { installManagedAgy } from "../src/agy-managed-installer";
+import { installAgyCli } from "../src/agy-cli-lifecycle";
 import { installManagedDeepSeek } from "../src/deepseek-managed-installer";
 import { allowFromRemote, INBOUND_DISPOSITION, REMOTE_REQUIRES_BOUND_SESSION, transformHostMsgForRemote } from "../src/remote-policy";
 import { parseWebviewMsg } from "../src/desktop/webview-msg-validate";
 
-vi.mock("../src/agy-managed-installer", async original => ({ ...await original<object>(), installManagedAgy: vi.fn() }));
+vi.mock("../src/agy-cli-lifecycle", async original => ({ ...await original<object>(), installAgyCli: vi.fn() }));
 vi.mock("../src/deepseek-managed-installer", async original => ({ ...await original<object>(), installManagedDeepSeek: vi.fn() }));
 afterEach(() => { vi.resetAllMocks(); vi.unstubAllEnvs(); });
 
@@ -21,6 +21,10 @@ function host() {
   s.context = { globalStorageUri: { fsPath: "/storage" } };
   s.host = { appendLine: vi.fn(), getConfiguration: () => ({ get: (_: string, fallback: unknown) => fallback }), showWarningMessage: vi.fn(), revealChatView: vi.fn() };
   s.locateProvider = vi.fn(() => undefined);
+  s.installedAgyCli = vi.fn(() => undefined);
+  s.state = { get: (_: string, fallback: unknown) => fallback };
+  s.context.secrets = { get: async () => undefined };
+  s.agyGoogleSignedIn = vi.fn(async () => false);
   s.postLocal = vi.fn(); s.sendRemoteRequester = vi.fn(); s.postProviderState = vi.fn();
   return { s, requester };
 }
@@ -38,18 +42,21 @@ describe("remote provider setup", () => {
 
   it.each(["agy", "deepseek"] as const)("routes %s install progress and completion to the requester", async provider => {
     const { s, requester } = host();
-    const install = vi.mocked(provider === "agy" ? installManagedAgy : installManagedDeepSeek);
-    install.mockImplementation(async options => {
+    const cli = vi.mocked(installAgyCli);
+    const managed = vi.mocked(installManagedDeepSeek);
+    cli.mockResolvedValue({ binary: "/installed", version: "1.5.8" });
+    managed.mockImplementation(async options => {
       options.onProgress?.("downloading", { receivedBytes: 1, totalBytes: 4 });
       options.onProgress?.("downloading", { receivedBytes: 2, totalBytes: 4 });
       return "/installed";
     });
     await s.onMessage({ type: provider === "agy" ? "installAgy" : "installDeepSeek" }, "remote", "phone");
-    expect(install).toHaveBeenCalledOnce();
+    expect(provider === "agy" ? cli : managed).toHaveBeenCalledOnce();
     const frames = s.sendRemoteRequester.mock.calls.map(([target, frame]: any[]) => {
       expect(target).toBe(requester); return frame;
     });
-    expect(frames).toContainEqual(expect.objectContaining({ type: "agyInstallProgress", provider, phase: "downloading", receivedBytes: 2 }));
+    expect(frames).toContainEqual(provider === "agy" ? { type: "agyInstallProgress", provider, phase: "installing" }
+      : expect.objectContaining({ type: "agyInstallProgress", provider, phase: "downloading", receivedBytes: 2 }));
     expect(frames.at(-1)).toMatchObject({ type: "onboarding", provider, state: provider === "agy" ? "agy-login" : "deepseek-login" });
     expect(s.postLocal).not.toHaveBeenCalled();
     expect(transformHostMsgForRemote(frames[0], {} as any)).toEqual(frames[0]);
@@ -59,10 +66,12 @@ describe("remote provider setup", () => {
     const { s } = host();
     let started!: () => void;
     const ready = new Promise<void>(resolve => { started = resolve; });
-    vi.mocked(provider === "agy" ? installManagedAgy : installManagedDeepSeek).mockImplementation(options => new Promise((_resolve, reject) => {
-      options.signal.addEventListener("abort", () => reject(options.signal.reason), { once: true });
+    const waitForCancel = <T>(signal: AbortSignal) => new Promise<T>((_resolve, reject) => {
+      signal.addEventListener("abort", () => reject(signal.reason), { once: true });
       started();
-    }));
+    });
+    vi.mocked(installAgyCli).mockImplementation(options => waitForCancel(options.signal!));
+    vi.mocked(installManagedDeepSeek).mockImplementation(options => waitForCancel(options.signal));
     const installing = s.onMessage({ type: provider === "agy" ? "installAgy" : "installDeepSeek" }, "remote", "phone");
     await ready;
     await s.onMessage({ type: provider === "agy" ? "cancelAgyInstall" : "cancelDeepSeekInstall" }, "remote", "phone");

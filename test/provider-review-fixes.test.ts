@@ -283,13 +283,14 @@ describe("multi-provider review regressions", () => {
     const instance = Object.create(GrokSidebar.prototype) as any;
     instance.providerConnections = vi.fn(() => ({ grok: true, codex: true }));
     instance.locatedProviders = vi.fn(() => ({ grok: true, codex: false, claude: false }));
+    instance.installedAgyCli = vi.fn(() => undefined);
     expect(instance.providerStateMessage()).toEqual({
       type: "providerState",
       // keepsCliSignIn: a desk host's account button disconnects (#203).
       providers: [
         { id: "deepseek", connected: false, keepsCliSignIn: true, remoteSetup: true, keySource: undefined },
         { id: "muse", connected: false, keepsCliSignIn: true },
-        { id: "agy", connected: false, keepsCliSignIn: true, remoteSetup: true, googleSignIn: true },
+        { id: "agy", connected: false, keepsCliSignIn: true, remoteSetup: true, googleSignIn: true, agyCli: { installed: false } },
         { id: "grok", connected: true, keepsCliSignIn: true },
         { id: "codex", connected: false, keepsCliSignIn: true },
         { id: "claude", connected: false, keepsCliSignIn: true },

@@ -182,6 +182,32 @@ describe("Antigravity in the chat renderer", () => {
     expect(wizard.querySelector(".onb-agy-key")).not.toBeNull();
   });
 
+  it("offers the CLI install and a separate key setup only after the host advertises the CLI", () => {
+    const h = bootWebview({ remote: true });
+    const provider = { id: "agy", connected: false, remoteSetup: true, googleSignIn: true };
+    dispatch(h.window, { type: "providerState", providers: [provider] });
+    dispatch(h.window, { type: "onboarding", state: "missing-agy", provider: "agy" });
+    expect(onboarding(h.doc).textContent).toContain("Antigravity agent server");
+    expect(onboarding(h.doc).querySelector('[data-act="agyChooseKey"]')).toBeNull();
+    dispatch(h.window, { type: "providerState", providers: [{ ...provider, agyCli: { installed: false } }] });
+    dispatch(h.window, { type: "onboarding", state: "missing-agy", provider: "agy" });
+    expect(onboarding(h.doc).textContent).toContain("Google sign-in uses the Antigravity CLI.");
+    click(h.window, onboarding(h.doc).querySelector('[data-act="installAgy"]'));
+    expect(h.posted).toContainEqual({ type: "installAgy" });
+    dispatch(h.window, { type: "providerState", providers: [{ ...provider, agyCli: { installed: false, installing: true } }] });
+    dispatch(h.window, { type: "agyInstallProgress", provider: "agy", phase: "installing" });
+    const progress = onboarding(h.doc).querySelector("progress")!;
+    expect(progress.hasAttribute("value")).toBe(false);
+    click(h.window, onboarding(h.doc).querySelector('[data-act="cancelAgyInstall"]'));
+    expect(h.posted).toContainEqual({ type: "cancelAgyInstall" });
+    dispatch(h.window, { type: "providerState", providers: [{ ...provider, agyCli: { installed: false } }] });
+    dispatch(h.window, { type: "agyInstallProgress", provider: "agy", phase: "idle" });
+    click(h.window, onboarding(h.doc).querySelector('[data-act="agyChooseKey"]'));
+    const wizard = h.doc.querySelector(".connect-wizard-body")!;
+    expect(wizard.querySelector(".onb-agy-key")).not.toBeNull();
+    expect(wizard.textContent).toContain("installs the Antigravity server");
+  });
+
   it("names Antigravity while it starts, and is patient with its slow start", () => {
     const h = bootWebview();
     dispatch(h.window, { type: "providerState", providers: [{ id: "agy", connected: true }] });
@@ -206,6 +232,20 @@ describe("Antigravity in Settings", () => {
     return { container, posted, window };
   }
   const desk = { isRemote: false, isDesktop: false, providersKnown: true };
+
+  it.each([false, true])("shows indeterminate progress, Cancel, and the installed version in Providers (remote=%s)", isRemote => {
+    const provider = { id: "agy", connected: true, remoteSetup: true };
+    const env = { ...desk, isRemote };
+    const installing = mount(env, [{ ...provider, agyCli: { installed: false, installing: true } }]);
+    const row = installing.container.querySelector('[data-id="providerAgy"]')!;
+    expect(row.querySelector("progress")?.hasAttribute("value")).toBe(false);
+    const cancel = row.querySelector("button")!;
+    expect(cancel.textContent).toBe("Cancel");
+    cancel.click();
+    expect(installing.posted).toContainEqual({ type: "cancelAgyInstall" });
+    const installed = mount(env, [{ ...provider, agyCli: { installed: true, version: "1.5.8" } }]);
+    expect(installed.container.querySelector('[data-id="providerAgy"]')?.textContent).toContain("Antigravity CLI v1.5.8");
+  });
 
   it("has a desk row only when advertised: Connect, then Disconnect that keeps what it signed in with", () => {
     expect(mount(desk, [{ id: "grok", connected: false }]).container.querySelector('[data-id="providerAgy"]')).toBeNull();

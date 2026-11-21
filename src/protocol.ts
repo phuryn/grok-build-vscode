@@ -560,6 +560,8 @@ export type HostMsg =
       remoteSetup?: boolean;
       /** Antigravity: a local browser sign-in may be started on this host. */
       googleSignIn?: boolean;
+      /** Antigravity CLI availability, version and install progress. Absent on older hosts. */
+      agyCli?: { installed: boolean; version?: string; installing?: boolean; reason?: string };
       /** Cloud Antigravity: accepts the phone's loopback address through paste-code login. */
       googleSignInPaste?: boolean }[]; checking?: boolean }
   /** Grok's grok.com + user-level MCP inventory (`_x.ai/mcp/list`; project-file
