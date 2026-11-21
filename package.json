@@ -1,7 +1,7 @@
 {
   "name": "grok-vscode-phuryn",
   "displayName": "AFK Pilot: Grok Build, Muse Code, DeepSeek, Claude, Codex & more in one place",
-  "description": "One place for Grok Build (Grok 4.7), Muse Code (Muse Wonder) and DeepSeek (V4 Pro), plus Codex (GPT-6 Astra), Claude Code (Opus 5.5) and Google Antigravity (Gemini 4 Argon). Remote Control from your phone, voice control, multiple sessions, images and videos, Mermaid diagrams, and LaTeX. Works with SuperGrok, X Premium+, and xAI API key. Fair Source (FSL-1.1-MIT). Not affiliated with or endorsed by SpaceXAI (formerly xAI), Meta, DeepSeek, OpenAI, Anthropic or Google.",
+  "description": "Six coding agents in one window: Grok Build (Grok 4.7), Google Antigravity (Gemini 4 Argon), Muse Code (Muse Wonder), DeepSeek (V4 Pro), Claude Code (Opus 5.5) and Codex (GPT-6.2 Sol). Remote Control from your phone, steering mid-turn, one compaction limit for every agent, voice control, parallel sessions, images and videos, Mermaid diagrams, and LaTeX. Works with SuperGrok, X Premium+, and xAI API key. Fair Source (FSL-1.1-MIT). Not affiliated with or endorsed by SpaceXAI (formerly xAI), Google, Meta, DeepSeek, Anthropic or OpenAI.",
   "version": "4.17.2",
   "publisher": "PawelHuryn",
   "author": {

@@ -67,7 +67,9 @@ remote.
 ### Signing in, and signing out
 
 Connecting Grok, Codex, Claude Code or Muse uses the device-code flow that any remote client uses
-(shipped 3.19.0 — see [Signing agents in](provider-login.md)). It has to work:
+(shipped 3.19.0 — see [Signing agents in](provider-login.md)). Antigravity connects
+with a Gemini API key, or a Google sign-in whose returned address is pasted
+back into the card, and DeepSeek with an API key, both from the remote too. It has to work:
 there is no desk to fall back to, so a cloud environment with nothing connected
 could otherwise never be made usable.
 

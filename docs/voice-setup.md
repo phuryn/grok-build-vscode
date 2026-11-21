@@ -9,6 +9,7 @@ In Settings → Voice, **Transcription backend** defaults to Auto:
 | Codex | OpenAI | xAI |
 | Grok | xAI | OpenAI |
 | Claude | xAI | OpenAI |
+| Muse Code, Antigravity, DeepSeek | xAI | OpenAI |
 
 Existing xAI-only Codex users keep working dictation. An explicit backend choice requires that backend's credential. The backend is pinned until recording ends, including hands-free restarts; a service error never switches vendors.
 

@@ -11,7 +11,7 @@ Product documentation lives here. Build, test and repo conventions are in
 - [Slash commands](SLASH-COMMANDS.md) — what the running CLI exposes and how commands dispatch.
 - [Projects](projects.md) — the three ways to add one, where new folders go, and cloning from GitHub.
 - [Tips on the empty screen](empty-state-tips.md) — what the welcome screen suggests, and the rules it follows.
-- [Signing agents in](provider-login.md) — how Grok, Codex and Claude authenticate, including the headless paths for a machine you only reach remotely.
+- [Signing agents in](provider-login.md) — how each of the six agents signs in, including the headless paths for a machine you only reach remotely.
 - [Running in a cloud environment](cloud-environments.md) — what the host does differently when the machine is one we run: waking for routines, which capabilities re-home to the browser, and what stays exactly the same.
 - [Voice setup](voice-setup.md) — dictation, transcription and the hands-free send phrase.
 - [Privacy](privacy.md) — what leaves your machine, and what never does.
