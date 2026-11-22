@@ -134,6 +134,9 @@ export class Session {
   codexModeChange?: Promise<boolean>;
   /** Provider is fixed once the first user turn enters history. */
   provider: AcpProvider = "grok";
+  /** Opened by a routine run: its agent, model and effort never become the
+   *  project's choice for the next New chat. */
+  fromRoutine = false;
   /** Host-owned composer attachments for this session/view. */
   chips: FileChip[] = [];
   /** Attachment authority for targeted Edit restores, never shared composer state. */

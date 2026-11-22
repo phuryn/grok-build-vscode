@@ -154,6 +154,19 @@ describe("composer chip", () => {
     expect([...h.doc.querySelectorAll(".effort-strip-stop")].map((el) => el.getAttribute("data-effort"))).toEqual(["low", "medium"]);
   });
 
+  it("shows the level a model brings back after a switch, and keeps the old rule without one", () => {
+    const h = boot();
+    dispatch(h.window, { type: "modelChanged", modelId: "grok-fast", effort: "medium" });
+    expect(h.doc.querySelector(".model-chip-effort")?.textContent).toBe("Medium");
+    dispatch(h.window, { type: "modelChanged", modelId: "grok-build", effort: "xhigh" });
+    expect(h.doc.querySelector(".model-chip-effort")?.textContent).toBe("Extra high");
+    // Off-menu or empty: the chip keeps the level it had, as with an older host.
+    dispatch(h.window, { type: "modelChanged", modelId: "grok-build", effort: "max" });
+    expect(h.doc.querySelector(".model-chip-effort")?.textContent).toBe("Extra high");
+    dispatch(h.window, { type: "modelChanged", modelId: "grok-build", effort: "" });
+    expect(h.doc.querySelector(".model-chip-effort")?.textContent).toBe("Extra high");
+  });
+
   it("keeps the advertised effective effort when an older host reports no override", () => {
     const h = boot();
     dispatch(h.window, { type: "initialState", effort: "" });

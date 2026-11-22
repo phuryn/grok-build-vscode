@@ -836,7 +836,10 @@ export class AcpClient extends EventEmitter {
     this.emit("modeChanged", modeId);
   }
 
-  async setModel(modelId: string): Promise<void> {
+  /** `preferredEffort` is the level the person last used on THIS model; it
+   *  wins over the live level when the target offers it, so going back to a
+   *  model brings back its own effort rather than the one just used elsewhere. */
+  async setModel(modelId: string, preferredEffort?: string): Promise<void> {
     if (this.contextWindowChanging) throw new Error("Wait for the context-window change to finish.");
     if (!this.sessionId) throw new Error("no session");
     // Carry the live effort override through a compatible switch — a bare
@@ -847,15 +850,16 @@ export class AcpClient extends EventEmitter {
     // the backend and 400. If the target advertises no menu, don't carry (let the
     // server resolve its default) rather than risk an off-menu value.
     const target = this.availableModels.find((m) => m.modelId === modelId);
-    const carry =
-      this.currentReasoningEffort &&
-      Array.isArray(target?.reasoningEfforts) &&
-      target!.reasoningEfforts.includes(this.currentReasoningEffort);
-    const call = this.backend.setModel(this.sessionId, modelId, carry ? this.currentReasoningEffort : undefined);
+    const offered = (level: string | undefined): level is string =>
+      !!level && Array.isArray(target?.reasoningEfforts) && target!.reasoningEfforts.includes(level);
+    const before = this.currentReasoningEffort;
+    const restore = offered(preferredEffort) && target?.supportsReasoningEffort === true ? preferredEffort : undefined;
+    const level = restore ?? (offered(before) ? before : undefined);
+    const call = this.backend.setModel(this.sessionId, modelId, level);
     const res = await this.request(call.method, call.params);
     const state = this.backend.configState(res, {
       modelId,
-      reasoningEffort: carry ? this.currentReasoningEffort : undefined,
+      reasoningEffort: level,
       modeId: this.currentModeId,
     });
     const ok = res?._meta?.model?.Ok;
@@ -875,6 +879,16 @@ export class AcpClient extends EventEmitter {
         this.currentModeId = state.modeId;
         const current = this.availableModels.find((entry) => entry.modelId === this.currentModelId);
         if (current) current.reasoningEffort = this.currentReasoningEffort;
+        // Adapters take the model alone and keep the session's own level
+        // (Claude's pinned effort, Codex's carried one), so a level this model
+        // remembers has to be stated on its own, before the change is announced.
+        if (restore && restore !== before) {
+          try {
+            await this.setReasoningEffort(restore);
+          } catch (err) {
+            this.opts.log(`[acp] Failed to restore reasoning effort ${restore} on ${modelId}: ${(err as Error).message}.`);
+          }
+        }
       }
       this.resetContextSelection();
       if (this.autoCompact && this.provider !== "grok") this.lastContextWindow = undefined;

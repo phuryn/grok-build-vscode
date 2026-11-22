@@ -21931,7 +21931,10 @@ ${fullText}`
         const previousEffort = effectiveEffort();
         state.currentModelId = msg.modelId;
         if (!contextPopover.hidden) renderContextPopover();
-        if (!effortLevelsForModel().includes(state.effort)) {
+        // A model brings back its own remembered level; the host says which.
+        if (typeof msg.effort === "string" && msg.effort && effortLevelsForModel().includes(msg.effort)) {
+          state.effort = msg.effort;
+        } else if (!effortLevelsForModel().includes(state.effort)) {
           state.effort = currentModel()?.reasoningEffort || "";
         }
         refreshModelControls();

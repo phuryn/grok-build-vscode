@@ -678,7 +678,9 @@ export type HostMsg =
   | { type: "sessionGoal"; sessionId: string; goal: SessionGoal | null }
   | { type: "composerDraftSession"; draftId: string; sessionId: string }
   | { type: "contextWindowSelection"; selection: ContextWindowSelection }
-  | { type: "modelChanged"; modelId: string }
+  // `effort`: the level the session runs at after the switch ("" when the
+  // agent reports none). Older hosts send no effort.
+  | { type: "modelChanged"; modelId: string; effort?: string }
   // `modes` is the set this session offers. Absent on an older host: the page
   // keeps its previous rule (Muse's button hidden, Codex without Plan).
   // Muse's native-id advertisement (three on cloud, four on desk) gates its names and new setMode values;

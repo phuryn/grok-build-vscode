@@ -138,6 +138,31 @@ export function configWriteTarget(
   return "global";
 }
 
+/** The level last picked on each model, by provider then model id. The
+ *  per-provider value above stays the fallback for a model never set. */
+export const MODEL_EFFORT_PREFS_KEY = "grok.defaultEffortByModel";
+export type ModelEffortPrefs = Record<string, Record<string, string>>;
+
+/** Undefined when this model has no level of its own; "" is a remembered Default. */
+export function rememberedModelEffort(
+  prefs: ModelEffortPrefs | undefined,
+  provider: string,
+  modelId: string | undefined,
+): string | undefined {
+  if (!modelId) return undefined;
+  const level = prefs?.[provider]?.[modelId];
+  return typeof level === "string" ? level : undefined;
+}
+
+export function withModelEffort(
+  prefs: ModelEffortPrefs | undefined,
+  provider: string,
+  modelId: string,
+  level: string,
+): ModelEffortPrefs {
+  return { ...prefs, [provider]: { ...prefs?.[provider], [modelId]: level } };
+}
+
 /** Adapter picker choices belong to that provider; existing Grok config stays its fallback. */
 export function rememberedEffort(
   prefs: EffortPrefs | undefined,

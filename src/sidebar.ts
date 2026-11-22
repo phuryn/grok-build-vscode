@@ -140,7 +140,7 @@ import { DEEPSEEK_API_KEY_SECRET, deepseekKey, validDeepSeekKey, isDeepSeekCrede
 import { locateDeepSeek, installManagedDeepSeek, DEEPSEEK_VERSION } from "./deepseek-managed-installer";
 import { MediaRef, adapterCompactSignal, adapterContextOccupancy, agentTimestampMsFromMeta, autoCompactStartedNote, childStreamFromRoute, commandOutputForToolCall, commandOutputFromLiveTerminal, contextUsedFromCompactNotification, enforceCompleteSessionCost, errorDetail, gateZeroTokenMeta, isAuthErrorText, isCredentialError, isIncompatibleAgentError, isResumeNotFound, isRateLimitError, isSubagentLifecycleUpdate, occupancyFromAdapterTurn, parseSessionInfoContext, permissionOutcomeFor, promptErrorText, rateLimitNoticeText, sessionInfoCacheFresh, sumUsage, summarizeBackgroundCommand, usageIsRealMeasurement, type UpdateRoute } from "./acp-dispatch";
 import { createMcpPrepareState, prepareMcpToolCall } from "./mcp-tool";
-import { CODEX_ASK_APPROVAL_PREF_KEY, CODEX_MODE_WAITS_FOR_PLAN, EFFORT_PREFS_KEY, MUSE_MODE_PREF_KEY, MUSE_ON_REQUEST_UNAVAILABLE, museSandboxUnavailable, museOnRequestUnavailable, resolvedDefaultMode, configWriteTarget, isMuseModeId, modeToRemember, rememberedEffort, sessionModes, startsInNativeAuto, startsInYolo, musePosture, museShellSandboxEnabled, usesClientAutoAccept, type ModeId, type MuseSettings, type EffortPrefs } from "./mode-prefs";
+import { CODEX_ASK_APPROVAL_PREF_KEY, CODEX_MODE_WAITS_FOR_PLAN, EFFORT_PREFS_KEY, MODEL_EFFORT_PREFS_KEY, MUSE_MODE_PREF_KEY, MUSE_ON_REQUEST_UNAVAILABLE, museSandboxUnavailable, museOnRequestUnavailable, resolvedDefaultMode, configWriteTarget, isMuseModeId, modeToRemember, rememberedEffort, rememberedModelEffort, withModelEffort, sessionModes, startsInNativeAuto, startsInYolo, musePosture, museShellSandboxEnabled, usesClientAutoAccept, type ModeId, type MuseSettings, type EffortPrefs, type ModelEffortPrefs } from "./mode-prefs";
 import { supportsApprovalModeSwitching } from "./acp-backend";
 import { beginAuthRecovery, oauthShadowsXaiApiKey } from "./auth-recovery";
 import {
@@ -1607,6 +1607,7 @@ export class GrokSidebar {
 
     try {
       const session = this.newLocalSession();
+      session.fromRoutine = true;
       this.pool.add(session);
       this.setSessionCwd(session, routine.cwd, this.workspaceRoot());
       session.provider = routine.provider;
@@ -1652,6 +1653,8 @@ export class GrokSidebar {
 
       let started = false;
       await this.handleSend(routine.prompt, false, session, "local", undefined, undefined, () => { started = true; });
+      // From here the conversation is the person's: what they pick in it counts.
+      session.fromRoutine = false;
       // `handleSend` CATCHES a failed turn — it renders the error and resolves
       // normally — so awaiting it says nothing about whether the turn worked.
       // Reporting every one of those as a success would put a green tick on the
@@ -3339,12 +3342,17 @@ export class GrokSidebar {
     } satisfies ProjectProviderDefaults);
   }
 
-  private defaultEffortForProvider(provider: AcpProvider): string {
-    return rememberedEffort(
+  /** The level this model was last used at, else the provider's last level. */
+  private defaultEffortForProvider(provider: AcpProvider, modelId?: string): string {
+    return this.rememberedEffortForModel(provider, modelId) ?? rememberedEffort(
       this.state.get<EffortPrefs>(EFFORT_PREFS_KEY),
       provider,
       this.host.getConfiguration("grok").get<string>("defaultEffort", ""),
     );
+  }
+
+  private rememberedEffortForModel(provider: AcpProvider, modelId: string | undefined): string | undefined {
+    return rememberedModelEffort(this.state.get<ModelEffortPrefs>(MODEL_EFFORT_PREFS_KEY), provider, modelId);
   }
 
   /** Persist a picker choice where the next read will actually find it.
@@ -3359,7 +3367,15 @@ export class GrokSidebar {
     await cfg.update(key, value, configWriteTarget(cfg.inspect<string>(key)));
   }
 
-  private async rememberProviderEffort(provider: AcpProvider, level: string): Promise<void> {
+  private async rememberModelEffort(provider: AcpProvider, modelId: string, level: string): Promise<void> {
+    await this.state.update(
+      MODEL_EFFORT_PREFS_KEY,
+      withModelEffort(this.state.get<ModelEffortPrefs>(MODEL_EFFORT_PREFS_KEY), provider, modelId, level),
+    );
+  }
+
+  private async rememberProviderEffort(provider: AcpProvider, level: string, modelId?: string): Promise<void> {
+    if (modelId) await this.rememberModelEffort(provider, modelId, level);
     if (provider === "grok") {
       await this.rememberGrokConfig("defaultEffort", level);
       return;
@@ -3990,9 +4006,16 @@ export class GrokSidebar {
       return;
     }
     try {
-      await client.setModel(modelId);
-      await this.rememberProjectProvider(this.sessionCwd(session), provider, modelId);
-      if (provider === "grok") await this.rememberGrokConfig("defaultModel", modelId);
+      // The model being left keeps the level it ran at, so coming back to it
+      // brings that level back even when nobody picked it by hand.
+      const leaving = client.currentModelId;
+      const leavingLevel = client.currentReasoningEffort;
+      await client.setModel(modelId, this.rememberedEffortForModel(provider, modelId));
+      if (!session.fromRoutine) {
+        if (leaving && leavingLevel) await this.rememberModelEffort(provider, leaving, leavingLevel);
+        await this.rememberProjectProvider(this.sessionCwd(session), provider, modelId);
+        if (provider === "grok") await this.rememberGrokConfig("defaultModel", modelId);
+      }
     } catch (e) {
       if (!isIncompatibleAgentError(e)) {
         this.reportRequester(requester, "error", `Failed to set model: ${(e as Error).message}`);
@@ -4059,13 +4082,13 @@ export class GrokSidebar {
     if (newLevel && session.client?.currentModelSupportsEffort()) {
       const applied = await session.client.setReasoningEffort(newLevel).catch(() => false);
       if (applied) {
-        await this.rememberProviderEffort(session.provider, newLevel);
+        await this.rememberProviderEffort(session.provider, newLevel, session.client?.currentModelId);
         return;
       }
     }
 
     if (this.pendingAgyForkHandoff(session)) {
-      await this.rememberProviderEffort(session.provider, newLevel);
+      await this.rememberProviderEffort(session.provider, newLevel, session.client?.currentModelId);
       await this.startSession(session.activeSessionId, session);
       return;
     }
@@ -4075,7 +4098,7 @@ export class GrokSidebar {
       // history (a dead client on a session WITH history must keep that history).
       const wasEmpty = !session.hasHistory;
       const discardId = session.activeSessionId;
-      await this.rememberProviderEffort(session.provider, newLevel);
+      await this.rememberProviderEffort(session.provider, newLevel, session.client?.currentModelId);
       if (wasEmpty && usesAdapterHistory(session.provider)) {
         await this.discardAdapterEmptySession(session.provider, discardId, this.sessionCwd(session), session.client);
       }
@@ -4094,7 +4117,7 @@ export class GrokSidebar {
     }
     const mode = await this.pickRestartMode("Changing reasoning effort requires restarting the session.");
     if (!mode) return; // dismissed — leave the remembered effort untouched
-    await this.rememberProviderEffort(session.provider, newLevel);
+    await this.rememberProviderEffort(session.provider, newLevel, session.client?.currentModelId);
     await this.restartSession(mode, session);
   }
 
@@ -12037,7 +12060,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       modelId = defaultModel || catalog?.currentModelId;
       modelWindow = resumedWindow ?? catalog?.models.find(model => model.modelId === modelId)?.totalContextTokens;
     }
-    const effortStr = this.defaultEffortForProvider(session.provider);
+    const effortStr = this.defaultEffortForProvider(
+      session.provider,
+      defaultModel || this.state.get<ProviderModelCache>(PROVIDER_MODEL_CACHE_KEY, {})[session.provider]?.currentModelId,
+    );
     const effort = effortStr ? (effortStr as EffortLevel) : undefined;
     // Transient spawn/init after an update can throw once; retry the plain
     // failure only (auth and the Windows stdio pin keep their own paths).
@@ -12211,7 +12237,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     });
     client.on("modelChanged", (id) => {
       if (gen !== session.gen) return;
-      this.emit(session, { type: "modelChanged", modelId: id });
+      this.emit(session, { type: "modelChanged", modelId: id, effort: client.currentReasoningEffort ?? "" });
       if (compactAt !== undefined && client.autoCompactThreshold?.() !== undefined) this.emit(session, { type: "contextUsage" });
       if (session.provider === "deepseek") this.emit(session, sessionModeMessage(session, this.displayMode(session)));
       // Antigravity's meter shows the quota of the model in use; another model may draw on the other one.
@@ -13813,7 +13839,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         // before this handler yields, or a `send` posted behind it sees none.
         await this.trackPickerChange((async () => {
           const before = session.activeSessionId;
-          if (typeof effort === "string") await this.rememberProviderEffort(provider, effort);
+          if (typeof effort === "string") await this.rememberProviderEffort(provider, effort, msg.modelId || undefined);
           await this.switchModel(msg.modelId, session, requester, provider);
           if (typeof effort === "string" && session.activeSessionId === before) {
             await this.applyEffort(effort, session, origin, clientId, requester);
@@ -19721,11 +19747,14 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     const isFirstSend = !session.hasHistory;
     session.hasHistory = true;
     if (isFirstSend) {
-      void this.rememberProjectProvider(
-        this.sessionCwd(session),
-        session.provider,
-        session.client?.currentModelId,
-      );
+      // A routine's agent is the routine's, never the project's next New chat.
+      if (!session.fromRoutine) {
+        void this.rememberProjectProvider(
+          this.sessionCwd(session),
+          session.provider,
+          session.client?.currentModelId,
+        );
+      }
       if (session.client?.sessionId) {
         this.emit(session, {
           type: "session",
