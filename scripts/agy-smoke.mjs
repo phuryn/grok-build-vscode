@@ -281,7 +281,7 @@ async function exerciseAutoAccept({ agy, timed, rpcMs, turnMs, scratch }) {
   const marker = "afk-auto-accept-ok";
   agy.on("permissionRequest", answer);
   try {
-    await timed(agy.prompt(`Run this shell command now with your terminal tool: mkdir ${marker} . Then reply DONE.`),
+    await timed(agy.prompt(`Run exactly this shell command now with your terminal tool: \`mkdir ${marker}\`. Then reply DONE.`),
       "CLI Auto accept command", turnMs);
   } finally { agy.off("permissionRequest", answer); }
   assert(answers.length > 0, "no permission request arrived");

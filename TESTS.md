@@ -235,7 +235,7 @@ The managed fixture checks catalog, per-family effort, native modes, key and Goo
 
 `test/agy-cli-lifecycle.test.ts` injects fake child processes into the real lifecycle code. It checks both installer commands, version verification, process-tree cancellation and the updater deadline. `test/session-start-retry.test.ts` runs the real host startup and approval handlers against an in-process ACP stand-in. It checks migration, concurrent install sharing, fallback and retry, first-launch update ordering, CLI sign-in routing, and Auto accept defaults and grants. `test/agy-host.test.ts` checks progress frames, cloud OAuth handoff and the first-key managed install. `test/agy-provider.dom.test.ts` exercises setup and the Providers row with old and new host frames on desk and phone. These are part of `npm test` and invoke neither Google's installer nor `agy update`.
 
-For the live CLI edit check, set `AGY_SMOKE_PROGRAM=cli` and `AGY_SMOKE_SCENARIO=auto-accept` and run `npm run smoke:acp -- --provider=agy`. It uses the CLI's existing sign-in, requires a real `allow_once` permission and checks the resulting scratch-file edit. The smoke turns off the CLI's own background updater in its child environment.
+For the live CLI Auto accept check, set `AGY_SMOKE_PROGRAM=cli` and `AGY_SMOKE_SCENARIO=auto-accept` and run `npm run smoke:acp -- --provider=agy`. It uses the CLI's existing sign-in, asks for a shell command (the CLI's default mode edits workspace files without asking), requires a real `allow_once` permission and checks that the command made its scratch folder. The smoke turns off the CLI's own background updater in its child environment.
 
 ### DeepSeek
 

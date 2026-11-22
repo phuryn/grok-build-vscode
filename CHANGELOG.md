@@ -6,13 +6,13 @@
 
 ### Added
 
-- **Dictate with Google.** Settings → Voice offers Google beside xAI and OpenAI, with a Gemini API key: the one already saved for Antigravity, or one set in **Google voice API key**. Auto picks Google for Antigravity chats, OpenAI for Codex and xAI for the rest, and otherwise uses whichever key you have. A Google sign-in or a Google AI subscription is not a key; the row links to AI Studio and explains which key to use: a free key works, but on Google's free tier Google may use your audio to improve its products. When Google refuses a key, the mic says why: a key Google does not accept, or a project out of credits or over its spending cap. On the desk and from a phone.
-- **AFK Pilot installs Google's agy CLI and keeps it current.** With a Google sign-in, your next Antigravity chat installs the CLI with Google's own installer, with progress in Settings → Providers, which also shows its version. After each AFK Pilot update it runs `agy update` once.
-- **Auto accept on the agy CLI.** It answers each request once and never saves an allow rule. A remembered Auto accept applies to new CLI chats.
+- **Dictate with Google.** Settings → Voice offers Google beside xAI and OpenAI, with a Gemini API key: the one already saved for Antigravity, one set in **Google voice API key**, or `GEMINI_API_KEY` / `GOOGLE_API_KEY` in the project's `.env` or the host environment. Auto picks Google for Antigravity chats, OpenAI for Codex and xAI for the rest; when that one has no credential, it tries xAI, OpenAI, then Google. A Google sign-in or a Google AI subscription is not a key; the row links to AI Studio and explains which key to use: a free key works, but on Google's free tier Google may use your audio to improve its products. When Google refuses a key, the mic says why: a key Google does not accept, or a project out of credits or over its spending cap. Dictation works on the desk and from a phone; the key is set on the desk.
+- **AFK Pilot installs Google's agy CLI and keeps it current.** With a Google sign-in, your next new Antigravity chat installs the CLI with Google's own installer, with progress in Settings → Providers, which also shows its version. From the next AFK Pilot update on, it runs `agy update` once after each update.
+- **Auto accept on the agy CLI.** It approves each tool request once and never saves an allow rule; plan reviews still wait for you. A remembered Auto accept applies to new CLI chats.
 
 ### Changed
 
-- **AFK Pilot's own copy of Codex follows Codex's latest release**, checked against the release's SHA-256 and never moved to an older version. After an AFK Pilot update it fetches a newer release in the background while your chats keep running. A Codex you installed yourself is never updated in the background; Providers offers the update instead.
+- **AFK Pilot's own copy of Codex follows Codex's latest release**, checked against the release's SHA-256 and never moved to an older version. A new install takes the latest release; after each AFK Pilot update it checks once for a newer one and fetches it in the background while your chats keep running. A Codex you installed yourself is never updated in the background; Providers offers an update when it is older than the newest release AFK Pilot knows of.
 - **The README leads with the six agents**, with a comparison and a section for each.
 
 ## 4.17.2 — 2026-11-21
