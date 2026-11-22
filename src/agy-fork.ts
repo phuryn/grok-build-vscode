@@ -28,6 +28,8 @@ export type AgyForkCut = { id: string; edit: boolean };
 /** A command agy ran, filled in by its later updates. */
 type Command = { command: string; status?: string; exitCode?: number; output?: string };
 type Turn = { role: "User" | "Assistant"; parts: (string | Command)[] };
+/** How much of each command a turn carries: nothing, its line and outcome, or those and its output. */
+type Detail = "words" | "lines" | "output";
 
 function isCommandCall(call: Record<string, unknown>): boolean {
   return call.tool === "run_command" || (typeof call.kind === "string" && call.kind.toLowerCase() === "execute");
@@ -78,16 +80,16 @@ function renderCommand(entry: Command, withOutput: boolean): string {
   return `${heading}\n${fence}\n${block}\n${fence}\n`;
 }
 
-function renderParts(parts: readonly (string | Command)[], withOutput: boolean): string {
+function renderParts(parts: readonly (string | Command)[], detail: Detail): string {
   let text = "";
   let endsWithCommand = false;
   for (const part of parts) {
     if (typeof part === "string") {
       text += part;
       endsWithCommand = false;
-    } else if (part.command) {
+    } else if (part.command && detail !== "words") {
       if (text && !text.endsWith("\n")) text += "\n";
-      text += renderCommand(part, withOutput);
+      text += renderCommand(part, detail === "output");
       endsWithCommand = true;
     }
   }
@@ -231,23 +233,28 @@ export function buildAgyForkHandoff(buffer: readonly HostMsg[], cut?: AgyForkCut
 }
 
 /**
- * Everything when it fits. Otherwise the words come first: whole turns
- * without command output, chosen in priority order, then output added back
- * to the newest of them while it fits.
+ * Everything when it fits. Otherwise the words come first: turns are chosen
+ * by their words alone, as before commands were carried, so a command never
+ * costs a turn (a turn of commands alone counts its command lines as its
+ * words). The kept turns then get their command lines back, then their
+ * output, newest turn first, while room is left.
  */
 function formatHandoff(allTurns: Turn[]): string {
-  const turns = allTurns.filter(turn => renderParts(turn.parts, true).trim());
-  const full = turns.map(({ role, parts }) => `${role}: ${renderParts(parts, true)}\n`);
-  const lines = turns.map(({ role, parts }) => `${role}: ${renderParts(parts, false)}\n`);
+  const turns = allTurns.filter(turn => renderParts(turn.parts, "output").trim());
+  const render = (detail: Detail) => turns.map(({ role, parts }) => `${role}: ${renderParts(parts, detail)}\n`);
+  const full = render("output");
+  const lines = render("lines");
+  const words = render("words").map((text, i) => renderParts(turns[i].parts, "words").trim() ? text : lines[i]);
   const available = BUDGET - HEADER.length - FOOTER.length;
   const total = (texts: Iterable<string>) => [...texts].reduce((length, text) => length + text.length, 0);
   if (total(full) <= available) return HEADER + full.join("") + FOOTER;
   const omittedText = (count: number) => count ? `(${count} earlier turn${count === 1 ? "" : "s"} left out)\n` : "";
   const chosen = new Map<number, string>();
-  if (total(lines) <= available) {
-    lines.forEach((line, i) => chosen.set(i, line));
+  const whole = [lines, words].find(level => total(level) <= available);
+  if (whole) {
+    whole.forEach((text, i) => chosen.set(i, text));
   } else {
-    const newestFirst = lines.map((_, i) => i).reverse();
+    const newestFirst = words.map((_, i) => i).reverse();
     const priorities = new Set([
       newestFirst.find(i => turns[i].role === "User"),
       newestFirst.find(i => turns[i].role === "Assistant"),
@@ -257,21 +264,23 @@ function formatHandoff(allTurns: Turn[]): string {
     let used = 0;
     for (const index of priorities) {
       if (index === undefined || index < 0) continue;
-      const length = lines[index].length;
-      if (used + length + omittedText(lines.length - chosen.size - 1).length > available) continue;
-      chosen.set(index, lines[index]);
+      const length = words[index].length;
+      if (used + length + omittedText(turns.length - chosen.size - 1).length > available) continue;
+      chosen.set(index, words[index]);
       used += length;
     }
   }
-  let used = total(chosen.values()) + omittedText(lines.length - chosen.size).length;
-  for (const index of [...chosen.keys()].sort((a, b) => b - a)) {
-    const extra = full[index].length - lines[index].length;
-    if (extra <= 0 || used + extra > available) continue;
-    chosen.set(index, full[index]);
-    used += extra;
+  let used = total(chosen.values()) + omittedText(turns.length - chosen.size).length;
+  for (const level of [lines, full]) {
+    for (const index of [...chosen.keys()].sort((a, b) => b - a)) {
+      const extra = level[index].length - (chosen.get(index) ?? "").length;
+      if (extra <= 0 || used + extra > available) continue;
+      chosen.set(index, level[index]);
+      used += extra;
+    }
   }
-  let omission = omittedText(lines.length - chosen.size);
-  return HEADER + lines.map((_, i) => {
+  let omission = omittedText(turns.length - chosen.size);
+  return HEADER + turns.map((_, i) => {
     const line = chosen.get(i);
     if (line !== undefined) return line;
     const note = omission;

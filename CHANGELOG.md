@@ -6,7 +6,7 @@
 
 ### Changed
 
-- **Editing an earlier prompt, branching from a reply and Continue in a new chat on Antigravity keep the commands.** The earlier turns sent to the new chat now include each command agy ran, at the point it ran, with its exit code and the last 2,000 characters of its output, from a running chat or one reopened from history. Other tool output and images still stay behind. When the conversation does not fit in 64,000 characters, command output is left out before any turn is, and the newest turns get theirs back first.
+- **Editing an earlier prompt, branching from a reply and Continue in a new chat on Antigravity keep the commands.** The earlier turns sent to the new chat now include each command agy ran, at the point it ran, with its exit code (or how it ended) and the last 2,000 characters of its output, from a running chat or one reopened from history. Your prompts and its replies still come first: when they do not all fit in 64,000 characters, the same turns as before are kept, and the commands fill the room the words leave, newest turn first, lines before output. Commands a subagent ran, other tool output and images still stay behind.
 
 ## 4.17.4 — 2026-11-22
 

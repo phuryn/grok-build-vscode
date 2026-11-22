@@ -87,7 +87,7 @@ describe("Antigravity fork text", () => {
   });
 });
 
-// The frames agy 1.5.8 sent for one command (t3-parity logs/4175-agy-cmd-replay-probe.log), through AFK's own shaping.
+// The frames agy 1.5.8 sent for one command (measured 2026-11-22, live and reopened), through AFK's own shaping.
 const commandLine = "echo probe-4175-marker && exit 3";
 const agyResult = "Created At: 2026-11-22T08:39:28+01:00\nCompleted At: 2026-11-22T08:39:29+01:00\nCommand exited with code 1.\n\n"
   + "Command output:\nAt line:1 char:145\r\n+ ... echo probe-4175-marker && exit 3\r\nThe token '&&' is not a valid statement separator.\r\n";
@@ -168,5 +168,21 @@ describe("Antigravity fork text with commands", () => {
     expect(handoff).toContain("\n" + output + "\n```\nDone c");
     expect(handoff).not.toContain("left out)\n");
     expect(handoff.split("User: ").length - 1).toBe(3);
+  });
+
+  it("never lets a command cost a turn the words alone would keep", () => {
+    const words = 64_000 - prefix.length - suffix.length - "User: \n".length - "Assistant: Done.\n".length;
+    const prompt = "p".repeat(words);
+    const exact = buildAgyForkHandoff([user(prompt), ...shaped([completed("tool_call")], "toolCall"), reply("Done.")]);
+    expect(exact).toBe(prefix + `User: ${prompt}\nAssistant: Done.\n` + suffix);
+    expect(exact?.length).toBe(64_000);
+  });
+
+  it("chooses a long chat's turns by their words, then gives the kept turns their commands", () => {
+    const first = "a".repeat(40_000), last = "b".repeat(30_000);
+    const command = (id: string) => shaped([{ ...completed("tool_call"), toolCallId: id }], "toolCall");
+    const frames = [user(first), ...command("c1"), reply("A"), user(last), ...command("c2"), reply("B")];
+    expect(buildAgyForkHandoff(frames)).toBe(prefix + "(1 earlier turn left out)\nAssistant: " + ran + "\nA\n"
+      + `User: ${last}\nAssistant: ` + ran + "\nB\n" + suffix);
   });
 });
