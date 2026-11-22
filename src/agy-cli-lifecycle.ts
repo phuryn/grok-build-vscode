@@ -83,8 +83,11 @@ export async function downloadAgyCli(options: AgyDownloadOptions): Promise<strin
       if (!payload) throw new Error("The Antigravity CLI archive holds no antigravity binary.");
     }
     signal.throwIfAborted();
-    await fs.promises.copyFile(payload, binary);
-    if (platform !== "win32") await fs.promises.chmod(binary, 0o755);
+    // Staging sits in the install folder, so this is one rename: the binary
+    // appears whole or not at all, and a symlink already at that name is
+    // replaced rather than written through.
+    if (platform !== "win32") await fs.promises.chmod(payload, 0o755);
+    await fs.promises.rename(payload, binary);
   } finally {
     await fs.promises.rm(staging, { recursive: true, force: true });
   }

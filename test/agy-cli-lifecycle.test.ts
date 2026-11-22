@@ -8,6 +8,7 @@ import { PassThrough } from "node:stream";
 import { gzipSync } from "node:zlib";
 import { afterEach, expect, it, vi } from "vitest";
 import { AGY_RELEASE_BASE, agyBuildName, downloadAgyCli, installAgyCli, updateAgyCliOnUpgrade, runAgyCommand } from "../src/agy-cli-lifecycle";
+import { agyInstallDir } from "../src/agy-backend";
 
 class FakeChild extends EventEmitter {
   readonly pid = 61561;
@@ -75,38 +76,65 @@ it("names the build Google's installers ask for", () => {
 // The Marketplace's virus check refused every build that fetched Google's
 // script and ran it in a hidden PowerShell (4.17.3 to 4.17.6). The download
 // is done in Node, exactly as the script does it, and no shell is spawned.
-it("installs the Windows build where Google's script puts it, after checking its SHA-512", async () => {
-  const home = tempHome();
-  const url = "https://storage.googleapis.com/antigravity-public/cli_windows_x64.exe";
-  const exe = Buffer.from("MZ fake agy");
+// These write real files, so they use this machine's platform and paths.
+const host = process.platform;
+const build = agyBuildName(host, "x64", false)!;
+
+function installTarget(home: string) {
   const env = { LOCALAPPDATA: path.join(home, "Local") };
-  const binary = await downloadAgyCli({ signal: new AbortController().signal, platform: "win32", arch: "x64", env, home,
-    fetchFn: releaseServer("windows_amd64", url, exe) });
-  expect(binary).toBe(path.join(home, "Local", "agy", "bin", "agy.exe"));
-  expect(fs.readFileSync(binary)).toEqual(exe);
-  expect(fs.readdirSync(path.dirname(binary))).toEqual(["agy.exe"]);
+  return { env, binary: path.join(agyInstallDir(env, host, home), host === "win32" ? "agy.exe" : "agy") };
+}
+
+it("installs a plain build where Google's script puts it, after checking its SHA-512", async () => {
+  const home = tempHome();
+  const { env, binary: expected } = installTarget(home);
+  const url = "https://storage.googleapis.com/antigravity-public/cli_x64";
+  const body = Buffer.from("fake agy binary");
+  const binary = await downloadAgyCli({ signal: new AbortController().signal, platform: host, arch: "x64", musl: false, env, home,
+    fetchFn: releaseServer(build, url, body) });
+  expect(binary).toBe(expected);
+  expect(fs.readFileSync(binary)).toEqual(body);
+  expect(fs.readdirSync(path.dirname(binary))).toEqual([path.basename(binary)]);
+  if (host !== "win32") expect(fs.statSync(binary).mode & 0o111).not.toBe(0);
   fs.rmSync(home, { recursive: true, force: true });
 });
 
-it("unpacks the antigravity binary from a Linux archive into ~/.local/bin/agy", async () => {
+it("unpacks the antigravity binary from a .tar.gz build", async () => {
   const home = tempHome();
-  const url = "https://storage.googleapis.com/antigravity-public/cli_linux_x64.tar.gz";
+  const { env, binary: expected } = installTarget(home);
+  const url = "https://storage.googleapis.com/antigravity-public/cli_x64.tar.gz";
   const elf = Buffer.from("\x7fELF fake agy");
-  const binary = await downloadAgyCli({ signal: new AbortController().signal, platform: "linux", arch: "x64", musl: false, home,
-    fetchFn: releaseServer("linux_amd64", url, gzipSync(tarWith("antigravity", elf))) });
-  expect(binary).toBe(path.join(home, ".local", "bin", "agy"));
+  const binary = await downloadAgyCli({ signal: new AbortController().signal, platform: host, arch: "x64", musl: false, env, home,
+    fetchFn: releaseServer(build, url, gzipSync(tarWith("antigravity", elf))) });
+  expect(binary).toBe(expected);
   expect(fs.readFileSync(binary)).toEqual(elf);
-  expect(fs.readdirSync(path.dirname(binary))).toEqual(["agy"]);
+  expect(fs.readdirSync(path.dirname(binary))).toEqual([path.basename(binary)]);
   fs.rmSync(home, { recursive: true, force: true });
 });
 
 it("refuses a download whose SHA-512 differs from the manifest and leaves nothing behind", async () => {
   const home = tempHome();
-  const url = "https://storage.googleapis.com/antigravity-public/cli_windows_x64.exe";
-  const env = { LOCALAPPDATA: path.join(home, "Local") };
-  await expect(downloadAgyCli({ signal: new AbortController().signal, platform: "win32", arch: "x64", env, home,
-    fetchFn: releaseServer("windows_amd64", url, Buffer.from("tampered"), "a".repeat(128)) })).rejects.toThrow("Checksum verification failed");
-  expect(fs.readdirSync(path.join(home, "Local", "agy", "bin"))).toEqual([]);
+  const { env, binary } = installTarget(home);
+  const url = "https://storage.googleapis.com/antigravity-public/cli_x64";
+  await expect(downloadAgyCli({ signal: new AbortController().signal, platform: host, arch: "x64", musl: false, env, home,
+    fetchFn: releaseServer(build, url, Buffer.from("tampered"), "a".repeat(128)) })).rejects.toThrow("Checksum verification failed");
+  expect(fs.readdirSync(path.dirname(binary))).toEqual([]);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+// A dangling ~/.local/bin/agy is skipped by discovery, so install runs; the
+// binary must replace that link, never write through it to its target.
+it.skipIf(host === "win32")("replaces a dangling symlink at the install path instead of writing through it", async () => {
+  const home = tempHome();
+  const { env, binary: expected } = installTarget(home);
+  const outside = path.join(home, "outside", "agy-target");
+  fs.mkdirSync(path.dirname(expected), { recursive: true });
+  fs.symlinkSync(outside, expected);
+  const url = "https://storage.googleapis.com/antigravity-public/cli_x64";
+  const binary = await downloadAgyCli({ signal: new AbortController().signal, platform: host, arch: "x64", musl: false, env, home,
+    fetchFn: releaseServer(build, url, Buffer.from("fake agy binary")) });
+  expect(fs.lstatSync(binary).isSymbolicLink()).toBe(false);
+  expect(fs.existsSync(outside)).toBe(false);
   fs.rmSync(home, { recursive: true, force: true });
 });
 
