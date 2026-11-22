@@ -493,13 +493,7 @@
         },
         "grok.autoCompactAt": {
           "type": "number",
-          "enum": [
-            200000,
-            300000,
-            400000,
-            500000,
-            750000
-          ],
+          "enum": [200000, 300000, 400000, 500000, 750000],
           "default": 300000,
           "scope": "machine",
           "description": "Tokens of context. Applies to conversations you start or reopen after changing it."

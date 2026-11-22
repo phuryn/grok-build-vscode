@@ -26,6 +26,21 @@ describe("sessionUiSnapshot", () => {
     });
   });
 
+  it("restores Antigravity's current commands, including the marked /compact, without a steering owner", () => {
+    const session = new Session();
+    session.provider = "agy";
+    const commands = [{ name: "compact", _meta: { "afk/compact": true } }, { name: "memory" }];
+    session.client = { availableCommands: commands, supportsInterject: () => true } as any;
+    expect(sessionUiSnapshot(session, "agent")).toContainEqual({ type: "commandsUpdate", commands });
+  });
+
+  it("sends no command list for agents whose list replays from the buffer", () => {
+    const session = new Session();
+    session.provider = "claude";
+    session.client = { availableCommands: [{ name: "compact" }], supportsInterject: () => true } as any;
+    expect(sessionUiSnapshot(session, "agent").some((m) => m.type === "commandsUpdate")).toBe(false);
+  });
+
   it("omits On request on Windows even before the Muse process starts", () => {
     Object.defineProperty(process, "platform", { value: "win32" });
     const session = new Session();

@@ -729,13 +729,17 @@ export function sessionGoalMessage(session: Session): Extract<HostMsg, { type: "
   }
 }
 
-/** Muse's catalog and queue capability describe the live connection. */
+/**
+ * Muse's catalog and queue capability describe the live connection.
+ * Antigravity's list carries the marked /compact, which the webview drops on
+ * clearMessages; a remote's trimmed replay can miss its startup update.
+ */
 export function museCommandSnapshot(session: Session) {
-  if (session.provider !== "muse") return [];
+  if (session.provider !== "muse" && session.provider !== "agy") return [];
   return [{
     type: "commandsUpdate" as const,
     commands: session.client?.availableCommands ?? [],
-    ...(session.client?.supportsInterject?.() ? { steeringOwner: session.provider } : {}),
+    ...(session.provider === "muse" && session.client?.supportsInterject?.() ? { steeringOwner: session.provider } : {}),
   }];
 }
 
