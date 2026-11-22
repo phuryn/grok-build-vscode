@@ -1,5 +1,19 @@
 # Changelog
 
+## 4.17.8 — 2026-11-22
+
+**The context meter knows each model's window before the first reply, and tool rows say what they did.**
+
+### Fixed
+
+- **Context window before the first reply.** Claude Code chats showed 200K until Claude reported 1M. The meter now assumes Claude's 1M and Codex's 258K, and remembers the window each model actually reports, for the next chat on it. A new chat no longer keeps the previous chat's window when its model names none.
+- **Antigravity: a reopened chat shows its last context count** instead of 0 until the next prompt.
+- **Antigravity: Compact conversation** appears in the meter's popup, as it does for the other agents; `/compact` already worked.
+- **Web rows.** Claude's web searches read "Web search …" and its page fetches "Fetch …", where both read "Generate …" and counted as generated items. Codex's "Open page" and "Find in page" rows show their own titles and count as web, not as file searches.
+- **A failed command keeps its output behind the row.** The row shows a two-line reason; the full output is in OUT, as for any command.
+- **Scroll to bottom disappears when you reach the bottom**, including after collapsing a long list of tool rows.
+- **README:** setup says the sidebar guides sign-in or key setup; Claude Code users install the CLI, then sign in from its card if asked; permission cards and mode pickers are described by what each agent offers.
+
 ## 4.17.7 — 2026-11-22
 
 **The listing names all six agents, and 4.17.3 to 4.17.6 reach the VS Code Marketplace.**

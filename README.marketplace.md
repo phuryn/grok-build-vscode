@@ -23,7 +23,7 @@
 
 **1. Install the extension.** In VS Code or Cursor, open **Extensions** (`Ctrl/Cmd+Shift+X`) and search **"AFK Pilot"**.
 
-**2. Open AFK Pilot and connect an agent.** Press `Ctrl/Cmd+;`. The sidebar asks which agent to connect, then **walks you through its setup**: it installs the CLI for every agent but Claude Code and signs you in with that agent's account or key. Claude Code needs Anthropic's `claude` CLI installed and signed in (`claude auth login`) first.
+**2. Open AFK Pilot and connect an agent.** Press `Ctrl/Cmd+;`. The sidebar asks which agent to connect, then **walks you through its setup**: it installs the CLI for every agent but Claude Code and guides you through sign-in or key setup. For Claude Code, install Anthropic's `claude` CLI first, then sign in from its card if asked.
 
 **3. Add more agents** any time from **Settings → Providers**, each with its own account. Each agent's section below says which account or key it takes.
 
@@ -37,8 +37,8 @@ AFK Pilot defaults to the **Secondary Side Bar** (right side, next to other AI t
 
 1. **Open** the AFK Pilot view (`Ctrl/Cmd+;`, or **AFK Pilot: Open** from the command palette) — it lives in the Secondary Side Bar by default.
 2. **Type a prompt** and press **Enter**; the agent's answer streams in. Want its reasoning inline? Turn on **Show thinking traces** in Settings.
-3. **Approve actions.** When the agent wants to write a file or run a command it may raise a permission card — preview an edit in the native **diff editor**, with full-file context focused on the first changed line, then *Allow once / always / Reject*.
-4. **Pick your mode**, **model** and **reasoning effort** from the bottom toolbar and model chip; each agent's section below lists the modes it offers.
+3. **Approve actions.** When the agent wants to write a file or run a command it may raise a permission card — preview an edit in the native **diff editor**, with full-file context focused on the first changed line, then pick one of the card's options, such as *Allow once* or *Reject*.
+4. **Pick your model** and **reasoning effort** from the model chip, and a **mode** from the bottom toolbar when the agent offers one; the picker lists what that agent has.
 5. **Resume anytime** — the clock icon lists past sessions for this project.
 
 ---
@@ -158,7 +158,7 @@ How it works, and the choices behind it: [research/antigravity-acp.md](https://g
 <summary><strong>DeepSeek</strong>: DeepSeek V4 through its official dsh harness, with a lean full-access mode</summary>
 
 - **Setup.** In **Settings → Providers**, on your computer or a cloud machine, connect with a DeepSeek API key from your computer, phone or browser. Remote setup needs a host that advertises it; older hosts keep the computer-only instructions. AFK Pilot installs a pinned dsh with its own Node, and the key stays in the app's secure storage.
-- **Two harnesses.** Pick one in the context popup before the first message. **Default** is dsh's standard agent, which asks before the actions it flags (on Windows its shell commands run without dsh's sandbox). **Minimal** is a lean tool set with full access and no approval prompts.
+- **Two harnesses.** Pick one in the context popup before the first message. **Default** is dsh's standard agent, which asks before the actions it flags (on Windows its shell commands run without dsh's sandbox). **Minimal** is a lean tool set with full access and no approval prompts. Default offers Agent mode and Auto accept in the mode picker; Minimal has no mode picker.
 - **Goals and skills.** In Default, **/** offers goal shortcuts (`/goal`, `/goal-status`, `/goal-pause`, `/goal-resume`, `/goal-done`) and the skills dsh itself would load: the project's `.dsh/skills` and `.agents/skills`, then `~/.agents/skills`. They are instructions to the model, not commands it runs.
 - **Compaction at your token limit**, layered over dsh's own limits.
 - **Not yet:** Steer, Plan, compacting on demand, image attachments, and a subagent's result (its card shows the launch). After the editor or app restarts, a reopened conversation keeps its context but does not show its earlier messages.

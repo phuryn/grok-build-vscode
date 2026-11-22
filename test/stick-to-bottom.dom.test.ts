@@ -160,3 +160,51 @@ describe("stick-to-bottom after expanded tool detail growth (#92)", () => {
     expect(doc.getElementById("scroll-bottom-btn")!.classList.contains("visible")).toBe(false);
   });
 });
+
+describe("Scroll to bottom clears when the reader lands at the bottom", () => {
+  function bootResizable() {
+    let scrollHeight = 1800;
+    const h = bootWebview({
+      beforeScripts(window) {
+        const messages = window.document.getElementById("messages")!;
+        Object.defineProperty(messages, "clientHeight", { configurable: true, get: () => 200 });
+        Object.defineProperty(messages, "scrollHeight", { configurable: true, get: () => scrollHeight });
+        messages.scrollTop = 1600;
+      },
+    });
+    return { ...h, setHeight: (v: number) => { scrollHeight = v; } };
+  }
+  function scrollAway(window: Window, messages: HTMLElement) {
+    wheelUp(window, messages);
+    messages.scrollTop = 400;
+    messages.dispatchEvent(new window.Event("scroll"));
+  }
+
+  it("after a collapse leaves nothing below", async () => {
+    const { window, doc, setHeight } = bootResizable();
+    dispatch(window, exec);
+    const messages = doc.getElementById("messages") as HTMLElement;
+    const btn = doc.getElementById("scroll-bottom-btn")!;
+    scrollAway(window, messages);
+    expect(btn.classList.contains("visible")).toBe(true);
+    // Collapsing a long tool list: the content shrinks and the browser clamps
+    // scrollTop to the new bottom (600 - 200). No scroll gesture is involved.
+    setHeight(600);
+    doc.querySelector(".tool-group, .tool-flat, .tool-item")!.classList.toggle("collapsed-probe");
+    await vi.waitFor(() => expect(btn.classList.contains("visible")).toBe(false));
+    expect(messages.classList.contains("stick-to-bottom")).toBe(true);
+  });
+
+  it("but not for a reader still a few lines up", async () => {
+    const { window, doc, setHeight } = bootResizable();
+    dispatch(window, exec);
+    const messages = doc.getElementById("messages") as HTMLElement;
+    const btn = doc.getElementById("scroll-bottom-btn")!;
+    scrollAway(window, messages);
+    setHeight(700);
+    doc.querySelector(".tool-group, .tool-flat, .tool-item")!.classList.toggle("collapsed-probe");
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(btn.classList.contains("visible")).toBe(true);
+    expect(messages.scrollTop).toBe(400);
+  });
+});

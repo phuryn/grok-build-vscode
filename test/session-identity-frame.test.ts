@@ -66,6 +66,8 @@ describe("the identity frame on a live re-focus", () => {
    */
   it("builds a frame for a session whose models have not arrived yet", () => {
     const sidebar = Object.create(GrokSidebar.prototype) as any;
+    // The frame reads remembered model windows; nothing is stored yet.
+    sidebar.state = { get: (_key: string, fallback: unknown) => fallback };
     const session = new Session();
     session.provider = "grok";
     // A real client mid-join: it has an id, and no availableModels.

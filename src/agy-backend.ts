@@ -521,8 +521,13 @@ export function normalizeAgyPermissionParams(params: any): any {
 export function normalizeAgyUpdate(update: any, meta: any, toolCalls: AgyToolCallMerger, shapes = new AgyToolCallShapes()): BackendUpdate {
   if (!update || typeof update !== "object") return { update, meta };
   if (update.sessionUpdate === "available_commands_update" && Array.isArray(update.availableCommands)) {
-    // Keep sign-out in AFK's account controls.
-    return { update: { ...update, availableCommands: update.availableCommands.filter((command: any) => command?.name !== "logout") }, meta };
+    // Keep sign-out in AFK's account controls. The CLI's own /compact gets the
+    // mark the meter's Compact button looks for, as Muse's adapter sets it.
+    const availableCommands = update.availableCommands
+      .filter((command: any) => command?.name !== "logout")
+      .map((command: any) => command?.name === "compact"
+        ? { ...command, _meta: { ...(command._meta ?? {}), "afk/compact": true } } : command);
+    return { update: { ...update, availableCommands }, meta };
   }
   // The backend maps native modes before this shared update normalizer.
   if (update.sessionUpdate === "current_mode_update") return { meta };

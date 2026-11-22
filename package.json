@@ -2,7 +2,7 @@
   "name": "grok-vscode-phuryn",
   "displayName": "AFK Pilot: Grok Build, Muse Code, Antigravity, Claude Code, Codex, DeepSeek & more",
   "description": "Six coding agents in one window: Grok Build (Grok 4.7), Muse Code (Muse Wonder), Google Antigravity (Gemini 4 Neon), Claude Code (Opus 5.5), Codex (GPT-6.2 Sol) and DeepSeek (V4 Pro). Remote Control from your phone, steering mid-turn, one compaction limit for every agent, voice control, parallel sessions, images and videos, Mermaid diagrams, and LaTeX. Works with SuperGrok, X Premium+, and xAI API key. Fair Source (FSL-1.1-MIT). Not affiliated with or endorsed by SpaceXAI (formerly xAI), Meta, Google, Anthropic, OpenAI or DeepSeek.",
-  "version": "4.17.7",
+  "version": "4.17.8",
   "publisher": "PawelHuryn",
   "author": {
     "name": "Paweł Huryn",
@@ -493,7 +493,13 @@
         },
         "grok.autoCompactAt": {
           "type": "number",
-          "enum": [200000, 300000, 400000, 500000, 750000],
+          "enum": [
+            200000,
+            300000,
+            400000,
+            500000,
+            750000
+          ],
           "default": 300000,
           "scope": "machine",
           "description": "Tokens of context. Applies to conversations you start or reopen after changing it."

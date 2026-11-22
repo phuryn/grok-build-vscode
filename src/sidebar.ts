@@ -558,6 +558,7 @@ import {
   writeOAuthClientMetadataFile,
 } from "./mcp-connector-auth";
 import { authorizeMcpConnectorOAuth, ownedMcpOAuthClient, writeOAuthClientInfoFile } from "./mcp-connector-oauth";
+import { adapterContextCount, rememberModelWindow, withRememberedWindows, type ModelContextWindows } from "./model-context-windows";
 
 // HostMsg (host -> webview) and WebviewMsg (webview -> host) both live in
 // src/protocol.ts now — the single source of truth for the message contract,
@@ -570,6 +571,8 @@ const LAST_CONVERSATION_KEY = "grok.lastConversation";
 // Older booleans included silent credential-probe promotions. Never import them.
 const PROVIDER_CONNECTIONS_KEY = "grok.providerConnections.v2";
 const PROVIDER_MODEL_CACHE_KEY = "grok.providerModelCache";
+/** The last window each model reported (model-context-windows.ts). */
+const MODEL_CONTEXT_WINDOWS_KEY = "grok.modelContextWindows";
 /** How Antigravity signs in on this machine: a preference, never a secret. */
 const AGY_SIGN_IN_METHOD_KEY = "grok.agySignInMethod";
 const AGY_CLI_UPDATE_VERSION_KEY = "grok.agyCliLastUpdateVersion";
@@ -3499,15 +3502,24 @@ export class GrokSidebar {
   }
 
   private modelsForSession(session: Session, ownModels: readonly any[], currentModelId?: string, newSession = false): ProviderModelInfo[] {
-    if (!newSession) return ownModels.map((model) => ({ ...model, provider: session.provider }));
-    return modelsForConnectedProviders(
+    const windows = this.state.get<ModelContextWindows>(MODEL_CONTEXT_WINDOWS_KEY, {});
+    if (!newSession) return withRememberedWindows(ownModels.map((model) => ({ ...model, provider: session.provider })), windows, session.provider);
+    return withRememberedWindows(modelsForConnectedProviders(
       // Usable, not connected: a provider that cannot answer contributes no
       // rows to the picker, so its heading and its stale cached models go with
       // it (owner, 2026-08-17: "Not connected => Not visible").
       this.usableProviders(),
       this.state.get<ProviderModelCache>(PROVIDER_MODEL_CACHE_KEY, {}),
       { provider: session.provider, models: ownModels, currentModelId },
-    );
+    ), windows, session.provider);
+  }
+
+  /** Remember the window this session's model just reported, for the next
+   *  chat on that model before its first turn. */
+  private noteModelWindow(session: Session, window: unknown): void {
+    const current = this.state.get<ModelContextWindows>(MODEL_CONTEXT_WINDOWS_KEY, {});
+    const next = rememberModelWindow(current, session.provider, session.client?.currentModelId, window);
+    if (next) void this.state.update(MODEL_CONTEXT_WINDOWS_KEY, next);
   }
 
   private providerForRequestedModel(modelId: string, fallback: AcpProvider): AcpProvider {
@@ -12512,15 +12524,19 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     });
     client.on("contextUsage", (used: number | undefined, window?: number) => {
       if (gen !== session.gen) return;
-      if (session.provider === "muse" || session.provider === "deepseek") {
+      this.noteModelWindow(session, window);
+      // Agents whose history the adapter keeps (Muse, DeepSeek, Antigravity)
+      // report the count only after a turn, so it is saved for a reopened chat.
+      if (usesAdapterHistory(session.provider) && !usesPerCallContextOccupancy(session.provider)) {
+        const count = adapterContextCount(session.provider, used);
         const id = session.activeSessionId;
         if (id) {
           const current = this.state.get<SessionMetaOverrides>(SESSION_META_KEY, {});
           void this.state.update(SESSION_META_KEY, { ...current, [id]: { ...current[id],
-            ...(typeof used === "number" ? { contextUsed: used } : {}),
+            ...(typeof count === "number" ? { contextUsed: count } : {}),
             ...(typeof window === "number" ? { contextWindow: window } : {}) } });
         }
-        this.emit(session, { type: "contextUsage", used, window });
+        this.emit(session, { type: "contextUsage", ...(typeof count === "number" ? { used: count } : {}), window });
         return;
       }
       if (usesPerCallContextOccupancy(session.provider)) {
@@ -12551,6 +12567,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     });
     client.on("adapterUsageUpdate", (used: number, window?: number) => {
       if (gen !== session.gen) return;
+      this.noteModelWindow(session, window);
       if (!usesPerCallContextOccupancy(session.provider) || session.replaying) {
         if (typeof window === "number" && Number.isFinite(window) && window > 0) {
           this.rememberAdapterContext(session, { window });

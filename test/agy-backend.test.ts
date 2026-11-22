@@ -187,8 +187,10 @@ describe("Antigravity updates", () => {
   it("hides /logout, keeps native commands, and ignores unknown mode changes", () => {
     const merger = new AgyToolCallMerger();
     const commands = normalizeAgyUpdate({ sessionUpdate: "available_commands_update", availableCommands: [
-      { name: "plan" }, { name: "logout" }, { name: "usage" }] }, undefined, merger);
-    expect(commands.update.availableCommands).toEqual([{ name: "plan" }, { name: "usage" }]);
+      { name: "plan" }, { name: "logout" }, { name: "usage" }, { name: "compact" }] }, undefined, merger);
+    // /compact gets the mark that shows the meter's Compact button, as Muse's adapter sets it.
+    expect(commands.update.availableCommands).toEqual([{ name: "plan" }, { name: "usage" },
+      { name: "compact", _meta: { "afk/compact": true } }]);
     expect(normalizeAgyUpdate({ sessionUpdate: "current_mode_update", currentModeId: "yolo" }, undefined, merger).update).toBeUndefined();
   });
 

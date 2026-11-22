@@ -12985,8 +12985,13 @@
   // we didn't predict still gets a sensible verb from its kind).
   const KIND_VERB = {
     read: "Read", search: "Search", edit: "Edit", write: "Write",
-    delete: "Delete", execute: "Run", fetch: "Generate",
+    delete: "Delete", execute: "Run", fetch: "Fetch",
   };
+  // Grok's image and video tools also arrive as kind "fetch"; they generate.
+  function kindVerb(call, kind) {
+    if (kind === "fetch" && isMediaGenToolCall(call, state.activeProvider)) return "Generate";
+    return KIND_VERB[kind] || null;
+  }
 
   // Tools whose raw name would otherwise be the row (DeepSeek titles every call
   // with its bare tool name and kind "other"): [settled verb, running label].
@@ -13030,9 +13035,15 @@
   // substring of an arbitrary title: a file search FOR "web_search", or a read
   // of web_search.ts, is not a web search.
   const WEB_SEARCH_TOOL = /^(web[ _-]?search|search[ _-]?web)$/i;
+  // Codex sends its web page actions as kind "search", titled "Open page: …"
+  // or "Find in page …". The title already reads well; they are web, not files.
+  function isWebPageAction(call) {
+    return !call._meta?.["x.ai/tool"]?.name && /^(open page|find in page)\b/i.test(String(call.title || "").trim());
+  }
   function isWebSearch(call) {
     // Grok also titles a grep with its pattern; stable metadata wins over that.
-    const identity = call._meta?.["x.ai/tool"]?.name || call.tool || call.name;
+    // Claude names its tool in _meta (WebSearch arrives as kind "fetch").
+    const identity = call._meta?.["x.ai/tool"]?.name || call._meta?.claudeCode?.toolName || call.tool || call.name;
     if (identity) return WEB_SEARCH_TOOL.test(identity);
     const title = String(call.title || "").trim();
     return WEB_SEARCH_TOOL.test(title) || /^web search\b/i.test(title);
@@ -13206,12 +13217,13 @@
     // Web search/fetch first: grok ships these with a "Web search: …" title and no
     // `kind`, so they'd otherwise fall through to the command catch-all (the exact
     // "ran N commands" miscount the user saw).
-    if (isWebSearch(call) || /^(web[ _-]?fetch|webfetch)\b/i.test(n)) return "web";
+    if (isWebSearch(call) || isWebPageAction(call) || /^(web[ _-]?fetch|webfetch)\b/i.test(n)) return "web";
     switch (toolKind(call)) {
       case "read": case "search": return "explore";
       case "edit": case "write": return "edit";
       case "delete": return "delete";
-      case "fetch": return "generate";
+      // Grok's image and video tools are kind "fetch"; everyone else's fetch is the web.
+      case "fetch": return isMediaGenToolCall(call, state.activeProvider) ? "generate" : "web";
       case "execute": return "command";
     }
     const v = TOOL_VERB[n];
@@ -13352,7 +13364,7 @@
       return NAMED_TOOL_LABELS[name][1] + (target ? ` ${target}` : "");
     }
     if (kind === "delete") return filePath ? `Deleting ${prettyPath(filePath)}` : "Deleting file";
-    if (kind === "fetch") return "Generating";
+    if (kind === "fetch") return isMediaGenToolCall(call, state.activeProvider) ? "Generating" : "Fetching page";
     if (/^(bash|execute|run_command|run_terminal_command|shell|run_bash|powershell|pwsh)$/.test(name) || kind === "execute") {
       return "Running command";
     }
@@ -13363,7 +13375,7 @@
   function toolLabel(call, opts) {
     const name = toolName(call);
     const kind = toolKind(call);
-    const verb = isWebSearch(call) ? "Web search" : TOOL_VERB[name] || KIND_VERB[kind] || null;
+    const verb = isWebSearch(call) ? "Web search" : TOOL_VERB[name] || kindVerb(call, kind);
     const r = call.rawInput || call.input || {};
     const filePath = toolFilePath(call);
     const command = r.command || r.cmd;
@@ -13371,6 +13383,10 @@
     if (Object.prototype.hasOwnProperty.call(NAMED_TOOL_LABELS, name)) {
       const target = namedToolTarget(name, r);
       return NAMED_TOOL_LABELS[name][0] + (target ? ` ${target}` : "");
+    }
+    if (isWebPageAction(call)) {
+      const title = String(call.title).trim();
+      return opts && opts.full ? title : middleElide(title, TOOL_LABEL_MAX);
     }
     const failure = state.toolFailuresById.get(call.toolCallId) || toolFailureText(call);
     if (isMissingPathRead(call, failure)) return `${filePath ? prettyPath(filePath) : isDirectoryListTool(call) ? "Directory" : "File"} — doesn't exist yet`;
@@ -14731,6 +14747,26 @@ ${fullText}`
     err.className = "tool-error";
     err.textContent = message;
     rowEl.appendChild(err);
+  }
+
+  // A failed command's output belongs in its OUT box, behind the row's
+  // chevron, like a successful one's. The line under the row then keeps a
+  // short reason: Claude reports a failed command with its whole output as
+  // the failure text, and a long help page sat under a collapsed row.
+  // Failures with no OUT box (media, reads, plain tools) keep their full text.
+  function failToolRow(call, message, isMedia) {
+    const id = call && call.toolCallId;
+    const rowCall = (state.toolItemsByToolCallId.get(id) || {})._call || call;
+    const boxed = !isMedia && !isReadTool(rowCall) && maybeAttachToolResultOutput(call);
+    markToolFailed(id, boxed ? shortToolFailure(message) : message);
+  }
+
+  function shortToolFailure(text) {
+    const lines = String(text || "").split(/\r?\n/).filter((l) => l.trim() && !/^\s*```/.test(l));
+    const kept = lines.slice(0, 2).map((l) => (l.length > 160 ? l.slice(0, 159) + "…" : l));
+    if (!kept.length) return "Command failed.";
+    if (lines.length > 2) kept[kept.length - 1] += " …";
+    return kept.join("\n");
   }
 
   function markToolFailed(toolCallId, message) {
@@ -17512,12 +17548,25 @@ ${fullText}`
   // expanded tool detail grows, so ResizeObserver above cannot see that case.
   // Re-follow after subtree layout changes only when the reader was already
   // pinned; a deliberate scroll-up has cleared stickToBottom and is untouched.
+  // Pinning is a user-intent bit, but a reader who is AT the bottom has
+  // nothing below to scroll to. Collapsing a long tool list, or content that
+  // now fits, can land them there with no scroll gesture, and the
+  // "Scroll to bottom" button used to stay up. Exactly the bottom only, so a
+  // reader a few lines up keeps their place.
+  function repinIfAtBottom() {
+    if (state.stickToBottom || state.replaying || prependLock || workflowMoveFrame || promptNavPin) return;
+    if (messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight > 1) return;
+    setStickToBottom(true);
+    updateScrollBtn();
+  }
+
   let contentFollowFrame = 0;
   new MutationObserver(() => {
     if (state.replaying || state.historyHydrating || prependLock || workflowMoveFrame || contentFollowFrame) return;
     contentFollowFrame = requestAnimationFrame(() => {
       contentFollowFrame = 0;
       if (state.stickToBottom && !state.replaying && !prependLock && !workflowMoveFrame) messagesEl.scrollTop = messagesEl.scrollHeight;
+      else repinIfAtBottom();
       updatePromptNav();
     });
   }).observe(messagesEl, {
@@ -17587,6 +17636,8 @@ ${fullText}`
       ));
       setPromptNavPin(null);
       updateScrollBtn();
+    } else {
+      repinIfAtBottom();
     }
     updatePromptNav();
     maybeLoadEarlierHistory();
@@ -21820,7 +21871,9 @@ ${fullText}`
         refreshModelControls();
         renderProviderSignInCard();
         const m = state.availableModels.find((x) => x.modelId === msg.currentModelId && (!x.provider || x.provider === state.activeProvider));
-        if (m?.totalContextTokens) state.contextWindow = m.totalContextTokens;
+        // A new chat starts from its own model's window; one that names none
+        // must not keep the previous chat's (Antigravity's 1M on a Codex chat).
+        state.contextWindow = m?.totalContextTokens || 200000;
         setModelCatalogPending(false);
         state.contextBreakdown = null;
         state.autoCompact = null;
@@ -22337,10 +22390,9 @@ ${fullText}`
         {
           const failure = toolFailureText(msg.call);
           if (failure) {
-      const hint = isMediaGenToolCall(msg.call, state.activeProvider)
-              ? mediaGenZeroRetentionHint(failure)
-              : null;
-            markToolFailed(msg.call.toolCallId, hint ? failure + "\n" + hint : failure);
+            const isMedia = isMediaGenToolCall(msg.call, state.activeProvider);
+            const hint = isMedia ? mediaGenZeroRetentionHint(failure) : null;
+            failToolRow(msg.call, hint ? failure + "\n" + hint : failure, isMedia);
           }
         }
         // Resume: if this tool was permission-gated, drop the restored (collapsed)
@@ -22426,7 +22478,7 @@ ${fullText}`
           const isMedia =
         (id && state.mediaGenCallIds.has(id)) || isMediaGenToolCall(msg.call, state.activeProvider);
           const hint = isMedia ? mediaGenZeroRetentionHint(failure) : null;
-          markToolFailed(id, hint ? failure + "\n" + hint : failure);
+          failToolRow(msg.call, hint ? failure + "\n" + hint : failure, isMedia);
           break;
         }
         applyToolDiffs(msg.call);
