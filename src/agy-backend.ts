@@ -22,12 +22,18 @@ export function agyProfile(sessionId: string | undefined, saved: AgyProfile | un
   return saved ?? (sessionId ? agyHistoryProfile(sessionId, env) : key ? "server" : "cli");
 }
 
+/** Where Google's installer puts agy, and where AFK's own install writes it. */
+export function agyInstallDir(env = process.env, platform = process.platform, home = os.homedir()): string {
+  const paths = platform === "win32" ? path.win32 : path.posix;
+  return platform === "win32" ? paths.join(env.LOCALAPPDATA || paths.join(home, "AppData", "Local"), "agy", "bin")
+    : paths.join(home, ".local", "bin");
+}
+
 export function locateAgyCli(env = process.env, platform = process.platform, home = os.homedir(), check = isCliFile): string | undefined {
   const win = platform === "win32";
   const paths = win ? path.win32 : path.posix;
   const executable = win ? "agy.exe" : "agy";
-  const installer = win ? paths.join(env.LOCALAPPDATA || paths.join(home, "AppData", "Local"), "agy", "bin")
-    : paths.join(home, ".local", "bin");
+  const installer = agyInstallDir(env, platform, home);
   const pathKey = win ? Object.keys(env).find(key => key.toLowerCase() === "path") : "PATH";
   const dirs = (env[pathKey ?? "PATH"] ?? "").split(paths.delimiter).map(dir => dir.trim().replace(/^"(.*)"$/, "$1"));
   return [installer, ...dirs].filter(dir => paths.isAbsolute(dir)).map(dir => paths.join(dir, executable))

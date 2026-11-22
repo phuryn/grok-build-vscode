@@ -1,8 +1,13 @@
 import type { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { PassThrough } from "node:stream";
+import { gzipSync } from "node:zlib";
 import { afterEach, expect, it, vi } from "vitest";
-import { agyInstallCommand, installAgyCli, updateAgyCliOnUpgrade, runAgyCommand } from "../src/agy-cli-lifecycle";
+import { AGY_RELEASE_BASE, agyBuildName, downloadAgyCli, installAgyCli, updateAgyCliOnUpgrade, runAgyCommand } from "../src/agy-cli-lifecycle";
 
 class FakeChild extends EventEmitter {
   readonly pid = 61561;
@@ -26,54 +31,125 @@ function fakeProcess(launch: (file: string, args: string[], child: FakeChild) =>
 
 afterEach(() => vi.useRealTimers());
 
-it("invokes Google's unattended installer on Windows", () => {
-  expect(agyInstallCommand("win32")).toEqual({
-    file: "powershell.exe",
-    args: ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command",
-      "irm https://antigravity.google/cli/install.ps1 | iex"],
-  });
+function tarWith(name: string, body: Buffer): Buffer {
+  const header = Buffer.alloc(512);
+  header.write(name, 0);
+  header.write("0000755\0", 100);
+  header.write("0000000\0", 108);
+  header.write("0000000\0", 116);
+  header.write(body.length.toString(8).padStart(11, "0") + "\0", 124);
+  header.write("00000000000\0", 136);
+  header.write("        ", 148);
+  header.write("0", 156);
+  header.write("ustar  \0", 257);
+  let sum = 0;
+  for (const byte of header) sum += byte;
+  header.write(sum.toString(8).padStart(6, "0") + "\0 ", 148);
+  const padded = Buffer.alloc(Math.ceil(body.length / 512) * 512);
+  body.copy(padded);
+  return Buffer.concat([header, padded, Buffer.alloc(1024)]);
+}
+
+function releaseServer(build: string, url: string, payload: Buffer, sha512 = createHash("sha512").update(payload).digest("hex")) {
+  return vi.fn(async (requested: string | URL | Request) => {
+    const href = String(requested);
+    if (href === `${AGY_RELEASE_BASE}/manifests/${build}.json`) return new Response(JSON.stringify({ version: "1.5.14", url, sha512 }));
+    if (href === url) return new Response(new Uint8Array(payload));
+    return new Response("missing", { status: 404 });
+  }) as unknown as typeof fetch;
+}
+
+function tempHome(): string {
+  return fs.mkdtempSync(path.join(os.tmpdir(), "agy-install-"));
+}
+
+it("names the build Google's installers ask for", () => {
+  expect(agyBuildName("win32", "x64")).toBe("windows_amd64");
+  expect(agyBuildName("win32", "arm64")).toBe("windows_arm64");
+  expect(agyBuildName("darwin", "arm64")).toBe("darwin_arm64");
+  expect(agyBuildName("linux", "x64")).toBe("linux_amd64");
+  expect(agyBuildName("linux", "arm64", true)).toBe("linux_arm64_musl");
+  expect(agyBuildName("linux", "ia32")).toBeUndefined();
 });
 
-it.each(["darwin", "linux"] as const)("invokes Google's unattended installer on %s with pipe failure visible", platform => {
-  expect(agyInstallCommand(platform)).toEqual({
-    file: "bash",
-    args: ["-o", "pipefail", "-c", "curl -fsSL https://antigravity.google/cli/install.sh | bash"],
-  });
+// The Marketplace's virus check refused every build that fetched Google's
+// script and ran it in a hidden PowerShell (4.17.3 to 4.17.6). The download
+// is done in Node, exactly as the script does it, and no shell is spawned.
+it("installs the Windows build where Google's script puts it, after checking its SHA-512", async () => {
+  const home = tempHome();
+  const url = "https://storage.googleapis.com/antigravity-public/cli_windows_x64.exe";
+  const exe = Buffer.from("MZ fake agy");
+  const env = { LOCALAPPDATA: path.join(home, "Local") };
+  const binary = await downloadAgyCli({ signal: new AbortController().signal, platform: "win32", arch: "x64", env, home,
+    fetchFn: releaseServer("windows_amd64", url, exe) });
+  expect(binary).toBe(path.join(home, "Local", "agy", "bin", "agy.exe"));
+  expect(fs.readFileSync(binary)).toEqual(exe);
+  expect(fs.readdirSync(path.dirname(binary))).toEqual(["agy.exe"]);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+it("unpacks the antigravity binary from a Linux archive into ~/.local/bin/agy", async () => {
+  const home = tempHome();
+  const url = "https://storage.googleapis.com/antigravity-public/cli_linux_x64.tar.gz";
+  const elf = Buffer.from("\x7fELF fake agy");
+  const binary = await downloadAgyCli({ signal: new AbortController().signal, platform: "linux", arch: "x64", musl: false, home,
+    fetchFn: releaseServer("linux_amd64", url, gzipSync(tarWith("antigravity", elf))) });
+  expect(binary).toBe(path.join(home, ".local", "bin", "agy"));
+  expect(fs.readFileSync(binary)).toEqual(elf);
+  expect(fs.readdirSync(path.dirname(binary))).toEqual(["agy"]);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+it("refuses a download whose SHA-512 differs from the manifest and leaves nothing behind", async () => {
+  const home = tempHome();
+  const url = "https://storage.googleapis.com/antigravity-public/cli_windows_x64.exe";
+  const env = { LOCALAPPDATA: path.join(home, "Local") };
+  await expect(downloadAgyCli({ signal: new AbortController().signal, platform: "win32", arch: "x64", env, home,
+    fetchFn: releaseServer("windows_amd64", url, Buffer.from("tampered"), "a".repeat(128)) })).rejects.toThrow("Checksum verification failed");
+  expect(fs.readdirSync(path.join(home, "Local", "agy", "bin"))).toEqual([]);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+it("ships no shell download-and-run line in the installer", () => {
+  const source = fs.readFileSync(path.join(__dirname, "..", "src", "agy-cli-lifecycle.ts"), "utf8");
+  expect(source).not.toMatch(/powershell|ExecutionPolicy|\biex\b|\|\s*bash/i);
 });
 
 it("requires the located binary to answer --version even when the installer exits successfully", async () => {
   const child = fakeProcess((_file, _args, child) => child.close(0));
-  const options = { command: { file: "fake installer", args: [] }, spawnChild: child as unknown as typeof spawn };
+  const options = { download: async () => "fake agy", spawnChild: child as unknown as typeof spawn };
   await expect(installAgyCli({ ...options, locate: () => undefined })).rejects.toThrow("agy was not found");
   await expect(installAgyCli({ ...options, locate: () => "fake agy" })).rejects.toThrow("--version did not report");
   expect(child).toHaveBeenLastCalledWith("fake agy", ["--version"], expect.anything());
 });
 
-it("accepts an installed, answering CLI even when the script exits nonzero", async () => {
+it("accepts an installed, answering CLI even when agy install exits nonzero", async () => {
   const log = vi.fn();
-  const child = fakeProcess((file, _args, child) => {
-    if (file === "fake installer") child.stderr.write("Shell integration failed\n");
+  const child = fakeProcess((_file, args, child) => {
+    const setup = args[0] === "install";
+    if (setup) child.stderr.write("Shell integration failed\n");
     else child.stdout.write("1.5.8\n");
-    child.close(file === "fake installer" ? 1 : 0);
+    child.close(setup ? 1 : 0);
   });
   const beforeVersion = vi.fn(async () => {
-    expect(child.mock.calls).toEqual([["fake installer", [], expect.anything()]]);
+    expect(child.mock.calls).toEqual([["fake agy", ["install"], expect.anything()]]);
   });
-  await expect(installAgyCli({ command: { file: "fake installer", args: [] }, locate: () => "fake agy",
+  await expect(installAgyCli({ download: async () => "fake agy", locate: () => "fake agy",
     beforeVersion, spawnChild: child as unknown as typeof spawn, log })).resolves.toEqual({ binary: "fake agy", version: "1.5.8" });
   expect(beforeVersion).toHaveBeenCalledWith("fake agy");
   expect(log).toHaveBeenCalledWith("Shell integration failed");
-  expect(child).toHaveBeenNthCalledWith(1, "fake installer", [], expect.objectContaining({ stdio: ["ignore", "pipe", "pipe"] }));
+  expect(child).toHaveBeenNthCalledWith(1, "fake agy", ["install"], expect.objectContaining({ stdio: ["ignore", "pipe", "pipe"] }));
 });
 
-it("cancels the Windows installer tree with taskkill and waits for exit", async () => {
+it("cancels the Windows setup tree with taskkill and waits for exit", async () => {
   const controller = new AbortController();
   const installer = new FakeChild();
   const killer = new FakeChild();
   const child = vi.fn().mockReturnValueOnce(installer).mockReturnValueOnce(killer);
-  const run = installAgyCli({ command: { file: "fake installer", args: [] }, signal: controller.signal,
+  const run = installAgyCli({ download: async () => "fake agy", signal: controller.signal,
     platform: "win32", spawnChild: child as typeof spawn, locate: () => undefined });
   const rejected = expect(run).rejects.toThrow("Installation cancelled.");
+  await vi.waitFor(() => expect(child).toHaveBeenCalledTimes(1));
   controller.abort(new Error("Installation cancelled."));
   installer.close(null);
   killer.close(0);
@@ -82,16 +158,17 @@ it("cancels the Windows installer tree with taskkill and waits for exit", async 
   expect(installer.kill).not.toHaveBeenCalled();
 });
 
-it("cancels the POSIX process group started for the installer", async () => {
+it("cancels the POSIX process group started for agy install", async () => {
   const controller = new AbortController();
   const installer = new FakeChild();
   const child = vi.fn().mockReturnValue(installer);
   const killGroup = vi.fn(() => { queueMicrotask(() => installer.close(null)); return true; });
-  const run = installAgyCli({ command: { file: "fake installer", args: [] }, platform: "linux", signal: controller.signal,
+  const run = installAgyCli({ download: async () => "fake agy", platform: "linux", signal: controller.signal,
     spawnChild: child as typeof spawn, killGroup, locate: () => undefined });
+  await vi.waitFor(() => expect(child).toHaveBeenCalledTimes(1));
   controller.abort(new Error("Installation cancelled."));
   await expect(run).rejects.toThrow("Installation cancelled.");
-  expect(child).toHaveBeenCalledWith("fake installer", [], expect.objectContaining({ detached: true }));
+  expect(child).toHaveBeenCalledWith("fake agy", ["install"], expect.objectContaining({ detached: true }));
   expect(killGroup).toHaveBeenCalledWith(-61561, "SIGKILL");
 });
 

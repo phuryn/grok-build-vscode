@@ -2,11 +2,15 @@
 
 ## 4.17.7 — 2026-11-22
 
-**The listing names all six agents.**
+**The listing names all six agents, and 4.17.3 to 4.17.6 reach the VS Code Marketplace.**
+
+### Fixed
+
+- **4.17.3 to 4.17.6 never reached the VS Code Marketplace.** Its virus check refused each of them, so VS Code stayed on 4.17.2. They were on GitHub and Open VSX. The likely cause was how the Antigravity CLI was installed: AFK fetched Google's install script and ran it in a hidden PowerShell window. AFK now downloads Google's build itself, from the same release server the script uses, checks its SHA-512 against Google's manifest, and puts it where the script would. VS Code users get everything from 4.17.3 to 4.17.6 with this release.
 
 ### Changed
 
-- **The extension is now "AFK Pilot: Grok Build, Muse Code, Antigravity, Claude Code, Codex, DeepSeek & more"**, and its description names Gemini 4 Neon for Google Antigravity. Nothing in the extension itself changed since 4.17.6.
+- **The extension is now "AFK Pilot: Grok Build, Muse Code, Antigravity, Claude Code, Codex, DeepSeek & more"**, and its description names Gemini 4 Neon for Google Antigravity.
 - **A shorter README.** The introduction no longer repeats the agents section, Install and Requirements. Each agent's modes are described once, in its own section, and the agents appear in the same order throughout. The non-affiliation and trademark notice moved to the end, under Trademarks. The comparison table now shows Muse Code's `/plan` skill in the Plan mode row.
 - **Install comes first.** Requirements, Install and Quick start now follow the introduction, on GitHub and on the store page, and setup says the sidebar asks which agent to connect, not only Grok.
 
