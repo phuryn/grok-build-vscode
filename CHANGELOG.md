@@ -1,5 +1,14 @@
 # Changelog
 
+## 4.17.7 — 2026-11-22
+
+**The listing names all six agents.**
+
+### Changed
+
+- **The extension is now "AFK Pilot: Grok Build, Muse Code, Antigravity, Claude Code, Codex, DeepSeek & more"**, and its description names Gemini 4 Neon for Google Antigravity. Nothing in the extension itself changed since 4.17.6.
+- **A shorter README.** The introduction no longer repeats the agents section, Install and Requirements. Each agent's modes, phone sign-in and voice are described once, in its own section, and the agents appear in the same order throughout. The non-affiliation and trademark notice moved to the end, under Trademarks. The comparison table now shows Muse Code's `/plan` skill in the Plan mode row.
+
 ## 4.17.6 — 2026-11-22
 
 **Muse Code's subagents show their work live, come back when you reopen the chat, and can be stopped one at a time.**

@@ -17,15 +17,11 @@ const path = require("node:path");
 
 const root = path.resolve(__dirname, "..");
 
-const header = `# AFK Pilot: Grok Build, Muse Code, DeepSeek, Claude, Codex & more in one place
+const header = `# AFK Pilot: Grok Build, Muse Code, Antigravity, Claude Code, Codex, DeepSeek & more
 
-[![License: FSL-1.1-MIT](https://img.shields.io/badge/License-FSL--1.1--MIT-blue.svg)](https://github.com/phuryn/grok-build-vscode/blob/main/LICENSE) ![Agents](https://img.shields.io/badge/Agents-Grok%20Build%20%C2%B7%20Antigravity%20%C2%B7%20Muse%20Code%20%C2%B7%20DeepSeek%20%C2%B7%20Claude%20Code%20%C2%B7%20Codex-000000) [![VS Code](https://img.shields.io/badge/VS%20Code-Extension-007ACC?logo=visualstudiocode&logoColor=white)](https://code.visualstudio.com) [![Cursor](https://badgen.net/badge/Cursor/Extension/007ACC)](https://cursor.com) [![The Product Compass](https://img.shields.io/badge/The%20Product%20Compass-productcompass.pm-FF6B35)](https://www.productcompass.pm)
+[![License: FSL-1.1-MIT](https://img.shields.io/badge/License-FSL--1.1--MIT-blue.svg)](https://github.com/phuryn/grok-build-vscode/blob/main/LICENSE) ![Agents](https://img.shields.io/badge/Agents-Grok%20Build%20%C2%B7%20Muse%20Code%20%C2%B7%20Antigravity%20%C2%B7%20Claude%20Code%20%C2%B7%20Codex%20%C2%B7%20DeepSeek-000000) [![VS Code](https://img.shields.io/badge/VS%20Code-Extension-007ACC?logo=visualstudiocode&logoColor=white)](https://code.visualstudio.com) [![Cursor](https://badgen.net/badge/Cursor/Extension/007ACC)](https://cursor.com) [![The Product Compass](https://img.shields.io/badge/The%20Product%20Compass-productcompass.pm-FF6B35)](https://www.productcompass.pm)
 
-> **Six coding agents in one window: Grok Build (Grok 4.7), Google Antigravity (Gemini 4 Argon), Muse Code (Muse Wonder), DeepSeek (V4 Pro), Claude Code (Opus 5.5) and Codex (GPT-6.2 Sol).** Not affiliated with or endorsed by SpaceXAI (formerly xAI), Google, Meta, DeepSeek, Anthropic or OpenAI. *Grok*, *Grok Build* and *xAI* are trademarks of xAI; *Antigravity* and *Gemini* of Google; *Muse Code* of Meta; *DeepSeek* of DeepSeek; *Claude* and *Claude Code* of Anthropic; *Codex* of OpenAI. This project uses those names only to describe what it is compatible with.
-
-Six coding agents in your editor's sidebar: **Grok Build**, **Google Antigravity**, **Muse Code**, **DeepSeek**, **Claude Code** and **Codex**. One window, one model picker, and every conversation keeps the agent it started with. **Remote Control** is built in: pair your phone at **[afkpilot.com](https://afkpilot.com)** once, then watch, approve and steer any of them from your phone or any browser while away from your desk. Steer a running turn without stopping it, compact every agent at one token limit you choose, dictate by **voice**, drop open files in as \`@\`-context, run **parallel sessions**, keep **resumable history**, and generate **images & video inline**.
-
-No manual setup: the extension **walks you through installing the \`grok\` CLI and signing in**, with a **SuperGrok or X Premium+ subscription** or an **xAI API key**, right from the sidebar, one click per step. The other agents connect from **Settings → Providers**, each with its own account, and Providers installs Antigravity, Muse Code, DeepSeek and Codex for you.
+**Six coding agents in your editor's sidebar: Grok Build (Grok 4.7), Muse Code (Muse Wonder), Google Antigravity (Gemini 4 Neon), Claude Code (Opus 5.5), Codex (GPT-6.2 Sol) and DeepSeek (V4 Pro).** AFK Pilot is the graphical workflow on top of each agent's own CLI, and **Remote Control** is built in: pair your phone at **[afkpilot.com](https://afkpilot.com)** once, then watch, approve and steer any of them from your phone or any browser while away from your desk.
 
 ![Grok Build in VS Code, choosing Grok 4.7 and its reasoning effort](https://raw.githubusercontent.com/phuryn/grok-build-vscode/main/docs/screenshots/grok_4.7.png)
 
@@ -34,8 +30,6 @@ No manual setup: the extension **walks you through installing the \`grok\` CLI a
 ---
 
 ## Why use this?
-
-If you live in your editor, this puts your coding agents right next to your code, as a graphical workflow on top of their CLIs: the **native diff editor** on every proposed edit, your **open files and selection as context**, **parallel sessions** with status dots, **resumable history**, **inline images & video**, and **voice dictation**. The CLIs do the heavy lifting; this is the GUI for when you'd rather not be in a terminal.
 
 `;
 
@@ -49,7 +43,7 @@ const installBlock = `## Install
 
 **2. Open AFK Pilot and sign in.** Press \`Ctrl/Cmd+;\`. The sidebar **walks you through installing the \`grok\` CLI and signing in** — one click per step, with your SuperGrok / X Premium+ subscription or an xAI API key. That's the whole setup.
 
-**3. Add more agents.** **Settings → Providers** connects Google Antigravity, Muse Code, DeepSeek, Claude Code and Codex, each with its own account. See each agent's section above.
+**3. Add more agents.** **Settings → Providers** connects Muse Code, Google Antigravity, Claude Code, Codex and DeepSeek, each with its own account. See each agent's section above.
 
 AFK Pilot defaults to the **Secondary Side Bar** (right side, next to other AI tools). Cursor refuses that container, so a first installation moves the view to the Primary Side Bar. Use the editor's own Move View controls to relocate it; where the secondary container is unavailable, Settings → Advanced → **Move view…** opens that picker.
 
