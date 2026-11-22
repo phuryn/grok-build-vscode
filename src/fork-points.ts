@@ -1,4 +1,12 @@
 /**
+ * The Edit point of a conversation's first prompt. There is no earlier reply
+ * to fork from, so this id names no reply: the host answers it with a new chat
+ * on the same agent and model, the prompt in its composer. Only a host that
+ * handles it emits it, so an older host never shows the pencil.
+ */
+export const FIRST_PROMPT_EDIT = "afk:first-prompt";
+
+/**
  * For adapters that supply reply IDs, record the end of a settled live turn
  * and match that exact reply on replay. Host-generated IDs are valid in the
  * current buffer, where the displayed frames also anchor the corresponding cut.

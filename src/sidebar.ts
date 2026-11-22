@@ -9,6 +9,7 @@ import { MuseBackend, withMuseCredentialBackend } from "./muse-backend";
 import { locateMuseCli, parseMuseVersionOutput } from "./muse-cli-locator";
 import { museInstallCommand } from "./muse-install";
 import { AgyBackend, agyProfile, agyProfileDir, agySessionsFor, listAgyCatalog, locateAgyCli, type AgyProfile } from "./agy-backend";
+import { FIRST_PROMPT_EDIT } from "./fork-points";
 import { buildAgyForkHandoff } from "./agy-fork";
 import { AGY_HANDOFF_MARKER } from "./agy-handoff";
 import { restoreAgySkillShortcuts } from "./agy-skills";
@@ -834,6 +835,9 @@ function guessMediaMime(p: string): string {
     default: return "image/png";
   }
 }
+
+/** A new chat that names its own agent, model and folder (first-prompt Edit). */
+type NewChatSpawn = { provider: AcpProvider; modelId?: string; cwd: string; draft: string };
 
 export class GrokSidebar {
   public static readonly viewId = "grok.chat";
@@ -5808,6 +5812,61 @@ Only continue if you trust this code.`,
   }
 
   private pendingForkDrafts?: Set<string>;
+
+  /** Agents whose later prompts can be edited in a new chat get the same on
+   *  their first prompt. Grok edits by rewinding the conversation instead. */
+  private firstPromptEditable(session: Session): boolean {
+    return session.provider !== "grok" && supportsFork(session.provider)
+      && (session.provider === "agy" || session.client?.supportsTurnFork?.() === true);
+  }
+
+  /** There is no reply before a first prompt to branch from, so editing it is
+   *  a new chat on the same agent, model and folder, with the prompt in the
+   *  composer. The original conversation is left as it is. */
+  private async editFirstPromptInNewChat(
+    session: Session, origin: MsgOrigin, requester: RemoteRequester | undefined, text: string,
+  ): Promise<void> {
+    // Offered only where this host put the point on the first bubble; a parked
+    // conversation keeps it even without a live process.
+    const offered = session.buffer.find(frame =>
+      (frame.type === "userMessage" || frame.type === "userMessageChunk") && frame.forkBefore === FIRST_PROMPT_EDIT);
+    if (!session.activeSessionId || !offered) {
+      return void this.reportRequester(requester, "info", "This prompt can't be edited in a new chat.");
+    }
+    const agyShortcuts = session.provider === "agy" && offered.type === "userMessageChunk";
+    const spawn: NewChatSpawn = {
+      provider: session.provider,
+      modelId: session.client?.currentModelId || undefined,
+      cwd: this.sessionCwd(session),
+      draft: agyShortcuts && text ? restoreAgySkillShortcuts(text) : text,
+    };
+    const parentName = this.sessionDisplayName(session);
+    if (origin === "remote") {
+      const current = requester && this.resolveRemoteRequester(requester);
+      if (!current || this.remoteClients.active(current) !== session) return;
+      await this.newRemoteSession(current, true, undefined, spawn);
+    } else {
+      if (this.focused !== session) return;
+      await this.newFocusedSession(origin, undefined, undefined, spawn);
+    }
+    this.reportRequester(
+      requester,
+      "info",
+      "Your prompt is in a new chat, ready to edit and send. The original conversation is unchanged"
+        + (parentName ? ` and is in your session history as "${parentName}".` : " and is in your session history.")
+        + " Attachments stay with the original message. Add them again if needed.",
+    );
+  }
+
+  /** The prompt goes in as a parked draft named by the new chat's id, the
+   *  route a fork's Edit uses: the composer can still be bound to the chat
+   *  being left when it arrives, and a draft without an id would land there. */
+  private async handSpawnDraft(session: Session, spawn: NewChatSpawn, recipient: RemoteRequester | "local"): Promise<void> {
+    const id = session.activeSessionId;
+    if (!id || !spawn.draft) return;
+    await this.rememberQueuedDraft(id, spawn.draft);
+    this.restorePersistedDraft(session, recipient);
+  }
 
   private agyEditPoint(session: Session, steer = false): string | undefined {
     return !steer && session.forkPoints.observed.size ? randomUUID() : undefined;
@@ -12394,10 +12453,16 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       // (Old transcripts written under the session-scoped scheme still render
       // correctly — the previews below are matched to the tags found in the
       // very same text, whatever numbers that text happens to carry.)
+      // The first prompt has no reply before it to fork from. Its Edit opens a
+      // new chat on the same agent instead (editFirstPromptInNewChat).
+      const firstPrompt = fork.startsMessage && !fork.forkBefore && session.replayUserCounted
+        && session.userMessageCount === 1 && !session.replayUserIsInterjection && this.firstPromptEditable(session)
+        ? { forkBefore: FIRST_PROMPT_EDIT } : {};
       this.emit(session, {
         type: "userMessageChunk",
         text,
         ...fork,
+        ...firstPrompt,
         ...(session.provider === "muse" && session.replayUserIsInterjection ? { forkBefore: undefined } : {}),
         timestampMs: agentTimestampMsFromMeta(meta),
         images: historyImagePreviews(
@@ -13516,6 +13581,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       case "forkAtReply":
         if (typeof msg.sessionId !== "string" || !msg.sessionId || this.refuseMismatchedSessionId(msg.sessionId, session, requester)) break;
         if (msg.draft !== undefined && typeof msg.draft !== "string") break;
+        if (msg.messageId === FIRST_PROMPT_EDIT) {
+          await this.editFirstPromptInNewChat(session, origin, requester, msg.draft ?? "");
+          break;
+        }
         await this.forkFocusedSession(session, requester, msg);
         break;
       case "newWorktreeSession":
@@ -19778,7 +19847,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     const sentChips = chips.filter((c) => !c.hidden);
     session.userMessageCount += 1;
     session.inUserMessage = false; // live send isn't part of the streamed-chunk count path
-    const forkBefore = session.provider === "agy" ? this.agyEditPoint(session) : session.forkPoints.startPrompt();
+    const forkBefore = (session.provider === "agy" ? this.agyEditPoint(session) : session.forkPoints.startPrompt())
+      ?? (isFirstSend && this.firstPromptEditable(session) ? FIRST_PROMPT_EDIT : undefined);
     this.emit(session, { type: "userMessage", text, chips: sentChips, submissionId, ...(forkBefore ? { forkBefore } : {}) });
     this.emit(session, { type: "agentStart" });
     // The token, not the status, is what says a turn is running from here on —
@@ -22718,7 +22788,9 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   }
 
   /** Start a brand-new session, keeping the current one alive in the background. */
-  private async newFocusedSession(origin: MsgOrigin, requestedCwd?: string, onCreated?: (id: string) => void): Promise<void> {
+  private async newFocusedSession(
+    origin: MsgOrigin, requestedCwd?: string, onCreated?: (id: string) => void, spawn?: NewChatSpawn,
+  ): Promise<void> {
     // The answer to a CLI update belongs to the update, not to every
     // conversation opened afterwards. This lives in the two session
     // constructors rather than in `case "newSession"` because a remote's
@@ -22753,10 +22825,12 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     if (named && !pathsEqual(named.cwd, this.selectedRepoCwd || "")) {
       this.selectedRepoCwd = named.cwd;
     }
-    const targetCwd = named?.cwd ?? this.historyCwdFor(origin);
+    const targetCwd = spawn?.cwd ?? named?.cwd ?? this.historyCwdFor(origin);
     const leavingId = this.focused.activeSessionId;
     this.parkFocused();
-    const unused = this.findUnusedEmptySession(targetCwd, "local", leavingId);
+    // A spawn names its agent and model; an empty chat on another agent is
+    // not that chat.
+    const unused = spawn ? undefined : this.findUnusedEmptySession(targetCwd, "local", leavingId);
     if (unused) onCreated?.(unused.id);
     if (unused?.session?.client) {
       this.focusSession(unused.session);
@@ -22770,15 +22844,16 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     } else {
       this.focused = this.newLocalSession();
       this.setSessionCwd(this.focused, targetCwd, this.workspaceRoot());
-      this.focused.provider = this.defaultProviderForProject(targetCwd);
+      this.focused.provider = spawn?.provider ?? this.defaultProviderForProject(targetCwd);
       // The webview toolbar button clears its own DOM before posting newSession,
       // but the Command Palette command lands here directly — without this clear
       // the old transcript stayed onscreen under the fresh session. (The toolbar
       // path just clears twice, a no-op.)
       this.emit(this.focused, { type: "clearMessages" });
       const created = this.focused;
-      await this.startSession(undefined, created, "replace");
+      await this.startSession(undefined, created, "replace", undefined, spawn?.modelId ? { modelId: spawn.modelId } : {});
       if (created.activeSessionId) onCreated?.(created.activeSessionId);
+      if (spawn) await this.handSpawnDraft(created, spawn, "local");
     }
     await this.persistWorktreeBinding(this.focused);
     this.sweepEmptySessions(this.sessionCwd(this.focused));
@@ -22827,14 +22902,16 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     };
   }
 
-  private async newRemoteSession(clientId: string, notifyCatalog = true, onCreated?: (id: string) => void): Promise<void> {
+  private async newRemoteSession(
+    clientId: string, notifyCatalog = true, onCreated?: (id: string) => void, spawn?: NewChatSpawn,
+  ): Promise<void> {
     this.clearSettledCliUpdates();
     const ownerTabToken = this.remoteClients.tabToken(clientId);
-    const cwd = this.remoteClients.cwd(clientId);
+    const cwd = spawn?.cwd ?? this.remoteClients.cwd(clientId);
     const leavingId = this.remoteClients.active(clientId)?.activeSessionId;
     this.parkRemoteSession(clientId);
     this.dropRemoteVoice(clientId);
-    const unused = this.findUnusedEmptySession(cwd, "remote", leavingId);
+    const unused = spawn ? undefined : this.findUnusedEmptySession(cwd, "remote", leavingId);
     if (unused) onCreated?.(unused.id);
     if (unused?.session?.client) {
       this.focusRemoteSession(clientId, unused.session, notifyCatalog);
@@ -22856,11 +22933,14 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     }
     const session = new Session();
     this.setSessionCwd(session, cwd, this.workspaceRoot());
-    session.provider = this.defaultProviderForProject(cwd);
+    session.provider = spawn?.provider ?? this.defaultProviderForProject(cwd);
     this.remoteClients.setActive(clientId, session);
     this.emit(session, { type: "clearMessages" });
-    await this.startSession(undefined, session, "replace", undefined, { agyRemoteClientId: clientId });
+    await this.startSession(undefined, session, "replace", undefined, {
+      agyRemoteClientId: clientId, ...(spawn?.modelId ? { modelId: spawn.modelId } : {}),
+    });
     if (session.activeSessionId) onCreated?.(session.activeSessionId);
+    if (spawn) await this.handSpawnDraft(session, spawn, { clientId });
     await this.persistWorktreeBinding(session);
     this.sweepEmptySessions(this.sessionCwd(session));
     if (notifyCatalog) this.postRepoCatalog();

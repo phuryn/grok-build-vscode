@@ -317,6 +317,20 @@ describe.each(["desktop", "vscode", "remote"])("composer session drafts (%s)", (
     expect(input.disabled).toBe(false);
   });
 
+  it("files a new chat's handed-over prompt under that chat when it lands before the switch", () => {
+    // First-prompt Edit: the host opens the new chat and hands the prompt over
+    // before the frame that moves the composer arrives.
+    const { window, input, focus } = setup();
+    focus("a");
+    dispatch(window, { type: "clearMessages" });
+    dispatch(window, { type: "restoreComposer", sessionId: "c", text: "Edited first prompt", draft: true });
+    expect(input.value).toBe("");
+    dispatch(window, { type: "sessions", entries: [], activeId: "c" });
+    expect(input.value).toBe("Edited first prompt");
+    focus("a");
+    expect(input.value).toBe("");
+  });
+
   it("restores an automatic draft into an untouched empty composer", () => {
     const { window, input, focus } = setup();
     focus("a");

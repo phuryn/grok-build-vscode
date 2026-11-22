@@ -12,6 +12,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GrokSidebar } from "../src/sidebar";
+import { FIRST_PROMPT_EDIT } from "../src/fork-points";
 import { Session } from "../src/session";
 import { RemoteClientState } from "../src/remote-client-state";
 import type { HostMsg, WebviewMsg } from "../src/protocol";
@@ -673,7 +674,11 @@ describe("Antigravity forks through the host and an ACP subprocess", () => {
     const replyPoints = parent.buffer.filter(m => m.type === (where === "replay" ? "messageChunk" : "agentEnd")
       && "forkPoint" in m && m.forkPoint);
     expect(replyPoints).toHaveLength(where === "replay" ? 4 : 2);
-    const edit = parent.buffer.find(m => (m.type === "userMessage" || m.type === "userMessageChunk") && m.forkBefore);
+    const prompts = parent.buffer.filter(m => (m.type === "userMessage" || m.type === "userMessageChunk") && m.forkBefore);
+    // The first prompt has no reply before it: its Edit opens a new chat instead.
+    expect(prompts[0]).toMatchObject({ text: "First prompt", forkBefore: FIRST_PROMPT_EDIT });
+    const edit = prompts[1];
+    expect(prompts).toHaveLength(2);
     expect(edit).toMatchObject({ text: "Second prompt", forkBefore: expect.any(String) });
     if (where === "parked") {
       await sidebar.detachClient(parent).dispose();
@@ -715,7 +720,11 @@ describe("Antigravity forks through the host and an ACP subprocess", () => {
     if (where !== "parked" && edit && "forkBefore" in edit) {
       sidebar.focused = parent;
       sidebar.remoteClients.setActive("phone", parent);
-      click(webview.window, webview.doc.querySelector(".msg.user .msg-fork-btn")!);
+      const edits = webview.doc.querySelectorAll(".msg.user .msg-fork-btn");
+      expect(edits).toHaveLength(2);
+      click(webview.window, edits[0]);
+      expect(webview.posted.at(-1)).toEqual({ type: "forkAtReply", sessionId: parentId, messageId: FIRST_PROMPT_EDIT, draft: "First prompt" });
+      click(webview.window, edits[1]);
       const clickedEdit = webview.posted.at(-1) as Extract<WebviewMsg, { type: "forkAtReply" }>;
       expect(clickedEdit).toEqual({ type: "forkAtReply", sessionId: parentId, messageId: edit.forkBefore, draft: "Second prompt" });
       await sidebar.forkFocusedSession(parent, requester, clickedEdit);
