@@ -71,6 +71,17 @@ describe("marketplace README", () => {
     expect(out.indexOf("\n## Install\n")).toBeLessThan(out.indexOf("\n## Quick start\n"));
   });
 
+  it("puts Install before the feature tour, on GitHub and in the listing", () => {
+    // 2026-11-22: a reader who came to install should not scroll past every
+    // feature to find how.
+    const github = lf(readFileSync(path.join(root, "README.md"), "utf8"));
+    const out = buildMarketplaceReadme();
+    for (const doc of [github, out]) {
+      expect(doc.indexOf("\n## Install\n")).toBeGreaterThan(0);
+      expect(doc.indexOf("\n## Quick start\n")).toBeLessThan(doc.indexOf("\n## Why use this?\n"));
+    }
+  });
+
   it("refuses dual-host install wording that drifts in from README.md", () => {
     // The guard protects the BODY, not the generator's own blocks — Companion
     // apps names the desktop app on purpose. Feed it a README whose kept body

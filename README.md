@@ -18,6 +18,73 @@ Two ways to use it:
 
 ---
 
+## Requirements
+
+- **VS Code** 1.106+ (or a compatible editor on the same base — Cursor 3.x qualifies; an editor on an older base keeps the last extension version that supports it).
+- **macOS, Linux or Windows.** Every agent runs natively on all three, no WSL required (WSL2 + Remote-WSL still works if you prefer it). AFK Pilot installs every agent but Claude Code, which uses the `claude` CLI you have installed.
+- **An account or API key for each agent you use.** Its **Setup** below says which.
+- **Voice control** is optional and needs [`ffmpeg`](https://ffmpeg.org) to record: [docs/voice-setup.md](docs/voice-setup.md).
+
+---
+
+## Install
+
+### VS Code / Cursor extension
+
+**1. Install the extension.** In VS Code or Cursor, open **Extensions** (`Ctrl/Cmd+Shift+X`) and search **"AFK Pilot"** — or install from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=PawelHuryn.grok-vscode-phuryn) / [Open VSX Registry](https://open-vsx.org/extension/PawelHuryn/grok-vscode-phuryn).
+
+**2. Open AFK Pilot and connect an agent.** Press `Ctrl/Cmd+;`. The sidebar asks which agent to connect, then **installs its CLI and signs you in**, one click per step (Claude Code uses the `claude` CLI you already have). That's the whole setup.
+
+**3. Add more agents** any time from **Settings → Providers**, each with its own account. [Each agent's section](#each-agent-in-afk-pilot) below says which account or key it takes.
+
+AFK Pilot defaults to the **Secondary Side Bar** (right side, next to other AI tools). Cursor refuses that container, so a first installation moves the view to the Primary Side Bar. Use the editor's own Move View controls to relocate it; where the secondary container is unavailable, Settings → Advanced → **Move view…** opens that picker.
+
+> Prefer the terminal, building from source, or installing into several IDEs at once? See **[docs/INSTALL.md](docs/INSTALL.md)**.
+
+### Grok Build Desktop
+
+Standalone app for **macOS** (Apple Silicon + Intel), **Windows** (x64) and **Linux** (x86_64 AppImage, or a Debian package). Same agent UI as the extension; no VS Code required.
+
+**1. Download** the installer from **[afkpilot.com/desktop](https://afkpilot.com/desktop)** — it detects your platform and offers the right build. Asset names:
+
+| Platform | File |
+|---|---|
+| macOS Apple Silicon | `Grok-Build-Desktop-<version>-mac-arm64.dmg` |
+| macOS Intel | `Grok-Build-Desktop-<version>-mac-x64.dmg` |
+| Windows x64 | `Grok-Build-Desktop-<version>-win-x64.exe` |
+| Linux x86_64 | `Grok-Build-Desktop-<version>-linux-x86_64.AppImage` |
+| Linux Debian / Ubuntu (amd64) | `Grok-Build-Desktop-<version>-linux-amd64.deb` |
+
+(Zip archives are also published for macOS: `…-mac-arm64.zip` / `…-mac-x64.zip`.)
+
+**2. Install and open** the app, then pick a project folder (File → Add Project Folder). Onboarding asks which agent to connect and signs you in, the same way as the extension.
+
+**macOS is signed and notarised** (since 3.2.7) — the app opens straight from the `.dmg`, with no Gatekeeper warning and nothing to allow through in Settings.
+
+**Windows is not signed yet**, so Microsoft Defender SmartScreen may show “Windows protected your PC.” Choose **More info** → **Run anyway**.
+
+**Debian / Ubuntu:** download the `.deb` from [GitHub Releases](https://github.com/phuryn/grok-build-vscode/releases) and run `sudo apt install ./Grok-Build-Desktop-<version>-linux-amd64.deb`. It installs under `/opt/grok-build-desktop`, adds the **Grok Build Desktop** menu entry and dependencies, configures Chromium's sandbox helper, and removes with `sudo apt remove grok-build-desktop`. Use this package on Ubuntu 24.04+: its user-namespace restrictions prevent the AppImage from launching normally. **Update available** opens the new `.deb`; install it with the same `apt` command to upgrade.
+
+**Other Linux systems:** the AppImage is one file: `chmod +x` it and run it. It needs FUSE (`libfuse2` on Debian; `libfuse2t64` on Ubuntu 24.04+) and updates itself in place where the distro permits unprivileged user namespaces. There is exactly one AppImage per release.
+
+**Closing the window keeps the app running** on Windows and Linux: it hides to a tray icon so the agent — and any phone linked to this machine — keeps working. **Quit** from the tray menu to stop it, or turn the behaviour off in Settings → General. There is no tray on macOS, where closing the window still quits the app — the macOS answer is its own convention, the dock rather than a menu-bar item, and that is a separate change.
+
+Details, build-from-source, and signing notes: **[docs/desktop.md](docs/desktop.md)**.
+
+---
+
+## Quick start
+
+Open **Settings** from **+** in VS Code, or the rail gear in Desktop and on your phone.
+
+1. **Open** AFK Pilot — in VS Code: `Ctrl/Cmd+;` (Secondary Side Bar by default); in Desktop: launch the app and add a project folder.
+2. **Type a prompt** and press **Enter**. Grok streams its answer, showing a *Thinking…* line while it reasons. Want the full reasoning inline? Turn on **Show thinking traces** in Settings.
+3. **Approve actions.** When Grok wants to write a file or run a command it may raise a permission card — preview an edit (native diff in VS Code; in-app viewer on Desktop), then *Allow once / always / Reject*.
+4. **Pick your mode** (Agent / Plan / Auto accept), **model**, and **reasoning effort** from the bottom toolbar and model chip.
+5. **Resume anytime** — the clock icon lists past sessions for this project.
+
+---
+
 ## Why use this?
 
 ### Six agents, one window
@@ -366,73 +433,6 @@ A ` ```mermaid ` block renders as a real diagram via [Mermaid](https://mermaid.j
 ![Mermaid diagram rendered inline in the chat](docs/screenshots/v1.4.6%20Mermaid%20diagrams.png)
 
 </details>
-
----
-
-## Requirements
-
-- **VS Code** 1.106+ (or a compatible editor on the same base — Cursor 3.x qualifies; an editor on an older base keeps the last extension version that supports it).
-- **macOS, Linux or Windows.** Every agent runs natively on all three, no WSL required (WSL2 + Remote-WSL still works if you prefer it). AFK Pilot installs every agent but Claude Code, which uses the `claude` CLI you have installed.
-- **An account or API key for each agent you use.** Its **Setup** above says which.
-- **Voice control** is optional and needs [`ffmpeg`](https://ffmpeg.org) to record: [docs/voice-setup.md](docs/voice-setup.md).
-
----
-
-## Install
-
-### VS Code / Cursor extension
-
-**1. Install the extension.** In VS Code or Cursor, open **Extensions** (`Ctrl/Cmd+Shift+X`) and search **"AFK Pilot"** — or install from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=PawelHuryn.grok-vscode-phuryn) / [Open VSX Registry](https://open-vsx.org/extension/PawelHuryn/grok-vscode-phuryn).
-
-**2. Open AFK Pilot and sign in.** Press `Ctrl/Cmd+;`. The sidebar **walks you through installing the `grok` CLI and signing in** — one click per step, with your SuperGrok / X Premium+ subscription or an xAI API key. That's the whole setup.
-
-**3. Add more agents.** **Settings → Providers** connects Muse Code, Google Antigravity, Claude Code, Codex and DeepSeek, each with its own account. See [each agent's section](#each-agent-in-afk-pilot).
-
-AFK Pilot defaults to the **Secondary Side Bar** (right side, next to other AI tools). Cursor refuses that container, so a first installation moves the view to the Primary Side Bar. Use the editor's own Move View controls to relocate it; where the secondary container is unavailable, Settings → Advanced → **Move view…** opens that picker.
-
-> Prefer the terminal, building from source, or installing into several IDEs at once? See **[docs/INSTALL.md](docs/INSTALL.md)**.
-
-### Grok Build Desktop
-
-Standalone app for **macOS** (Apple Silicon + Intel), **Windows** (x64) and **Linux** (x86_64 AppImage, or a Debian package). Same agent UI as the extension; no VS Code required.
-
-**1. Download** the installer from **[afkpilot.com/desktop](https://afkpilot.com/desktop)** — it detects your platform and offers the right build. Asset names:
-
-| Platform | File |
-|---|---|
-| macOS Apple Silicon | `Grok-Build-Desktop-<version>-mac-arm64.dmg` |
-| macOS Intel | `Grok-Build-Desktop-<version>-mac-x64.dmg` |
-| Windows x64 | `Grok-Build-Desktop-<version>-win-x64.exe` |
-| Linux x86_64 | `Grok-Build-Desktop-<version>-linux-x86_64.AppImage` |
-| Linux Debian / Ubuntu (amd64) | `Grok-Build-Desktop-<version>-linux-amd64.deb` |
-
-(Zip archives are also published for macOS: `…-mac-arm64.zip` / `…-mac-x64.zip`.)
-
-**2. Install and open** the app, then pick a project folder (File → Add Project Folder). Onboarding installs the `grok` CLI and signs you in the same way as the extension.
-
-**macOS is signed and notarised** (since 3.2.7) — the app opens straight from the `.dmg`, with no Gatekeeper warning and nothing to allow through in Settings.
-
-**Windows is not signed yet**, so Microsoft Defender SmartScreen may show “Windows protected your PC.” Choose **More info** → **Run anyway**.
-
-**Debian / Ubuntu:** download the `.deb` from [GitHub Releases](https://github.com/phuryn/grok-build-vscode/releases) and run `sudo apt install ./Grok-Build-Desktop-<version>-linux-amd64.deb`. It installs under `/opt/grok-build-desktop`, adds the **Grok Build Desktop** menu entry and dependencies, configures Chromium's sandbox helper, and removes with `sudo apt remove grok-build-desktop`. Use this package on Ubuntu 24.04+: its user-namespace restrictions prevent the AppImage from launching normally. **Update available** opens the new `.deb`; install it with the same `apt` command to upgrade.
-
-**Other Linux systems:** the AppImage is one file: `chmod +x` it and run it. It needs FUSE (`libfuse2` on Debian; `libfuse2t64` on Ubuntu 24.04+) and updates itself in place where the distro permits unprivileged user namespaces. There is exactly one AppImage per release.
-
-**Closing the window keeps the app running** on Windows and Linux: it hides to a tray icon so the agent — and any phone linked to this machine — keeps working. **Quit** from the tray menu to stop it, or turn the behaviour off in Settings → General. There is no tray on macOS, where closing the window still quits the app — the macOS answer is its own convention, the dock rather than a menu-bar item, and that is a separate change.
-
-Details, build-from-source, and signing notes: **[docs/desktop.md](docs/desktop.md)**.
-
----
-
-## Quick start
-
-Open **Settings** from **+** in VS Code, or the rail gear in Desktop and on your phone.
-
-1. **Open** AFK Pilot — in VS Code: `Ctrl/Cmd+;` (Secondary Side Bar by default); in Desktop: launch the app and add a project folder.
-2. **Type a prompt** and press **Enter**. Grok streams its answer, showing a *Thinking…* line while it reasons. Want the full reasoning inline? Turn on **Show thinking traces** in Settings.
-3. **Approve actions.** When Grok wants to write a file or run a command it may raise a permission card — preview an edit (native diff in VS Code; in-app viewer on Desktop), then *Allow once / always / Reject*.
-4. **Pick your mode** (Agent / Plan / Auto accept), **model**, and **reasoning effort** from the bottom toolbar and model chip.
-5. **Resume anytime** — the clock icon lists past sessions for this project.
 
 ---
 

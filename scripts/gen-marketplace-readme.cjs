@@ -29,7 +29,10 @@ const header = `# AFK Pilot: Grok Build, Muse Code, Antigravity, Claude Code, Co
 
 ---
 
-## Why use this?
+`;
+
+// Opens the feature tour, which follows Requirements, Install and Quick start.
+const whyHeading = `## Why use this?
 
 `;
 
@@ -41,9 +44,9 @@ const installBlock = `## Install
 
 **1. Install the extension.** In VS Code or Cursor, open **Extensions** (\`Ctrl/Cmd+Shift+X\`) and search **"AFK Pilot"**.
 
-**2. Open AFK Pilot and sign in.** Press \`Ctrl/Cmd+;\`. The sidebar **walks you through installing the \`grok\` CLI and signing in** — one click per step, with your SuperGrok / X Premium+ subscription or an xAI API key. That's the whole setup.
+**2. Open AFK Pilot and connect an agent.** Press \`Ctrl/Cmd+;\`. The sidebar asks which agent to connect, then **installs its CLI and signs you in**, one click per step (Claude Code uses the \`claude\` CLI you already have). That's the whole setup.
 
-**3. Add more agents.** **Settings → Providers** connects Muse Code, Google Antigravity, Claude Code, Codex and DeepSeek, each with its own account. See each agent's section above.
+**3. Add more agents** any time from **Settings → Providers**, each with its own account. Each agent's section below says which account or key it takes.
 
 AFK Pilot defaults to the **Secondary Side Bar** (right side, next to other AI tools). Cursor refuses that container, so a first installation moves the view to the Primary Side Bar. Use the editor's own Move View controls to relocate it; where the secondary container is unavailable, Settings → Advanced → **Move view…** opens that picker.
 
@@ -98,6 +101,19 @@ const BANNED_IN_BODY = [
   /electron-builder/i,
 ];
 
+// Marketplace prefers absolute image/doc URLs (no local repo tree in the store).
+// Applied to every part taken from README.md: the body and Requirements.
+function absoluteLinks(markdown) {
+  return markdown
+    .replace(
+      /\((docs\/screenshots\/[^)]+)\)/g,
+      "(https://raw.githubusercontent.com/phuryn/grok-build-vscode/main/$1)",
+    )
+    .replace(/\]\((docs\/[^)]+)\)/g, "](https://github.com/phuryn/grok-build-vscode/blob/main/$1)")
+    .replace(/\]\((research\/[^)]+)\)/g, "](https://github.com/phuryn/grok-build-vscode/blob/main/$1)")
+    .replace(/\]\(LICENSE\)/g, "](https://github.com/phuryn/grok-build-vscode/blob/main/LICENSE)");
+}
+
 function buildMarketplaceReadme(githubReadme) {
   const github =
     githubReadme ?? fs.readFileSync(path.join(root, "README.md"), "utf8");
@@ -116,42 +132,16 @@ function buildMarketplaceReadme(githubReadme) {
     body = body.slice(0, dev) + body.slice(known);
   }
 
-  // Strip dual-host install / quick-start wording if present in the body.
-  body = body.replace(/\n### Grok Build Desktop[\s\S]*?(?=\n### |\n## )/m, "\n");
-  body = body.replace(/\n### VS Code \/ Cursor extension\n\n/m, "\n");
-  body = body.replace(
-    /1\. \*\*Open\*\* AFK Pilot — in VS Code: `Ctrl\/Cmd\+;` \(Secondary Side Bar by default\); in Desktop: launch the app and add a project folder\./,
-    "1. **Open** the AFK Pilot view (`Ctrl/Cmd+;`, or **AFK Pilot: Open** from the command palette) — it lives in the Secondary Side Bar by default.",
-  );
-  body = body.replace(
-    /preview an edit \(native diff in VS Code; in-app viewer on Desktop\)/,
-    "preview an edit in the native **diff editor**, with full-file context focused on the first changed line",
-  );
+  body = absoluteLinks(body);
 
-  // Marketplace prefers absolute image/doc URLs (no local repo tree in the store).
-  body = body.replace(
-    /\((docs\/screenshots\/[^)]+)\)/g,
-    "(https://raw.githubusercontent.com/phuryn/grok-build-vscode/main/$1)",
-  );
-  body = body.replace(
-    /\]\((docs\/[^)]+)\)/g,
-    "](https://github.com/phuryn/grok-build-vscode/blob/main/$1)",
-  );
-  body = body.replace(
-    /\]\((research\/[^)]+)\)/g,
-    "](https://github.com/phuryn/grok-build-vscode/blob/main/$1)",
-  );
-  body = body.replace(
-    /\]\(LICENSE\)/g,
-    "](https://github.com/phuryn/grok-build-vscode/blob/main/LICENSE)",
-  );
-
-  // README.md order is Requirements → Install → Quick start → Configuration.
-  // Keep that reading order, but swap in the extension-only Install/Quick start
-  // pair by slicing the body AROUND the two sections we replace. Appending ours
-  // in front of them instead is what printed both headings twice.
-  const reqIdx = body.indexOf("## Requirements");
-  const installIdx = body.indexOf("## Install");
+  // README.md puts Requirements → Install → Quick start right after its
+  // introduction, before the feature tour, so a reader installs first. The
+  // listing keeps that order: README's Requirements, then the extension-only
+  // Install/Quick start pair in place of README's dual-host one, then the tour.
+  // Requirements is sliced from the whole README; the body (from the agents
+  // overview on) must not hold Install, or both headings print twice.
+  const reqIdx = github.indexOf("## Requirements");
+  const installIdx = github.indexOf("## Install");
   const configIdx = body.indexOf("## Configuration");
   const privacyIdx = body.indexOf("## Privacy");
   for (const [name, idx] of [
@@ -162,13 +152,14 @@ function buildMarketplaceReadme(githubReadme) {
   ]) {
     if (idx < 0) throw new Error(`README.md missing ${name}`);
   }
-  if (!(reqIdx < installIdx && installIdx < configIdx && configIdx < privacyIdx)) {
+  if (!(reqIdx < installIdx && installIdx < featIdx && configIdx < privacyIdx)) {
     throw new Error("README.md sections are out of the expected order");
   }
 
-  const featuresOnly = body.slice(0, reqIdx);
-  const requirements = body.slice(reqIdx, installIdx);
-  // Configuration .. Known limits. Install/Quick start are dropped on purpose.
+  const requirements = absoluteLinks(github.slice(reqIdx, installIdx));
+  // The agents overview and the feature tour, up to Configuration.
+  const featuresOnly = body.slice(0, configIdx);
+  // Configuration .. Known limits.
   const middle = body.slice(configIdx, privacyIdx);
   const tail = body.slice(privacyIdx);
 
@@ -181,9 +172,10 @@ function buildMarketplaceReadme(githubReadme) {
 
   const out =
     header +
-    featuresOnly +
     requirements +
     installBlock +
+    whyHeading +
+    featuresOnly +
     middle +
     companionBlock +
     tail;

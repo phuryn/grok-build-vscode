@@ -10,6 +10,39 @@
 
 ---
 
+## Requirements
+
+- **VS Code** 1.106+ (or a compatible editor on the same base — Cursor 3.x qualifies; an editor on an older base keeps the last extension version that supports it).
+- **macOS, Linux or Windows.** Every agent runs natively on all three, no WSL required (WSL2 + Remote-WSL still works if you prefer it). AFK Pilot installs every agent but Claude Code, which uses the `claude` CLI you have installed.
+- **An account or API key for each agent you use.** Its **Setup** below says which.
+- **Voice control** is optional and needs [`ffmpeg`](https://ffmpeg.org) to record: [docs/voice-setup.md](https://github.com/phuryn/grok-build-vscode/blob/main/docs/voice-setup.md).
+
+---
+
+## Install
+
+**1. Install the extension.** In VS Code or Cursor, open **Extensions** (`Ctrl/Cmd+Shift+X`) and search **"AFK Pilot"**.
+
+**2. Open AFK Pilot and connect an agent.** Press `Ctrl/Cmd+;`. The sidebar asks which agent to connect, then **installs its CLI and signs you in**, one click per step (Claude Code uses the `claude` CLI you already have). That's the whole setup.
+
+**3. Add more agents** any time from **Settings → Providers**, each with its own account. Each agent's section below says which account or key it takes.
+
+AFK Pilot defaults to the **Secondary Side Bar** (right side, next to other AI tools). Cursor refuses that container, so a first installation moves the view to the Primary Side Bar. Use the editor's own Move View controls to relocate it; where the secondary container is unavailable, Settings → Advanced → **Move view…** opens that picker.
+
+> Prefer the terminal, building from source, or installing into several IDEs at once? See the project [INSTALL docs](https://github.com/phuryn/grok-build-vscode/blob/main/docs/INSTALL.md).
+
+---
+
+## Quick start
+
+1. **Open** the AFK Pilot view (`Ctrl/Cmd+;`, or **AFK Pilot: Open** from the command palette) — it lives in the Secondary Side Bar by default.
+2. **Type a prompt** and press **Enter**. Grok streams its answer, showing a *Thinking…* line while it reasons. Want the full reasoning inline? Turn on **Show thinking traces** in Settings.
+3. **Approve actions.** When Grok wants to write a file or run a command it may raise a permission card — preview an edit in the native **diff editor**, with full-file context focused on the first changed line, then *Allow once / always / Reject*.
+4. **Pick your mode** (Agent / Plan / Auto accept), **model**, and **reasoning effort** from the bottom toolbar and model chip.
+5. **Resume anytime** — the clock icon lists past sessions for this project.
+
+---
+
 ## Why use this?
 
 ### Six agents, one window
@@ -358,39 +391,6 @@ A ` ```mermaid ` block renders as a real diagram via [Mermaid](https://mermaid.j
 ![Mermaid diagram rendered inline in the chat](https://raw.githubusercontent.com/phuryn/grok-build-vscode/main/docs/screenshots/v1.4.6%20Mermaid%20diagrams.png)
 
 </details>
-
----
-
-## Requirements
-
-- **VS Code** 1.106+ (or a compatible editor on the same base — Cursor 3.x qualifies; an editor on an older base keeps the last extension version that supports it).
-- **macOS, Linux or Windows.** Every agent runs natively on all three, no WSL required (WSL2 + Remote-WSL still works if you prefer it). AFK Pilot installs every agent but Claude Code, which uses the `claude` CLI you have installed.
-- **An account or API key for each agent you use.** Its **Setup** above says which.
-- **Voice control** is optional and needs [`ffmpeg`](https://ffmpeg.org) to record: [docs/voice-setup.md](https://github.com/phuryn/grok-build-vscode/blob/main/docs/voice-setup.md).
-
----
-
-## Install
-
-**1. Install the extension.** In VS Code or Cursor, open **Extensions** (`Ctrl/Cmd+Shift+X`) and search **"AFK Pilot"**.
-
-**2. Open AFK Pilot and sign in.** Press `Ctrl/Cmd+;`. The sidebar **walks you through installing the `grok` CLI and signing in** — one click per step, with your SuperGrok / X Premium+ subscription or an xAI API key. That's the whole setup.
-
-**3. Add more agents.** **Settings → Providers** connects Muse Code, Google Antigravity, Claude Code, Codex and DeepSeek, each with its own account. See each agent's section above.
-
-AFK Pilot defaults to the **Secondary Side Bar** (right side, next to other AI tools). Cursor refuses that container, so a first installation moves the view to the Primary Side Bar. Use the editor's own Move View controls to relocate it; where the secondary container is unavailable, Settings → Advanced → **Move view…** opens that picker.
-
-> Prefer the terminal, building from source, or installing into several IDEs at once? See the project [INSTALL docs](https://github.com/phuryn/grok-build-vscode/blob/main/docs/INSTALL.md).
-
----
-
-## Quick start
-
-1. **Open** the AFK Pilot view (`Ctrl/Cmd+;`, or **AFK Pilot: Open** from the command palette) — it lives in the Secondary Side Bar by default.
-2. **Type a prompt** and press **Enter**. Grok streams its answer, showing a *Thinking…* line while it reasons. Want the full reasoning inline? Turn on **Show thinking traces** in Settings.
-3. **Approve actions.** When Grok wants to write a file or run a command it may raise a permission card — preview an edit in the native **diff editor**, with full-file context focused on the first changed line, then *Allow once / always / Reject*.
-4. **Pick your mode** (Agent / Plan / Auto accept), **model**, and **reasoning effort** from the bottom toolbar and model chip.
-5. **Resume anytime** — the clock icon lists past sessions for this project.
 
 ---
 
