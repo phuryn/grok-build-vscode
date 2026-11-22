@@ -8,7 +8,20 @@ AFK uses Google's `agy acp` for Antigravity. `AgyBackend` uses stdio with `mcpSe
 
 New Google sessions use agy's default `antigravity-cli` profile. New key sessions use `agy acp --gemini-dir <agyGeminiHome(env)> --app-data-dir antigravity-acp`. Reopen uses the session's recorded profile, or looks for its database in the two folders. The legacy `agyProgram: "server"` value still selects `antigravity-acp` and `"cli"` selects the default profile. The selected sign-in method is independent of this choice.
 
-On 2026-11-22, agy 1.5.8 listed and loaded a copy of an older conversation directly in `antigravity-acp` with both key auth and the older Google token file. Replay included the user turn, tool calls and reply. Databases, sidecars, credentials, brain files and the old meter directory stay in place. History listing merges paged ACP catalogs from both profiles with older sidecar entries and known metadata. Historical meter records stay out of AFK history. The CLI advertises load, resume, close, list and additional directories. Forking is unavailable.
+On 2026-11-22, agy 1.5.8 listed and loaded a copy of an older conversation directly in `antigravity-acp` with both key auth and the older Google token file. Replay included the user turn, tool calls and reply. Databases, sidecars, credentials, brain files and the old meter directory stay in place. History listing merges paged ACP catalogs from both profiles with older sidecar entries and known metadata. Historical meter records stay out of AFK history. The CLI advertises load, resume, close, list and additional directories.
+
+## Conversation forks
+
+**Edit in a new chat** sends the turns before the prompt and puts that prompt in the new composer. **Go back to here in a new chat** includes the selected reply. **Continue in a new chat** includes the full visible conversation within the handoff budget. The new chat opens as `(Fork) <name>` in the original checkout, and the original remains in history.
+
+agy has no native `session/fork`. AFK creates a blank chat in the parent's profile and sends earlier turns as text before the person's first message. The host keeps the text through a restart until agy returns a successful prompt response or replays the handoff from its transcript. After a dispatched failure or cancellation, AFK reloads the chat before trying again. The host filters the marked replay chunk before counting user messages or forwarding the transcript. On agy 1.5.8, two separate text blocks replay as separate user chunks, and a second process can load a new, unprompted chat while its parent stays live.
+
+- The handoff is limited to 64,000 characters. It favors the last user message, the last reply, the first user message and then the newest remaining turns. It keeps whole turns in conversation order and gives a count of omitted turns.
+- The handoff carries user and reply text, with `[image]` for an image. Tool output, thinking, attachments and the agent's working state stay with the original. The checkout contains the files as they are at the time of the fork. When forking a fork, only turns visible in that chat are eligible.
+- A fork with no sends is an empty chat. agy adds it to its own history list after the first prompt.
+- On reopen, a person's own message that starts with `[AFK Pilot: earlier conversation]` is hidden too.
+- Outside AFK, agy history shows the full handoff in the first prompt.
+- Recovery relies on the prompt response or a saved transcript. If agy accepts the first prompt, loses the response and never records the handoff in replay, AFK has no receipt for that delivery.
 
 At host startup, `removeRetiredAgyInstall` removes recognized version directories under AFK's `agy-managed` storage. Configured paths, symlinks and junctions, ambiguous layouts and Gemini homes are excluded. The previous managed bundles occupied 105 to 274 MB. AFK no longer contributes the binary override setting.
 

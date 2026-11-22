@@ -48,11 +48,11 @@ function startedSession(provider: Session["provider"]) {
   return session;
 }
 
-it("implements forks on the four supported providers", () => {
-  expect(INTERNAL_PROVIDERS.filter((provider) => supportsFork(provider))).toEqual(["grok", "codex", "claude", "muse"]);
+it("implements forks on the five supported providers", () => {
+  expect(INTERNAL_PROVIDERS.filter((provider) => supportsFork(provider))).toEqual(["grok", "codex", "claude", "muse", "agy"]);
 });
 
-it.each(INTERNAL_PROVIDERS.filter((provider) => provider !== "grok"))(
+it.each(INTERNAL_PROVIDERS.filter((provider) => provider !== "grok" && provider !== "agy"))(
   "refuses a fork on %s without asking the agent",
   async (provider) => {
     const session = startedSession(provider);
@@ -63,7 +63,7 @@ it.each(INTERNAL_PROVIDERS.filter((provider) => provider !== "grok"))(
     expect(host.reportRequester).toHaveBeenCalledWith(
       requester,
       "info",
-      expect.stringMatching(/^(Codex|Claude|Muse Code|Antigravity|DeepSeek) can't continue a conversation in a new chat yet\.$/),
+      expect.stringMatching(/^(Codex|Claude|Muse Code|DeepSeek) can't continue a conversation in a new chat yet\.$/),
     );
   },
 );

@@ -18,6 +18,7 @@ const waiting = new Map();
 const cancelled = new Set();
 const sessions = new Map();
 const extendedCatalog = process.env.FAKE_AGY_EXTENDED_CATALOG === "1";
+const forkHistory = process.env.FAKE_AGY_FORK_HISTORY === "1";
 let loggedOut = false;
 // What `authenticate` selected in this process; settings.json otherwise.
 let auth;
@@ -73,6 +74,30 @@ function sessionResult(sessionId, session) {
 }
 function newSessionState(cwd) {
   return { cwd, model: "gemini-3.8-flash", level: "high" };
+}
+function transcriptPath(sessionId) {
+  return path.join(conversations, `${sessionId}.fixture.jsonl`);
+}
+function forkPrompt(id, { sessionId, prompt: blocks }) {
+  const text = blocks.at(-1)?.text ?? "";
+  const fail = /refuse (before|after) saving/.exec(text)?.[1];
+  const reject = () => {
+    const text = blocks[0].text;
+    process.stderr.write(text + "\n");
+    process.stdout.write("Diagnostic: " + text.replaceAll("\n", "\\n") + "\n");
+    write({ id, error: { code: -32002, message: text, data: { copy: text } } });
+  };
+  if (fail === "before") return reject();
+  const stream = [
+    ...blocks.map(content => ({ sessionUpdate: "user_message_chunk", content })),
+    { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Reply to " } },
+    { sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "Private thinking" } },
+    { sessionUpdate: "agent_message_chunk", content: { type: "text", text } },
+  ];
+  fs.appendFileSync(transcriptPath(sessionId), JSON.stringify(stream) + "\n");
+  if (fail === "after") return reject();
+  for (const item of stream) update(sessionId, item);
+  write({ id, result: { stopReason: "end_turn" } });
 }
 function commands(sessionId) {
   update(sessionId, { sessionUpdate: "available_commands_update", availableCommands: [
@@ -226,8 +251,17 @@ rl.on("line", async (line) => {
       try { session.mode = JSON.parse(fs.readFileSync(path.join(conversations, `${params.sessionId}.meta`), "utf8")).mode; } catch { /* older fixture */ }
       sessions.set(params.sessionId, session);
       if (method === "session/load") {
-        update(params.sessionId, { content: { type: "text", text: "Remember 41." }, sessionUpdate: "user_message_chunk" });
-        update(params.sessionId, { content: { type: "text", text: "OK" }, sessionUpdate: "agent_message_chunk" });
+        if (forkHistory) {
+          const file = transcriptPath(params.sessionId);
+          if (fs.existsSync(file)) {
+            for (const line of fs.readFileSync(file, "utf8").trimEnd().split("\n")) {
+              for (const item of JSON.parse(line)) update(params.sessionId, item);
+            }
+          }
+        } else {
+          update(params.sessionId, { content: { type: "text", text: "Remember 41." }, sessionUpdate: "user_message_chunk" });
+          update(params.sessionId, { content: { type: "text", text: "OK" }, sessionUpdate: "agent_message_chunk" });
+        }
       }
       write({ id, result: sessionResult(undefined, session) });
       if (extendedCatalog) commands(params.sessionId);
@@ -261,7 +295,7 @@ rl.on("line", async (line) => {
       cancelled.add(params.sessionId);
       return;
     case "session/prompt":
-      return prompt(id, params);
+      return forkHistory && signedIn() && sessions.has(params.sessionId) ? forkPrompt(id, params) : prompt(id, params);
     default:
       if (id !== undefined) write({ id, error: { code: -32601, message: "Method not found", data: { method } } });
   }

@@ -1,8 +1,7 @@
 /**
- * ACP replay has reply IDs, but does not reliably distinguish steers from
- * ordinary prompts. Record the end of a settled live turn and match that exact
- * reply on replay. A prompt can edit from the preceding end only when replay
- * places it immediately after that reply.
+ * For adapters that supply reply IDs, record the end of a settled live turn
+ * and match that exact reply on replay. Host-generated IDs are valid in the
+ * current buffer, where the displayed frames also anchor the corresponding cut.
  */
 export class ForkPoints {
   private saved = new Set<string>();
@@ -17,13 +16,13 @@ export class ForkPoints {
     this.lastReplayUserId = undefined;
   }
 
-  reply(messageId: string | undefined, replaying: boolean): string | undefined {
+  reply(messageId: string | undefined, replaying: boolean, generated = false): string | undefined {
     this.lastReplayUserId = undefined;
     if (!replaying) {
       this.adjacentReply = messageId;
       return undefined;
     }
-    this.adjacentReply = messageId && this.saved.has(messageId) ? messageId : undefined;
+    this.adjacentReply = messageId && (generated || this.saved.has(messageId)) ? messageId : undefined;
     if (this.adjacentReply) this.observed.add(this.adjacentReply);
     return this.adjacentReply;
   }

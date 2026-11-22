@@ -64,3 +64,8 @@ export function rewriteAgyPrompt(text: string, commands: readonly SlashCommand[]
     (token, boundary: string, name: string) => skills.has(name)
       ? `${boundary}[Use the ${name} skill with lookup_skill and follow its instructions]` : token);
 }
+
+/** Restore the slash spelling for earlier turns carried over as text. */
+export function restoreAgySkillShortcuts(text: string): string {
+  return text.replace(/(^|\s)\[Use the ([a-z0-9][a-z0-9-]{0,63}) skill with lookup_skill and follow its instructions\](?=\s|$)/g, "$1/$2");
+}

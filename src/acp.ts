@@ -5,6 +5,7 @@ import type { ChildHistoryReplay, DelegatedWorkKind } from "./acp-backend";
 import type { WebviewMsg } from "./protocol";
 import { GrokHookCalls } from "./grok-hooks";
 import { appendPastedTextContext } from "./prompt-builder";
+import { isAgyHandoff } from "./agy-handoff";
 import { ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { createInterface, Interface } from "node:readline";
 import { randomUUID } from "node:crypto";
@@ -129,6 +130,8 @@ export interface AcpClientOptions {
   startupAuth?: { methodId: string };
   /** Redact the saved credential if the agent sends it back. */
   redactInbound?: (text: string) => string;
+  /** The provider history may contain a private first-prompt block. */
+  agyFork?: boolean;
   /**
    * Host-owned MCP servers for `session/new` and `session/load`. A getter is
    * read at request time so a Connect that lands after construct still applies.
@@ -341,6 +344,10 @@ export class AcpClient extends EventEmitter {
   private humanWaitActive = false;
   private steering: BackendSteeringCapabilities;
   private forkAdvertised = false;
+  private creatingEmptyFork = false;
+  private privateAgyFork = false;
+  agyHandoffDispatched = false;
+  replayedAgyHandoff = false;
   lastPromptStopReason: string | undefined;
 
   readonly provider: AcpProvider;
@@ -570,6 +577,7 @@ export class AcpClient extends EventEmitter {
     });
 
     this.proc.stderr.on("data", (d) => {
+      if (this.privateAgyFork) return;
       const raw = d.toString();
       const text = this.opts.redactInbound?.(raw) ?? raw;
       this.opts.log(`[stderr] ${text}`);
@@ -738,6 +746,8 @@ export class AcpClient extends EventEmitter {
     // Only an explicit spawn identifies a child until the load completes.
     this.loadingChildSessionIds = new Set();
     this.loadingSessionId = sessionId;
+    this.replayedAgyHandoff = false;
+    if (this.provider === "agy" && this.opts.agyFork) this.privateAgyFork = true;
     this.currentGoal = undefined;
     this.hookCalls.reset();
     let raw: any;
@@ -978,7 +988,7 @@ export class AcpClient extends EventEmitter {
     }
   }
 
-  async prompt(textOrBlocks: string | PromptContentBlock[], authoredTexts?: readonly string[], pastedText = ""): Promise<PromptResultMeta> {
+  async prompt(textOrBlocks: string | PromptContentBlock[], authoredTexts?: readonly string[], pastedText = "", agyHandoff?: string): Promise<PromptResultMeta> {
     if (this.contextWindowChanging) throw new Error("Wait for the context-window change to finish.");
     const firstText = typeof textOrBlocks === "string" ? textOrBlocks : textOrBlocks[0]?.type === "text" ? textOrBlocks[0].text : "";
     if (this.provider !== "deepseek" && /^\/context-window(?:\s|$)/i.test(firstText) && !this.availableCommands.some(c => c.name === "context-window"))
@@ -1016,6 +1026,11 @@ export class AcpClient extends EventEmitter {
     if (pastedText && prompt[0]?.type === "text") {
       prompt = [{ ...prompt[0], text: appendPastedTextContext(prompt[0].text, pastedText) }, ...prompt.slice(1)];
     }
+    const carriesHandoff = this.provider === "agy" ? agyHandoff : undefined;
+    if (carriesHandoff) {
+      this.privateAgyFork = true;
+      prompt = [{ type: "text", text: carriesHandoff }, ...prompt];
+    }
     let raw: any;
     const turn: { latest?: Promise<any> } = {};
     const manualCompact = /^\/compact(?:\s|$)/i.test(firstText);
@@ -1025,7 +1040,7 @@ export class AcpClient extends EventEmitter {
       let reply = this.request("session/prompt", {
         sessionId: this.sessionId,
         prompt,
-      });
+      }, undefined, undefined, carriesHandoff ? () => { this.agyHandoffDispatched = true; } : undefined);
       turn.latest = reply;
       for (;;) {
         // A steering prompt hands back the preceding response before its own
@@ -1219,13 +1234,29 @@ export class AcpClient extends EventEmitter {
   }
 
   supportsTurnFork(): boolean {
-    return this.forkAdvertised && !!this.backend.fork;
+    return !!this.backend.emptyForkParams || (this.forkAdvertised && !!this.backend.fork);
   }
 
   /** Copy the conversation into a new session ID. Grok's route is whole-session only. */
   async forkSession(cwd: string, messageId?: string): Promise<{ newSessionId: string } | "unsupported"> {
     if (!this.sessionId) throw new Error("no session");
     if (messageId !== undefined && !messageId.trim()) throw new Error("Missing fork point.");
+    if (this.backend.emptyForkParams) {
+      // Keep the parent's identity, model, commands and turn state. The copy is
+      // loaded by a separate client after the host saves its name and handoff.
+      this.creatingEmptyFork = true;
+      try {
+        const r = await this.request("session/new", {
+          cwd, mcpServers: await this.mcpServersForSession(), ...this.backend.emptyForkParams(cwd),
+        });
+        if (typeof r?.sessionId !== "string" || !r.sessionId || r.sessionId === this.sessionId) {
+          throw new Error("The agent did not return a new conversation.");
+        }
+        return { newSessionId: r.sessionId };
+      } finally {
+        this.creatingEmptyFork = false;
+      }
+    }
     if (this.provider !== "grok") {
       if (!this.supportsTurnFork()) return "unsupported";
       const call = this.backend.fork!(this.sessionId, cwd, messageId);
@@ -1736,7 +1767,7 @@ export class AcpClient extends EventEmitter {
     const ev = parseAcpLine(this.opts.redactInbound?.(line) ?? line);
     if (!ev) return;
     if (ev.kind === "non-json") {
-      this.opts.log(`[non-json] ${ev.line.slice(0, 200)}`);
+      if (!this.privateAgyFork) this.opts.log(`[non-json] ${ev.line.slice(0, 200)}`);
       return;
     }
     if (ev.kind === "response") {
@@ -1752,10 +1783,16 @@ export class AcpClient extends EventEmitter {
         // request that just finished.
         this.touchPendingPromptTimers();
         if (ev.error) {
-          if (this.provider !== "grok" && this.backend.isCredentialError(ev.error)) {
-            this.emit("credentialError", ev.error);
+          let error = ev.error;
+          const credential = this.provider !== "grok" && this.backend.isCredentialError(error);
+          if (this.privateAgyFork) {
+            error = credential ? { code: -32000, message: "Antigravity authentication required." }
+              : { code: ev.error.code, message: p.method === "session/load"
+                ? "Antigravity could not load this conversation." : p.isPrompt
+                  ? "Antigravity could not complete this message." : "The Antigravity request failed." };
           }
-          p.reject(ev.error);
+          if (credential) this.emit("credentialError", error);
+          p.reject(error);
         }
         else {
           try { p.onResolve?.(ev.result); }
@@ -1777,6 +1814,17 @@ export class AcpClient extends EventEmitter {
   private replaceablePrompt?: { latest?: Promise<any> };
 
   private handleSessionUpdate(u: any, meta?: any, sessionId?: string): void {
+    if (this.provider === "agy") {
+      if (!this.loadingSessionId && isForeignSessionUpdate(sessionId, this.sessionId)
+        && (this.creatingEmptyFork || u?.sessionUpdate === "available_commands_update")) return;
+      if (u?.sessionUpdate === "user_message_chunk" && isAgyHandoff(u.content?.text)) {
+        if (this.loadingSessionId && !isForeignSessionUpdate(sessionId, this.loadingSessionId)) {
+          this.replayedAgyHandoff = true;
+          this.privateAgyFork = true;
+        }
+        return;
+      }
+    }
     if (this.replaceablePrompt && u?.sessionUpdate === "user_message_chunk") return;
     const delegationSession = this.loadingSessionId ?? this.sessionId;
     if (this.routeHookUpdate(u, meta, sessionId)) return;

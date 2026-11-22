@@ -309,6 +309,8 @@ export class Session {
    */
   inUserMessage = false;
   readonly forkPoints = new ForkPoints();
+  /** One host-generated ID for the visible reply, including text around tool calls. */
+  agyReplyId?: string;
   forkInFlight = false;
 
   /**

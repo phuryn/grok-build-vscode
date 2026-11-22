@@ -30,7 +30,7 @@ const PROVIDER_ACTIONS: Record<AcpProvider, {
   codex: { deleteHistory: true, compact: true, adapterHistory: true, modeSwitching: true, approvalModeSwitching: false, autoAccept: true, perCallContext: true, clientMcp: true, fork: true },
   claude: { deleteHistory: true, compact: true, adapterHistory: true, modeSwitching: true, approvalModeSwitching: false, autoAccept: true, perCallContext: true, clientMcp: true, fork: true },
   muse: { deleteHistory: false, compact: true, adapterHistory: true, modeSwitching: false, approvalModeSwitching: true, autoAccept: true, perCallContext: false, clientMcp: false, fork: true },
-  agy: { deleteHistory: false, compact: false, adapterHistory: true, modeSwitching: false, approvalModeSwitching: true, autoAccept: true, perCallContext: false, clientMcp: false, fork: false },
+  agy: { deleteHistory: false, compact: false, adapterHistory: true, modeSwitching: false, approvalModeSwitching: true, autoAccept: true, perCallContext: false, clientMcp: false, fork: true },
   deepseek: { deleteHistory: false, compact: false, adapterHistory: true, modeSwitching: false, approvalModeSwitching: false, autoAccept: true, perCallContext: false, clientMcp: false, fork: false },
 };
 
@@ -253,6 +253,8 @@ export interface AcpBackend<Provider extends string = AcpProvider> {
   setMode(sessionId: string, modeId: string): { method: string; params: any };
   steeringCapabilities(initializeResult: any, options: BackendSteeringOptions): BackendSteeringCapabilities;
   fork?(sessionId: string, cwd: string, messageId?: string): { method: string; params: object };
+  /** Parameters for creating a blank fork without changing the parent's backend state. */
+  emptyForkParams?(cwd: string): object;
   interject(sessionId: string, text: string, content?: readonly PromptContentBlock[]): { method: string; params: any } | null;
   /**
    * Whether a steering RPC that RESOLVED actually delivered the text. Some

@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 import { bootWebview, click, dispatch, type Harness } from "./webview-harness";
 
 function announce(h: Harness, provider: string, turnForkSupported?: boolean) {
+  if (provider === "agy") dispatch(h.window, { type: "providerState", providers: [{ id: "agy", connected: true }] });
   dispatch(h.window, { type: "session", sessionId: "source", provider, models: [], currentModelId: "model" });
   dispatch(h.window, { type: "sessionName", sessionId: "source", name: "Source", cwd: "/repo", turnForkSupported });
 }
@@ -15,7 +16,7 @@ function forkButtons(h: Harness, role: string) {
   return [...h.doc.querySelectorAll<HTMLButtonElement>(`.msg.${role} .msg-fork-btn`)];
 }
 
-it.each(["claude", "codex"])("offers %s's whole fork and only the settled bubble actions", (provider) => {
+it.each(["claude", "codex", "agy"])("offers %s's whole fork and only the settled bubble actions", (provider) => {
   const h = bootWebview({ vscode: true });
   announce(h, provider, true);
   click(h.window, openContinue(h)!);
@@ -51,7 +52,7 @@ it.each(["claude", "codex"])("offers %s's whole fork and only the settled bubble
   ]);
 });
 
-it.each(["claude", "codex", "grok"])("keeps %s on the older host's controls without a new capability", (provider) => {
+it.each(["claude", "codex", "grok", "agy"])("keeps %s on the older host's controls without a new capability", (provider) => {
   const h = bootWebview({ vscode: true });
   announce(h, provider);
   for (let i = 0; i < 2; i++) {

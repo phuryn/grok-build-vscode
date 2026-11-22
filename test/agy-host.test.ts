@@ -13,6 +13,9 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GrokSidebar } from "../src/sidebar";
 import { Session } from "../src/session";
+import { RemoteClientState } from "../src/remote-client-state";
+import type { HostMsg, WebviewMsg } from "../src/protocol";
+import { bootWebview, click, dispatch } from "./webview-harness";
 import { CLOUD_ENVIRONMENT_ENV, parseRelayFrame } from "../src/remote-frames";
 import { AGY_PASTE_ADDRESS_ERROR, agyGoogleSignInPresent } from "../src/agy-auth";
 import { parseWebviewMsg } from "../src/desktop/webview-msg-validate";
@@ -577,5 +580,214 @@ describe("Disconnect and Sign out", () => {
     await sidebar.logout("agy", { signOutCli: true });
     expect(fs.existsSync(token())).toBe(true);
     expect(sidebar.providerConnectionState.agy).toBe(true);
+  });
+});
+
+describe("Antigravity forks through the host and an ACP subprocess", () => {
+  const clients = new Set<NonNullable<Session["client"]>>();
+  const metaKey = "grok.sessionMeta";
+  const history = () => fs.readFileSync(path.join(home, "fork-requests.jsonl"), "utf8")
+    .trim().split("\n").map(line => JSON.parse(line));
+  const promptRequests = (id: string) => history().filter(row => row.method === "session/prompt" && row.params.sessionId === id);
+
+  function makeHost(previous?: Record<string, unknown>) {
+    vi.stubEnv("FAKE_AGY_FORK_HISTORY", "1");
+    vi.stubEnv("FAKE_AGY_SINK", path.join(home, "fork-requests.jsonl"));
+    const sidebar = host({ connected: true, method: "api-key", key: KEY });
+    Object.assign(sidebar.memento, structuredClone(previous ?? {}));
+    const desk = vi.fn();
+    sidebar.view = { webview: { postMessage: desk } };
+    sidebar.postLocal = desk;
+    sidebar.remoteClients = new RemoteClientState<Session>(home);
+    sidebar.remoteClients.ready("phone");
+    sidebar.remoteClients.setActive("phone", sidebar.focused);
+    sidebar.sessionMetaWrites = Promise.resolve();
+    sidebar.sessionCache = new Map();
+    sidebar.pendingAttach = new Set();
+    sidebar.pendingConfirms = new Map();
+    sidebar.fullImagePaths = new Map();
+    sidebar.pendingTurnDiffCaptures = new WeakSet();
+    sidebar.turnOrderTimers = new Set();
+    sidebar.host.getConfiguration = () => ({ get: (_key: string, fallback: unknown) => fallback, inspect: () => undefined });
+    sidebar.localizeHistoryMessage = (message: HostMsg) => message;
+    sidebar.providerRunSignal = () => new AbortController().signal;
+    sidebar.isAuthorizedCwd = () => true;
+    sidebar.authorizedSessionCwds = () => [home];
+    sidebar.connectedProviders = sidebar.usableProviders = () => ["agy"];
+    sidebar.terminalManager = { ownedBy: vi.fn(), releaseOwnedBy: vi.fn() };
+    sidebar.configForcesAutoApprove = () => false;
+    sidebar.providerDefaultForProject = () => "";
+    sidebar.modelsForSession = () => [];
+    sidebar.allAdapterCatalogs = () => [];
+    sidebar.resolveLocalRepoTarget = () => undefined;
+    sidebar.setStatus = (session: Session, status: Session["status"]) => { session.status = status; };
+    for (const method of [
+      "stopVoiceInput", "queueInFlightPlanCommentsOnExit", "warnOAuthShadowOnce", "cacheProviderModels",
+      "touch", "reapPool", "maybeFlushQueuedSends",
+      "restoreUsage", "mirrorToProjectsRail", "setProviderNeedsLogin", "refreshAgySaved",
+      "publishSubscriptionUsage", "bindSubscriptionUsage", "refreshSubscriptionUsage",
+      "retainUploadedFilesForSession", "refreshImplicitChip", "postChips", "reportSessionStart",
+      "reportRemoteMessage", "startTurnDiffBaseline", "noteSessionActivity", "rememberProjectProvider",
+      "maybeAskToAddProject", "noteLiveTurnEnded", "maybeGenerateTitle", "reportRequester",
+    ]) sidebar[method] = vi.fn();
+    const start = sidebar.startSession.bind(sidebar);
+    sidebar.startSession = async (...args: any[]) => {
+      const client = await start(...args);
+      expect(client, JSON.stringify(sidebar.host.appendLine.mock.calls)).toBeDefined();
+      clients.add(client);
+      await sidebar.sessionMetaWrites;
+      return client;
+    };
+    const open = async (id: string, cwd: string) => {
+      const child = new Session();
+      child.provider = "agy";
+      child.cwd = cwd;
+      sidebar.focused = child;
+      sidebar.remoteClients.setActive("phone", child);
+      await sidebar.startSession(id, child);
+    };
+    sidebar.openSession = vi.fn(open);
+    sidebar.openRemoteSession = vi.fn(async (_clientId: string, id: string, cwd: string) => open(id, cwd));
+    return sidebar;
+  }
+
+  afterEach(async () => {
+    for (const client of clients) {
+      client.removeAllListeners();
+      await client.dispose();
+    }
+    clients.clear();
+  });
+
+  it.each(["live", "replay", "parked"] as const)("matches a %s button to its exact cut and preserves the parent", async where => {
+    const sidebar = makeHost();
+    const parent: Session = sidebar.focused;
+    parent.worktree = { path: home, label: "Topic worktree", sourceGitRoot: path.dirname(home) };
+    const original = await sidebar.startSession();
+    const parentId = parent.activeSessionId!;
+    await sidebar.updateSessionMeta(current => ({ ...current, [parentId]: { ...current[parentId], customName: "Source" } }));
+    await sidebar.handleSend("First prompt", false, parent, "local");
+    await sidebar.handleSend("Second prompt", false, parent, "local");
+    expect(parent.userMessageCount).toBe(2);
+    if (where === "replay") await sidebar.startSession(parentId);
+    const replyPoints = parent.buffer.filter(m => m.type === (where === "replay" ? "messageChunk" : "agentEnd")
+      && "forkPoint" in m && m.forkPoint);
+    expect(replyPoints).toHaveLength(where === "replay" ? 4 : 2);
+    const edit = parent.buffer.find(m => (m.type === "userMessage" || m.type === "userMessageChunk") && m.forkBefore);
+    expect(edit).toMatchObject({ text: "Second prompt", forkBefore: expect.any(String) });
+    if (where === "parked") {
+      await sidebar.detachClient(parent).dispose();
+      sidebar.postSessionName(parent);
+      expect(sidebar.postLocal).toHaveBeenLastCalledWith(expect.objectContaining({ turnForkSupported: true }));
+    }
+    const webview = bootWebview({ vscode: true });
+    dispatch(webview.window, { type: "providerState", providers: [{ id: "agy", connected: true }] });
+    for (const frame of frames(sidebar.postLocal)) dispatch(webview.window, frame);
+    const buttons = webview.doc.querySelectorAll(".msg.agent .msg-fork-btn");
+    expect(buttons).toHaveLength(2);
+    expect(buttons[0].closest(".msg")?.textContent).toContain("First prompt");
+    click(webview.window, buttons[0]);
+    const clickedReply = webview.posted.at(-1) as Extract<WebviewMsg, { type: "forkAtReply" }>;
+    expect(clickedReply).toMatchObject({ type: "forkAtReply", sessionId: parentId });
+    const requester = where === "replay" ? { clientId: "phone" } : undefined;
+    await sidebar.forkFocusedSession(parent, requester, clickedReply);
+    const copy: Session = sidebar.focused;
+    expect(copy.activeSessionId).not.toBe(parentId);
+    const saved = sidebar.memento[metaKey][copy.activeSessionId!];
+    expect(saved).toMatchObject({ customName: "(Fork) Source", provider: "agy", providerCwd: home,
+      agyProgram: "server", worktreePath: home, worktreeLabel: "Topic worktree" });
+    expect(saved.agyForkHandoff).toContain("User: First prompt\nAssistant: Reply to First prompt\n");
+    expect(saved.agyForkHandoff).not.toContain("Second prompt");
+    expect(saved.agyForkHandoff).not.toContain("Private thinking");
+    expect(sidebar.reportRequester).toHaveBeenCalledWith(requester, "info",
+      "Forked into \"(Fork) Source\". Antigravity can't branch a conversation, so it got the conversation up to that reply as text. The original conversation is unchanged and is in your session history as \"Source\". Files on disk were not touched.");
+    expect(copy.userMessageCount).toBe(0);
+    expect(parent.activeSessionId).toBe(parentId);
+    if (where === "live") {
+      expect(parent.client).toBe(original);
+      const creates = history().filter(row => row.method === "session/new");
+      expect(creates).toHaveLength(2);
+      expect(creates[1].params).toEqual(creates[0].params);
+      await sidebar.handleSend("Parent still works", false, parent, "local");
+      expect(promptRequests(parentId)).toHaveLength(3);
+      expect(promptRequests(copy.activeSessionId!)).toHaveLength(0);
+    }
+    if (where !== "parked" && edit && "forkBefore" in edit) {
+      sidebar.focused = parent;
+      sidebar.remoteClients.setActive("phone", parent);
+      click(webview.window, webview.doc.querySelector(".msg.user .msg-fork-btn")!);
+      const clickedEdit = webview.posted.at(-1) as Extract<WebviewMsg, { type: "forkAtReply" }>;
+      expect(clickedEdit).toEqual({ type: "forkAtReply", sessionId: parentId, messageId: edit.forkBefore, draft: "Second prompt" });
+      await sidebar.forkFocusedSession(parent, requester, clickedEdit);
+      const edited = sidebar.focused.activeSessionId;
+      expect(sidebar.memento[metaKey][edited].agyForkHandoff).toBe(saved.agyForkHandoff);
+      expect(sidebar.postLocal.mock.calls).toContainEqual([{ type: "restoreComposer", sessionId: edited, text: "Second prompt", draft: true }]);
+      expect(sidebar.reportRequester).toHaveBeenLastCalledWith(requester, "info", expect.stringContaining(
+        "so it got the turns before your edit as text. The original conversation is unchanged and is in your session history as \"Source\". Files on disk were not touched. Attachments stay with the original message. Add them again if needed."));
+    }
+  });
+
+  it("keeps the first handoff across a restart and never posts its payload to the desk or the phone", async () => {
+    const sidebar = makeHost();
+    await sidebar.startSession();
+    const parentId = sidebar.focused.activeSessionId;
+    await sidebar.updateSessionMeta(current => ({ ...current, [parentId]: { ...current[parentId], customName: "Named original" } }));
+    await sidebar.handleSend("Unique past wording", false, sidebar.focused, "local");
+    await sidebar.handleSend("Last original question", false, sidebar.focused, "local");
+    await sidebar.forkFocusedSession(sidebar.focused);
+    const id = sidebar.focused.activeSessionId;
+    const handoff = sidebar.memento[metaKey][id].agyForkHandoff;
+    expect(handoff).toContain("User: Last original question");
+    expect(sidebar.reportRequester).toHaveBeenLastCalledWith(undefined, "info", expect.stringContaining("so it got the conversation as text."));
+    for (const client of clients) {
+      client.removeAllListeners();
+      await client.dispose();
+    }
+    const reopened = makeHost(sidebar.memento);
+    await reopened.startSession(id);
+    expect(reopened.memento[metaKey][id].agyForkHandoff).toBe(handoff);
+    await reopened.handleSend("Question after fork", false, reopened.focused, "local");
+    await reopened.handleSend("Second send", false, reopened.focused, "local");
+    expect(promptRequests(id).map(row => row.params.prompt)).toEqual([
+      [{ type: "text", text: handoff }, { type: "text", text: "Question after fork" }],
+      [{ type: "text", text: "Second send" }],
+    ]);
+    expect(reopened.memento[metaKey][id].agyForkHandoff).toBeNull();
+    await reopened.startSession(id);
+    const desk = frames(reopened.postLocal);
+    const phone: HostMsg[] = reopened.sendRemoteClient.mock.calls.map(([, message]: any[]) => message);
+    expect(desk).toContainEqual(expect.objectContaining({
+      type: "sessionName", sessionId: id, name: "(Fork) Named original", turnForkSupported: true,
+    }));
+    for (const out of [desk, phone, reopened.focused.buffer]) {
+      expect(out.flatMap((frame: HostMsg) => frame.type === "historyBatch" ? frame.messages : [frame]))
+        .toContainEqual(expect.objectContaining({ type: "userMessageChunk", text: "Question after fork" }));
+      expect(JSON.stringify(out)).not.toContain("Unique past wording");
+      expect(JSON.stringify(out)).not.toContain("[AFK Pilot: earlier conversation]");
+    }
+    expect(reopened.focused.userMessageCount).toBe(2);
+    expect(JSON.stringify(reopened.host.appendLine.mock.calls)).not.toContain("Unique past wording");
+  });
+
+  it.each(["before", "after"] as const)("reconciles a prompt failure %s agy saves its first send", async (failure) => {
+    const sidebar = makeHost();
+    await sidebar.startSession();
+    await sidebar.handleSend("Private original", false, sidebar.focused, "local");
+    await sidebar.forkFocusedSession(sidebar.focused);
+    const child: Session = sidebar.focused;
+    const id = child.activeSessionId!;
+    const handoff = sidebar.memento[metaKey][id].agyForkHandoff;
+    const originalClient = child.client;
+    await sidebar.handleSend("refuse " + failure + " saving", false, child, "local");
+    expect(sidebar.memento[metaKey][id].agyForkHandoff).toBe(handoff);
+    await sidebar.handleSend("Retry the send", false, child, "local");
+    expect(child.client).not.toBe(originalClient);
+    expect(promptRequests(id).map(row => row.params.prompt)).toEqual([
+      [{ type: "text", text: handoff }, { type: "text", text: "refuse " + failure + " saving" }],
+      [...(failure === "before" ? [{ type: "text", text: handoff }] : []), { type: "text", text: "Retry the send" }],
+    ]);
+    expect(sidebar.memento[metaKey][id].agyForkHandoff).toBeNull();
+    expect(JSON.stringify([frames(sidebar.postLocal), sidebar.sendRemoteClient.mock.calls, sidebar.host.appendLine.mock.calls]))
+      .not.toContain("[AFK Pilot: earlier conversation]");
   });
 });

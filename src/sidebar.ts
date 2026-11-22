@@ -9,6 +9,9 @@ import { MuseBackend, withMuseCredentialBackend } from "./muse-backend";
 import { locateMuseCli, parseMuseVersionOutput } from "./muse-cli-locator";
 import { museInstallCommand } from "./muse-install";
 import { AgyBackend, agyProfile, agyProfileDir, agySessionsFor, listAgyCatalog, locateAgyCli, type AgyProfile } from "./agy-backend";
+import { buildAgyForkHandoff } from "./agy-fork";
+import { AGY_HANDOFF_MARKER } from "./agy-handoff";
+import { restoreAgySkillShortcuts } from "./agy-skills";
 import { installAgyCli, readAgyCliVersion, updateAgyCliOnUpgrade } from "./agy-cli-lifecycle";
 import { AgyUsageMeter } from "./agy-usage";
 import { AGY_KEY_METHOD, agyCredentialEnv, agyGoogleSignInPresent, isAgySignInMethod, normalizeAgyApiKey, runAgySignIn, startAgyGoogleChat, type AgySignInMethod } from "./agy-auth";
@@ -2958,7 +2961,7 @@ export class GrokSidebar {
    * restarts them; the next send respawns each with the new one.
    */
   private async connectAgy(method: AgySignInMethod, binary: string, session: Session, requester?: RemoteRequester): Promise<void> {
-    const profile = this.agyProfileForChat(session.hasHistory ? session.activeSessionId : undefined, method);
+    const profile = this.agyProfileForChat(session.hasHistory || this.pendingAgyForkHandoff(session) ? session.activeSessionId : undefined, method);
     const deskRemote = !!requester && !isCloudEnvironment();
     if (method === "google" && deskRemote && !(await this.agyGoogleAvailable(profile))) {
       await this.postAgyChoice("Sign in with Google on the workspace computer, or use a Gemini API key here.", requester);
@@ -3426,7 +3429,7 @@ export class GrokSidebar {
       if (!session || seen.has(session)) continue;
       seen.add(session);
     }
-    return [...seen].filter((session) => !session.hasHistory && session.client?.sessionId);
+    return [...seen].filter((session) => !session.hasHistory && !this.pendingAgyForkHandoff(session) && session.client?.sessionId);
   }
 
   /**
@@ -3931,8 +3934,9 @@ export class GrokSidebar {
     // Ignore switches fired during session startup. The webview disables the
     // control while busy; this is the backstop for a click already in flight.
     if (!client || session.priming) return;
+    const pendingFork = this.pendingAgyForkHandoff(session);
     if (provider !== session.provider) {
-      if (session.hasHistory) {
+      if (session.hasHistory || pendingFork) {
         const current = providerDisplayName(session.provider);
         const requested = providerDisplayName(provider);
         this.reportRequester(
@@ -3964,7 +3968,7 @@ export class GrokSidebar {
     }
     if (modelId === client.currentModelId) return;
     if (!modelId) {
-      if (session.hasHistory) return;
+      if (session.hasHistory || pendingFork) return;
       const discardId = session.activeSessionId;
       await this.rememberProjectProvider(this.sessionCwd(session), provider, undefined);
       if (provider === "grok") await this.rememberGrokConfig("defaultModel", "");
@@ -3982,7 +3986,7 @@ export class GrokSidebar {
         this.reportRequester(requester, "error", `Failed to set model: ${(e as Error).message}`);
         return;
       }
-      if (!session.hasHistory) {
+      if (!session.hasHistory && !pendingFork) {
         // Empty session (no real conversation): a cross-agent switch restarts it
         // with a fresh grok id. There is nothing to summarize or preserve.
         // Drop it after the restart, carrying over any rename the user made.
@@ -4048,6 +4052,11 @@ export class GrokSidebar {
       }
     }
 
+    if (this.pendingAgyForkHandoff(session)) {
+      await this.rememberProviderEffort(session.provider, newLevel);
+      await this.startSession(session.activeSessionId, session);
+      return;
+    }
     if (!session.hasHistory || !session.client) {
       // As with a model switch on an empty session: restart without the summarize-vs-restart
       // prompt and discard the abandoned empty session — but only when it truly had no
@@ -5393,8 +5402,8 @@ Only continue if you trust this code.`,
     if ((session.provider === "muse" || session.client?.ownsSteeringQueue) && fromQueue
       && (!takeQueue || authored !== queuedSendsText(session.queuedSends))) return;
 
-    if (!session.client || !session.activeSessionId) {
-      // No live turn to steer — fall back to the queue rather than drop it.
+    if (!session.client || !session.activeSessionId || this.pendingAgyForkHandoff(session)) {
+      // Queue until the first turn has taken the handoff, or if there is no turn to steer.
       // Deliberately NOT flagged for a relay round-trip: the relay meters
       // steerSend on ingress exactly like send, so this text is already paid
       // for — re-submitting the queued fallback through the relay would
@@ -5765,17 +5774,47 @@ Only continue if you trust this code.`,
 
   private pendingForkDrafts?: Set<string>;
 
+  private agyEditPoint(session: Session, steer = false): string | undefined {
+    return !steer && session.forkPoints.observed.size ? randomUUID() : undefined;
+  }
+
+  private pendingAgyForkHandoff(session: Session): string | undefined {
+    if (session.provider !== "agy" || !session.activeSessionId) return undefined;
+    return this.state.get<SessionMetaOverrides>(SESSION_META_KEY, {})[session.activeSessionId]?.agyForkHandoff ?? undefined;
+  }
+
+  private async consumeAgyForkHandoff(id: string): Promise<void> {
+    try {
+      await this.updateSessionMeta(current => current[id]?.agyForkHandoff
+        ? { ...current, [id]: { ...current[id], agyForkHandoff: null } }
+        : null);
+    } catch {
+      this.host.appendLine("[fork] could not clear the Antigravity handoff");
+    }
+  }
+
+  private async promptAgy(
+    session: Session, client: AcpClient, blocks: Parameters<AcpClient["prompt"]>[0], authored: readonly string[], pastedText: string,
+  ): Promise<PromptResultMeta> {
+    const id = client.sessionId;
+    const handoff = client.replayedAgyHandoff ? undefined : this.pendingAgyForkHandoff(session);
+    const result = await client.prompt(blocks, authored, pastedText, handoff);
+    if (id && handoff && client.lastPromptStopReason !== "cancelled") await this.consumeAgyForkHandoff(id);
+    return result;
+  }
+
   private async forkFocusedSession(
     session: Session = this.focused,
     requester?: RemoteRequester,
     point?: Extract<WebviewMsg, { type: "forkAtReply" }>,
   ): Promise<void> {
-    if (!session.client || !session.activeSessionId) {
+    const { activeSessionId: parentId, provider } = session;
+    const agy = provider === "agy";
+    if (!parentId || (!session.client && !agy)) {
       this.reportRequester(requester, "warning", "Start a session before forking it.");
       return;
     }
-    const { client, activeSessionId: parentId, provider } = session;
-    const turnFork = client.supportsTurnFork?.() === true;
+    const turnFork = agy || session.client?.supportsTurnFork?.() === true;
     if (!supportsFork(provider) || (!turnFork && (point || provider !== "grok"))) {
       this.reportRequester(
         requester,
@@ -5795,9 +5834,14 @@ Only continue if you trust this code.`,
     if (session.forkInFlight) {
       return void this.reportRequester(requester, "info", "A new chat is already being created from this conversation.");
     }
-    if (point && !session.forkPoints.observed.has(point.messageId)) {
+    const agyCut = agy && point
+      ? buildAgyForkHandoff(session.buffer, { id: point.messageId, edit: point.draft !== undefined })
+      : undefined;
+    if (point && (agy ? !agyCut : !session.forkPoints.observed.has(point.messageId))) {
       return void this.reportRequester(requester, "warning", "This reply is no longer available as a fork point.");
     }
+    const draft = agy && point?.draft && session.buffer.some(frame => frame.type === "userMessageChunk" && frame.forkBefore === point.messageId)
+      ? restoreAgySkillShortcuts(point.draft) : point?.draft;
     // Resolve the parent's name BEFORE the fork — it names the fork, so it must
     // be the name the user was looking at when they clicked. Reading it after the
     // await risks a turn landing mid-fork and rewriting summary.json (and with it
@@ -5809,11 +5853,17 @@ Only continue if you trust this code.`,
     let codexForkId: string | undefined;
     let releasedSource = false;
     try {
+      // A parked conversation can have its transcript but no process. Reopen
+      // the parent normally, keeping any cut already resolved from its buffer.
+      const client = session.client ?? await this.ensureClient(session, requester && this.resolveRemoteRequester(requester));
+      if (!client || session.activeSessionId !== parentId) return;
       // Fork keeps the same cwd as the source, worktree-isolated ones included.
       const cwd = this.sessionCwd(session);
+      const agyHandoff = agy ? agyCut ?? buildAgyForkHandoff(session.buffer) : undefined;
+      const agyProgram = agy ? this.agyProfileForChat(parentId) : undefined;
       const replyIds = [...session.forkPoints.observed];
       const keptReplyIds = point ? replyIds.slice(0, replyIds.indexOf(point.messageId) + 1) : replyIds;
-      const r = await (point ? client.forkSession(cwd, point.messageId) : client.forkSession(cwd));
+      const r = await (point && !agy ? client.forkSession(cwd, point.messageId) : client.forkSession(cwd));
       if (r === "unsupported") {
         if (turnFork && session.client === client) this.postSessionName(session);
         this.reportRequester(
@@ -5824,7 +5874,7 @@ Only continue if you trust this code.`,
         );
         return;
       }
-      this.host.appendLine(`[fork] ${parentId} → ${r.newSessionId} ("${forkName}")`);
+      this.host.appendLine(`[fork] ${parentId} → ${r.newSessionId}` + (agy ? "" : ` ("${forkName}")`));
       if (turnFork && provider === "codex") {
         // The copy may restore its edit draft during open. Hold it until the
         // source queue can be appended, so the composer receives both together.
@@ -5842,14 +5892,17 @@ Only continue if you trust this code.`,
           [r.newSessionId]: {
             ...prev,
             customName: forkName,
-            uploadedFiles: [...new Set([...(prev.uploadedFiles ?? []), ...(parent.uploadedFiles ?? [])])],
-            contextUsed: point ? undefined : parent.contextUsed,
-            contextWindow: parent.contextWindow,
-            contextPendingCompact: point ? undefined : parent.contextPendingCompact,
-            ...(turnFork ? { provider, providerCwd: cwd, forkReplyIds: keptReplyIds } : {}),
+            ...(!agy ? {
+              uploadedFiles: [...new Set([...(prev.uploadedFiles ?? []), ...(parent.uploadedFiles ?? [])])],
+              contextUsed: point ? undefined : parent.contextUsed,
+              contextWindow: parent.contextWindow,
+              contextPendingCompact: point ? undefined : parent.contextPendingCompact,
+            } : {}),
+            ...(turnFork ? { provider, providerCwd: cwd } : {}),
+            ...(agy ? { agyProgram, agyForkHandoff: agyHandoff } : turnFork ? { forkReplyIds: keptReplyIds } : {}),
             ...(provider === "codex" ? { codexAskApproval: parent.codexAskApproval } : {}),
             ...(provider === "muse" && session.musePosture ? { musePosture: session.musePosture } : {}),
-            ...(point?.draft ? { queuedDraft: point.draft } : {}),
+            ...(draft ? { queuedDraft: draft } : {}),
             ...(worktree ? {
               worktreePath: worktree.path, worktreeLabel: worktree.label, sourceGitRoot: worktree.sourceGitRoot,
             } : {}),
@@ -5873,10 +5926,15 @@ Only continue if you trust this code.`,
         await this.releaseForkSource(session, client, parentId);
         await this.openSession(r.newSessionId, cwd);
       }
+      const handoffNotice = agy
+        ? " Antigravity can't branch a conversation, so it got " + (point
+          ? point.draft === undefined ? "the conversation up to that reply as text." : "the turns before your edit as text."
+          : "the conversation as text.")
+        : "";
       this.reportRequester(
         requester,
         "info",
-        `Forked into "${forkName}". The original conversation is unchanged and is in your session history` +
+        `Forked into "${forkName}".${handoffNotice} The original conversation is unchanged and is in your session history` +
           (parentName ? ` as "${parentName}"` : "") +
           ". Files on disk were not touched." +
           (point?.draft !== undefined ? " Attachments stay with the original message. Add them again if needed." : ""),
@@ -5936,9 +5994,9 @@ Only continue if you trust this code.`,
     session: Session, client: AcpClient, meta: PromptResultMeta, completed: boolean,
   ): void {
     const forkPoint = client.supportsTurnFork?.()
-      ? session.forkPoints.settle(completed && client.lastPromptStopReason === "end_turn")
+      ? session.forkPoints.settle(completed && (session.provider === "agy" || client.lastPromptStopReason === "end_turn"))
       : undefined;
-    if (forkPoint && session.activeSessionId) {
+    if (session.provider !== "agy" && forkPoint && session.activeSessionId) {
       const id = session.activeSessionId;
       void this.updateSessionMeta((current) => ({
         ...current,
@@ -10475,7 +10533,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       // it unusable, and handing the empty session to it there would start a
       // session against an agent that just refused to authenticate.
       const nowUsable = this.usableProviders();
-      const strandedOnUnusable = !session.hasHistory
+      const pendingFork = this.pendingAgyForkHandoff(session);
+      const strandedOnUnusable = !session.hasHistory && !pendingFork
         && !nowUsable.includes(session.provider)
         && nowUsable.includes(provider);
       // Say it worked. An empty session looks exactly like a re-check that did
@@ -10507,7 +10566,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         await this.startSession(undefined, session);
       } else if (session.provider === provider && !session.client) {
         // Retry a provider whose first real session exposed a credential error.
-        await this.startSession(session.hasHistory ? session.activeSessionId : undefined, session);
+        await this.startSession(session.hasHistory || pendingFork ? session.activeSessionId : undefined, session);
       } else {
         // Adding a second account must not restart or change a conversation
         // with history on screen. But an EMPTY one has nothing to protect,
@@ -11808,6 +11867,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     session.replayUserCounted = false;
     session.replayUserIsInterjection = false;
     session.forkPoints.load([]);
+    session.agyReplyId = undefined;
     if (!warmDeepSeekResume) session.userMessageCount = 0;
     if (!resumeId || resumeId !== session.activeSessionId) {
       session.telemetrySessionOrigin = undefined;
@@ -11998,6 +12058,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       timeouts: this.acpClientTimeouts(),
       mcpServers: (onDispose) => supportsClientMcpServers(session.provider) ? this.hostMcpServersFor(session, onDispose) : [],
       ...(agyMethod ? { initializeTimeoutMs: 4_000 } : {}),
+      ...(agyMethod && resumeId ? { agyFork: this.state.get<SessionMetaOverrides>(SESSION_META_KEY, {})[resumeId]?.agyForkHandoff !== undefined } : {}),
       ...(agyKey ? { startupAuth: { methodId: AGY_KEY_METHOD } } : {}),
       ...(session.provider === "grok"
         ? { grokVersion: grokHandshakeVersion, grokVersionVerified }
@@ -12089,7 +12150,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       this.emit(session, {
         type: "session",
         sessionId: res.sessionId,
-        models: this.modelsForSession(session, client.availableModels, client.currentModelId, !resumeId || (session.historyEventCount === 0 && session.userMessageCount === 0)),
+        models: this.modelsForSession(session, client.availableModels, client.currentModelId,
+          !resumeId || (session.historyEventCount === 0 && session.userMessageCount === 0 && !this.pendingAgyForkHandoff(session))),
         currentModelId: client.currentModelId,
         worktree: !!session.worktree,
         provider: session.provider,
@@ -12107,6 +12169,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       if (gen !== session.gen || !title.trim()) return;
       const sid = client.sessionId ?? session.activeSessionId;
       if (!sid) return;
+      if (session.provider === "agy" && (title.includes(AGY_HANDOFF_MARKER)
+        || this.state.get<SessionMetaOverrides>(SESSION_META_KEY, {})[sid]?.agyForkHandoff !== undefined)) return;
       session.agentTitle = capAutoName(title);
       void this.updateSessionMeta((current) => {
         const entry = current[sid];
@@ -12216,8 +12280,13 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       session.inUserMessage = false;
       session.historyEventCount += 1;
       const turnFork = client.supportsTurnFork();
+      const agy = session.provider === "agy";
+      if (agy && turnFork && !session.suppressContent && (session.replaying || turnIsInFlight(session))) {
+        if (text.trim()) session.agyReplyId ??= randomUUID();
+        messageId = session.agyReplyId;
+      }
       const forkPoint = turnFork && (session.replaying || turnIsInFlight(session))
-        ? session.forkPoints.reply(text.trim() ? messageId : undefined, session.replaying) : undefined;
+        ? session.forkPoints.reply(agy || text.trim() ? messageId : undefined, session.replaying, agy) : undefined;
       if (turnFork && !session.replaying && !turnIsInFlight(session)) session.forkPoints.interrupt();
       this.emit(session, {
         type: "messageChunk", text,
@@ -12234,7 +12303,17 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       // echo would render a duplicate bubble and double-count. Only the CLI's
       // session/load *replay* should drive user bubbles from here.
       if (!session.replaying) return;
-      const fork = client.supportsTurnFork() ? session.forkPoints.replayUser(messageId) : {};
+      let fork: ReturnType<Session["forkPoints"]["replayUser"]> = {};
+      if (client.supportsTurnFork()) {
+        if (session.provider === "agy") {
+          if (!session.inUserMessage) {
+            session.agyReplyId = undefined;
+            session.forkPoints.interrupt();
+            fork = { startsMessage: true };
+            if (countsAsUserBubble(text)) fork.forkBefore = this.agyEditPoint(session, isInterjectionText(text));
+          }
+        } else fork = session.forkPoints.replayUser(messageId);
+      }
       if (fork.startsMessage) session.inUserMessage = false;
       // Older extension sessions contain a hidden primer user turn. Don't count
       // it toward plan positions, but forward it so the webview's matching
@@ -12292,7 +12371,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     });
     client.on("thoughtChunk", (text: string) => {
       if (gen !== session.gen) return;
-      session.forkPoints.interrupt();
+      if (session.provider !== "agy") session.forkPoints.interrupt();
       session.inUserMessage = false;
       session.historyEventCount += 1;
       this.emit(session, { type: "thoughtChunk", text });
@@ -12315,7 +12394,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     });
     client.on("mediaContent", (m: MediaRef) => {
       if (gen !== session.gen) return;
-      session.forkPoints.interrupt();
+      if (session.provider !== "agy") session.forkPoints.interrupt();
       void this.postGeneratedMedia(m, session, gen);
     });
     client.on("taskBackgrounded", (u: any) => {
@@ -12358,7 +12437,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       this.emit(session, { type: "commandOutput", ...replayed });
     };
     const emitToolCallEvent = (type: "toolCall" | "toolCallUpdate", u: unknown) => {
-      session.forkPoints.interrupt();
+      if (session.provider !== "agy") session.forkPoints.interrupt();
       const prepared = prepareMcpToolCall(u, mcpState);
       if (prepared.action === "drop") {
         if (prepared.logLine) this.host.appendLine(prepared.logLine);
@@ -12778,6 +12857,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         // replayed messages makes this an untouched, switchable conversation.
         if (session.provider === "deepseek") await load();
         else await this.replayLoadedHistory(session, load, resumeId);
+        if (client.replayedAgyHandoff) await this.consumeAgyForkHandoff(resumeId);
         clock.record("replay(post)", clock.elapsed(replayAt));
         if (session.provider === "deepseek" && !warmDeepSeekResume) this.emit(session, { type: "planNotice", text: DEEPSEEK_COLD_REOPEN });
         session.activeSessionId = resumeId;
@@ -16230,7 +16310,9 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           } finally { await client.dispose(); }
         }
       }
-      const allRows = [...rows.values()];
+      const allRows = [...rows.values()].map(entry =>
+        overrides[entry.sessionId]?.agyForkHandoff !== undefined || entry.title?.includes(AGY_HANDOFF_MARKER)
+          ? { ...entry, title: undefined } : entry);
       for (const [key, cwd] of listable()) listed.set(key, agySessionsFor(allRows, cwd));
     } else if (provider === "deepseek" && cliPath) {
       for (const harness of ["default", "minimal"] as const) {
@@ -16561,7 +16643,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       sessionId: id,
       name,
       cwd,
-      ...(session.client?.supportsTurnFork?.() ? { turnForkSupported: true } : {}),
+      ...(session.provider === "agy" || session.client?.supportsTurnFork?.() ? { turnForkSupported: true } : {}),
       ...(owner && !pathsEqual(owner, cwd) ? { repoCwd: owner } : {}),
     };
     if (session === this.focused) this.postLocal(message);
@@ -19456,8 +19538,21 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       if (!queuedSendCommit) this.divertRacingSend(session, text, bare, this.composerChipsForSend(session, requestedChips));
       return;
     }
-    const client = session.client ?? await this.ensureClient(session, session.provider === "agy" && origin === "remote"
-      ? this.remoteClients.clientsForActiveValue(session)[0] : undefined);
+    const priorClient = session.client;
+    const agyRemoteClientId = session.provider === "agy" && origin === "remote" && (!priorClient || priorClient.agyHandoffDispatched)
+      ? this.remoteClients.clientsForActiveValue(session)[0] : undefined;
+    if (priorClient?.agyHandoffDispatched && this.pendingAgyForkHandoff(session)) {
+      // A lost reply or cancel leaves delivery uncertain. Reload through the
+      // normal session path before retrying, so a persisted handoff wins.
+      await this.startSession(session.activeSessionId, session, "replace", undefined, {
+        agyRemoteClientId, canReplace: () => session.client === priorClient,
+      });
+      if (!session.client || session.client === priorClient) {
+        onPreflightFailure?.();
+        return;
+      }
+    }
+    const client = session.client ?? await this.ensureClient(session, agyRemoteClientId);
     if (!client) {
       if (session.provider === "agy") onPreflightFailure?.();
       return;
@@ -19636,7 +19731,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     const sentChips = chips.filter((c) => !c.hidden);
     session.userMessageCount += 1;
     session.inUserMessage = false; // live send isn't part of the streamed-chunk count path
-    const forkBefore = session.forkPoints.startPrompt();
+    const forkBefore = session.provider === "agy" ? this.agyEditPoint(session) : session.forkPoints.startPrompt();
     this.emit(session, { type: "userMessage", text, chips: sentChips, submissionId, ...(forkBefore ? { forkBefore } : {}) });
     this.emit(session, { type: "agentStart" });
     // The token, not the status, is what says a turn is running from here on —
@@ -19665,7 +19760,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         }
       }
       const meta = session.provider === "agy"
-        ? await client.prompt(promptBlocks, contributions?.map(item => item.text) ?? [text], pastedText)
+        ? await this.promptAgy(session, client, promptBlocks, contributions?.map(item => item.text) ?? [text], pastedText)
         : pastedText
         ? await client.prompt(promptBlocks, session.provider === "deepseek" ? contributions?.map(item => item.text) ?? [text] : undefined, pastedText)
         : session.provider === "deepseek"
@@ -19871,7 +19966,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     session.adapterTurnCallUsed = [];
     try {
       const meta = session.provider === "agy"
-        ? await client.prompt(promptBlocks, [displayText], pastedText)
+        ? await this.promptAgy(session, client, promptBlocks, [displayText], pastedText)
         : pastedText ? await client.prompt(promptBlocks, undefined, pastedText) : await client.prompt(promptBlocks);
       if (gen !== session.gen) {
         this.emitAbandonedSend(session);
@@ -21062,6 +21157,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
    * focused one, so this is behaviorally identical to `post`.)
    */
   private emit(session: Session, message: HostMsg): void {
+    if (session.provider === "agy" && message.type === "agentStart") {
+      session.agyReplyId = undefined;
+      session.forkPoints.interrupt();
+    }
     if (message.type === "contextUsage") {
       const autoCompact = session.client?.autoCompactThreshold?.(message.window, message.autoCompactThresholdPercent);
       if (autoCompact !== undefined) message = { ...message, autoCompact };
@@ -21208,6 +21307,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   private sessionIsReusableEmpty(session: Session): boolean {
     return !!session.activeSessionId
       && !session.hasHistory
+      && !this.pendingAgyForkHandoff(session)
       && !session.worktree
       && session.chips.length === 0
       && !session.priming
@@ -24384,7 +24484,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         sessionId: session.activeSessionId,
         name: this.sessionDisplayName(session),
         cwd: sessionCwd,
-        ...(session.client?.supportsTurnFork?.() ? { turnForkSupported: true } : {}),
+        ...(session.provider === "agy" || session.client?.supportsTurnFork?.() ? { turnForkSupported: true } : {}),
       });
     }
     // Pins belong in the snapshot, not behind a `ready` handler: `ready` from a

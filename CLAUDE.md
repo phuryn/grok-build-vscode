@@ -39,7 +39,7 @@ Grok session context-window choices use `AcpClient.contextWindowSelection` and t
 
 Thinking traces have a bottom **Show Less** button that collapses and focuses the header without following new output. `GrokHookCalls` maps Stop, StopFailure and SubagentStop notifications onto tool rows, including running state and failure diagnostics; child hooks stay in their child stream. See [thinking and hook display](research/thinking-and-hook-display.md).
 
-Claude, Codex and Muse use advertised ACP `session/fork` for Continue in a new chat and reply-based forks. `ForkPoints` matches settled reply IDs on history replay. See [Fork and fork points](docs/architecture.md#subsystem-notes).
+Claude, Codex and Muse use advertised ACP `session/fork` for Continue in a new chat and reply-based forks. `ForkPoints` matches their settled reply IDs on history replay. Antigravity uses the same controls with host-generated points and a private text handoff on the new chat's first send. See [Fork and fork points](docs/architecture.md#subsystem-notes) and [Antigravity fork limits](research/antigravity-acp.md#conversation-forks).
 
 ## Where the detail lives
 

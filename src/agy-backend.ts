@@ -666,6 +666,8 @@ export class AgyBackend implements AcpBackend<"agy"> {
     return agySessionParams(cwd);
   }
 
+  readonly emptyForkParams = agySessionParams;
+
   subscriptionCredentialContext(): string | undefined {
     return this.printUsageAvailable && this.options.usageMeter ? "agy:cli" : undefined;
   }
