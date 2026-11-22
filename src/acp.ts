@@ -126,7 +126,9 @@ export interface AcpClientOptions {
    * or loaded. For agents whose shared settings file another client can
    * rewrite, so each process states its method itself.
    */
-  startupAuth?: { methodId: string; meta?: Record<string, unknown> };
+  startupAuth?: { methodId: string };
+  /** Redact the saved credential if the agent sends it back. */
+  redactInbound?: (text: string) => string;
   /**
    * Host-owned MCP servers for `session/new` and `session/load`. A getter is
    * read at request time so a Connect that lands after construct still applies.
@@ -266,10 +268,6 @@ export const ACP_SERVER_EXECUTED_CAPABILITIES: AcpClientCapabilities = {
   fs: { readTextFile: false, writeTextFile: false },
   terminal: false,
 };
-
-/** Teardown budget for a backend with `stopProcess`; it is only reached by a
- *  process that would not stop, and then the usual tree kill follows. */
-export const STOP_PROCESS_BUDGET_MS = 10_000;
 
 /** Handshake every provider used before grok 1.0 — client-delegated fs. */
 export const ACP_DELEGATED_FS_CAPABILITIES: AcpClientCapabilities = {
@@ -572,7 +570,8 @@ export class AcpClient extends EventEmitter {
     });
 
     this.proc.stderr.on("data", (d) => {
-      const text = d.toString();
+      const raw = d.toString();
+      const text = this.opts.redactInbound?.(raw) ?? raw;
       this.opts.log(`[stderr] ${text}`);
       this.emit("stderr", text);
     });
@@ -615,7 +614,7 @@ export class AcpClient extends EventEmitter {
     this.forkAdvertised = advertisedFork(init);
     this.emit("initialized", init);
     const auth = this.opts.startupAuth;
-    if (auth) await this.authenticate(auth.methodId, this.timeouts.requestTimeoutMs, auth.meta);
+    if (auth) await this.authenticate(auth.methodId, this.timeouts.requestTimeoutMs);
   }
 
   private async mcpServersForSession(): Promise<AcpMcpStdioServer[]> {
@@ -708,7 +707,7 @@ export class AcpClient extends EventEmitter {
     this.readNativeApprovalMode(res);
     this.emit("session", res);
 
-    const wantedModel = modelId || this.backend.defaultModelId?.(this.availableModels.map((m) => m.modelId));
+    const wantedModel = modelId;
     if (wantedModel && wantedModel !== this.currentModelId) {
       try {
         await this.setModel(wantedModel);
@@ -903,7 +902,7 @@ export class AcpClient extends EventEmitter {
     if (!level) return false; // "" = unset → cannot be expressed as an override
     const call = this.backend.setReasoningEffort(this.sessionId, this.currentModelId, level);
     if (!call) return false;
-    const res = "local" in call ? {} : await this.request(call.method, call.params);
+    const res = await this.request(call.method, call.params);
     const accepted = this.backend.modelSetSucceeded(res);
     if (accepted && this.provider !== "grok") {
       const state = this.backend.configState(res, {
@@ -1106,8 +1105,8 @@ export class AcpClient extends EventEmitter {
 
   /** ACP `authenticate`. Interactive methods wait on a person, so the caller
    *  sets the wait rather than the ordinary request cap. */
-  authenticate(methodId: string, timeoutMs: number, meta?: Record<string, unknown>): Promise<any> {
-    return this.request("authenticate", { methodId, ...(meta ? { _meta: meta } : {}) }, undefined, timeoutMs);
+  authenticate(methodId: string, timeoutMs: number): Promise<any> {
+    return this.request("authenticate", { methodId }, undefined, timeoutMs);
   }
 
   /** ACP `logout`: the agent clears its own stored credentials. */
@@ -1396,11 +1395,11 @@ export class AcpClient extends EventEmitter {
   private billingErrorLogged = false;
 
   subscriptionCredentialContext(): string | undefined {
-    return this.backend.subscriptionCredentialContext?.(this.opts.startupAuth?.methodId);
+    return this.backend.subscriptionCredentialContext?.();
   }
 
   async getSubscriptionUsage(): Promise<SubscriptionWindow[]> {
-    if (this.backend.readSubscriptionUsage) return this.backend.readSubscriptionUsage(this.opts.startupAuth?.methodId);
+    if (this.backend.readSubscriptionUsage) return this.backend.readSubscriptionUsage();
     if (this.provider !== "grok" || this.billingUnsupported) return [];
     try {
       const raw = await this.request("_x.ai/billing", {});
@@ -1570,9 +1569,6 @@ export class AcpClient extends EventEmitter {
       return Promise.resolve();
     }
     if (this.provider !== "grok") {
-      // A backend that can be asked to exit cleanly gets the time to do it.
-      const stop = this.backend.stopProcess;
-      const budget = stop ? Math.max(timeoutMs, STOP_PROCESS_BUDGET_MS) : timeoutMs;
       return new Promise<void>((resolve) => {
         let done = false;
         const finish = () => {
@@ -1593,13 +1589,9 @@ export class AcpClient extends EventEmitter {
             try { proc.kill(); } catch { /* already gone */ }
           }
         };
-        const timer = setTimeout(() => { abruptKill(); finish(); }, budget);
+        const timer = setTimeout(() => { abruptKill(); finish(); }, timeoutMs);
         proc.once("exit", finish);
         try { proc.stdin.end(); } catch { abruptKill(); }
-        if (stop && proc.pid !== undefined) {
-          stop.call(this.backend, proc.pid, this.opts.cliPath).catch((error) =>
-            this.opts.log(`[acp] ${this.backend.processName} clean stop failed: ${(error as Error).message}`));
-        }
       });
     }
     return new Promise<void>((resolve) => {
@@ -1741,7 +1733,7 @@ export class AcpClient extends EventEmitter {
   }
 
   private onLine(line: string): void {
-    const ev = parseAcpLine(line);
+    const ev = parseAcpLine(this.opts.redactInbound?.(line) ?? line);
     if (!ev) return;
     if (ev.kind === "non-json") {
       this.opts.log(`[non-json] ${ev.line.slice(0, 200)}`);

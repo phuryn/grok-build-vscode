@@ -5,7 +5,6 @@ import {
   AgyToolCallMerger,
   AgyToolCallShapes,
   agyGeminiHome,
-  agyServerArgs,
   agySessionParams,
   agyThinkingLevel,
   agyWorkingFolderPrompt,
@@ -15,7 +14,6 @@ import {
   modelsFromAgyConfigOptions,
   normalizeAgySessionResponse,
   normalizeAgyUpdate,
-  stopAgyServerTree,
 } from "../src/agy-backend";
 import { AcpClient, acpClientCapabilities } from "../src/acp";
 import { pickAutoAcceptOption } from "../src/session";
@@ -24,58 +22,12 @@ import { sessionModes } from "../src/mode-prefs";
 // Measured from agy_acp_server 1.4.0 `session/new` (research/antigravity-acp.md).
 const configOptions = [
   { currentValue: "gemini-3.8-flash", options: [{ value: "gemini-3.8-flash", name: "Gemini 3.8 Flash" }], id: "model", name: "Model", category: "model", type: "select" },
-  { currentValue: "high", options: [{ value: "low", name: "Low" }, { value: "medium", name: "Medium" }, { value: "high", name: "High" }], id: "thinking_level", name: "Thinking Level", category: "thought_level", type: "select" },
+  { currentValue: "high", options: [{ value: "low", name: "Low" }, { value: "medium", name: "Medium" }, { value: "high", name: "High" }], id: "thought_level", name: "Thinking Level", category: "thought_level", type: "select" },
   { currentValue: "default", options: [{ value: "default", name: "Default" }], id: "mode", name: "Session Mode", category: "mode", type: "select" },
 ];
 
 describe("Antigravity models and effort", () => {
-  it("applies the default and live key effort through AcpClient without an ACP thinking_level RPC, including after resume", async () => {
-    let level: "low" | "medium" | "high" = "high";
-    const backend = new AgyBackend({ keyRelay: {
-      baseUrl: "http://127.0.0.1/relay/lease", release: () => {}, supportsThinking: () => true,
-      get thinkingLevel() { return level; }, setThinkingLevel: (value) => { level = value; },
-    } });
-    const client = new AcpClient({ backend, cliPath: "unused", cwd: "/repo", env: {}, effort: "low", log: () => {} });
-    const rpc = vi.spyOn(client as any, "request").mockResolvedValue({ sessionId: "s", configOptions: [{ id: "model", currentValue: "gemini-4-argon", options: [{ value: "gemini-4-argon" }] }] });
-    await client.newSession();
-    expect(level).toBe("low");
-    expect(client.currentReasoningEffort).toBe("low");
-    const before = rpc.mock.calls.length;
-    await expect(client.setReasoningEffort("xhigh")).resolves.toBe(true);
-    expect(rpc.mock.calls).toHaveLength(before);
-    expect(level).toBe("high");
-    expect(client.currentReasoningEffort).toBe("high");
-    await client.loadSession("s");
-    expect(client.currentReasoningEffort).toBe("high");
-    await expect(client.setReasoningEffort("medium")).resolves.toBe(true);
-    expect(level).toBe("medium");
-    expect(rpc.mock.calls.some(([, params]) => (params as any)?.configId === "thinking_level")).toBe(false);
-  });
-
-  it("offers exactly Low/Medium/High from relay thinking metadata and applies key effort locally", () => {
-    let level: "low" | "medium" | "high" = "low";
-    const backend = new AgyBackend({ keyRelay: {
-      baseUrl: "http://127.0.0.1/relay/lease", release: () => {},
-      supportsThinking: (id) => id === "gemini-4-carbon",
-      get thinkingLevel() { return level; },
-      setThinkingLevel: (value) => { level = value; },
-    } });
-    const response = { configOptions: [{ id: "model", currentValue: "gemini-4-carbon", options: ["gemini-4-carbon", "gemini-3.8-flash"].map((value) => ({ value })) }] };
-    const [thinking, plain] = backend.normalizeSessionResponse(response).models.availableModels;
-    expect(thinking._meta).toMatchObject({ supportsReasoningEffort: true, reasoningEfforts: [{ value: "low" }, { value: "medium" }, { value: "high" }], reasoningEffort: "low" });
-    expect(plain._meta).toMatchObject({ supportsReasoningEffort: false, reasoningEfforts: [] });
-    for (const [requested, expected] of [["none", "low"], ["minimal", "low"], ["medium", "medium"], ["high", "high"], ["xhigh", "high"]]) {
-      expect(backend.setReasoningEffort("s", "gemini-4-carbon", requested)).toEqual({ local: true });
-      expect(level).toBe(expected);
-      expect(backend.configState({}, { modelId: "gemini-4-carbon", modeId: "agent", reasoningEffort: requested }).reasoningEffort).toBe(expected);
-    }
-    expect(backend.setReasoningEffort("s", "gemini-3.8-flash", "low")).toBeNull();
-    expect(backend.setReasoningEffort("s", "gemini-4-carbon", "max")).toBeNull();
-    expect(level).toBe("high");
-    expect(backend.configState({}, { modelId: "gemini-3.8-flash", modeId: "agent" }).reasoningEffort).toBeUndefined();
-  });
-
-  it("shows one model with thinking_level as its effort ladder", () => {
+  it("shows one model with thought_level as its effort ladder", () => {
     expect(modelsFromAgyConfigOptions(configOptions)).toEqual({
       currentModelId: "gemini-3.8-flash",
       availableModels: [{
@@ -87,7 +39,7 @@ describe("Antigravity models and effort", () => {
     });
   });
 
-  it("replaces the server's three per-level models in the session response", () => {
+  it("replaces the CLI's three per-level models in the session response", () => {
     const response = {
       sessionId: "s",
       configOptions,
@@ -101,15 +53,15 @@ describe("Antigravity models and effort", () => {
 
   it.each([
     ["none", "low"], ["minimal", "low"], ["low", "low"], ["medium", "medium"], ["high", "high"], ["xhigh", "high"], ["", undefined], ["max", undefined],
-  ])("maps effort %s to thinking_level %s", (level, expected) => {
+  ])("maps effort %s to thought_level %s", (level, expected) => {
     expect(agyThinkingLevel(level)).toBe(expected);
     const call = new AgyBackend().setReasoningEffort("s", "gemini-3.8-flash", level);
-    expect(call).toEqual(expected ? { method: "session/set_config_option", params: { sessionId: "s", configId: "thinking_level", value: expected } } : null);
+    expect(call).toEqual(expected ? { method: "session/set_config_option", params: { sessionId: "s", configId: "thought_level", value: expected } } : null);
   });
 
   // API-key mode lists the server's hardcoded catalog (model_selection.py
   // DEFAULT_MODEL_LIST): several families, and Gemini 3.1 Pro has only high
-  // and low. `thinking_level` lists only the CURRENT family's levels, so each
+  // and low. `thought_level` lists only the CURRENT family's levels, so each
   // family's ladder comes from its own listed variants.
   it("gives each family of the key catalog its own row and its own levels", () => {
     const families: [string, string, string[]][] = [
@@ -121,7 +73,7 @@ describe("Antigravity models and effort", () => {
       sessionId: "s",
       configOptions: [
         { currentValue: "gemini-3.8-flash", options: families.map(([value, name]) => ({ value, name })), id: "model", category: "model", type: "select" },
-        { currentValue: "medium", options: ["low", "medium", "high"].map((value) => ({ value, name: value })), id: "thinking_level", category: "thought_level", type: "select" },
+        { currentValue: "medium", options: ["low", "medium", "high"].map((value) => ({ value, name: value })), id: "thought_level", category: "thought_level", type: "select" },
       ],
       models: {
         currentModelId: "gemini-3.8-flash-medium",
@@ -138,45 +90,21 @@ describe("Antigravity models and effort", () => {
   });
 
   it("reads model and level back from configOptions, keeping the host's mode", () => {
-    const low = configOptions.map((o) => o.id === "thinking_level" ? { ...o, currentValue: "low" } : o);
+    const low = configOptions.map((o) => o.id === "thought_level" ? { ...o, currentValue: "low" } : o);
     expect(configStateFromAgyOptions({ configOptions: low }, { modelId: "x", reasoningEffort: "high", modeId: "yolo" }))
       .toEqual({ modelId: "gemini-3.8-flash", reasoningEffort: "low", modeId: "yolo" });
     expect(configStateFromAgyOptions({}, { modelId: "x", reasoningEffort: "high", modeId: "agent" }))
       .toEqual({ modelId: "x", reasoningEffort: "high", modeId: "agent" });
   });
 
-  it("offers Agent and Auto accept, never Plan, and Auto accept never sends a saved grant", () => {
-    expect(sessionModes("agy")).toEqual(["agent", "yolo"]);
-    expect(sessionModes("agy", false, true)).toEqual(["agent", "acceptEdits", "yolo"]);
-    expect(() => new AgyBackend().setMode("s", "plan")).toThrow(/Plan/);
-    expect(() => new AgyBackend().setMode("s", "acceptEdits")).toThrow(/Accept edits/);
-    expect(new AgyBackend().setMode("s", "yolo")).toEqual({ method: "session/set_mode", params: { sessionId: "s", modeId: "yolo" } });
-    const options = [
-      { optionId: "allow_always", name: "Allow Always (risky)", kind: "allow_always" },
-      { optionId: "allow", name: "Allow", kind: "allow_once" },
-      { optionId: "deny", name: "Deny", kind: "reject_once" },
-    ];
-    expect(pickAutoAcceptOption(options, "agy")?.optionId).toBe("allow");
-  });
 });
 
 describe("Antigravity session setup", () => {
-  it("puts the project folder in the server's system-prompt append", () => {
+  it("puts the project folder in the CLI's system-prompt append", () => {
     const cwd = path.join("C:", "Users", "me", "project");
     expect(agySessionParams(cwd)).toEqual({ _meta: { antigravity: { systemPrompt: { append: agyWorkingFolderPrompt(cwd) } } } });
     expect(agyWorkingFolderPrompt(cwd)).toContain(`The project folder for this session is ${cwd}.`);
     expect(new AgyBackend().sessionParams(cwd)).toEqual(agySessionParams(cwd));
-  });
-
-  it("spawns the server directly, with --uid= on Linux only", () => {
-    expect(agyServerArgs("linux")).toEqual(["--uid="]);
-    expect(agyServerArgs("win32")).toEqual([]);
-    expect(agyServerArgs("darwin")).toEqual([]);
-    const spec = new AgyBackend({ platform: "linux" }).spawn({ cliPath: "/opt/agy/agy_acp_server.par", cwd: "/repo", env: { A: "1" } });
-    expect(spec).toEqual({ command: "/opt/agy/agy_acp_server.par", args: ["--uid="], env: { A: "1" }, shell: false });
-    const script = new AgyBackend({ platform: "win32" }).spawn({ cliPath: "C:\\fake\\server.cjs", cwd: "C:\\repo", env: {} });
-    expect(script.command).toBe(process.execPath);
-    expect(script.args).toEqual(["C:\\fake\\server.cjs"]);
   });
 
   it("advertises no client fs or terminal, so the server runs its own tools", () => {
@@ -256,11 +184,11 @@ describe("Antigravity updates", () => {
     ]);
   });
 
-  it("hides /logout and /plan, keeps /usage, and ignores server mode changes", () => {
+  it("hides /logout, keeps native commands, and ignores unknown mode changes", () => {
     const merger = new AgyToolCallMerger();
     const commands = normalizeAgyUpdate({ sessionUpdate: "available_commands_update", availableCommands: [
       { name: "plan" }, { name: "logout" }, { name: "usage" }] }, undefined, merger);
-    expect(commands.update.availableCommands).toEqual([{ name: "usage" }]);
+    expect(commands.update.availableCommands).toEqual([{ name: "plan" }, { name: "usage" }]);
     expect(normalizeAgyUpdate({ sessionUpdate: "current_mode_update", currentModeId: "yolo" }, undefined, merger).update).toBeUndefined();
   });
 
@@ -308,28 +236,4 @@ describe("Antigravity history", () => {
     ]);
   });
 
-  it("is empty when nothing has been stored yet, and never asks the server", async () => {
-    expect(listAgySessions("/repo", "linux", { env: {}, home: "/nowhere", fs: fakeFs })).toEqual([]);
-    const request = vi.fn();
-    const result = await new AgyBackend({ env: {}, home: "/home/me", fs: fakeFs }).listSessions(request, "C:\\Users\\me\\proj", "win32");
-    expect(result.sessions.map((entry) => entry.sessionId)).toEqual(["a", "b"]);
-    expect(request).not.toHaveBeenCalled();
-  });
-});
-
-describe("stopping the Windows server", () => {
-  it("kills only the bootloader's same-named children, as trees, so the bootloader cleans up", async () => {
-    const run = vi.fn(async (command: string) => command === "powershell.exe" ? "4242\r\n4343\r\n" : "");
-    await stopAgyServerTree(1000, "C:\\Users\\me\\agy\\agy_acp_server.exe", run);
-    expect(run.mock.calls[0][0]).toBe("powershell.exe");
-    expect(run.mock.calls[0][1].at(-1)).toContain("ParentProcessId=1000 AND Name='agy_acp_server.exe'");
-    expect(run.mock.calls.slice(1)).toEqual([["taskkill", ["/PID", "4242", "/T", "/F"]], ["taskkill", ["/PID", "4343", "/T", "/F"]]]);
-  });
-
-  it("does nothing off Windows or for a script server", async () => {
-    const run = vi.fn(async () => "");
-    await new AgyBackend({ platform: "linux", run }).stopProcess(1, "/opt/agy_acp_server.par");
-    await new AgyBackend({ platform: "win32", run }).stopProcess(1, "C:\\fake\\server.cjs");
-    expect(run).not.toHaveBeenCalled();
-  });
 });

@@ -3,12 +3,11 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AcpClient, type PermissionRequest } from "../src/acp";
-import { AgyBackend, agyHistoryProgram, agyProgramCandidates, agySessionsFor, listAgyCatalog, locateAgyCli } from "../src/agy-backend";
+import { AgyBackend, agyProfile, agySessionsFor, locateAgyCli } from "../src/agy-backend";
 import { matchProviderSlashCommand } from "../src/slash-filter";
 import { planTextFromPermissionToolCall } from "../src/plan-gate";
 
 const CLI = path.join(__dirname, "fixtures", "fake-agy-cli.cjs");
-const SERVER = path.join(__dirname, "fixtures", "fake-agy-acp.cjs");
 
 describe("Antigravity CLI (real ACP transport)", () => {
   const clients: AcpClient[] = [];
@@ -18,10 +17,9 @@ describe("Antigravity CLI (real ACP transport)", () => {
   let sink: string;
   const received = () => fs.readFileSync(sink, "utf8").trim().split(/\r?\n/).filter(Boolean).map(line => JSON.parse(line));
 
-  const client = (program: "cli" | "server", cliPath = program === "cli" ? CLI : SERVER, extra: NodeJS.ProcessEnv = {}) => {
-    const made = new AcpClient({ cliPath, cwd, backend: new AgyBackend({ program }), log: () => {},
-      ...(program === "server" ? { startupAuth: { methodId: "oauth-personal" } } : {}),
-      env: { ...env, ...extra }, timeouts: { requestTimeoutMs: 2000 } });
+  const client = (profile: "cli" | "server") => {
+    const made = new AcpClient({ cliPath: CLI, cwd, backend: new AgyBackend({ profile }), log: () => {},
+      env, timeouts: { requestTimeoutMs: 2000 } });
     clients.push(made);
     return made;
   };
@@ -34,7 +32,7 @@ describe("Antigravity CLI (real ACP transport)", () => {
     fs.mkdirSync(path.join(home, "antigravity-acp"));
     fs.writeFileSync(path.join(home, "antigravity-acp", "acp_token.json"), "{}");
     fs.writeFileSync(sink, "");
-    env = { ...process.env, GEMINI_HOME: home, FAKE_AGY_CLI_SINK: sink, FAKE_AGY_152: "1" };
+    env = { ...process.env, GEMINI_HOME: home, FAKE_AGY_CLI_SINK: sink };
   });
 
   afterEach(async () => {
@@ -42,15 +40,10 @@ describe("Antigravity CLI (real ACP transport)", () => {
     fs.rmSync(home, { recursive: true, force: true });
   });
 
-  it("finds the Windows installer and orders fresh sessions without migrating history", () => {
+  it("finds the Windows installer without using a shell", () => {
     const installed = "C:\\Local\\agy\\bin\\agy.exe";
     expect(locateAgyCli({ LOCALAPPDATA: "C:\\Local", PATH: "C:\\Tools" }, "win32", "C:\\Home", file => file === installed)).toBe(installed);
     expect(locateAgyCli({ PATH: "/tools" }, "linux", "/home/test", () => false)).toBeUndefined();
-    expect(agyProgramCandidates(CLI, SERVER).map(row => row.program)).toEqual(["cli", "server"]);
-    expect(agyProgramCandidates(undefined, SERVER).map(row => row.program)).toEqual(["server"]);
-    expect(agyProgramCandidates(undefined, SERVER, "cli")).toEqual([]);
-    expect(agyProgramCandidates(CLI, SERVER, "server").map(row => row.program)).toEqual(["server"]);
-    expect(agyProgramCandidates(CLI, SERVER, undefined, true).map(row => row.program)).toEqual(["server"]);
   });
 
   it("publishes CLI modes and commands and applies thought_level using the vendor IDs", async () => {
@@ -113,7 +106,7 @@ describe("Antigravity CLI (real ACP transport)", () => {
     expect(chunks).toHaveBeenLastCalledWith("final output", undefined, undefined);
   });
 
-  it("lists and reopens history through the program that created it", async () => {
+  it("chooses the profile for key, Google, saved legacy metadata and both histories", async () => {
     const native = client("cli");
     const managed = client("server");
     await Promise.all([native.start(), managed.start()]);
@@ -122,12 +115,21 @@ describe("Antigravity CLI (real ACP transport)", () => {
     await native.dispose();
     const reopened = client("cli");
     await reopened.start();
-    const rows = [...listAgyCatalog(process.platform, { env }), ...(await reopened.listSessions("")).sessions];
+    const legacy = client("server");
+    await legacy.start();
+    const rows = [...(await legacy.listSessions("")).sessions, ...(await reopened.listSessions("")).sessions];
     expect(agySessionsFor(rows, cwd).map(row => row.sessionId)).toEqual([m.sessionId, n.sessionId]);
-    expect(agyHistoryProgram(n.sessionId, env)).toBe("cli");
-    expect(agyHistoryProgram(m.sessionId, env)).toBe("server");
+    expect(agyProfile(undefined, undefined, false, env)).toBe("cli");
+    expect(agyProfile(undefined, undefined, true, env)).toBe("server");
+    expect(agyProfile("old-no-disk", "server", false, env)).toBe("server");
+    expect(agyProfile(n.sessionId, undefined, true, env)).toBe("cli");
+    expect(agyProfile(m.sessionId, undefined, false, env)).toBe("server");
+    const replay = vi.fn();
+    legacy.on("messageChunk", replay);
+    await legacy.loadSession(m.sessionId);
+    expect(replay).toHaveBeenCalledWith("previous conversation", undefined, undefined);
     await reopened.loadSession(n.sessionId);
     expect(reopened.currentModeId).toBe("acceptEdits");
-    expect(received().filter(r => r.method === "session/list").map(r => r.params)).toEqual([{}, { cursor: "next" }]);
+    expect(received().filter(r => r.method === "session/list").map(r => r.params)).toEqual([{}, { cursor: "next" }, {}, { cursor: "next" }]);
   });
 });

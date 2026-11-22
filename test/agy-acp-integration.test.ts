@@ -1,13 +1,10 @@
 import * as fs from "node:fs";
-import * as http from "node:http";
-import type { AddressInfo } from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AcpClient, type PermissionRequest } from "../src/acp";
 import { AgyBackend, agyWorkingFolderPrompt } from "../src/agy-backend";
-import { agyGatewayAuth, agyGatewayEnv, agyGoogleAuth, agyGoogleSignInPresent, runAgySignIn } from "../src/agy-auth";
-import { AgyKeyRelay, type AgyRelayLease } from "../src/agy-key-relay";
+import { AGY_KEY_METHOD, agyCredentialEnv, agyGoogleSignInPresent, runAgySignIn, startAgyGoogleChat } from "../src/agy-auth";
 
 const FAKE = path.join(__dirname, "fixtures", "fake-agy-acp.cjs");
 
@@ -18,18 +15,17 @@ function signIn(home: string): void {
   fs.writeFileSync(path.join(acp, "acp_token.json"), "{}");
 }
 
-describe("Antigravity over ACP (real subprocess, fake server)", () => {
+describe("Antigravity over ACP (real subprocess, fake CLI)", () => {
   let home: string;
   let cwd: string;
   let sink: string;
   const clients: AcpClient[] = [];
 
-  function client(extraEnv: NodeJS.ProcessEnv = {}, startupAuth?: { methodId: string; meta?: Record<string, unknown> }, keyMode = false, keyRelay?: AgyRelayLease, effort?: "low" | "high" | "xhigh"): AcpClient {
+  function client(extraEnv: NodeJS.ProcessEnv = {}, startupAuth?: { methodId: string; meta?: Record<string, unknown> }): AcpClient {
     const made = new AcpClient({
       cliPath: FAKE,
       cwd,
-      backend: new AgyBackend({ env: { GEMINI_HOME: home }, keyMode, keyRelay }),
-      effort,
+      backend: new AgyBackend({ profile: "server" }),
       env: { ...process.env, GEMINI_HOME: home, FAKE_AGY_SINK: sink, ...extraEnv },
       log: () => {},
       ...(startupAuth ? { startupAuth } : {}),
@@ -53,7 +49,7 @@ describe("Antigravity over ACP (real subprocess, fake server)", () => {
     fs.rmSync(cwd, { recursive: true, force: true });
   });
 
-  it("opens a session with the working-folder append, one model, and effort as thinking_level", async () => {
+  it("opens a session with the working-folder append, one model, and effort as thought_level", async () => {
     signIn(home);
     const agy = client();
     await agy.start();
@@ -75,7 +71,7 @@ describe("Antigravity over ACP (real subprocess, fake server)", () => {
     signIn(home);
     const agy = new AcpClient({
       cliPath: FAKE, cwd, effort: "medium",
-      backend: new AgyBackend({ env: { GEMINI_HOME: home } }),
+      backend: new AgyBackend({ profile: "server" }),
       env: { ...process.env, GEMINI_HOME: home, FAKE_AGY_SINK: sink },
       log: () => {},
     });
@@ -85,14 +81,14 @@ describe("Antigravity over ACP (real subprocess, fake server)", () => {
     expect(agy.currentReasoningEffort).toBe("medium");
   });
 
-  it("uses advertised 1.5.2 models, exact extra-high effort, and native approval modes across reopen", async () => {
+  it("uses advertised models, exact extra-high effort, and native approval modes across reopen", async () => {
     signIn(home);
-    const agy = client({ FAKE_AGY_152: "1" }, agyGoogleAuth());
+    const agy = client({ FAKE_AGY_EXTENDED_CATALOG: "1" }, { methodId: "oauth-personal" });
     await agy.start();
     const { sessionId } = await agy.newSession();
     expect(received().find(entry => entry.method === "initialize").params).not.toHaveProperty("clientInfo");
     expect(agy.nativeApprovalModes).toBe(true);
-    expect(agy.supportsInterject()).toBe(false);
+    expect(agy.supportsInterject()).toBe(true);
     expect(agy.currentModeId).toBe("agent");
     expect(agy.availableModels.map(model => [model.modelId, model.reasoningEfforts])).toEqual([
       ["gemini-4-neon", ["low", "medium", "high", "xhigh"]],
@@ -104,16 +100,16 @@ describe("Antigravity over ACP (real subprocess, fake server)", () => {
     await agy.setModel("gemini-4-neon");
     await expect(agy.setReasoningEffort("xhigh")).resolves.toBe(true);
     expect(agy.currentReasoningEffort).toBe("xhigh");
-    for (const mode of ["yolo", "agent", "acceptEdits"]) {
+    for (const mode of ["plan", "agent", "acceptEdits"]) {
       await agy.setMode(mode);
       expect(agy.currentModeId).toBe(mode);
     }
     expect(received().filter(entry => entry.method === "session/set_config_option")
       .map(entry => [entry.params.configId, entry.params.value])).toEqual([
-      ["model", "gemini-4-neon"], ["thinking_level", "xhigh"], ["mode", "yolo"], ["mode", "default"], ["mode", "auto_edit"],
+      ["model", "gemini-4-neon"], ["thought_level", "xhigh"], ["mode", "plan"], ["mode", "default"], ["mode", "accept-edits"],
     ]);
     await agy.dispose();
-    const reopened = client({ FAKE_AGY_152: "1" }, agyGoogleAuth());
+    const reopened = client({ FAKE_AGY_EXTENDED_CATALOG: "1" }, { methodId: "oauth-personal" });
     await reopened.start();
     await reopened.loadSession(sessionId);
     expect(reopened.currentModeId).toBe("acceptEdits");
@@ -121,16 +117,16 @@ describe("Antigravity over ACP (real subprocess, fake server)", () => {
 
   it("merges skills with native commands and rewrites only authored skill picks on the wire", async () => {
     signIn(home);
-    for (const name of ["review", "usage", "native-check", "plan", "logout"]) {
+    for (const name of ["review", "compact", "native-check", "plan", "logout"]) {
       const folder = path.join(cwd, ".agents", "skills", name);
       fs.mkdirSync(folder, { recursive: true });
       fs.writeFileSync(path.join(folder, "SKILL.md"), `---\nname: ${name}\ndescription: A project skill\n---\n`);
     }
-    const agy = client({ FAKE_AGY_152: "1" }, agyGoogleAuth());
+    const agy = client({ FAKE_AGY_EXTENDED_CATALOG: "1" }, { methodId: "oauth-personal" });
     await agy.start();
     await agy.newSession();
-    await vi.waitFor(() => expect(agy.availableCommands.map(command => command.name)).toEqual(["usage", "native-check", "review"]));
-    expect(agy.availableCommands[1]).toEqual({ name: "native-check", description: "Native command for the collision test" });
+    await vi.waitFor(() => expect(agy.availableCommands.map(command => command.name)).toEqual(["plan", "compact", "native-check", "review"]));
+    expect(agy.availableCommands[2]).toEqual({ name: "native-check", description: "Native command for the collision test" });
     const blocks = [{ type: "text", text: "Attached context /review \n\nPlease /review these notes" }] as const;
     await agy.prompt([...blocks], ["Please /review these notes"]);
     expect(received().find(entry => entry.method === "session/prompt").params.prompt).toEqual([
@@ -165,13 +161,13 @@ describe("Antigravity over ACP (real subprocess, fake server)", () => {
     ]);
   });
 
-  it("hides /logout and /plan from the command list", async () => {
+  it("hides /logout and keeps /plan in the command list", async () => {
     signIn(home);
     const agy = client();
     await agy.start();
     await agy.newSession();
     await agy.prompt("hello");
-    expect(agy.availableCommands.map((command) => command.name)).toEqual(["usage"]);
+    expect(agy.availableCommands.map((command) => command.name)).toEqual(["plan", "compact"]);
   });
 
   it("cancels a running turn and takes the next prompt", async () => {
@@ -192,20 +188,27 @@ describe("Antigravity over ACP (real subprocess, fake server)", () => {
     expect(chunks).toEqual(["OK"]);
   });
 
-  it("resumes with the working-folder append and replays the transcript", async () => {
+  it.each(["oauth-personal", AGY_KEY_METHOD])("replays legacy history with %s and sends the working-folder append", async methodId => {
     signIn(home);
-    const agy = client();
-    await agy.start();
+    const agy = methodId === AGY_KEY_METHOD
+      ? client(agyCredentialEnv({}, "replay-fixture-key"), { methodId }) : client();
+    if (methodId === AGY_KEY_METHOD) await agy.start();
+    else await startAgyGoogleChat(agy);
     const chunks: string[] = [];
     agy.on("messageChunk", (text) => chunks.push(text));
-    await agy.loadSession("5e550000-0000-4000-8000-000000000001");
+    const legacy = "5e550000-0000-4000-8000-000000000001";
+    const conversations = path.join(home, "antigravity-acp", "conversations");
+    fs.mkdirSync(conversations);
+    fs.writeFileSync(path.join(conversations, legacy + ".db"), "");
+    await agy.loadSession(legacy);
+    expect(received().find(entry => entry.method === "authenticate").params).toEqual({ methodId });
     const load = received().find((entry) => entry.method === "session/load");
     expect(load.params._meta.antigravity.systemPrompt.append).toBe(agyWorkingFolderPrompt(cwd));
     expect(chunks.join("")).toContain("OK");
     expect(agy.availableModels.map((model) => model.modelId)).toEqual(["gemini-3.8-flash"]);
   });
 
-  it("signs in through authenticate and out through logout, on the server's own files", async () => {
+  it("signs in through authenticate and out through logout, in the selected profile", async () => {
     const onPrompt = (url: string) => urls.push(url);
     const urls: string[] = [];
     const done = await new Promise<any>((resolve) => {
@@ -213,11 +216,11 @@ describe("Antigravity over ACP (real subprocess, fake server)", () => {
     });
     expect(done).toEqual({ ok: true, output: "" });
     expect(urls).toEqual(["https://accounts.google.com/o/oauth2/v2/auth?client_id=fake"]);
-    expect(await agyGoogleSignInPresent({ env: { GEMINI_HOME: home }, platform: "linux" })).toBe(true);
+    expect(await agyGoogleSignInPresent("server", { env: { GEMINI_HOME: home }, platform: "linux" })).toBe(true);
     const agy = client();
     await agy.start();
     await agy.logout();
-    expect(await agyGoogleSignInPresent({ env: { GEMINI_HOME: home }, platform: "linux" })).toBe(false);
+    expect(await agyGoogleSignInPresent("server", { env: { GEMINI_HOME: home }, platform: "linux" })).toBe(false);
   });
 
   it("reports a refused Google sign-in as failed", async () => {
@@ -228,111 +231,43 @@ describe("Antigravity over ACP (real subprocess, fake server)", () => {
     expect(done.output).toContain("Onboarding failed");
   });
 
-  // Key sign-in end to end: the real relay between the server and a local
-  // stand-in for Google, which records what reached it.
-  async function fakeGoogle() {
-    const seen: { method: string; path: string; key: unknown; body: string }[] = [];
-    const server = http.createServer((req, res) => {
-      let body = "";
-      req.on("data", (chunk) => { body += chunk; });
-      req.on("end", () => {
-        seen.push({ method: req.method ?? "", path: (req.url ?? "").split("?")[0], key: req.headers["x-goog-api-key"], body });
-        if (req.method === "GET") {
-          res.writeHead(200, { "content-type": "application/json" });
-          return res.end(JSON.stringify({ models: [
-            "gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.5-flash-preview-tts", "gemma-4-31b-it", "gemini-flash-latest",
-            "nano-banana-pro-preview", "gemini-3.8-flash", "gemini-4-argon",
-          ].map((id) => ({ name: `models/${id}`, supportedGenerationMethods: ["generateContent"], thinking: id === "gemini-4-argon" }))
-            .concat([{ name: "models/gemini-embedding-001", supportedGenerationMethods: ["embedContent"], thinking: false }]) }));
-        }
-        if (req.headers["x-goog-api-key"] !== "AIza-good") {
-          res.writeHead(400, { "content-type": "application/json" });
-          return res.end(JSON.stringify({ error: { code: 400, message: "API key not valid. Please pass a valid API key.", status: "INVALID_ARGUMENT" } }));
-        }
-        const model = /models\/([^:]+):/.exec(req.url ?? "")?.[1];
-        res.writeHead(200, { "content-type": "text/event-stream" });
-        res.end(`data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text: `Hello from ${model}` }] } }] })}\r\n\r\n`);
-      });
-    });
-    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
-    const port = (server.address() as AddressInfo).port;
-    const relay = new AgyKeyRelay({
-      upstream: (url, options) => http.request({ host: "127.0.0.1", port, path: url.pathname + url.search, method: options.method, headers: options.headers }),
-    });
-    cleanups.push(async () => { await relay.close(); await new Promise<void>((resolve) => server.close(() => resolve())); });
-    return { seen, relay };
-  }
-  const cleanups: (() => Promise<void>)[] = [];
-  afterEach(async () => { for (const cleanup of cleanups.splice(0)) await cleanup(); });
-
-  it("signs a key in as a gateway at the relay, which alone presents the key, and starts on Gemini 4 Argon", async () => {
-    const { seen, relay } = await fakeGoogle();
-    const lease = await relay.acquire("AIza-good", "low");
-    const agy = client(agyGatewayEnv({}), agyGatewayAuth(lease.baseUrl), true, lease, "low");
+  it("gives the CLI a key only in the child environment and authenticates explicitly", async () => {
+    signIn(home);
+    const settings = path.join(home, "antigravity-acp", "settings.json");
+    const original = fs.readFileSync(settings, "utf8");
+    const key = "test-fixture-key";
+    const childEnv = agyCredentialEnv({ GEMINI_API_KEY: "inherited" }, key);
+    const agy = client(childEnv, { methodId: AGY_KEY_METHOD });
     await agy.start();
     await agy.newSession();
-    const methods = received().map((entry) => entry.method);
-    expect(methods.indexOf("authenticate")).toBeLessThan(methods.indexOf("session/new"));
-    expect(received().find((entry) => entry.method === "authenticate").params).toEqual({ methodId: "gateway", _meta: { gateway: { baseUrl: lease.baseUrl } } });
-    // Chat models only, newest first and never Gemini 2 (the gateway can start on
-    // gemini-2.5-flash, the first it lists); the start moved to Argon by itself.
-    expect(agy.availableModels.map((model) => model.modelId)).toEqual(["gemini-4-argon", "gemini-3.8-flash"]);
-    expect(agy.currentModelId).toBe("gemini-4-argon");
-    expect(agy.availableModels[0]).toMatchObject({ supportsReasoningEffort: true, reasoningEfforts: ["low", "medium", "high"], reasoningEffort: "low" });
-    expect(agy.availableModels[1]).toMatchObject({ supportsReasoningEffort: false, reasoningEfforts: [] });
-    expect(agy.currentReasoningEffort).toBe("low");
-    await agy.prompt("first, at the person's default");
-    expect(JSON.parse(seen.at(-1)!.body).generationConfig.thinkingConfig.thinkingLevel).toBe("low");
-    // Key effort is local: no unsupported ACP config option is sent, and the
-    // host's broader effort ladder is mapped onto the three real API levels.
-    await expect(agy.setReasoningEffort("xhigh")).resolves.toBe(true);
-    expect(agy.currentReasoningEffort).toBe("high");
-    expect(received().filter((entry) => entry.params?.configId === "thinking_level")).toEqual([]);
-    const chunks: string[] = [];
-    agy.on("messageChunk", (text) => chunks.push(text));
-    await agy.prompt("hello");
-    expect(chunks.join("")).toBe("Hello from gemini-4-argon");
-    expect(JSON.parse(seen.at(-1)!.body).generationConfig.thinkingConfig.thinkingLevel).toBe("high");
-    expect(seen.map(({ method, path: route }) => `${method} ${route}`)).toEqual([
-      "GET /v1beta/models", "POST /v1beta/models/gemini-4-argon:streamGenerateContent",
-      "POST /v1beta/models/gemini-4-argon:streamGenerateContent",
-    ]);
-    await agy.setModel("gemini-3.8-flash");
-    expect(agy.currentModelSupportsEffort()).toBe(false);
-    await expect(agy.setReasoningEffort("medium")).resolves.toBe(false);
-    await agy.prompt("a model without thinking");
-    expect(JSON.parse(seen.at(-1)!.body).generationConfig?.thinkingConfig).toBeUndefined();
-    await agy.setModel("gemini-4-argon");
-    expect(agy.currentReasoningEffort).toBe("high");
-    // The harness's own credential never reached Google; the key went only there.
-    expect(seen.every((request) => request.key === "AIza-good")).toBe(true);
-    expect(fs.readFileSync(sink, "utf8")).not.toContain("AIza-good");
+    expect(received().find(entry => entry.method === "authenticate").params).toEqual({ methodId: "gemini-api-key" });
+    expect(received()).toContainEqual({ method: "keyPresent", params: { present: true, onlyInEnv: true } });
+    expect(JSON.stringify(received())).not.toContain(key);
+    expect(fs.readFileSync(settings, "utf8")).toBe(original);
   });
 
-  it("is refused as a gateway without the rollout flag", async () => {
-    const { relay } = await fakeGoogle();
-    const lease = await relay.acquire("AIza-good");
-    const agy = client({}, agyGatewayAuth(lease.baseUrl), true);
-    await expect(agy.start()).rejects.toMatchObject({ code: -32602 });
-  });
-
-  it("reports a key Google refuses as a rejected credential", async () => {
-    const { relay } = await fakeGoogle();
-    const lease = await relay.acquire("AIza-bad");
-    const agy = client(agyGatewayEnv({}), agyGatewayAuth(lease.baseUrl), true);
+  it("classifies a key rejection delivered in live agent text", async () => {
+    const agy = client({ ...agyCredentialEnv({}, "invalid-fixture-key"), FAKE_AGY_REFUSE_KEY: "1" }, { methodId: AGY_KEY_METHOD });
     await agy.start();
     await agy.newSession();
-    let rejected = 0;
-    agy.on("credentialRejected", () => { rejected += 1; });
+    const reject = vi.fn();
+    agy.on("credentialRejected", reject);
     await agy.prompt("hello");
-    expect(rejected).toBe(1);
+    expect(reject).toHaveBeenCalledOnce();
+  });
+
+  it("signals that interactive Google sign-in is needed without waiting for the redirect", async () => {
+    const agy = client({ FAKE_AGY_SIGN_IN: "hang" });
+    await expect(startAgyGoogleChat(agy)).rejects.toThrow("Antigravity authentication required.");
+    expect(received().find(entry => entry.method === "authenticate").params).toEqual({ methodId: "oauth-personal" });
+    expect(fs.existsSync(path.join(home, "antigravity-acp", "acp_token.json"))).toBe(false);
   });
 
   it("states the Google method on every start, whatever settings.json was left saying", async () => {
     signIn(home);
     fs.writeFileSync(path.join(home, "antigravity-acp", "settings.json"), JSON.stringify({ auth: { type: "gemini-api-key" } }));
-    const agy = client({}, agyGoogleAuth());
-    await agy.start();
+    const agy = client();
+    await startAgyGoogleChat(agy);
     await agy.newSession();
     expect(received().find((entry) => entry.method === "authenticate").params).toEqual({ methodId: "oauth-personal" });
     expect(agy.availableModels.map((model) => model.modelId)).toEqual(["gemini-3.8-flash"]);
@@ -369,13 +304,13 @@ describe("Antigravity over ACP (real subprocess, fake server)", () => {
     expect(chunks.join("")).toBe("The subagent found the notes.");
   });
 
-  it("lists the project's conversations from disk", async () => {
+  it("lists the project's conversations with the CLI", async () => {
     signIn(home);
     const agy = client();
     await agy.start();
     const { sessionId } = await agy.newSession();
-    const listed = await new AgyBackend({ env: { GEMINI_HOME: home } }).listSessions(async () => ({}), cwd, process.platform);
+    const listed = await agy.listSessions(cwd);
     expect(listed.sessions.map((entry) => entry.sessionId)).toEqual([sessionId]);
-    expect(typeof listed.sessions[0].updatedAt).toBe("number");
+    expect(listed.sessions[0].agyProgram).toBe("server");
   });
 });

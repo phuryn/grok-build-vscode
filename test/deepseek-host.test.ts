@@ -25,7 +25,7 @@ function host(enabled = true): any {
   s.locateProvider = vi.fn(() => "/managed"); s.locatedProviders = () => ({ deepseek: true });
   s.post = vi.fn(); s.postLocal = vi.fn(); s.sendRemoteClient = vi.fn(); s.sendRemoteRequester = vi.fn(); s.postProviderState = vi.fn(); s.setProviderNeedsLogin = vi.fn();
   s.setProviderConnected = vi.fn(async () => {}); s.adoptSessionsForConnectedProvider = vi.fn(async () => {});
-  s.startSession = vi.fn(); s.installManagedAgyServer = vi.fn();
+  s.startSession = vi.fn(); s.installManagedDeepSeekCli = vi.fn();
   s.emit = vi.fn(); s.displayMode = () => "agent"; s.sessionCwd = () => "/workspace";
   return s;
 }
@@ -203,7 +203,7 @@ describe("DeepSeek desk boundary and credentials", () => {
     await s.onMessage({ type: "deepseekConnect", key: "sentinel-secret" }, "remote", "phone");
     expect(s.context.secrets.store).toHaveBeenCalledWith(DEEPSEEK_API_KEY_SECRET, "sentinel-secret");
     expect(s.setProviderConnected).toHaveBeenCalledWith("deepseek", true);
-    expect(s.installManagedAgyServer).toHaveBeenCalledWith("deepseek", { clientId: "phone" });
+    expect(s.installManagedDeepSeekCli).toHaveBeenCalledWith({ clientId: "phone" });
     expect(s.sendRemoteRequester).toHaveBeenLastCalledWith({ clientId: "phone" }, expect.objectContaining({ state: "provider-connected" }));
     expect(s.providerStateMessage().providers.find((p: any) => p.id === "deepseek")).toMatchObject({ remoteSetup: true });
     expect(s.providerStateMessage().providers.find((p: any) => p.id === "deepseek").keepsCliSignIn).toBe(cloud ? undefined : true);

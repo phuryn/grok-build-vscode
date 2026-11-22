@@ -3,8 +3,8 @@ import * as path from "node:path";
 import * as http from "node:http";
 import { describe, expect, it, vi } from "vitest";
 import {
-  AGY_SIGN_IN_METHOD, AGY_SIGN_IN_TIMEOUT_MS, AGY_PASTE_ADDRESS_ERROR, AGY_REDIRECT_TIMEOUT_MS, MAX_AGY_API_KEY_CHARS, agyGatewayAuth, agyGatewayEnv, agyGoogleAuth,
-  agyGoogleSignInPresent, agySignInCallback, agySignInUrl, isAgySignInMethod, normalizeAgyApiKey, runAgySignIn,
+  AGY_SIGN_IN_METHOD, AGY_SIGN_IN_TIMEOUT_MS, AGY_PASTE_ADDRESS_ERROR, AGY_REDIRECT_TIMEOUT_MS, MAX_AGY_API_KEY_CHARS, agyCredentialEnv,
+  agyGoogleSignInPresent, agySignInCallback, cmdkeyListsAgyEntry, agySignInUrl, isAgySignInMethod, normalizeAgyApiKey, runAgySignIn,
 } from "../src/agy-auth";
 
 import { deviceLoginFailureText } from "../src/device-login";
@@ -23,38 +23,40 @@ describe("Antigravity stored Google sign-in", () => {
   // shared with other ACP clients and a key sign-in rewrites it, so every
   // start authenticates with the way chosen here.
   it("is the token, whatever settings.json says", async () => {
-    expect(await agyGoogleSignInPresent(probe(token))).toBe(true);
-    expect(await agyGoogleSignInPresent(probe({ [path.join(acp, "settings.json")]: JSON.stringify({ auth: { type: "oauth-personal" } }) }))).toBe(false);
+    expect(await agyGoogleSignInPresent("server", probe(token))).toBe(true);
+    expect(await agyGoogleSignInPresent("server", probe({ [path.join(acp, "settings.json")]: JSON.stringify({ auth: { type: "oauth-personal" } }) }))).toBe(false);
   });
 
-  it("asks the macOS keychain only when there is no token file and file storage is not forced", async () => {
-    const keychainEntry = vi.fn(async () => true);
-    expect(await agyGoogleSignInPresent(probe({}, { platform: "darwin", keychainEntry }))).toBe(true);
-    expect(keychainEntry).toHaveBeenCalledTimes(1);
-    expect(await agyGoogleSignInPresent(probe({}, { platform: "darwin", keychainEntry, env: { AGY_ACP_FORCE_FILE_STORAGE: "1" } }))).toBe(false);
-    expect(await agyGoogleSignInPresent(probe({}, { platform: "win32", keychainEntry }))).toBe(false);
-    expect(keychainEntry).toHaveBeenCalledTimes(1);
+  // A phone starting a Google chat on a desk host after a restart has only
+  // this to go on: the CLI keeps its token in the OS store, or in a file when
+  // the store is unavailable (a Mac signed in over SSH).
+  it("finds the CLI's token file, else asks the OS store, and never for the key profile", async () => {
+    const cli = path.join(home, ".gemini", "antigravity-cli");
+    const storeEntry = vi.fn(async () => true);
+    expect(await agyGoogleSignInPresent("cli", probe({ [path.join(cli, "antigravity-oauth-token")]: "{}" }, { storeEntry }))).toBe(true);
+    expect(storeEntry).not.toHaveBeenCalled();
+    expect(await agyGoogleSignInPresent("cli", probe({}, { storeEntry }))).toBe(true);
+    expect(storeEntry).toHaveBeenCalledTimes(1);
+    expect(await agyGoogleSignInPresent("cli", probe({}, { storeEntry: async () => false }))).toBe(false);
+    expect(await agyGoogleSignInPresent("server", probe({}, { storeEntry }))).toBe(false);
+    expect(storeEntry).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads cmdkey's listing, not its header", () => {
+    const header = "\r\nCurrently stored credentials for gemini:antigravity:\r\n\r\n";
+    expect(cmdkeyListsAgyEntry(header + "    Target: gemini:antigravity\r\n    Type: Generic \r\n    User: antigravity\r\n")).toBe(true);
+    expect(cmdkeyListsAgyEntry(header + "    Ziel: LegacyGeneric:target=gemini:antigravity\r\n")).toBe(true);
+    expect(cmdkeyListsAgyEntry(header + "* NONE *\r\n")).toBe(false);
   });
 
   it("honours GEMINI_HOME", async () => {
     const custom = path.join("/data", "g", "antigravity-acp");
-    expect(await agyGoogleSignInPresent(probe({ [path.join(custom, "acp_token.json")]: "{}" },
+    expect(await agyGoogleSignInPresent("server", probe({ [path.join(custom, "acp_token.json")]: "{}" },
       { env: { GEMINI_HOME: path.join("/data", "g") } }))).toBe(true);
   });
 });
 
 describe("Antigravity sign-in methods", () => {
-  it("authenticates Google as oauth-personal, and a key's server as a gateway at the relay", () => {
-    expect(agyGoogleAuth()).toEqual({ methodId: AGY_SIGN_IN_METHOD });
-    expect(agyGatewayAuth("http://127.0.0.1:5000/p")).toEqual({ methodId: "gateway", meta: { gateway: { baseUrl: "http://127.0.0.1:5000/p" } } });
-  });
-
-  it("turns gateway mode on in the spawn environment and leaves the person's own untouched", () => {
-    const own = { PATH: "/bin", GEMINI_API_KEY: "their-own" };
-    expect(agyGatewayEnv(own)).toEqual({ PATH: "/bin", GEMINI_API_KEY: "their-own", AGY_ACP_ENABLE_GATEWAY_AUTH: "1" });
-    expect(own).not.toHaveProperty("AGY_ACP_ENABLE_GATEWAY_AUTH");
-  });
-
   it("takes a pasted key trimmed, and says plainly why it is not one", () => {
     expect(normalizeAgyApiKey("  AIza-test \n")).toEqual({ key: "AIza-test" });
     expect(normalizeAgyApiKey("   ")).toEqual({ error: "Paste a Gemini API key." });
@@ -69,7 +71,7 @@ describe("Antigravity sign-in methods", () => {
 });
 
 describe("Antigravity sign-in runner", () => {
-  it("finds the link the server prints while it waits", () => {
+  it("finds the OAuth link the CLI prints while it waits", () => {
     expect(agySignInUrl("I1014 noise\nOpen the following link to authenticate the ACP server: https://accounts.google.com/o/oauth2/v2/auth?x=1&y=2\n"))
       .toBe("https://accounts.google.com/o/oauth2/v2/auth?x=1&y=2");
     expect(agySignInUrl("Open the following link to authenticate the ACP server: http://evil")).toBeUndefined();
@@ -84,7 +86,7 @@ describe("Antigravity sign-in runner", () => {
     });
   }
 
-  it("reports the link once, then success, and always stops the server", async () => {
+  it("reports the link once, then success, and always stops the CLI", async () => {
     let resolve!: () => void;
     const client = fakeClient(() => new Promise<void>((r) => { resolve = r; }));
     const onPrompt = vi.fn();
@@ -92,23 +94,23 @@ describe("Antigravity sign-in runner", () => {
     runAgySignIn(client, { onPrompt, onDone });
     await vi.waitFor(() => expect(client.authenticate).toHaveBeenCalledWith(AGY_SIGN_IN_METHOD, AGY_SIGN_IN_TIMEOUT_MS));
     client.emit("stderr", "Open the following link to authenticate the ACP");
-    client.emit("stderr", " server: https://accounts.google.com/auth?a=1\n");
-    client.emit("stderr", "Open the following link to authenticate the ACP server: https://accounts.google.com/auth?a=2\n");
+    client.emit("stderr", " server: https://accounts.google.com/o/oauth2/auth?a=1\n");
+    client.emit("stderr", "Open the following link to authenticate the ACP server: https://accounts.google.com/o/oauth2/auth?a=2\n");
     expect(onPrompt).toHaveBeenCalledTimes(1);
-    expect(onPrompt).toHaveBeenCalledWith({ url: "https://accounts.google.com/auth?a=1" });
+    expect(onPrompt).toHaveBeenCalledWith({ url: "https://accounts.google.com/o/oauth2/auth?a=1" });
     resolve();
     await vi.waitFor(() => expect(onDone).toHaveBeenCalledWith({ ok: true, output: "" }));
     await vi.waitFor(() => expect(client.dispose).toHaveBeenCalled());
   });
 
-  it("reports a refused or timed-out sign-in as failed with the server's reason", async () => {
+  it("reports a refused or timed-out sign-in as failed with the CLI's reason", async () => {
     const client = fakeClient(async () => { throw { code: -32000, message: "Authentication required", data: { message: "Onboarding failed: x" } }; });
     const onDone = vi.fn();
     runAgySignIn(client, { onPrompt: vi.fn(), onDone });
     await vi.waitFor(() => expect(onDone).toHaveBeenCalledWith({ ok: false, failure: "failed", output: "Onboarding failed: x" }));
   });
 
-  it("settles a cancel at once and stops the server, ignoring what follows", async () => {
+  it("settles a cancel at once and stops the CLI, ignoring what follows", async () => {
     let reject!: (error: Error) => void;
     const client = fakeClient(() => new Promise((_r, j) => { reject = j; }));
     const onDone = vi.fn();

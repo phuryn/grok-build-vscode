@@ -8,7 +8,6 @@ export type MuseModeId = "agent" | "yolo" | "onRequest" | "denyUnmatched";
 /** `auto` is a provider's own Auto mode, offered only where one exists. */
 export type ModeId = MuseModeId | "plan" | "auto" | "askApproval" | "acceptEdits";
 export const MUSE_MODE_PREF_KEY = "grok.defaultMuseMode";
-export const AGY_ACCEPT_EDITS_PREF_KEY = "grok.agyAcceptEdits";
 export const CODEX_ASK_APPROVAL_PREF_KEY = "grok.codexAskApproval";
 export const CODEX_MODE_WAITS_FOR_PLAN = "Answer the plan first. Codex implements it with the access it had when planning began. To implement it with approvals, choose No on the plan, switch modes, then ask Codex to implement the plan.";
 export const MUSE_CLOUD_ON_REQUEST_UNAVAILABLE = "Muse On request is unavailable on cloud machines. Open this conversation on a desktop to change its mode, or start a new cloud conversation in Prompt unmatched.";
@@ -43,7 +42,7 @@ export function isModeId(value: unknown): value is ModeId {
  * actions are safe and asks about the rest. Claude Code's `auto` ("Claude
  * handles permission decisions") is the only unambiguous one: Codex's choices
  * are its auto-review mode (already its default, `agent`) and the classic Auto
- * preset; Grok, Muse and Antigravity's ACP server have none.
+ * preset; Grok and Muse have none.
  */
 export function hasNativeAutoMode(provider: string): boolean {
   return provider === "claude";
@@ -104,12 +103,11 @@ export function startsInYolo(defaultMode: string | undefined, isResume: boolean)
 }
 
 /** Modes this session's picker offers. */
-export function sessionModes(provider: string, sandboxUnavailable = false, nativeApprovalModes = false): ModeId[] {
+export function sessionModes(provider: string, sandboxUnavailable = false): ModeId[] {
   // Deny unmatched stalls Muse's end-of-turn reminder agent; see research/muse-modes.md.
   if (provider === "muse") return sandboxUnavailable ? ["yolo", "agent"] : ["yolo", "agent", "onRequest"];
   if (hasNativeAutoMode(provider)) return ["agent", "auto", "plan", "yolo"];
   if (provider === "codex") return ["agent", "askApproval", "plan", "yolo"];
-  if (provider === "agy" && nativeApprovalModes) return ["agent", "acceptEdits", "yolo"];
   return provider === "agy" || provider === "deepseek"
     ? ["agent", "yolo"]
     : ["agent", "plan", "yolo"];

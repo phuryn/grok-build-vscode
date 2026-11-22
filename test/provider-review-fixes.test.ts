@@ -149,7 +149,8 @@ describe("multi-provider review regressions", () => {
     expect(start).toContain("this.locateProvider(session.provider)");
     expect(start).not.toContain("locateCodexCli(");
     const owner = methodBody("private locateProvider(");
-    expect(owner).toContain("managedStorageRoot: this.context.globalStorageUri.fsPath");
+    expect(owner).toContain("const storageRoot = this.context.globalStorageUri.fsPath");
+    expect(owner).toContain("managedStorageRoot: storageRoot");
     expect(owner).toContain("arch: process.arch");
   });
 

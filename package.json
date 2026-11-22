@@ -363,11 +363,6 @@
           "default": true,
           "description": "The first time you send a message in a conversation whose folder is not one of your projects, offer to add it to Projects. Turn off to stop asking; \"Never for this folder\" stops it for one folder."
         },
-        "grok.agyServerPath": {
-          "type": "string",
-          "default": "",
-          "description": "Path to Google's Antigravity ACP server (`agy_acp_server`). Empty = the copy this app installs."
-        },
         "grok.defaultModel": {
           "type": "string",
           "default": "",
@@ -388,7 +383,7 @@
             "Auto accept — auto-approve every permission request"
           ],
           "default": "",
-          "description": "Mode for new sessions. Updated automatically to remember your last switch between Agent, Auto and Auto accept (Plan is never remembered). Empty keeps existing installs in Agent, and starts new installs in Auto accept for Grok and for Antigravity on the server AFK Pilot installs, or Allow all for Muse. Claude uses Auto and Codex uses Agent on all installs. Muse's separately remembered choice wins wherever that mode is offered (On request is not, on Windows or cloud machines). If Claude Code's Auto mode is not available for the model, the conversation stays in Agent mode."
+          "description": "Mode for new sessions. Updated automatically to remember your last switch between Agent, Auto and Auto accept (Plan is never remembered). Empty keeps existing installs in Agent, and starts new installs in Auto accept for Grok and Antigravity, or Allow all for Muse. Claude uses Auto and Codex uses Agent on all installs. Muse's separately remembered choice wins wherever that mode is offered (On request is not, on Windows or cloud machines). If Claude Code's Auto mode is not available for the model, the conversation stays in Agent mode."
         },
         "grok.includeActiveFileByDefault": {
           "type": "boolean",

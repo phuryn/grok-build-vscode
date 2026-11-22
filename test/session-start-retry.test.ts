@@ -31,6 +31,7 @@ const startControl = {
   catalogs: {} as Record<string, { modelId: string; name: string }[]>,
   startWait: undefined as Promise<void> | undefined,
   startupAuths: [] as unknown[],
+  explicitAuth: [] as string[],
   startEnvs: [] as Array<NodeJS.ProcessEnv | undefined>,
   setModes: [] as string[],
   claudeAutoUnsupported: false,
@@ -56,7 +57,7 @@ vi.mock("../src/acp", async (importOriginal) => {
     fsRead?: unknown;
     fsWrite?: unknown;
     terminal?: unknown;
-    constructor(private opts: { log: (msg: string) => void; effort?: string; backend?: any; startupAuth?: unknown; env?: NodeJS.ProcessEnv }) {
+    constructor(private opts: { log: (msg: string) => void; effort?: string; backend?: any; startupAuth?: unknown; env?: NodeJS.ProcessEnv; cliPath: string; cwd: string }) {
       super();
       startControl.startupAuths.push(opts.startupAuth);
       startControl.startEnvs.push(opts.env);
@@ -69,16 +70,22 @@ vi.mock("../src/acp", async (importOriginal) => {
     async start(): Promise<void> {
       await startControl.startWait;
       startControl.starts += 1;
-      if (this.provider === "agy") startControl.agyPrograms.push(this.opts.backend.program);
+      if (this.provider === "agy") {
+        const args = this.opts.backend.spawn({ cliPath: this.opts.cliPath, env: this.opts.env, cwd: this.opts.cwd }).args;
+        startControl.agyPrograms.push(args.includes("antigravity-acp") ? "server" : "cli");
+      }
       if (startControl.failuresRemaining > 0) {
         startControl.failuresRemaining -= 1;
         throw new Error(startControl.failWith);
       }
       this.emit("initialized", { protocolVersion: 1, serverInfo: { version: "0.2.117" } });
     }
+    async authenticate(method: string) {
+      startControl.explicitAuth.push(method);
+      if (startControl.agyCliNeedsLogin) throw Object.assign(new Error("Authentication required"), { code: -32000 });
+    }
     async newSession(): Promise<{ sessionId: string }> {
-      if (this.provider === "agy" && this.opts.backend.program === "cli") {
-        if (startControl.agyCliNeedsLogin) throw Object.assign(new Error("Authentication required"), { code: -32000 });
+      if (this.provider === "agy") {
         this.opts.backend.normalizeSessionResponse({ configOptions: [{ id: "mode", currentValue: "default",
           options: ["default", "accept-edits", "auto", "plan"].map(value => ({ name: value, value })) }] });
         this.pickerModes = this.opts.backend.pickerModes;
@@ -200,7 +207,8 @@ function makeSidebar(cwd: string): any {
   sidebar.sessionCwd = vi.fn((session: Session) => session.cwd || cwd);
   sidebar.locateProvider = vi.fn(() => "grok");
   sidebar.installedAgyCli = vi.fn(() => sidebar.agyCliLookup?.path);
-  sidebar.agyGoogleSignedIn = vi.fn(async () => false);
+  sidebar.agyGoogleAvailable = vi.fn(async () => false);
+  sidebar.agyGoogleAuthenticated = {};
   sidebar.providerDefaultForProject = vi.fn(() => "");
   sidebar.configForcesAutoApprove = vi.fn(() => false);
   sidebar.confirmRepoForcedAutoApprove = vi.fn(async () => true);
@@ -859,6 +867,7 @@ describe("startSession bounded spawn retry", () => {
     startControl.starts = 0;
     startControl.disposes = 0;
     startControl.agyPrograms = [];
+    startControl.explicitAuth = [];
     startControl.agyCliNeedsLogin = false;
     startControl.agyCliInitialMode = "agent";
   });
@@ -1043,41 +1052,13 @@ describe("startSession bounded spawn retry", () => {
 
   // Every Antigravity start authenticates with the way the person chose, and
   // with nothing stored for it starts no server: `authenticate` and the
-  // server's own session/new would open Google's sign-in at an empty desk.
-  it.each([true, false])("starts an Antigravity server only with its chosen credential (stored=%s)", async stored => {
-    const sidebar = makeSidebar("/repo");
-    sidebar.providerConnectionState = { agy: true };
-    sidebar.connectedProviders = vi.fn(() => ["agy"]);
-    sidebar.usableProviders = vi.fn(() => ["agy"]);
-    sidebar.focused.provider = "agy";
-    sidebar.agyCredentialFor = vi.fn(async () => stored ? { method: "google" } : undefined);
-    sidebar.rejectAgyCredential = vi.fn(async () => {});
-    startControl.startupAuths = [];
-    startControl.startEnvs = [];
-    const client = await sidebar.startSession(undefined, sidebar.focused);
-    if (stored) {
-      expect(client?.provider).toBe("agy");
-      expect(startControl.starts).toBe(1);
-      expect(startControl.startupAuths).toEqual([{ methodId: "oauth-personal" }]);
-      expect(startControl.startEnvs[0]?.AGY_ACP_ENABLE_GATEWAY_AUTH).toBeUndefined();
-      // A refusal reported mid-turn goes back to the choice of how to sign in.
-      sidebar.focused.client.emit("credentialRejected");
-      expect(sidebar.rejectAgyCredential).toHaveBeenCalledTimes(1);
-      return;
-    }
-    expect(client).toBeUndefined();
-    expect(startControl.starts).toBe(0);
-    expect(sidebar.setProviderNeedsLogin).toHaveBeenCalledWith("agy", true);
-    expect(onboardings(sidebar)).toEqual([expect.objectContaining({ state: "agy-login", provider: "agy" })]);
-    expect(startErrors(sidebar)).toEqual([]);
-  });
-
   function googleAgySidebar() {
     const sidebar = makeSidebar("/repo");
     sidebar.connectedProviders = sidebar.usableProviders = () => ["agy"];
     sidebar.providerConnectionState = { agy: true };
     sidebar.focused.provider = "agy";
-    sidebar.agyGoogleSignedIn.mockResolvedValue(true);
+    sidebar.locateProvider = vi.fn(() => sidebar.installedAgyCli());
+    sidebar.agyGoogleAvailable.mockResolvedValue(true);
     sidebar.context.extensionVersion = "4.17.3";
     sidebar.postLocal = vi.fn();
     sidebar.deviceLogins = new Map();
@@ -1095,9 +1076,7 @@ describe("startSession bounded spawn retry", () => {
     other.cwd = "/repo";
     const first = sidebar.startSession(undefined, sidebar.focused);
     const second = sidebar.startSession(undefined, other);
-    await vi.waitFor(() => expect(other.buffer).toContainEqual({
-      type: "planNotice", text: "Installing Google's Antigravity CLI. Antigravity chats run on it from now on.",
-    }));
+    await vi.waitFor(() => expect(install).toHaveBeenCalledOnce());
     expect(startControl.agyPrograms).toEqual([]);
     expect(install).toHaveBeenCalledOnce();
     complete({ binary: "fake agy", version: "1.5.8" });
@@ -1107,34 +1086,28 @@ describe("startSession bounded spawn retry", () => {
     expect(startControl.agyPrograms).toEqual(["cli", "cli"]);
   });
 
-  it("falls back with the installer error and retries on a later Google chat", async () => {
+  it("shows CLI install failure and retries on the next chat", async () => {
     const sidebar = googleAgySidebar();
     const install = vi.spyOn(agyLifecycle, "installAgyCli").mockRejectedValueOnce(new Error("Disk full."))
       .mockResolvedValueOnce({ binary: "fake agy", version: "1.5.8" });
+    expect(await sidebar.startSession()).toBeUndefined();
+    expect(sidebar.posted).toContainEqual({ type: "error", text: "Couldn't install the Antigravity CLI: Disk full." });
+    expect(startControl.agyPrograms).toEqual([]);
     expect(await sidebar.startSession()).toBeDefined();
-    expect(startControl.agyPrograms).toEqual(["server"]);
-    expect(sidebar.focused.buffer.filter((m: HostMsg) => m.type === "planNotice").at(-1)).toEqual({
-      type: "planNotice", text: "Couldn't install Google's Antigravity CLI: Disk full. This chat runs on the Antigravity server.",
-    });
-    const next = new Session();
-    next.provider = "agy";
-    next.cwd = "/repo";
-    expect(await sidebar.startSession(undefined, next)).toBeDefined();
-    expect(startControl.agyPrograms).toEqual(["server", "cli"]);
+    expect(startControl.agyPrograms).toEqual(["cli"]);
     expect(install).toHaveBeenCalledTimes(2);
   });
 
-  it("offers server setup for an existing managed chat when its binary is missing", async () => {
+  it("installs agy and opens saved server history directly with Google sign-in", async () => {
     const sidebar = googleAgySidebar();
-    sidebar.locateProvider.mockReturnValue(undefined);
     sidebar.connectedProviders = sidebar.usableProviders = () => [];
     await sidebar.state.update("grok.sessionMeta", { "server-history": { agyProgram: "server" } });
-    const install = vi.spyOn(agyLifecycle, "installAgyCli").mockRejectedValue(new Error("Unexpected CLI install"));
-    expect(await sidebar.startSession("server-history")).toBeUndefined();
-    expect(onboardings(sidebar)).toEqual([expect.objectContaining({ type: "onboarding", provider: "agy",
-      state: "agy-login", agyChoice: true, reason: expect.stringContaining("uses the Antigravity server") })]);
+    const install = vi.spyOn(agyLifecycle, "installAgyCli").mockResolvedValue({ binary: "fake agy", version: "1.5.8" });
+    expect(await sidebar.startSession("server-history")).toBeDefined();
     expect(sidebar.focused.activeSessionId).toBe("server-history");
-    expect(install).not.toHaveBeenCalled();
+    expect(startControl.agyPrograms).toEqual(["server"]);
+    expect(startControl.explicitAuth).toEqual(["oauth-personal"]);
+    expect(install).toHaveBeenCalledOnce();
   });
 
   it("waits for a single upgrade before another operation or chat can spawn agy", async () => {
@@ -1160,20 +1133,20 @@ describe("startSession bounded spawn retry", () => {
     expect(version).toHaveBeenCalledWith("fake agy");
   });
 
-  it("starts CLI sign-in at the desk and falls back with a notice for a phone at an unattended desk", async () => {
+  it("starts CLI sign-in on a desk and gives an unattended phone a reason", async () => {
     startControl.agyCliNeedsLogin = true;
     const phone = googleAgySidebar();
     phone.installedAgyCli.mockReturnValue("fake agy");
-    expect(await phone.startSession(undefined, phone.focused, "replace", undefined, { agyRemoteClientId: "phone" })).toBeDefined();
-    expect(startControl.agyPrograms).toEqual(["cli", "server"]);
+    phone.postAgyChoice = vi.fn();
+    expect(await phone.startSession(undefined, phone.focused, "replace", undefined, { agyRemoteClientId: "phone" })).toBeUndefined();
     expect(phone.startDeviceLogin).not.toHaveBeenCalled();
-    expect(phone.focused.buffer).toContainEqual({ type: "planNotice",
-      text: "Sign in to the Antigravity CLI on the workspace computer. This chat runs on the Antigravity server." });
+    expect(phone.postAgyChoice).toHaveBeenCalledWith(expect.stringContaining("workspace computer"), expect.anything());
     const desk = googleAgySidebar();
     desk.installedAgyCli.mockReturnValue("fake agy");
-    expect(await desk.startSession()).toBeUndefined();
-    expect(startControl.agyPrograms).toEqual(["cli", "server", "cli"]);
-    expect(desk.startDeviceLogin).toHaveBeenCalledWith("agy", "fake agy", undefined, { remote: false, agyProgram: "cli" });
+    await desk.state.update("grok.sessionMeta", { "server-history": { agyProgram: "server" } });
+    expect(await desk.startSession("server-history")).toBeUndefined();
+    expect(desk.focused.activeSessionId).toBe("server-history");
+    expect(desk.startDeviceLogin).toHaveBeenCalledWith("agy", "fake agy", undefined, { remote: false, agyProfile: "server" });
   });
 
   it.each(["remembered", "new install"])("applies %s Auto accept to a CLI chat without changing native mode", async source => {
@@ -1219,36 +1192,22 @@ describe("startSession bounded spawn retry", () => {
     expect([...session.pendingPermissions.keys()]).toEqual([2, 3]);
   });
 
-  // A key's server gets the relay's address and the rollout flag -- never the
-  // key -- and holds a lease on the relay until it exits.
-  it("starts a key's Antigravity server in gateway mode at the relay", async () => {
-    const sidebar = makeSidebar("/repo");
-    sidebar.providerConnectionState = { agy: true };
-    sidebar.connectedProviders = vi.fn(() => ["agy"]);
-    sidebar.usableProviders = vi.fn(() => ["agy"]);
-    sidebar.focused.provider = "agy";
-    await sidebar.state.update("grok.agySignInMethod", "api-key");
+  it("starts agy for key auth with the saved key only in the environment", async () => {
+    const sidebar = googleAgySidebar();
+    const key = "test-session-key";
     sidebar.installedAgyCli.mockReturnValue("fake agy");
-    sidebar.agyCredentialFor = vi.fn(async () => ({ method: "api-key", key: "AIza-session-key" }));
-    const release = vi.fn();
-    sidebar.agyRelay = {
-      acquire: vi.fn(async () => ({ baseUrl: "http://127.0.0.1:4321/prefix", release })),
-      redact: (text: string) => text,
-    };
+    sidebar.agySavedKey = vi.fn(async () => key);
+    await sidebar.state.update("grok.agySignInMethod", "api-key");
     startControl.startupAuths = [];
     startControl.startEnvs = [];
-    const client = await sidebar.startSession(undefined, sidebar.focused);
+    const client = await sidebar.startSession();
     expect(client?.provider).toBe("agy");
     expect(startControl.agyPrograms).toEqual(["server"]);
-    // No default effort here, so the lease leaves the model's own default alone.
-    expect(sidebar.agyRelay.acquire).toHaveBeenCalledWith("AIza-session-key", undefined);
-    expect(startControl.startupAuths).toEqual([{ methodId: "gateway", meta: { gateway: { baseUrl: "http://127.0.0.1:4321/prefix" } } }]);
-    expect(startControl.startEnvs[0]?.AGY_ACP_ENABLE_GATEWAY_AUTH).toBe("1");
-    expect(JSON.stringify(startControl.startupAuths)).not.toContain("AIza-session-key");
-    expect(Object.values(startControl.startEnvs[0] ?? {})).not.toContain("AIza-session-key");
-    expect(release).not.toHaveBeenCalled();
-    sidebar.focused.client.emit("exit", 0);
-    expect(release).toHaveBeenCalledTimes(1);
+    expect(startControl.startupAuths).toEqual([{ methodId: "gemini-api-key" }]);
+    expect(startControl.startEnvs[0]?.GEMINI_API_KEY).toBe(key);
+    client.emit("stderr", "key=" + key);
+    expect(sidebar.host.append).toHaveBeenCalledWith("key=[redacted]");
+    expect(JSON.stringify(sidebar.posted)).not.toContain(key);
   });
 
   // Claude Code's native Auto is the default for a new conversation where no

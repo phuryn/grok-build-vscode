@@ -5347,8 +5347,7 @@
 
   /**
    * The chip is a closed door while the catalog is on its way: a session is
-   * starting (Antigravity's server alone can take over a minute on Windows) and
-   * the picker could only show the previous conversation's models or a
+   * starting and the picker could only show the previous conversation's models or a
    * placeholder. Not while the agent cannot start at all -- signed out, not
    * connected -- because the picker is where recovery lives, and not forever:
    * the end of startup, an error, an exit or a long failsafe all open it again
@@ -11681,10 +11680,7 @@
       openConnectWizard(provider); connectWizard.deepseekMode = mode; renderConnectWizard(); return;
     }
     if (!IS_REMOTE && provider !== "muse" && provider !== "agy") return;
-    // Antigravity's install and sign-in panels. A missing server
-    // answers with a `failed` device, as Muse's does, so the wizard opens on
-    // the Install button wherever Connect was pressed. Its sign-in itself is a
-    // device flow, handled below like every other one.
+    // The Antigravity wizard handles installation and the sign-in choice.
     if (provider === "agy" && agyAdvertised && providerSetupAvailable(provider)) {
       const ownsWizard = !!connectWizard && connectWizard.provider === provider;
       // A Connect press answers with the choice of how to sign in, wherever
@@ -11825,50 +11821,46 @@
       + '<button class="onb-action onb-secondary" type="button" data-act="recheckProvider" data-provider="muse">Re-check</button></div>';
   }
 
-  /**
-   * Antigravity's own panels: install (a managed download, like Codex's) and
-   * Google sign-in. A remote gets neither -- signing in opens a browser on the
-   * desk, so it says where to do it instead.
-   */
-  function managedAgentInstallPanel(provider, info) {
-      if (provider === "agy") {
-        const cli = (state.providers || []).find(p => p.id === "agy")?.agyCli;
-        if (cli && (cli.installing || state.agyInstall.phase === "idle")) return agyCliInstallPanel(cli, info);
-      }
-      const name = provider === "deepseek" ? "DeepSeek" : "Antigravity";
-      const suffix = provider === "deepseek" ? "DeepSeek" : "Agy";
-      const install = state[provider === "deepseek" ? "deepseekInstall" : "agyInstall"];
-      const installing = install.phase !== "idle";
-      const percent = install.totalBytes > 0 && (provider !== "deepseek" || install.phase === "downloading")
-        ? Math.min(100, Math.round((install.receivedBytes / install.totalBytes) * 100))
-        : null;
-      const progressLabel = install.phase === "downloading"
-        ? `Downloading ${name}${percent == null ? "" : ` (${percent}%)`}...`
-        : install.phase === "verifying" ? "Verifying the download..."
-        : install.phase === "installing" ? (provider === "agy" ? "Unpacking Antigravity..." : "Installing DeepSeek...") : "";
-      const reason = (info && info.reason) || install.reason;
-      return `<div class="onb"><p class="onb-heading">Install ${name}</p>`
-        + `<p class="onb-desc">${provider === "deepseek" ? "Install the pinned official dsh harness and its private Node runtime into this app's storage. Your system Node is unchanged." : "Download Google's Antigravity agent server into this app's storage. It is a large download: about 125 MB, or 336 MB on Linux."}</p>`
-        + (reason ? `<p class="onb-install-error" role="alert">${escapeHtml(reason)}</p>` : "")
-        + (installing
-          ? `<div class="onb-install-progress" role="status"><span>${provider === "deepseek" ? escapeHtml(progressLabel.replace(/\.\.\.$/, "")) + BLINK_DOTS : escapeHtml(progressLabel)}</span>`
-            + (percent == null ? "" : `<progress max="100" value="${percent}">${percent}%</progress>`)
-            + `<button class="onb-action onb-secondary" type="button" data-act="cancel${suffix}Install">Cancel</button></div>`
-          : `<button class="onb-action" type="button" data-act="install${suffix}">Install ${name}</button>`)
-        + `<button class="onb-action onb-secondary" type="button" data-act="recheckProvider" data-provider="${provider}">Re-check</button></div>`;
-    }
-
-  function agyCliInstallPanel(cli, info) {
-    const reason = cli.reason || info?.reason;
-    return `<div class="onb"><p class="onb-heading">Install Antigravity</p>`
-      + `<p class="onb-desc">Google sign-in uses the Antigravity CLI.</p>`
+  function deepSeekInstallPanel(info) {
+    const install = state.deepseekInstall;
+    const installing = install.phase !== "idle";
+    const percent = install.totalBytes > 0 && install.phase === "downloading"
+      ? Math.min(100, Math.round((install.receivedBytes / install.totalBytes) * 100))
+      : null;
+    const progressLabel = install.phase === "downloading"
+      ? "Downloading DeepSeek" + (percent == null ? "" : " (" + percent + "%)")
+      : install.phase === "verifying" ? "Verifying the download"
+      : install.phase === "installing" ? "Installing DeepSeek" : "";
+    const reason = info?.reason || install.reason;
+    return `<div class="onb"><p class="onb-heading">Install DeepSeek</p>`
+      + `<p class="onb-desc">Install the pinned official dsh harness and its private Node runtime into this app's storage. Your system Node is unchanged.</p>`
       + (reason ? `<p class="onb-install-error" role="alert">${escapeHtml(reason)}</p>` : "")
-      + (cli.installing
-        ? `<div class="onb-install-progress" role="status"><span>Installing the Antigravity CLI${BLINK_DOTS}</span>`
-          + `<progress aria-label="Installing the Antigravity CLI"></progress>`
+      + (installing
+        ? `<div class="onb-install-progress" role="status"><span>${escapeHtml(progressLabel) + BLINK_DOTS}</span>`
+          + (percent == null ? "" : `<progress max="100" value="${percent}">${percent}%</progress>`)
+          + `<button class="onb-action onb-secondary" type="button" data-act="cancelDeepSeekInstall">Cancel</button></div>`
+        : `<button class="onb-action" type="button" data-act="installDeepSeek">Install DeepSeek</button>`)
+      + `<button class="onb-action onb-secondary" type="button" data-act="recheckProvider" data-provider="deepseek">Re-check</button></div>`;
+  }
+
+  function agyCliInstallPanel(info) {
+    const cli = state.providers.find(p => p.id === "agy")?.agyCli;
+    const install = state.agyInstall;
+    const reason = cli?.reason || info?.reason || install.reason;
+    // Old hosts can still send byte progress through the shared frame.
+    const installing = cli?.installing || install.phase !== "idle";
+    const percent = install.totalBytes > 0
+      ? Math.min(100, Math.round((install.receivedBytes / install.totalBytes) * 100)) : null;
+    const legacyProgress = install.phase === "downloading" ? "Downloading Antigravity" : install.phase === "verifying" ? "Verifying the download" : "Installing Antigravity";
+    const progress = cli?.installing ? "Installing the Antigravity CLI" : legacyProgress;
+    return `<div class="onb"><p class="onb-heading">Install Antigravity</p>`
+      + (reason ? `<p class="onb-install-error" role="alert">${escapeHtml(reason)}</p>` : "")
+      + (installing
+        ? `<div class="onb-install-progress" role="status"><span>${progress}${percent == null ? "" : " (" + percent + "%)"}${BLINK_DOTS}</span>`
+          + (percent == null ? `<progress aria-label="${progress}"></progress>` : `<progress max="100" value="${percent}">${percent}%</progress>`)
           + `<button class="onb-action onb-secondary" type="button" data-act="cancelAgyInstall">Cancel</button></div>`
         : `<button class="onb-action" type="button" data-act="installAgy">Install Antigravity</button>`
-          + `<button class="onb-action onb-secondary" type="button" data-act="agyChooseKey">Use a Gemini API key</button>`)
+          + (cli ? `<button class="onb-action onb-secondary" type="button" data-act="agyChooseKey">Use a Gemini API key</button>` : ""))
       + `<button class="onb-action onb-secondary" type="button" data-act="recheckProvider" data-provider="agy">Re-check</button></div>`;
   }
 
@@ -11878,7 +11870,7 @@
   }
   function deepseekPanel(mode, info) {
     if (!providerSetupAvailable("deepseek")) return '<div class="onb"><p class="onb-heading">Connect DeepSeek at the computer</p><p class="onb-desc">Install dsh and enter its API key on the computer running this workspace.</p></div>';
-    if (mode === "missing-deepseek") return managedAgentInstallPanel("deepseek", info);
+    if (mode === "missing-deepseek") return deepSeekInstallPanel(info);
     const provider = state.providers.find(p => p.id === "deepseek") || {};
     if (provider.keySource === "environment") {
       return '<div class="onb"><p class="onb-heading">Connect DeepSeek</p><p class="onb-desc">Uses the key from the DEEPSEEK_API_KEY environment variable.</p><button class="onb-action" data-act="deepseekConnect">Connect</button></div>';
@@ -11910,7 +11902,7 @@
       return `<div class="onb"><p class="onb-heading">Connect Antigravity at the computer</p>`
         + `<p class="onb-desc">Antigravity signs in with Google in a browser on the computer running this workspace. Connect it there, then use it from here.</p></div>`;
     }
-    if (mode === "missing-agy") return managedAgentInstallPanel("agy", info);
+    if (mode === "missing-agy") return agyCliInstallPanel(info);
     if (IS_REMOTE || info && info.agyChoice || !agyGoogleAvailable()) return agyChoicePanel(info);
     const provider = (state.providers || []).find(p => p.id === "agy");
     const connected = !!(provider && provider.connected);
@@ -11930,7 +11922,7 @@
   function agyChoicePanel(info) {
     const provider = (state.providers || []).find(p => p.id === "agy") || {};
     if (provider.agyCli?.installing || (provider.agyCli && state.agyInstall.phase !== "idle")) {
-      return managedAgentInstallPanel("agy", info);
+      return agyCliInstallPanel(info);
     }
     const saved = Array.isArray(provider.savedSignIns) ? provider.savedSignIns : [];
     const last = provider.signInMethod;
@@ -11948,10 +11940,12 @@
           ? "Open Google's sign-in page, then paste the full address from the page that does not load."
           : "Opens Google's sign-in page in your browser."}</p>`
       + `<p class="onb-or">or</p>` : "")
-      + `<p class="onb-desc"><strong>Gemini API key${lastUsed("api-key")}</strong> &mdash; get one at `
-      + `<a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">aistudio.google.com/apikey</a>. `
-      + `It is kept in this app's secure storage on the workspace machine.</p>`
-      + (provider.agyCli ? `<p class="onb-desc">AFK Pilot installs the Antigravity server when needed to use a key.</p>` : "")
+      + `<p class="onb-desc"><strong>Gemini API key${lastUsed("api-key")}</strong> &mdash; `
+      + `<a href="https://aistudio.google.com/api-keys" target="_blank" rel="noopener noreferrer">get one in AI Studio</a>. `
+      + `It is kept in this app's secure storage on the workspace machine.`
+      + (provider.agyCli?.installed === false ? " Using it installs the Antigravity CLI first." : "") + `</p>`
+      + `<p class="onb-desc">A free key works, but Google may use what you send to improve its products. `
+      + `Google AI Pro and Ultra may include Cloud credits that pay for a paid key.</p>`
       + (saved.includes("api-key")
         ? `<button class="onb-action onb-secondary" type="button" data-act="agySignInSavedKey">Use the saved key</button>`
           + `<p class="onb-desc">Or replace it:</p>`
@@ -19048,10 +19042,8 @@ ${fullText}`
     strip.hidden = !!(link && (!link.reachable || !link.restored));
     const seconds = Math.floor(Math.max(0, Date.now() - startup.startedAt) / 1000);
     // A CLI update routinely takes minutes; only a stalled start is "slow".
-    // Antigravity's Windows server unpacks itself on every start: 15-25 s is
-    // its ordinary start, not a stall. DeepSeek's harness boots ~15 s warm and
-    // well past 20 s on a busy machine, so it gets the same latitude.
-    const slowAfter = { agy: 60, deepseek: 45 }[startup.provider] || 20;
+    // DeepSeek's harness can take more than 20 seconds to boot.
+    const slowAfter = startup.provider === "deepseek" ? 45 : 20;
     const slow = seconds >= slowAfter && startup.stage !== "updating";
     const provider = { grok: "Grok", codex: "Codex", claude: "Claude", muse: "Muse", agy: "Antigravity", deepseek: "DeepSeek" }[startup.provider] || "Grok";
     const count = Number.isInteger(startup.messageCount) && startup.messageCount >= 0 ? startup.messageCount + " " : "";

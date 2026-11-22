@@ -55,7 +55,7 @@ it("applies remembered Auto accept only after creating a new Codex chat", () => 
   // native Auto start. Nothing that unlocks the composer.
   const between = src.slice(newSession, call).split("\n").slice(1, -1).map(line => line.trim());
   expect(between).toEqual([
-    "if (agyProgram?.program === \"cli\" && gen === session.gen) {",
+    "if (agyMethod && gen === session.gen) {",
     "const mode = this.defaultModeForProvider(\"agy\");",
     "if (mode === \"yolo\") await this.setAgyCliMode(session, client, mode, undefined, false);",
     "}",

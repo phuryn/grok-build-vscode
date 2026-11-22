@@ -106,6 +106,7 @@ function makeSidebar(cwd: string): any {
   sidebar.providerConnections = vi.fn(() => sidebar.providerConnectionState);
   sidebar.connectedProviders = vi.fn(() => ["grok"]);
   sidebar.providerNeedsLogin = {};
+  sidebar.agyGoogleAuthenticated = {};
   sidebar.providerCliVersions = {};
   sidebar.remoteClients = new RemoteClientState<Session>(cwd);
   sidebar.pool = new Set<Session>();
@@ -401,34 +402,26 @@ describe("send vs concurrent startSession", () => {
     expect(sidebar.posted.filter((m: HostMsg) => m.type === "userMessage").map((m: any) => m.text)).toEqual(["first", "held"]);
   });
 
-  it.each([false, true])("selects Antigravity once before admitting a turn (broken CLI: %s)", async broken => {
+  it("selects Antigravity once before admitting a turn", async () => {
     const cwd = fs.mkdtempSync(path.join(tmpdir(), "agy-host-start-"));
     const sidebar = makeSidebar(cwd);
     const sink = path.join(cwd, "cli.jsonl");
     fs.writeFileSync(sink, "");
-    fs.mkdirSync(path.join(cwd, "antigravity-acp"));
-    fs.writeFileSync(path.join(cwd, "antigravity-acp", "acp_token.json"), "{}");
     vi.stubEnv("GEMINI_HOME", cwd);
     vi.stubEnv("FAKE_AGY_CLI_SINK", sink);
-    vi.stubEnv("FAKE_AGY_CLI_BROKEN", broken ? "1" : "0");
-    vi.stubEnv("FAKE_AGY_152", "1");
     sidebar.focused.provider = "agy";
     sidebar.providerConnectionState = { agy: true };
     sidebar.connectedProviders = () => ["agy"];
     sidebar.usableProviders = () => ["agy"];
-    sidebar.installedAgyCli = () => path.join(__dirname, "fixtures", "fake-agy-cli.cjs");
-    sidebar.locateProvider = () => path.join(__dirname, "fixtures", "fake-agy-acp.cjs");
+    const cli = path.join(__dirname, "fixtures", "fake-agy-cli.cjs");
+    sidebar.installedAgyCli = () => cli;
+    sidebar.locateProvider = () => cli;
     const prompts = () => fs.readFileSync(sink, "utf8").trim().split(/\r?\n/).filter(Boolean)
       .map(line => JSON.parse(line)).filter(row => row.method === "session/prompt").map(row => row.params.prompt[0].text);
     try {
       const client = await sidebar.startSession(undefined, sidebar.focused);
       expect(client?.sessionId).toBeTruthy();
-      expect(client.supportsInterject()).toBe(!broken);
-      if (broken) {
-        expect(client.nativeApprovalModes).toBe(true);
-        expect(client.pickerModes).toBeUndefined();
-        return;
-      }
+      expect(client.supportsInterject()).toBe(true);
       delete sidebar.maybeFlushQueuedSends;
       const first = sidebar.handleSend("first");
       await vi.waitFor(() => expect(prompts()).toEqual(["first"]));

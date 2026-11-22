@@ -4,7 +4,7 @@ import { spawn } from "node:child_process";
 import { pipeline } from "node:stream/promises";
 import { createGunzip } from "node:zlib";
 import { downloadCodexAsset, extractTarFile, type CodexDownload, type DownloadProgress } from "./codex-managed-installer";
-import { extractZipFile } from "./agy-managed-installer";
+import { extractZipFile } from "./zip-extract";
 
 export const DEEPSEEK_VERSION = "0.2.1-rc.5";
 export const DEEPSEEK_NODE_VERSION = "22.23.4";

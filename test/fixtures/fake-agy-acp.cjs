@@ -1,28 +1,14 @@
 #!/usr/bin/env node
-// A stand-in for Google's agy_acp_server, replaying the frames measured
-// against the real server (research/antigravity-acp.md). State lives under
-// GEMINI_HOME exactly where the real server keeps it, so host code that reads
-// the server's files sees what it would see in production.
-//
-// Env: GEMINI_HOME (required), FAKE_AGY_SINK (JSONL of requests received),
-// FAKE_AGY_SIGN_IN = approve (default) | deny | hang.
-// FAKE_AGY_152 opts into the 1.5.2 Google catalog and session-open commands.
-//
-// `gateway` behaves as the real server's does (measured against 1.4.0 with a
-// local fake of the Gemini API): refused as an unsupported method unless
-// AGY_ACP_ENABLE_GATEWAY_AUTH is set; never written to settings.json; models
-// listed from `<baseUrl>/v1beta/models` (no credential sent) with no
-// thinking_level option; a turn POSTs `<baseUrl>/v1beta/models/<model>:
-// streamGenerateContent?alt=sse` with `x-goog-api-key: dummy_api_key`, and an
-// API refusal becomes the error's message as agent text. These are real HTTP
-// calls, so a test can put the host's key relay in between.
+// Fake agy ACP transport for isolated Google sign-in, key sign-in and tool replay.
+if (process.argv[2] !== "acp") process.exit(2);
 const fs = require("node:fs");
 const path = require("node:path");
 const readline = require("node:readline");
-const usageText = require("./agy-usage-text.json");
 
-const home = process.env.GEMINI_HOME;
-const acpDir = path.join(home, "antigravity-acp");
+const flag = name => process.argv.includes(name) ? process.argv[process.argv.indexOf(name) + 1] : undefined;
+const home = flag("--gemini-dir") ?? process.env.GEMINI_HOME;
+if (!home) throw new Error("A throwaway Gemini home is required.");
+const acpDir = path.join(home, flag("--app-data-dir") ?? "antigravity-cli");
 const settingsFile = path.join(acpDir, "settings.json");
 const tokenFile = path.join(acpDir, "acp_token.json");
 const conversations = path.join(acpDir, "conversations");
@@ -31,7 +17,7 @@ let nextServerId = 0;
 const waiting = new Map();
 const cancelled = new Set();
 const sessions = new Map();
-const version152 = process.env.FAKE_AGY_152 === "1";
+const extendedCatalog = process.env.FAKE_AGY_EXTENDED_CATALOG === "1";
 let loggedOut = false;
 // What `authenticate` selected in this process; settings.json otherwise.
 let auth;
@@ -49,10 +35,6 @@ function request(method, params) {
 function savedAuthType() {
   try { return JSON.parse(fs.readFileSync(settingsFile, "utf8")).auth.type; } catch { return undefined; }
 }
-function rememberAuthType(type) {
-  fs.mkdirSync(acpDir, { recursive: true });
-  fs.writeFileSync(settingsFile, JSON.stringify({ auth: { type } }));
-}
 /** The method in force: the one authenticate chose, else settings.json's. */
 function currentAuth() {
   if (loggedOut) return undefined;
@@ -62,26 +44,11 @@ function currentAuth() {
   return undefined;
 }
 function signedIn() { return !!currentAuth(); }
-function gatewayBase() { return currentAuth()?.method === "gateway" ? currentAuth().baseUrl.replace(/\/+$/, "") : undefined; }
-// gateway/model_discovery.py tier 4, when the gateway lists nothing.
-const BUILTIN_GATEWAY_MODELS = ["gemini-3.1-pro-preview", "gemini-3-flash-preview", "gemini-3.1-flash-lite-preview"];
-async function discoverGatewayModels() {
-  try {
-    const answer = await fetch(`${gatewayBase()}/v1beta/models?pageSize=1000`);
-    if (answer.status !== 200) throw new Error(String(answer.status));
-    const body = await answer.json();
-    const ids = (body.models || [])
-      .filter((model) => !model.supportedGenerationMethods || model.supportedGenerationMethods.includes("generateContent"))
-      .map((model) => ({ value: String(model.name).replace(/^models\//, ""), name: model.displayName || String(model.name).replace(/^models\//, "") }));
-    if (ids.length) return ids;
-  } catch { /* falls through to the built-in list, as the server does */ }
-  return BUILTIN_GATEWAY_MODELS.map((value) => ({ value, name: value }));
-}
 function authRequired() {
   return { code: -32000, message: "Authentication required", data: { message: "No authentication method selected." } };
 }
-const MODE_OPTION = { currentValue: "default", options: [{ value: "default", name: "Default" }, { value: "auto_edit", name: "Auto Edit" }, { value: "yolo", name: "YOLO" }], id: "mode", name: "Session Mode", category: "mode", type: "select" };
-const FAMILIES = (version152 ? ["Gemini 4 Neon", "Gemini 4 Carbon", "Gemini 4 Argon", "Gemini 4 Hydrogen", "Gemini 3.8 Flash"] : ["Gemini 3.8 Flash"])
+const MODE_OPTION = { currentValue: "default", options: [{ value: "default", name: "Default" }, { value: "accept-edits", name: "Accept edits" }, { value: "plan", name: "Plan" }], id: "mode", name: "Session Mode", category: "mode", type: "select" };
+const FAMILIES = (extendedCatalog ? ["Gemini 4 Neon", "Gemini 4 Carbon", "Gemini 4 Argon", "Gemini 4 Hydrogen", "Gemini 3.8 Flash"] : ["Gemini 3.8 Flash"])
   .map(name => ({ name, value: name.toLowerCase().replaceAll(" ", "-") }));
 function levels(model) {
   const standard = ["low", "medium", "high"];
@@ -89,14 +56,10 @@ function levels(model) {
 }
 function configOptions(session) {
   const mode = { ...MODE_OPTION, currentValue: session.mode ?? "default" };
-  if (session?.gatewayModels) {
-    // Gateway mode: models exactly as the gateway declares them, no thinking_level.
-    return [{ currentValue: session.model, options: session.gatewayModels, id: "model", name: "Model", category: "model", type: "select" }, mode];
-  }
   const level = session?.level ?? "high";
   return [
     { currentValue: session.model, options: FAMILIES, id: "model", name: "Model", category: "model", type: "select" },
-    { currentValue: level, options: levels(session.model).map((value) => ({ value, name: value })), id: "thinking_level", name: "Thinking Level", category: "thought_level", type: "select" },
+    { currentValue: level, options: levels(session.model).map((value) => ({ value, name: value })), id: "thought_level", name: "Thinking Level", category: "thought_level", type: "select" },
     mode,
   ];
 }
@@ -105,41 +68,16 @@ function sessionResult(sessionId, session) {
     ...(sessionId ? { sessionId } : {}),
     modes: { currentModeId: session.mode ?? "default", availableModes: MODE_OPTION.options.map(({ value, name }) => ({ id: value, name })) },
     configOptions: configOptions(session),
-    models: session?.gatewayModels
-      ? { availableModels: session.gatewayModels.map(({ value, name }) => ({ modelId: value, name })), currentModelId: session.model }
-      : { availableModels: FAMILIES.flatMap(({ value, name }) => levels(value).map(level => ({ modelId: `${value}-${level}`, name: `${name} (${level})` }))), currentModelId: `${session.model}-${session.level}` },
+    models: { availableModels: FAMILIES.flatMap(({ value, name }) => levels(value).map(level => ({ modelId: `${value}-${level}`, name: `${name} (${level})` }))), currentModelId: `${session.model}-${session.level}` },
   };
 }
-async function newSessionState(cwd) {
-  if (!gatewayBase()) return { cwd, model: "gemini-3.8-flash", level: "high" };
-  const gatewayModels = await discoverGatewayModels();
-  return { cwd, gatewayModels, model: gatewayModels[0].value };
-}
-/** One gateway turn: the harness's own call, dummy credential and all. */
-async function gatewayTurn(sessionId, session, text) {
-  const answer = await fetch(`${gatewayBase()}/v1beta/models/${session.model}:streamGenerateContent?alt=sse`, {
-    method: "POST",
-    headers: { "content-type": "application/json", "x-goog-api-key": "dummy_api_key" },
-    body: JSON.stringify({ contents: [{ role: "user", parts: [{ text }] }], generationConfig: { maxOutputTokens: 65535 } }),
-  });
-  const body = await answer.text();
-  if (answer.status !== 200) {
-    let message = `Agent execution error: status ${answer.status}`;
-    try { message = JSON.parse(body).error.message || message; } catch { /* keep the generic one */ }
-    return update(sessionId, { content: { type: "text", text: message }, sessionUpdate: "agent_message_chunk" });
-  }
-  for (const line of body.split(/\r?\n/)) {
-    if (!line.startsWith("data:")) continue;
-    let event;
-    try { event = JSON.parse(line.slice(5)); } catch { continue; }
-    const part = event.candidates?.[0]?.content?.parts?.map((p) => p.text || "").join("");
-    if (part) update(sessionId, { content: { type: "text", text: part }, sessionUpdate: "agent_message_chunk" });
-  }
+function newSessionState(cwd) {
+  return { cwd, model: "gemini-3.8-flash", level: "high" };
 }
 function commands(sessionId) {
   update(sessionId, { sessionUpdate: "available_commands_update", availableCommands: [
-    { name: "plan", description: "Plan carefully" }, { name: "logout", description: "Log out" }, { name: "usage", description: "Show usage" },
-    ...(version152 ? [{ name: "native-check", description: "Native command for the collision test" }] : []),
+    { name: "plan", description: "Plan carefully" }, { name: "logout", description: "Log out" }, { name: "compact", description: "Compact" },
+    ...(extendedCatalog ? [{ name: "native-check", description: "Native command for the collision test" }] : []),
   ] });
 }
 function remember(sessionId, cwd) {
@@ -154,17 +92,8 @@ async function prompt(id, params) {
   if (loggedOut) return write({ id, error: { code: -32000, message: "Logged out. Sign in again to continue." } });
   commands(sessionId);
   const session = sessions.get(sessionId);
-  if (text === "/usage") {
-    await request("session/request_permission", { sessionId, options: [{ optionId: "allow", kind: "allow_once" }] });
-    update("unrelated-session", { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Foreign output" } });
-    const middle = usageText.indexOf("- **Claude");
-    update(sessionId, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: usageText.slice(0, middle) } });
-    write({ id, result: { stopReason: "end_turn" } });
-    setTimeout(() => update(sessionId, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: usageText.slice(middle) } }), 15);
-    return;
-  }
-  if (session.gatewayModels) {
-    await gatewayTurn(sessionId, session, text);
+  if (auth?.method === "gemini-api-key" && process.env.FAKE_AGY_REFUSE_KEY) {
+    update(sessionId, { content: { type: "text", text: "API key not valid. Please pass a valid API key." }, sessionUpdate: "agent_message_chunk" });
   } else if (/subagent/i.test(text)) {
     // Measured: the launch completes at once with the model's own summary, and
     // the child's call arrives on this session with nothing to attribute it.
@@ -242,19 +171,13 @@ rl.on("line", async (line) => {
       return write({ id, result: { protocolVersion: 1,
         agentCapabilities: { loadSession: true, sessionCapabilities: { list: {}, resume: {} }, auth: { logout: {} },
           _meta: { antigravity: { tier: true, systemPrompt: { append: true } } } },
-        authMethods: [{ id: "oauth-personal", name: "Log in with Google" }],
-        agentInfo: { name: "antigravity-acp", title: "Google Antigravity", version: version152 ? "1.5.2" : "1.4.0" } } });
+        authMethods: [{ id: "oauth-personal", name: "Log in with Google" }, { id: "gemini-api-key", name: "Gemini API key" }],
+        agentInfo: { name: "Antigravity ACP Server", title: "Google Antigravity", version: "1.5.8" } } });
     case "authenticate": {
-      if (params.methodId === "gateway") {
-        if (!/^(1|true|yes|on)$/i.test(String(process.env.AGY_ACP_ENABLE_GATEWAY_AUTH ?? "").trim())) {
-          return write({ id, error: { code: -32602, message: "Unsupported auth method: 'gateway'" } });
-        }
-        const baseUrl = params._meta?.gateway?.baseUrl;
-        if (typeof baseUrl !== "string" || !baseUrl) {
-          return write({ id, error: { code: -32602, message: "authenticate(gateway): `_meta.gateway.baseUrl` is required and must be a non-empty string." } });
-        }
-        // Per connection, never persisted.
-        auth = { method: "gateway", baseUrl };
+      if (params.methodId === "gemini-api-key") {
+        if (!process.env.GEMINI_API_KEY) return write({ id, error: authRequired() });
+        sink("keyPresent", { present: true, onlyInEnv: !process.argv.some(arg => arg.includes(process.env.GEMINI_API_KEY)) });
+        auth = { method: "gemini-api-key" };
         loggedOut = false;
         return write({ id, result: {} });
       }
@@ -262,17 +185,15 @@ rl.on("line", async (line) => {
       if (fs.existsSync(tokenFile)) {
         auth = { method: "oauth-personal" };
         loggedOut = false;
-        rememberAuthType("oauth-personal");
         return write({ id, result: {} });
       }
-      process.stderr.write("Open the following link to authenticate the ACP server: https://accounts.google.com/o/oauth2/v2/auth?client_id=fake\n");
+      process.stderr.write("Open this link: https://accounts.google.com/o/oauth2/v2/auth?client_id=fake\n");
       const mode = process.env.FAKE_AGY_SIGN_IN || "approve";
       if (mode === "hang") return;
       await new Promise((resolve) => setTimeout(resolve, 50));
       if (mode === "deny") return write({ id, error: { code: -32000, message: "Onboarding failed: denied" } });
       fs.mkdirSync(acpDir, { recursive: true });
       fs.writeFileSync(tokenFile, JSON.stringify({ token: "fake" }));
-      rememberAuthType("oauth-personal");
       auth = { method: "oauth-personal" };
       loggedOut = false;
       return write({ id, result: {} });
@@ -291,15 +212,14 @@ rl.on("line", async (line) => {
       const session = await newSessionState(params.cwd);
       sessions.set(sessionId, session);
       remember(sessionId, params.cwd);
-      if (process.env.FAKE_AGY_LOSE_METER_CREATE && params.cwd.endsWith("afk-pilot-meter")) process.exit(1);
       write({ id, result: sessionResult(sessionId, session) });
-      if (version152) commands(sessionId);
+      if (extendedCatalog) commands(sessionId);
       return;
     }
     case "session/resume":
     case "session/load": {
       if (!signedIn()) return write({ id, error: authRequired() });
-      if (method === "session/resume" && !fs.existsSync(path.join(conversations, `${params.sessionId}.db`))) {
+      if (!fs.existsSync(path.join(conversations, `${params.sessionId}.db`))) {
         return write({ id, error: { code: -32002, message: "Resource not found" } });
       }
       const session = await newSessionState(params.cwd);
@@ -310,7 +230,7 @@ rl.on("line", async (line) => {
         update(params.sessionId, { content: { type: "text", text: "OK" }, sessionUpdate: "agent_message_chunk" });
       }
       write({ id, result: sessionResult(undefined, session) });
-      if (version152) commands(params.sessionId);
+      if (extendedCatalog) commands(params.sessionId);
       return;
     }
     case "session/list":
@@ -318,13 +238,12 @@ rl.on("line", async (line) => {
     case "session/set_config_option": {
       const session = sessions.get(params.sessionId);
       if (!session) return write({ id, error: { code: -32002, message: "Resource not found" } });
-      if (params.configId === "thinking_level") {
-        if (session.gatewayModels) return write({ id, error: { code: -32602, message: "Unknown config option id: thinking_level" } });
+      if (params.configId === "thought_level") {
         if (!levels(session.model).includes(params.value)) return write({ id, error: { code: -32602, message: "Unsupported thinking level" } });
         session.level = params.value;
       }
       if (params.configId === "model") {
-        const offered = (session.gatewayModels ?? FAMILIES).map(option => option.value);
+        const offered = FAMILIES.map(option => option.value);
         if (!offered.includes(params.value)) return write({ id, error: { code: -32602, message: `Model '${params.value}' is not available for the current authentication method.` } });
         session.model = params.value;
         if (!levels(session.model).includes(session.level)) session.level = "high";

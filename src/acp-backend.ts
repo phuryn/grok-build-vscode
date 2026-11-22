@@ -241,16 +241,15 @@ export interface AcpBackend<Provider extends string = AcpProvider> {
   readonly nativeCompactCommand?: boolean;
   /** A new prompt can take over the response that closes the same turn. */
   readonly ownsSteeringQueue?: boolean;
-  subscriptionCredentialContext?(authMethod: string | undefined): string | undefined;
-  readSubscriptionUsage?(authMethod: string | undefined): Promise<SubscriptionWindow[]>;
+  subscriptionCredentialContext?(): string | undefined;
+  readSubscriptionUsage?(): Promise<SubscriptionWindow[]>;
   normalizeUpdate(update: any, meta: any, foreignSessionId?: string): BackendUpdate;
   stopDelegatedWork?(sessionId: string, kind: DelegatedWorkKind, id: string): { method: string; params: object } | undefined;
   /** Supply child history at the position of its card in the parent replay. */
   prepareChildReplay?(sessionId: string, cwd: string): Promise<ChildHistoryReplay>;
   normalizePermissionParams(params: any): any;
   setModel(sessionId: string, modelId: string, reasoningEffort?: string): { method: string; params: any };
-  /** A relay-backed provider can apply effort locally without an ACP call. */
-  setReasoningEffort(sessionId: string, modelId: string | undefined, level: string): { method: string; params: any } | { local: true } | null;
+  setReasoningEffort(sessionId: string, modelId: string | undefined, level: string): { method: string; params: any } | null;
   setMode(sessionId: string, modeId: string): { method: string; params: any };
   steeringCapabilities(initializeResult: any, options: BackendSteeringOptions): BackendSteeringCapabilities;
   fork?(sessionId: string, cwd: string, messageId?: string): { method: string; params: object };
@@ -286,18 +285,8 @@ export interface AcpBackend<Provider extends string = AcpProvider> {
   /** Extra `session/new` and `session/load` params beyond cwd and mcpServers. */
   sessionParams?(cwd: string): Record<string, unknown>;
   /**
-   * The model a new session moves to when the host remembers none, or
-   * undefined to keep the agent's own default.
-   */
-  defaultModelId?(modelIds: readonly string[]): string | undefined;
-  /**
    * A turn (or a `session/load` replay) ended. Returns already-normalized
    * updates to route, e.g. settling subagent cards the agent never closes.
    */
   turnEnded?(outcome: "completed" | "cancelled" | "failed"): any[];
-  /**
-   * Ask the spawned process to exit cleanly, in place of waiting for it to
-   * notice stdin closing. Dispose still kills it if it has not exited in time.
-   */
-  stopProcess?(pid: number, command: string): Promise<void>;
 }

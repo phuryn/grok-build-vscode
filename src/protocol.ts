@@ -593,7 +593,7 @@ export type HostMsg =
       errorId?: string;
     }
   | { type: "codexInstallProgress"; phase: "downloading" | "verifying" | "installing" | "idle"; receivedBytes?: number; totalBytes?: number; reason?: string }
-  /** Same shape for the managed Antigravity server; desk only. */
+  /** Shared by current CLI installers and older host builds. */
   | { type: "agyInstallProgress"; provider?: "agy" | "deepseek"; phase: "downloading" | "verifying" | "installing" | "idle"; receivedBytes?: number; totalBytes?: number; reason?: string }
   /** Plan picker gate. `recheckable` means the version probe failed (not a
    *  verified-old CLI) — the row stays clickable so a later pick re-probes. */

@@ -218,7 +218,7 @@ function hostHarness(provider: Session["provider"] = "grok") {
 }
 
 describe("host subscription lifecycle", () => {
-  it("shares Antigravity reads for one Google sign-in and publishes ephemeral, account-scoped windows", async () => {
+  it("keeps Antigravity windows per session and clears them when the binding expires", async () => {
     const { sidebar, session, read } = hostHarness("agy");
     let credential: string | undefined = "agy:fake-google-account";
     Object.assign(session.client!, { subscriptionCredentialContext: () => credential });
@@ -229,19 +229,19 @@ describe("host subscription lifecycle", () => {
     other.client = { sessionId: "other", subscriptionCredentialContext: () => credential, getSubscriptionUsage: read } as any;
     sidebar.bindSubscriptionUsage(other, process.env);
     await sidebar.refreshSubscriptionUsage(other);
-    expect(read).toHaveBeenCalledOnce();
+    expect(read).toHaveBeenCalledTimes(2);
     expect(other.subscriptionUsage?.snapshot()).toEqual(windows());
     expect(session.buffer).toEqual([]);
     expect(sidebar.sendRemoteSession).toHaveBeenLastCalledWith(other, { type: "subscriptionUsage", windows: windows(), hideWhenEmpty: true });
     credential = undefined;
     await sidebar.refreshSubscriptionUsage(session);
-    expect(read).toHaveBeenCalledOnce();
+    expect(read).toHaveBeenCalledTimes(2);
     expect(sidebar.sendRemoteSession).toHaveBeenLastCalledWith(session, { type: "subscriptionUsage", windows: [], hideWhenEmpty: true });
-    const gateway = new Session();
-    gateway.provider = "agy";
-    gateway.client = other.client;
-    sidebar.bindSubscriptionUsage(gateway, process.env);
-    expect(gateway.subscriptionUsage).toBeUndefined();
+    const keyChat = new Session();
+    keyChat.provider = "agy";
+    keyChat.client = other.client;
+    sidebar.bindSubscriptionUsage(keyChat, process.env);
+    expect(keyChat.subscriptionUsage).toBeUndefined();
   });
 
   it("shares Grok reads across the same credential context but starts each Claude process empty", async () => {

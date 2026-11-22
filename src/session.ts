@@ -700,7 +700,7 @@ export function finishQueuedSendCommit(
 export function sessionPickerModes(session: Session) {
   if (session.client?.pickerModes) return [...session.client.pickerModes];
   if (session.provider === "deepseek" && session.deepseekHarness === "minimal") return [];
-  return sessionModes(session.provider, !!session.museSandboxUnavailable, session.client?.nativeApprovalModes);
+  return sessionModes(session.provider, !!session.museSandboxUnavailable);
 }
 
 export function sessionModeMessage(session: Session, modeId: string): Extract<HostMsg, { type: "modeChanged" }> {

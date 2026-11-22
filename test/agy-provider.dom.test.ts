@@ -3,7 +3,6 @@ import * as path from "node:path";
 import { Window } from "happy-dom";
 import { describe, expect, it } from "vitest";
 import { bootWebview, click, dispatch } from "./webview-harness";
-import { AgyBackend } from "../src/agy-backend";
 
 const onboarding = (doc: Document) => doc.getElementById("welcome-onboarding")!;
 
@@ -27,28 +26,6 @@ describe("Antigravity in the chat renderer", () => {
     expect(h.posted).toContainEqual({ type: "setMode", modeId: "acceptEdits" });
     dispatch(h.window, { type: "modeChanged", modeId: "acceptEdits", modes: ["agent", "acceptEdits", "yolo"] });
     expect(button.title).toContain("Accept edits");
-  });
-
-  it.each([false, true])("offers Low/Medium/High only for a key model that thinks (remote=%s)", (remote) => {
-    const backend = new AgyBackend({ keyRelay: {
-      baseUrl: "http://127.0.0.1/relay/lease", release: () => {}, thinkingLevel: "medium", setThinkingLevel: () => {},
-      supportsThinking: (id) => id === "gemini-4-carbon",
-    } });
-    const normalized = backend.normalizeSessionResponse({ configOptions: [{ id: "model", currentValue: "gemini-4-carbon", options: ["gemini-4-carbon", "gemini-3.8-flash"].map((value) => ({ value, name: value })) }] });
-    const models = normalized.models.availableModels.map((model: any) => ({ provider: "agy", modelId: model.modelId, name: model.name,
-      ...model._meta, reasoningEfforts: model._meta.reasoningEfforts.map((effort: any) => effort.value) }));
-    const h = bootWebview({ remote });
-    dispatch(h.window, { type: "providerState", providers: [{ id: "agy", connected: true }] });
-    dispatch(h.window, { type: "session", sessionId: "s", provider: "agy", currentModelId: "gemini-4-carbon", models });
-    click(h.window, h.doc.getElementById("gear-btn"));
-    expect([...h.doc.querySelectorAll(".effort-strip-stop")].map((el) => el.getAttribute("aria-label"))).toEqual(["Low", "Medium", "High"]);
-    click(h.window, h.doc.querySelector('[data-effort="high"]'));
-    click(h.window, h.doc.getElementById("gear-btn"));
-    expect(h.posted).toContainEqual({ type: "setEffort", level: "high" });
-    dispatch(h.window, { type: "session", sessionId: "s", provider: "agy", currentModelId: "gemini-3.8-flash", models });
-    click(h.window, h.doc.getElementById("gear-btn"));
-    expect(h.doc.querySelector(".model-picker-row")).not.toBeNull();
-    expect(h.doc.querySelector(".model-effort-strip")).toBeNull();
   });
 
   it("draws and sends nothing for Antigravity until the host names it", () => {
@@ -75,7 +52,7 @@ describe("Antigravity in the chat renderer", () => {
     expect(h.posted).toContainEqual({ type: "runGrokLogin", provider: "agy" });
   });
 
-  it("installs from the missing-server panel and shows progress", () => {
+  it("installs from the legacy missing-agent panel and shows progress", () => {
     const h = bootWebview();
     dispatch(h.window, { type: "providerState", providers: [{ id: "agy", connected: false }] });
     dispatch(h.window, { type: "onboarding", state: "missing-agy", provider: "agy", platform: "win32" });
@@ -104,7 +81,9 @@ describe("Antigravity in the chat renderer", () => {
     const google = wizard.querySelector('[data-act="agySignInGoogle"]') as HTMLElement;
     expect(google.textContent).toBe("Sign in with Google (last used)");
     expect(wizard.textContent).toContain("Already signed in on this computer, so no browser is needed.");
-    expect(wizard.querySelector('a[href="https://aistudio.google.com/apikey"]')).not.toBeNull();
+    expect(wizard.querySelector('a[href="https://aistudio.google.com/api-keys"]')).not.toBeNull();
+    expect(wizard.textContent).toContain("A free key works, but Google may use what you send to improve its products.");
+    expect(wizard.textContent).not.toContain("installs the Antigravity CLI first");
     expect(wizard.querySelector('[data-act="agySignInSavedKey"]')).toBeNull();
     click(h.window, google);
     expect(h.posted).toContainEqual({ type: "agySignIn", method: "google" });
@@ -167,7 +146,7 @@ describe("Antigravity in the chat renderer", () => {
     expect(card.querySelector(".provider-signin-btn")).toBeNull();
   });
 
-  it("opens the connect dialog on the Install panel when Connect finds no server", () => {
+  it("opens the connect dialog on the Install panel when Connect finds no CLI", () => {
     const h = bootWebview();
     dispatch(h.window, { type: "providerState", providers: [{ id: "agy", connected: false }] });
     dispatch(h.window, { type: "onboarding", state: "missing-agy", provider: "agy", platform: "win32",
@@ -175,7 +154,7 @@ describe("Antigravity in the chat renderer", () => {
     const wizard = h.doc.querySelector(".connect-wizard-body")!;
     expect(wizard.querySelector('[data-act="installAgy"]')).not.toBeNull();
     dispatch(h.window, { type: "agyInstallProgress", phase: "installing" });
-    expect(wizard.textContent).toContain("Unpacking Antigravity...");
+    expect(wizard.textContent).toContain("Installing Antigravity");
     // Installed: the same dialog goes on to the choice of how to sign in.
     dispatch(h.window, { type: "onboarding", state: "agy-login", provider: "agy", platform: "win32" });
     expect(wizard.querySelector('[data-act="agySignInGoogle"]')).not.toBeNull();
@@ -187,11 +166,11 @@ describe("Antigravity in the chat renderer", () => {
     const provider = { id: "agy", connected: false, remoteSetup: true, googleSignIn: true };
     dispatch(h.window, { type: "providerState", providers: [provider] });
     dispatch(h.window, { type: "onboarding", state: "missing-agy", provider: "agy" });
-    expect(onboarding(h.doc).textContent).toContain("Antigravity agent server");
+    expect(onboarding(h.doc).textContent).toContain("Install Antigravity");
     expect(onboarding(h.doc).querySelector('[data-act="agyChooseKey"]')).toBeNull();
     dispatch(h.window, { type: "providerState", providers: [{ ...provider, agyCli: { installed: false } }] });
     dispatch(h.window, { type: "onboarding", state: "missing-agy", provider: "agy" });
-    expect(onboarding(h.doc).textContent).toContain("Google sign-in uses the Antigravity CLI.");
+    expect(onboarding(h.doc).textContent).toContain("Install Antigravity");
     click(h.window, onboarding(h.doc).querySelector('[data-act="installAgy"]'));
     expect(h.posted).toContainEqual({ type: "installAgy" });
     dispatch(h.window, { type: "providerState", providers: [{ ...provider, agyCli: { installed: false, installing: true } }] });
@@ -205,17 +184,14 @@ describe("Antigravity in the chat renderer", () => {
     click(h.window, onboarding(h.doc).querySelector('[data-act="agyChooseKey"]'));
     const wizard = h.doc.querySelector(".connect-wizard-body")!;
     expect(wizard.querySelector(".onb-agy-key")).not.toBeNull();
-    expect(wizard.textContent).toContain("installs the Antigravity server");
+    expect(wizard.textContent).toContain("Using it installs the Antigravity CLI first.");
   });
 
-  it("names Antigravity while it starts, and is patient with its slow start", () => {
+  it("names Antigravity while it starts", () => {
     const h = bootWebview();
     dispatch(h.window, { type: "providerState", providers: [{ id: "agy", connected: true }] });
     dispatch(h.window, { type: "session", sessionId: "s", provider: "agy", models: [] });
     expect((h.doc.getElementById("input") as HTMLTextAreaElement).placeholder).toBe("Ask Antigravity…");
-    const chat = readFileSync(path.join(__dirname, "..", "media", "chat.js"), "utf8");
-    // Behaviour (60 s before "slow") is pinned in startup-status.dom.test.ts.
-    expect(chat).toContain("{ agy: 60, deepseek: 45 }[startup.provider] || 20");
   });
 });
 

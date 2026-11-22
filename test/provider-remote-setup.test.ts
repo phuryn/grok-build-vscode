@@ -24,7 +24,8 @@ function host() {
   s.installedAgyCli = vi.fn(() => undefined);
   s.state = { get: (_: string, fallback: unknown) => fallback };
   s.context.secrets = { get: async () => undefined };
-  s.agyGoogleSignedIn = vi.fn(async () => false);
+  s.agyGoogleAuthenticated = {};
+  s.agyGoogleStored = vi.fn(async () => false);
   s.postLocal = vi.fn(); s.sendRemoteRequester = vi.fn(); s.postProviderState = vi.fn();
   return { s, requester };
 }
@@ -124,11 +125,11 @@ function credentialHost(provider: "agy" | "deepseek", google = false, method = "
   s.focused.provider = provider; s.focused.status = "working"; s.focused.turnToken = {};
   s.finishProviderLogout = vi.fn();
   s.host.createTerminal = vi.fn();
-  s.agyGoogleSignedIn = vi.fn(async () => google);
+  s.agyGoogleStored = vi.fn(async (profile: string) => profile === "server" && google);
+  s.prepareAgyCli = vi.fn(async () => {});
   const client = { start: vi.fn(), logout: vi.fn(async () => { google = false; }), dispose: vi.fn(), authenticate: vi.fn() };
   s.agySignInClient = vi.fn(() => client);
-  // Managed credentials only: a machine with Google's agy CLI installed would otherwise sign it out too.
-  s.installedAgyCli = vi.fn(() => undefined);
+  s.installedAgyCli = vi.fn(() => google ? "/installed" : undefined);
   s.locateProvider = vi.fn(() => "/installed");
   s.startDeviceLogin = vi.fn();
   return { s, secrets, client };
@@ -157,8 +158,8 @@ describe("cloud provider Sign out", () => {
     await s.onMessage({ type, provider: "agy" }, "remote", "phone");
     expect(secrets.has("grok.agy.geminiApiKey")).toBe(false);
     expect(secrets.get("grok.deepseekApiKey")).toBe("sentinel-deepseek-key");
-    expect(await s.agyGoogleSignedIn()).toBe(false);
-    expect(client.logout).toHaveBeenCalledTimes(google ? 1 : 0);
+    expect(await s.agyGoogleStored("server")).toBe(false);
+    expect(client.logout).toHaveBeenCalledTimes(google ? 2 : 0);
     if (google) expect(client.logout.mock.invocationCallOrder[0]).toBeLessThan(s.context.secrets.delete.mock.invocationCallOrder[0]);
     expect(s.finishProviderLogout).toHaveBeenCalledWith("agy", expect.any(Function));
     expect(s.host.showWarningMessage).not.toHaveBeenCalled();

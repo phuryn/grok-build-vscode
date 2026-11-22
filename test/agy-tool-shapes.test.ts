@@ -9,10 +9,8 @@ import {
   AgyBackend,
   AgyToolCallMerger,
   AgyToolCallShapes,
-  agyKeyChatModels,
   agyToolNameFromTitle,
   isAgyGemini2,
-  isAgyKeyChatModel,
   normalizeAgyPermissionParams,
   normalizeAgySessionResponse,
   normalizeAgyUpdate,
@@ -220,61 +218,5 @@ describe("Antigravity subagents, as subagent cards with their own work inside", 
     expect(out[5].precede).toEqual([expect.objectContaining({ toolCallId: "step_3", status: "completed" })]);
     expect(out[7].childSessionId).toBe(child("step_9"));
     expect(backend.turnEnded("completed").map((update) => update.toolCallId)).toEqual(["step_9"]);
-  });
-});
-
-describe("Antigravity's key-mode model catalog", () => {
-  // The MODELS line of a live gateway session with a real key.
-  const OFFERED = "gemini-2.5-flash, gemini-2.5-pro, gemini-2.5-flash-preview-tts, gemini-2.5-pro-preview-tts, gemma-4-26b-a4b-it, gemma-4-31b-it, gemini-flash-latest, gemini-flash-lite-latest, gemini-pro-latest, gemini-2.5-flash-lite, gemini-3-flash-preview, gemini-3.1-pro-preview, gemini-3.1-pro-preview-customtools, gemini-3.1-flash-lite-preview, gemini-3.1-flash-lite, nano-banana-pro-preview, gemini-nano-banana-2.1, gemini-3.5-flash, gemini-3.5-flash-lite, gemini-omni-flash-preview, gemini-omni-1.1-flash, gemini-3.5-transcribe, gemini-3.6-flash, gemini-3.7-flash, gemini-3.8-flash, gemini-4-argon, lyria-3-clip-preview, lyria-3-pro-preview, lyria-3.5, gemini-3.1-flash-tts-preview, gemini-3.8-flash-tts, gemini-3.8-flash-lite-tts, gemini-robotics-er-2-preview, gemini-2.5-computer-use-preview-10-2025, antigravity-preview-05-2026, antigravity-preview-09-2026, antigravity-preview-latest, deep-research-max-preview-04-2026, deep-research-preview-04-2026, deep-research-pro-preview-12-2025".split(", ");
-
-  it("keeps the Gemini chat models, newest first, and never Gemini 2", () => {
-    expect(OFFERED).toHaveLength(40);
-    expect(agyKeyChatModels(OFFERED.map((modelId) => ({ modelId }))).map((model) => model.modelId)).toEqual([
-      "gemini-4-argon", "gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite",
-      "gemini-3.1-pro-preview", "gemini-3.1-pro-preview-customtools", "gemini-3.1-flash-lite-preview", "gemini-3.1-flash-lite",
-      "gemini-3-flash-preview",
-    ]);
-    for (const retired of ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.5-flash-lite", "gemini-2.0-flash", "gemini-2.0-flash-exp", "gemini-2-flash"]) {
-      expect(isAgyGemini2(retired)).toBe(true);
-    }
-    for (const kept of ["gemini-3-flash-preview", "gemini-3.8-flash", "gemini-4-argon", "gemini-20-flash", "gemini-nano-banana-2.1"]) {
-      expect(isAgyGemini2(kept)).toBe(false);
-    }
-    for (const dropped of ["gemini-2.5-flash-preview-tts", "gemma-4-31b-it", "gemini-flash-latest", "gemini-nano-banana-2.1", "gemini-omni-1.1-flash",
-      "gemini-3.5-transcribe", "lyria-3.5", "gemini-robotics-er-2-preview", "gemini-2.5-computer-use-preview-10-2025", "antigravity-preview-latest",
-      "deep-research-preview-04-2026", "gemini-3.1-flash-image", "gemini-live-2.5-flash"]) {
-      expect(isAgyKeyChatModel(dropped)).toBe(false);
-    }
-  });
-
-  it("keeps the existing gateway chat filter and preserves the Google catalog in server order", () => {
-    expect(agyKeyChatModels([{ modelId: "gemma-4-31b-it" }, { modelId: "gemini-3.8-flash" }], "gemma-4-31b-it").map((m) => m.modelId))
-      .toEqual(["gemini-3.8-flash", "gemma-4-31b-it"]);
-    const response = { sessionId: "s", configOptions: [
-      { id: "model", currentValue: "gemini-2.5-flash", options: ["gemini-2.5-flash", "gemini-2.5-flash-preview-tts", "gemini-4-argon", "gemma-4-31b-it"].map((value) => ({ value, name: value })) },
-      { id: "mode", currentValue: "default", options: [] },
-    ] };
-    // The gateway's own start, Gemini 2.5 Flash, is in use and still not shown.
-    expect(normalizeAgySessionResponse(response, true).models.availableModels.map((m: any) => m.modelId)).toEqual(["gemini-4-argon"]);
-    expect(normalizeAgySessionResponse(response).models.availableModels.map((m: any) => m.modelId))
-      .toEqual(["gemini-2.5-flash", "gemini-2.5-flash-preview-tts", "gemini-4-argon", "gemma-4-31b-it"]);
-    expect(normalizeAgySessionResponse({ sessionId: "s", models: { currentModelId: "gemini-3.8-flash-high",
-      availableModels: [{ modelId: "gemini-3.8-flash-high" }, { modelId: "gemini-2.5-pro" }] } }).models.availableModels)
-      .toEqual([{ modelId: "gemini-3.8-flash-high" }, { modelId: "gemini-2.5-pro" }]);
-  });
-
-  it("starts a key's conversation on Gemini 4 Argon, and offers no effort where the server has no thinking_level", () => {
-    const keyed = new AgyBackend({ keyMode: true });
-    expect(keyed.defaultModelId(["gemini-2.5-flash", "gemini-4-argon"])).toBe("gemini-4-argon");
-    // A key without Argon starts on the newest model offered, never on Gemini 2.
-    expect(keyed.defaultModelId(["gemini-3.8-flash", "gemini-3.5-flash"])).toBe("gemini-3.8-flash");
-    expect(keyed.defaultModelId(["gemini-2.5-flash"])).toBeUndefined();
-    expect(new AgyBackend().defaultModelId(["gemini-4-argon"])).toBeUndefined();
-    keyed.normalizeSessionResponse({ sessionId: "s", configOptions: [{ id: "model", currentValue: "gemini-4-argon", options: [{ value: "gemini-4-argon" }] }] });
-    expect(keyed.setReasoningEffort("s", "gemini-4-argon", "high")).toBeNull();
-    const google = new AgyBackend();
-    google.normalizeSessionResponse({ sessionId: "s", configOptions: [{ id: "model", currentValue: "gemini-3.8-flash", options: [{ value: "gemini-3.8-flash" }] },
-      { id: "thinking_level", currentValue: "high", options: [{ value: "low" }, { value: "high" }] }] });
-    expect(google.setReasoningEffort("s", "gemini-3.8-flash", "high")).toEqual({ method: "session/set_config_option", params: { sessionId: "s", configId: "thinking_level", value: "high" } });
   });
 });

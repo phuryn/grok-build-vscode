@@ -3,8 +3,10 @@ const path = require("node:path");
 const readline = require("node:readline");
 
 if (process.argv[2] !== "acp") process.exit(2);
-if (process.env.FAKE_AGY_CLI_BROKEN === "1") process.exit(3);
-const store = path.join(process.env.GEMINI_HOME, "antigravity-cli", "conversations");
+const flag = name => process.argv.includes(name) ? process.argv[process.argv.indexOf(name) + 1] : undefined;
+const home = flag("--gemini-dir") ?? process.env.GEMINI_HOME;
+const profile = flag("--app-data-dir") ?? "antigravity-cli";
+const store = path.join(home, profile, "conversations");
 const sink = process.env.FAKE_AGY_CLI_SINK;
 const write = payload => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...payload }) + "\n");
 const update = (sessionId, sessionUpdate, fields) => write({ method: "session/update", params: { sessionId, update: { sessionUpdate, ...fields } } });
@@ -36,6 +38,9 @@ rl.on("line", line => {
     case "initialize":
       return write({ id, result: { protocolVersion: 1, agentInfo: { version: "1.5.8" },
         agentCapabilities: { loadSession: true, sessionCapabilities: { list: {}, load: {}, resume: {}, close: {} } } } });
+    case "authenticate":
+      // Signed in already: the real CLI answers at once.
+      return write({ id, result: {} });
     case "session/new":
       fs.mkdirSync(store, { recursive: true });
       session = { sessionId: "fake-cli-" + process.pid, cwd: params.cwd, mode: "default", effort: "high", title: "Native CLI history" };
@@ -89,8 +94,8 @@ rl.on("line", line => {
       return;
     case "logout":
       // The real CLI clears its own stored sign-in (agentCapabilities.auth.logout, 1.5.8).
-      fs.mkdirSync(path.join(process.env.GEMINI_HOME, "antigravity-cli"), { recursive: true });
-      fs.writeFileSync(path.join(process.env.GEMINI_HOME, "antigravity-cli", "signed-out"), "");
+      fs.mkdirSync(path.join(home, profile), { recursive: true });
+      fs.writeFileSync(path.join(home, profile, "signed-out"), "");
       return write({ id, result: {} });
     default:
       if (id === "plan-review") return finish(complete);

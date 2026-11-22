@@ -14,20 +14,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GrokSidebar } from "../src/sidebar";
 import { Session } from "../src/session";
 import { CLOUD_ENVIRONMENT_ENV, parseRelayFrame } from "../src/remote-frames";
-import { AGY_PASTE_ADDRESS_ERROR } from "../src/agy-auth";
+import { AGY_PASTE_ADDRESS_ERROR, agyGoogleSignInPresent } from "../src/agy-auth";
 import { parseWebviewMsg } from "../src/desktop/webview-msg-validate";
-import * as installer from "../src/agy-managed-installer";
 import * as agyLifecycle from "../src/agy-cli-lifecycle";
 
 const FAKE = path.join(__dirname, "fixtures", "fake-agy-acp.cjs");
 const KEY = "AIza-host-test-key";
 
 let home: string;
-const token = () => path.join(home, "antigravity-acp", "acp_token.json");
+const token = (profile = "antigravity-cli") => path.join(home, profile, "acp_token.json");
 
 function signIn(): void {
   fs.mkdirSync(path.dirname(token()), { recursive: true });
-  fs.writeFileSync(path.join(home, "antigravity-acp", "settings.json"), JSON.stringify({ auth: { type: "oauth-personal" } }));
+  fs.writeFileSync(path.join(path.dirname(token()), "settings.json"), JSON.stringify({ auth: { type: "oauth-personal" } }));
   fs.writeFileSync(token(), "{}");
 }
 
@@ -42,6 +41,11 @@ function host(opts: { connected?: boolean; experimental?: boolean; method?: "goo
   sidebar.providerNeedsLogin = {};
   sidebar.providerCliVersions = {};
   sidebar.deviceLogins = new Map();
+  sidebar.agyGoogleAuthenticated = {};
+  // The token files are real, under GEMINI_HOME; the OS credential store is
+  // the machine's own, so a test never reads it.
+  sidebar.agyGoogleStored = (profile: "cli" | "server") => agyGoogleSignInPresent(profile, { storeEntry: async () => false });
+  sidebar.prepareAgyCli = vi.fn(async () => {});
   sidebar.deviceLoginPreflightShown = new Set();
   sidebar.deviceLoginWork = new Set();
   sidebar.deviceLoginWorkSeq = 0;
@@ -51,7 +55,7 @@ function host(opts: { connected?: boolean; experimental?: boolean; method?: "goo
   sidebar.sendRemoteClient = vi.fn();
   sidebar.remoteClients = { active: () => session, cwd: () => home, detachedActiveValues: () => [], clients: () => [], tabToken: () => undefined, cwdIfPresent: () => undefined };
   sidebar.locateProvider = vi.fn(() => FAKE);
-  sidebar.installedAgyCli = vi.fn(() => undefined);
+  sidebar.installedAgyCli = vi.fn(() => FAKE);
   sidebar.locatedProviders = () => ({ agy: true });
   sidebar.workspaceRoot = vi.fn(() => home);
   const config = { inspect: () => undefined, update: vi.fn(async () => {}) };
@@ -117,7 +121,7 @@ describe("Antigravity approval and installation", () => {
   it("accepts the existing desk and phone mode action only for an advertising session", async () => {
     const sidebar = host();
     const session = sidebar.focused;
-    const client = { sessionId: "s", nativeApprovalModes: false, currentModeId: "agent", setMode: vi.fn(async mode => { client.currentModeId = mode; }) };
+    const client = { sessionId: "s", pickerModes: ["agent", "yolo"], nativeApprovalModes: false, currentModeId: "agent", setMode: vi.fn(async mode => { client.currentModeId = mode === "yolo" ? "agent" : mode; }) };
     session.client = client;
     sidebar.sendRemoteSession = vi.fn();
     const message = { type: "setMode", modeId: "acceptEdits" };
@@ -125,13 +129,13 @@ describe("Antigravity approval and installation", () => {
     expect(parseRelayFrame(JSON.stringify({ t: "msg", clientId: "phone", msg: message }))).toMatchObject({ msg: message });
     await sidebar.setMode(message.modeId, session);
     expect(client.setMode).not.toHaveBeenCalled();
+    client.pickerModes = ["agent", "acceptEdits", "yolo"];
     client.nativeApprovalModes = true;
     await sidebar.setMode(message.modeId, session);
     expect(client.setMode).toHaveBeenCalledWith("acceptEdits");
-    expect(sidebar.defaultModeForProvider("agy")).toBe("acceptEdits");
     expect(sidebar.sendRemoteSession).toHaveBeenLastCalledWith(session, { type: "modeChanged", modeId: "acceptEdits", modes: ["agent", "acceptEdits", "yolo"] });
     await sidebar.setMode("yolo", session);
-    expect(session.autoApprove).toBe(false);
+    expect(session.autoApprove).toBe(true);
     expect(sidebar.displayMode(session)).toBe("yolo");
     expect(sidebar.memento["grok.agyAcceptEdits"]).toBeUndefined();
     expect(sidebar.configUpdate).toHaveBeenCalledWith("defaultMode", "yolo", "global");
@@ -140,38 +144,26 @@ describe("Antigravity approval and installation", () => {
   it("answers the approval already on screen when a native session switches to Auto accept", async () => {
     const sidebar = host();
     const session = sidebar.focused;
-    const client = { sessionId: "s", nativeApprovalModes: true, currentModeId: "agent", setMode: vi.fn(async mode => { client.currentModeId = mode; }) };
+    const client = { sessionId: "s", pickerModes: ["agent", "acceptEdits", "yolo"], currentModeId: "agent", setMode: vi.fn(async mode => { client.currentModeId = mode === "yolo" ? "agent" : mode; }) };
     session.client = client;
     sidebar.sendRemoteSession = vi.fn();
     sidebar.autoApprovePendingPermissions = vi.fn();
     await sidebar.setMode("acceptEdits", session);
     expect(sidebar.autoApprovePendingPermissions).not.toHaveBeenCalled();
     await sidebar.setMode("yolo", session);
-    expect(session.autoApprove).toBe(false);
+    expect(session.autoApprove).toBe(true);
     expect(sidebar.autoApprovePendingPermissions).toHaveBeenCalledOnce();
     expect(sidebar.autoApprovePendingPermissions).toHaveBeenCalledWith(session);
   });
 
-  it("shares one pinned upgrade attempt and keeps a custom server path outside the upgrader", async () => {
-    const sidebar = host();
-    const binary = installer.agyManagedBinaryPath(home);
-    const old = path.join(installer.agyManagedRoot(home), "1.4.0", installer.agyManagedFileNames().server);
-    const upgrade = vi.spyOn(installer, "installManagedAgy").mockResolvedValue(binary);
-    try {
-      expect(sidebar.upgradeManagedAgy(FAKE)).toBeUndefined();
-      expect(sidebar.upgradeManagedAgy(binary)).toBeUndefined();
-      await expect(Promise.all([sidebar.upgradeManagedAgy(old), sidebar.upgradeManagedAgy(old)])).resolves.toEqual([binary, binary]);
-      expect(upgrade).toHaveBeenCalledOnce();
-    } finally { upgrade.mockRestore(); }
-  });
 });
 
 describe("Antigravity in providerState", () => {
   it("is advertised with remote setup and Disconnect semantics", () => {
     const sidebar = host({ connected: true });
-    sidebar.providerCliVersions = { agy: "1.4.0" };
+    sidebar.agyCliVersion = { binary: FAKE, version: "1.5.8" };
     sidebar.providerNeedsLogin = { agy: true };
-    expect(row(sidebar)).toEqual({ id: "agy", connected: true, keepsCliSignIn: true, cliVersion: "1.4.0", needsLogin: true, signInMethod: "google", remoteSetup: true, googleSignIn: true, agyCli: { installed: false } });
+    expect(row(sidebar)).toEqual({ id: "agy", connected: true, keepsCliSignIn: true, cliVersion: "1.5.8", needsLogin: true, signInMethod: "google", remoteSetup: true, googleSignIn: true, agyCli: { installed: true, version: "1.5.8" } });
   });
 
   it("names the way it is signed in and what is stored, never the key", async () => {
@@ -190,12 +182,12 @@ describe("Antigravity in providerState", () => {
     expect(GrokSidebar.prototype["providerStateMessage"].call(cloud).providers.map((p: any) => p.id)).toContain("agy");
   });
 
-  it("notes the server's version from its handshake", () => {
+  it("notes the CLI's version from its handshake", () => {
     const sidebar = host({ connected: true });
-    sidebar.noteAgyVersion({ agentInfo: { name: "antigravity-acp", version: "1.4.0" } });
-    expect(sidebar.providerCliVersions.agy).toBe("1.4.0");
+    sidebar.noteAgyVersion({ agentInfo: { name: "Antigravity ACP Server", version: "1.5.8" } }, FAKE);
+    expect(row(sidebar).agyCli.version).toBe("1.5.8");
     expect(sidebar.postProviderState).toHaveBeenCalledTimes(1);
-    sidebar.noteAgyVersion({ agentInfo: { version: "1.4.0" } });
+    sidebar.noteAgyVersion({ agentInfo: { version: "1.5.8" } }, FAKE);
     expect(sidebar.postProviderState).toHaveBeenCalledTimes(1);
   });
 
@@ -242,7 +234,7 @@ describe("Connect offers the choice of how to sign in", () => {
     expect(sidebar.adoptSessionsForConnectedProvider).not.toHaveBeenCalled();
   });
 
-  it("answers a missing server with the install panel", async () => {
+  it("answers a missing CLI with the install panel", async () => {
     const sidebar = host();
     sidebar.locateProvider = vi.fn(() => undefined);
     await sidebar.onMessage({ type: "runGrokLogin", provider: "agy" }, "local");
@@ -264,6 +256,7 @@ describe("Connect offers the choice of how to sign in", () => {
 
   it("mirrors an indeterminate CLI install and its version through the provider and progress frames", async () => {
     const sidebar = host();
+    sidebar.installedAgyCli.mockReturnValue(undefined);
     let finish!: (value: { binary: string; version: string }) => void;
     const install = vi.spyOn(agyLifecycle, "installAgyCli").mockImplementation(() => new Promise(resolve => { finish = resolve; }));
     const requester = { clientId: "phone", tabToken: "tab" };
@@ -288,19 +281,16 @@ describe("Connect offers the choice of how to sign in", () => {
 });
 
 describe("Sign in with Google", () => {
-  it("reinstalls the managed server when Google setup is requested for its existing history", async () => {
-    signIn();
+  it("installs agy for Google sign-in requested from a legacy conversation", async () => {
     const sidebar = host({ connected: true });
     sidebar.focused.hasHistory = true;
-    sidebar.focused.activeSessionId = "server-history";
-    await sidebar.state.update("grok.sessionMeta", { "server-history": { agyProgram: "server" } });
-    sidebar.locateProvider.mockReturnValue(undefined);
-    sidebar.connectAgyCli = vi.fn();
-    sidebar.installManagedAgyServer = vi.fn(async () => { sidebar.locateProvider.mockReturnValue(FAKE); });
+    sidebar.focused.activeSessionId = "legacy-history";
+    await sidebar.state.update("grok.sessionMeta", { "legacy-history": { agyProgram: "server" } });
+    sidebar.ensureAgyCli = vi.fn(async () => FAKE);
+    sidebar.startDeviceLogin = vi.fn();
     await sidebar.onMessage({ type: "agySignIn", method: "google" }, "local");
-    expect(sidebar.installManagedAgyServer).toHaveBeenCalledWith("agy", undefined);
-    expect(sidebar.connectAgyCli).not.toHaveBeenCalled();
-    expect(sidebar.adoptSessionsForConnectedProvider).toHaveBeenCalledWith("agy", sidebar.focused);
+    expect(sidebar.ensureAgyCli).toHaveBeenCalledOnce();
+    expect(sidebar.startDeviceLogin.mock.calls[0][3]).toEqual({ remote: false, agyProfile: "server" });
   });
 
   it("refuses browser sign-in from a remote desk but may adopt an existing token", async () => {
@@ -318,12 +308,22 @@ describe("Sign in with Google", () => {
     expect(sidebar.sendRemoteRequester).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ state: "provider-connected" }));
   });
 
+  // Windows keeps the CLI's Google token in Credential Manager, with no file.
+  it("adopts a Google sign-in the CLI keeps only in the OS credential store", async () => {
+    const sidebar = host();
+    sidebar.startDeviceLogin = vi.fn();
+    sidebar.agyGoogleStored = (profile: "cli" | "server") => agyGoogleSignInPresent(profile, { storeEntry: async () => profile === "cli" });
+    await sidebar.onMessage({ type: "agySignIn", method: "google" }, "remote", "phone");
+    expect(sidebar.providerConnectionState.agy).toBe(true);
+    expect(sidebar.startDeviceLogin).not.toHaveBeenCalled();
+  });
+
   it.each(["local", "remote"])("a cloud host starts paste sign-in from %s and advertises it", async origin => {
     vi.stubEnv(CLOUD_ENVIRONMENT_ENV, "1");
     const sidebar = host(); sidebar.startDeviceLogin = vi.fn();
     sidebar.installedAgyCli.mockReturnValue("fake-agy");
     await sidebar.onMessage({ type: "agySignIn", method: "google" }, origin, origin === "remote" ? "phone" : undefined);
-    expect(sidebar.startDeviceLogin).toHaveBeenCalledWith("agy", "fake-agy", origin === "remote" ? "phone" : undefined, { remote: origin === "remote", agyProgram: "cli" });
+    expect(sidebar.startDeviceLogin).toHaveBeenCalledWith("agy", "fake-agy", origin === "remote" ? "phone" : undefined, { remote: origin === "remote", agyProfile: "cli" });
     expect(row(sidebar)).toMatchObject({ remoteSetup: true, googleSignIn: false, googleSignInPaste: true });
     sidebar.startDeviceLogin.mockClear();
     signIn();
@@ -345,8 +345,7 @@ describe("Sign in with Google", () => {
     const sidebar = host();
     const client = sidebar.agySignInClient(FAKE, new AbortController().signal);
     client.opts.log("[stderr] GET /?code=sentinel-callback-code");
-    if (cloud) expect(sidebar.host.appendLine).not.toHaveBeenCalled();
-    else expect(sidebar.host.appendLine).toHaveBeenCalledWith("[stderr] GET /?code=sentinel-callback-code");
+    expect(sidebar.host.appendLine).not.toHaveBeenCalled();
   });
 
   it("sanitizes an unexpected callback submission exception before the remote error handler", async () => {
@@ -395,7 +394,7 @@ describe("Sign in with Google", () => {
       await vi.waitFor(() => expect(sidebar.adoptSessionsForConnectedProvider).toHaveBeenCalledWith("agy", sidebar.focused));
       expect(callbacks).toEqual([new URL(address).pathname + new URL(address).search]);
       expect(sidebar.providerNeedsLogin.agy).toBe(false);
-      expect(sidebar.agyCliAuthenticated).toBe(true);
+      expect(sidebar.agyGoogleAuthenticated.cli).toBe(true);
       expect(fs.existsSync(token())).toBe(false);
       const outbound = [...frames(sidebar.post), ...frames(sidebar.postLocal), ...sidebar.sendRemoteClient.mock.calls.map((c: any[]) => c[1]), ...sidebar.sendRemoteRequester.mock.calls.map((c: any[]) => c[1]), sidebar.providerStateMessage()];
       expect(JSON.stringify(outbound)).not.toContain("sentinel-callback-code");
@@ -407,19 +406,19 @@ describe("Sign in with Google", () => {
     }
   });
 
-  it("adopts a stored Google sign-in without starting a server", async () => {
+  it("verifies a stored Google sign-in through the CLI", async () => {
     signIn();
     const sidebar = host({ method: "api-key" });
     await sidebar.connectAgy("google", FAKE, sidebar.focused);
     expect(sidebar.memento["grok.agySignInMethod"]).toBe("google");
     expect(sidebar.providerConnectionState.agy).toBe(true);
+    await vi.waitFor(() => expect(deviceFrames(sidebar).at(-1)).toEqual({ status: "done" }));
     expect(sidebar.providerNeedsLogin.agy).toBe(false);
     expect(sidebar.adoptSessionsForConnectedProvider).toHaveBeenCalledWith("agy", sidebar.focused);
-    expect(sidebar.postLocal).toHaveBeenCalledWith(expect.objectContaining({ state: "provider-connected", provider: "agy" }));
-    expect(deviceFrames(sidebar)).toEqual([]);
+    expect(deviceFrames(sidebar).some((device: any) => device.status === "waiting")).toBe(false);
   });
 
-  it("runs Google's browser sign-in through the server when nothing is stored, and connects", async () => {
+  it("runs Google's browser sign-in through the CLI when nothing is stored, and connects", async () => {
     const sidebar = host();
     await sidebar.connectAgy("google", FAKE, sidebar.focused);
     await vi.waitFor(() => expect(deviceFrames(sidebar).at(-1)).toEqual({ status: "done" }), { timeout: 15_000 });
@@ -447,29 +446,26 @@ describe("Sign in with Google", () => {
 });
 
 describe("Use a Gemini API key", () => {
-  it("installs only the managed server on first key entry, then saves the key and connects", async () => {
+  it("installs agy when a phone enters its first key", async () => {
     const sidebar = host();
     sidebar.locateProvider.mockReturnValue(undefined);
-    sidebar.ensureAgyCli = vi.fn();
-    sidebar.installManagedAgyServer = vi.fn(async () => { sidebar.locateProvider.mockReturnValue(FAKE); });
+    sidebar.ensureAgyCli = vi.fn(async () => FAKE);
     await sidebar.onMessage({ type: "agySignIn", method: "api-key", key: KEY }, "remote", "phone");
-    expect(sidebar.installManagedAgyServer).toHaveBeenCalledWith("agy", { clientId: "phone", tabToken: "tab" });
-    expect(sidebar.ensureAgyCli).not.toHaveBeenCalled();
-    expect(await sidebar.agyCredentialFor()).toEqual({ method: "api-key", key: KEY });
+    expect(sidebar.ensureAgyCli).toHaveBeenCalledWith({ clientId: "phone", tabToken: "tab" });
+    expect(sidebar.secrets.get("grok.agy.geminiApiKey")).toBe(KEY);
     expect(sidebar.providerConnectionState.agy).toBe(true);
   });
-  it("keeps a pasted key in HostSecrets only, and hands it to a server start as a credential", async () => {
+
+  it("keeps a pasted key in HostSecrets only", async () => {
     const sidebar = host();
     await sidebar.onMessage({ type: "agySignIn", method: "api-key", key: `  ${KEY}  ` }, "local");
     expect(sidebar.secrets.get("grok.agy.geminiApiKey")).toBe(KEY);
     expect(sidebar.memento["grok.agySignInMethod"]).toBe("api-key");
     expect(sidebar.providerConnectionState.agy).toBe(true);
-    expect(sidebar.providerNeedsLogin.agy).toBe(false);
+    expect(sidebar.providerNeedsLogin.agy).not.toBe(true);
     expect(sidebar.googleVoiceKeyAvailable).toBe(true);
     expect(sidebar.postVoiceConfigured).toHaveBeenCalled();
     expect(sidebar.adoptSessionsForConnectedProvider).toHaveBeenCalledWith("agy", sidebar.focused);
-    // The start hands it to the relay alone (session-start-retry.test.ts).
-    expect(await sidebar.agyCredentialFor()).toEqual({ method: "api-key", key: KEY });
     // Nowhere else: not in state, not in a frame, not in the log.
     expect(JSON.stringify(sidebar.memento)).not.toContain(KEY);
     expect(JSON.stringify([...frames(sidebar.postLocal), ...frames(sidebar.post)])).not.toContain(KEY);
@@ -522,11 +518,6 @@ describe("Use a Gemini API key", () => {
     expect(sidebar.rejectAgyCredential).toHaveBeenCalledTimes(1);
   });
 
-  it("a session start with nothing stored for the chosen way starts no server", async () => {
-    signIn();
-    expect(await host({ method: "api-key" }).agyCredentialFor()).toBeUndefined();
-    expect(await host({ method: "google" }).agyCredentialFor()).toEqual({ method: "google" });
-  });
 });
 
 describe("Disconnect and Sign out", () => {
@@ -553,15 +544,17 @@ describe("Disconnect and Sign out", () => {
     expect(sidebar.providerConnectionState.agy).toBe(false);
   });
 
-  it("Sign out with Google also signs out the installed agy CLI, whose sign-in new chats would otherwise keep", async () => {
+  it("Sign out with Google clears both profiles through the CLI", async () => {
     signIn();
     const sidebar = host({ connected: true, method: "google" });
-    sidebar.installedAgyCli = vi.fn(() => path.join(__dirname, "fixtures", "fake-agy-cli.cjs"));
+    const legacyToken = token("antigravity-acp");
+    fs.mkdirSync(path.dirname(legacyToken), { recursive: true });
+    fs.writeFileSync(legacyToken, "{}");
     sidebar.persistProviderConnections = vi.fn(async () => {});
     await sidebar.logout("agy", { signOutCli: true });
-    expect(sidebar.host.showWarningMessage).toHaveBeenCalledWith(expect.stringContaining("including the agy CLI's"), { modal: true }, "Sign Out");
+    expect(sidebar.host.showWarningMessage).toHaveBeenCalledWith(expect.stringContaining("clears the Google sign-in"), { modal: true }, "Sign Out");
     expect(fs.existsSync(token())).toBe(false);
-    expect(fs.existsSync(path.join(home, "antigravity-cli", "signed-out"))).toBe(true);
+    expect(fs.existsSync(legacyToken)).toBe(false);
     expect(sidebar.host.showErrorMessage).not.toHaveBeenCalled();
     expect(sidebar.providerConnectionState.agy).toBe(false);
   });

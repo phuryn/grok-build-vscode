@@ -57,10 +57,10 @@ describe("Settings → Providers refresh", () => {
   it.each([false, true])("does not inspect Antigravity credentials without consent, even when installed=%s", async installed => {
     const sidebar = makeSidebar({ grok: true, agy: false });
     sidebar.locatedProviders = vi.fn(() => ({ grok: true, agy: installed }));
-    sidebar.agyGoogleSignedIn = vi.fn(async () => false);
+    sidebar.agyGoogleAvailable = vi.fn(async () => false);
     sidebar.agySavedKey = vi.fn(async () => undefined);
     await refresh(sidebar, { credentials: true });
-    expect(sidebar.agyGoogleSignedIn).not.toHaveBeenCalled();
+    expect(sidebar.agyGoogleAvailable).not.toHaveBeenCalled();
     expect(sidebar.agySavedKey).not.toHaveBeenCalled();
     expect(sidebar.reprobeProviderCredentials).toHaveBeenCalledTimes(1);
     expect(sidebar.reprobeProviderCredentials).toHaveBeenCalledWith("grok");
@@ -69,10 +69,10 @@ describe("Settings → Providers refresh", () => {
   it("does not inspect Antigravity credentials on a local-only refresh, even when connected", async () => {
     const sidebar = makeSidebar({ agy: true });
     sidebar.locatedProviders = vi.fn(() => ({ agy: true }));
-    sidebar.agyGoogleSignedIn = vi.fn(async () => false);
+    sidebar.agyGoogleAvailable = vi.fn(async () => false);
     sidebar.agySavedKey = vi.fn(async () => undefined);
     await refresh(sidebar, { credentials: false });
-    expect(sidebar.agyGoogleSignedIn).not.toHaveBeenCalled();
+    expect(sidebar.agyGoogleAvailable).not.toHaveBeenCalled();
     expect(sidebar.agySavedKey).not.toHaveBeenCalled();
     expect(sidebar.reprobeProviderCredentials).not.toHaveBeenCalled();
   });
