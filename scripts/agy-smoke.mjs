@@ -8,7 +8,7 @@
 // Server path: AGY_SERVER_PATH, else the copy the app installed
 // (AGY_STORAGE_ROOT, the extension's global storage, to find it).
 // AGY_SMOKE_PROGRAM=cli exercises a signed-in agy CLI (AGY_CLI_PATH or discovery).
-// AGY_SMOKE_SCENARIO=auto-accept runs only the CLI permission and edit check.
+// AGY_SMOKE_SCENARIO=auto-accept runs only the CLI Auto accept check (a shell command).
 // Model: gemini-3.8-flash at the `low` thinking level (= gemini-3.8-flash-low).
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -82,7 +82,7 @@ export async function runAgySmoke({ root, output, record, say, rpcMs, turnMs }) 
     record("initialize", "PASS", `agentInfo=${init?.agentInfo?.name} ${init?.agentInfo?.version}; systemPrompt.append=${init?.agentCapabilities?._meta?.antigravity?.systemPrompt?.append === true}`);
     if (program === "cli") {
       if (autoAcceptOnly) {
-        await check("CLI Auto accept edit", async () => {
+        await check("CLI Auto accept command", async () => {
           await timed(agy.newSession(), "CLI session/new", rpcMs);
           return exerciseAutoAccept({ agy, timed, rpcMs, turnMs, scratch });
         });
@@ -274,18 +274,20 @@ async function exerciseAutoAccept({ agy, timed, rpcMs, turnMs, scratch }) {
     if (option) agy.respondPermission(request.id, option.optionId);
     else agy.respondPermissionCancelled(request.id);
   };
-  const marker = "AFK-AUTO-ACCEPT-OK";
-  const file = path.join(scratch, "auto-accept.txt");
-  fs.writeFileSync(file, "BEFORE\n");
+  // A shell command, not a file edit: the CLI's default mode edits workspace files
+  // without asking (measured on agy 1.5.8, 22 Nov 2026), so only a command proves
+  // that a request arrived and Auto accept answered it. A folder, not a file:
+  // PowerShell's `>` writes UTF-16, mkdir reads the same in every shell.
+  const marker = "afk-auto-accept-ok";
   agy.on("permissionRequest", answer);
   try {
-    await timed(agy.prompt(`Use your file editing tool now to replace BEFORE in auto-accept.txt with ${marker}. Then reply DONE.`),
-      "CLI Auto accept edit", turnMs);
+    await timed(agy.prompt(`Run this shell command now with your terminal tool: mkdir ${marker} . Then reply DONE.`),
+      "CLI Auto accept command", turnMs);
   } finally { agy.off("permissionRequest", answer); }
   assert(answers.length > 0, "no permission request arrived");
   assert(answers.every(kind => kind === "allow_once"), `unexpected permission answers: ${answers.join(", ")}`);
-  assert.equal(fs.readFileSync(file, "utf8").trim(), marker);
-  return `${answers.length} permission requests answered with allow_once; scratch file edited`;
+  assert(fs.statSync(path.join(scratch, marker), { throwIfNoEntry: false })?.isDirectory(), "the command did not run");
+  return `${answers.length} permission requests answered with allow_once; the command ran`;
 }
 
 async function exerciseCli({ agy, client, check, timed, rpcMs, turnMs, scratch }) {

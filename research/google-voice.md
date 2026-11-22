@@ -38,6 +38,15 @@ labels the API preview. The Google Cloud model ID uses a different suffix.
   interim, bounded by 8 seconds total. A timeout leaves the latest text
   available to the host as a draft. Cancel closes immediately. Google
   documents a 10-minute session limit. AFK Pilot caps recordings at 120 seconds.
+- Measured on 22 Nov 2026 with two spoken phrases: Google ends each voice
+  segment with its final `inputTranscription`, then `generationComplete`, then
+  `voiceActivity` `ACTIVITY_END`, and opens the next segment with
+  `ACTIVITY_START`. It never sent `turnComplete`. A segment's final arrived
+  about 1 second after its speech ended, so an earlier phrase is already final
+  when the user stops after a later one; a 300 ms pause merged two phrases
+  into one segment. With Stop called the instant the audio ended, the last
+  final arrived about 0.3 seconds later and Stop resolved 0.5 seconds after
+  that. Every phrase was kept in 5 of 5 runs, with pauses of 300 to 1,500 ms.
 
 [Live transcription guide](https://aistudio.google.com/docs/live-api/live-transcribe) ·
 [WebSocket reference](https://aistudio.google.com/api-reference/live)

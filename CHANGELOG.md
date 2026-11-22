@@ -1,12 +1,27 @@
 # Changelog
 
+## 4.17.3 — 2026-11-22
+
+**Google as a third voice option, Google's agy CLI installed and kept current with Auto accept, and AFK Pilot's own Codex follows the latest release.**
+
+### Added
+
+- **Dictate with Google.** Settings → Voice offers Google beside xAI and OpenAI, with a Gemini API key: the one already saved for Antigravity, or one set in **Google voice API key**. Auto picks Google for Antigravity chats, OpenAI for Codex and xAI for the rest, and otherwise uses whichever key you have. A Google sign-in or a Google AI subscription is not a key; the row links to AI Studio and explains which key to use: a free key works, but on Google's free tier Google may use your audio to improve its products. When Google refuses a key, the mic says why: a key Google does not accept, or a project out of credits or over its spending cap. On the desk and from a phone.
+- **AFK Pilot installs Google's agy CLI and keeps it current.** With a Google sign-in, your next Antigravity chat installs the CLI with Google's own installer, with progress in Settings → Providers, which also shows its version. After each AFK Pilot update it runs `agy update` once.
+- **Auto accept on the agy CLI.** It answers each request once and never saves an allow rule. A remembered Auto accept applies to new CLI chats.
+
+### Changed
+
+- **AFK Pilot's own copy of Codex follows Codex's latest release**, checked against the release's SHA-256 and never moved to an older version. After an AFK Pilot update it fetches a newer release in the background while your chats keep running. A Codex you installed yourself is never updated in the background; Providers offers the update instead.
+- **The README leads with the six agents**, with a comparison and a section for each.
+
 ## 4.17.2 — 2026-11-21
 
 **Compact at a token limit for every agent but Antigravity, and the chat drops the previous name.**
 
 ### Added
 
-- **Compact at a token limit** in Settings → General. Turn it on and choose 200K, 300K, 400K, 500K or 750K (300K to start): Grok Build, Muse Code, DeepSeek, Codex and Claude Code are set through their own compaction settings to compact by that point, or at their own threshold if it comes first. Two exceptions: Grok Build takes the limit as a share of the model's context window, so it applies once that window is known and moves if you widen the window later, and Claude Code keeps automatic compaction off if you turned it off there. An agent picks the setting up when its process starts, so a new conversation or one reopened from history gets it, while a conversation that is still running keeps the setting it started with. You can set it from a linked phone too. When the host can work the threshold out, the context popover marks it and says whose it is. Antigravity keeps its own compaction.
+- **Compact at a token limit** in Settings → General. Turn it on and choose 200K, 300K, 400K, 500K or 750K (300K to start): Grok Build, Muse Code, DeepSeek, Codex and Claude Code are set through their own compaction settings to compact by that point, or at their own threshold if it comes first. Two exceptions: Grok Build takes the limit as a share of the model's context window, so it applies when Grok Build starts once AFK Pilot has seen that window, and moves if you widen the window later, and Claude Code keeps automatic compaction off if you turned it off there. An agent picks the setting up when its process starts, so a new conversation or one reopened from history gets it, while a conversation that is still running keeps the setting it started with. You can set it from a linked phone too. When the host can work the threshold out, the context popover marks it and says whose it is. Antigravity keeps its own compaction.
 
 ### Changed
 
