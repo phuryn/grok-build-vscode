@@ -55,29 +55,50 @@ more than it gains. The choice per provider is in `acpClientCapabilities`
 | Grok | none needed | Grok reports subagents and workflows on its own `_x.ai/session_notification` rail, and replays them on `_x.ai/session/update`. |
 | Codex | `subagents: {}` plus the AIR metadata capability `nativeSubagentSessions` (`_meta.jetbrains.air`) | Without it Codex sends only "Start subagent", `wait` and "Complete subagent" rows and never the child's output. With it the child's output streams live and comes back on reopen. The adapter's `initialize` parser drops the plain `subagents` field, so the AIR capability is what actually turns it on. |
 | Claude Code | `_meta["subagent-transcript"]` and the AIR capability `asyncTasks` | Claude sends child activity with the launching tool call ID. The host keeps the `Agent` tool card and uses AIR task events for workflow progress. |
-| Muse Code | none | The bundled adapter reads Muse's own workflow items and forwards them (see below). |
+| Muse Code | none | The bundled adapter reads Muse's own workflow and subagent items, and subscribes to each subagent's session for its activity (see below). |
 
 ### Subagents
 
-Muse Code offers no plain subagent tool: asked for one, its model runs a
-one-agent workflow, which gets a Workflow card (1.4.0, and again 1.4.24). In
-1.4.24 the workflow's agents also arrive as subagent items, each with its own
-card. Those cards have no Stop: stopping one agent ended its whole workflow, so
-the Workflow card's Stop is the control. A subagent Muse spawns natively,
-outside a workflow, would carry Stop on its own card; none has been seen yet.
+Muse Code delegates in two ways, and which one runs is Muse's choice. In a
+trusted workspace 1.4.25 spawns subagents natively, with `subagent_spawn` and
+`subagent_wait`. A conversation started or reopened in Allow all is trusted
+(the adapter passes `--trust-workspace`); switching a running one to Allow all
+leaves its trust as it was. Otherwise, and sometimes
+in a trusted workspace too, its model runs a one-agent workflow, which gets a
+Workflow card; the workflow's agents also arrive as subagent items, each with
+its own card. A workflow agent's card has no Stop: stopping one agent ended its
+whole workflow, so the Workflow card's Stop is the control. A native
+subagent's card has Stop until its result is ready.
 
-| | Grok | Codex | Claude Code |
-|---|---|---|---|
-| **Starts with** | a `spawn_subagent` tool call (`Task` on Grok's Composer agent), in the foreground or the background | `subagent_spawned` on the parent session | an `Agent` tool call marked `_meta.claudeCode.subagent: true`, foreground or background |
-| **Lifecycle** | `subagent_spawned` and `subagent_finished` on `_x.ai/session_notification` | `subagent_state_update`; disconnected children show stopped | foreground tool updates; a background receipt settles as “in background”; ID-correlated task events or notifications supply any later outcome |
-| **Child's own output, live** | yes, on the child's own `sessionId`: thinking, tool calls, prose | yes, on the child's own `sessionId` | yes, on the parent session with `parentToolUseId` |
-| **Card name** | the task description | the agent's name (the adapter's task text is a placeholder, not the child's prompt) | the task description |
-| **Open while running** | Activity: the child's thinking, tool rows and prose | Activity | Activity |
-| **Result** | from `subagent_finished`, the tool's completion, or for a background run the `get_command_or_subagent_output` result | the child's last message | cleaned foreground hand-back, or the background task's summary/result when supplied; never the launch receipt |
-| **Time** | reported (`duration_ms`) | not reported; the app measures it while it watches live | reported, or measured while observing live work; no clock for “in background” |
-| **Tokens** | `tokens_used`, at the finish only | not reported | reported, at the finish only |
-| **Controls** | none | none | Stop, while a background task the host has observed is running |
-| **After reopening** | the card, result and time rebuild from the replayed tool call and lifecycle; the child's activity is not replayed | everything comes back, including the child's activity; no time | the host restores linked child transcripts. Foreground hand-backs and correlated background outcomes restore the results and usage Claude reported |
+The rows that only launch, await or hand back a delegation are hidden, since
+the card is the record: `subagent_spawn`, `subagent_wait`, `subagent_list`,
+`subagent_stop`, `subagent_read_result`, and a workflow agent's
+`submit_result`. Messages sent to a running subagent (`subagent_send_message`,
+`subagent_followup_task`) stay as rows.
+
+Muse streams only the parent session. When a card learns its subagent's
+session ID, the bundled adapter subscribes to that session (`view/subscribe`),
+fills in what the subagent did before then from `view/page`, and unsubscribes
+when it finishes. The subagent's messages and tool calls reach the card tagged
+with the card's tool call ID, the route Claude uses; they never enter the
+transcript or the context meter. On reopen the adapter reads each subagent's
+history with `view/page` before the conversation finishes loading. A subagent's
+approvals arrive on the parent session: in Allow all the adapter answers the
+ones that mode covers, and the rest show as ordinary permission cards.
+A Muse CLI without `view/subscribe` gives cards without activity.
+
+| | Grok | Codex | Claude Code | Muse Code |
+|---|---|---|---|---|
+| **Starts with** | a `spawn_subagent` tool call (`Task` on Grok's Composer agent), in the foreground or the background | `subagent_spawned` on the parent session | an `Agent` tool call marked `_meta.claudeCode.subagent: true`, foreground or background | a `subagent` item, native or one per workflow agent |
+| **Lifecycle** | `subagent_spawned` and `subagent_finished` on `_x.ai/session_notification` | `subagent_state_update`; disconnected children show stopped | foreground tool updates; a background receipt settles as “in background”; ID-correlated task events or notifications supply any later outcome | native: `controlStatus`, settled at a terminal status, `resultReady` or a `subagentResult` item; workflow agents: their own terminal update, or the workflow's end |
+| **Child's own output, live** | yes, on the child's own `sessionId`: thinking, tool calls, prose | yes, on the child's own `sessionId` | yes, on the parent session with `parentToolUseId` | yes, from a subscription to the child's session |
+| **Card name** | the task description | the agent's name (the adapter's task text is a placeholder, not the child's prompt) | the task description | the agent's role, or the first line of its objective when the role is generic |
+| **Open while running** | Activity: the child's thinking, tool rows and prose | Activity | Activity | Activity |
+| **Result** | from `subagent_finished`, the tool's completion, or for a background run the `get_command_or_subagent_output` result | the child's last message | cleaned foreground hand-back, or the background task's summary/result when supplied; never the launch receipt | the result text or summary Muse reports |
+| **Time** | reported (`duration_ms`) | not reported; the app measures it while it watches live | reported, or measured while observing live work; no clock for “in background” | reported (`durationMs`) |
+| **Tokens** | `tokens_used`, at the finish only | not reported | reported, at the finish only | reported (`usage`) |
+| **Controls** | none | none | Stop, while a background task the host has observed is running | Stop on a native subagent until its result is ready; none on a workflow agent |
+| **After reopening** | the card, result and time rebuild from the replayed tool call and lifecycle; the child's activity is not replayed | everything comes back, including the child's activity; no time | the host restores linked child transcripts. Foreground hand-backs and correlated background outcomes restore the results and usage Claude reported | everything comes back, including the child's activity |
 
 Notes:
 
@@ -114,7 +135,7 @@ no command offers one. (`/goal` exists in Codex and is a different feature.)
 | **Steps** | named phases with their states | every phase declared in the script's literal `meta` block, from launch; the current one from progress | none reported; one dot per agent instead |
 | **Agents** | one row per agent, with state and tokens | one row per agent seen in progress; no tokens, because usage is only a run total | `Agent 1`, `Agent 2` and so on, with state, and tokens when reported |
 | **Time** | reported; the card counts on between frames and holds while paused | reported | not reported; the app measures it while it watches live |
-| **Result in the card** | `result_summary`: prose, or the `report`, `summary` or `sentence` field of a JSON object; any other JSON shows as a JSON code block | the task's terminal `summary`, when Claude sends one, as sanitized Markdown; the `outputFilePath` is not shown, and Claude's own reply usually carries the answer too | Muse's final summary; a JSON value shows as a code block |
+| **Result in the card** | `result_summary`: prose, or the `report`, `summary` or `sentence` field of a JSON object; any other JSON shows as a JSON code block | the task's terminal `summary`, when Claude sends one, as sanitized Markdown; the `outputFilePath` is not shown, and Claude's own reply usually carries the answer too | Muse's final summary: the text or summaries of a `result` or `results` envelope as prose, any other JSON as a code block |
 | **Controls** | Pause or Resume, and Stop | Stop, while the run is live | Stop, while the run is live; its agents stop with it |
 | **Finish** | a terminal `workflow_updated`; the host also checks the run's own state file | a terminal task state; on reopen, the replayed `<task-notification>` | a terminal `workflow` item |
 | **After reopening** | the frames replay and the card is rebuilt where the run happened, with steps, agents, time and result | task events are not replayed; the card comes back from the launch acknowledgement and the task notification, with its name, the declared steps and the outcome | Muse's history carries the finished item: agent dots, agents and result; no time |
@@ -147,10 +168,10 @@ Notes:
   is outside the loaded part of the history, the card cannot show that the run
   finished. The `Workflow` permission row stays in the transcript either way,
   since it records a decision.
-- **Muse agents' own results** are opaque references (`resultRef`) that SDK
-  1.3.0 offers no public way to resolve, so the card shows only the overall
-  result. The `workflow` tool row that launched the run is hidden; the card is
-  the record.
+- **Muse results** come wrapped in a reference envelope
+  (`{"result": {"ref", "summary", "text"}}`, or `results` for several); the
+  card shows the text, and any other structured result as JSON. The `workflow`
+  tool row that launched the run is hidden; the card is the record.
 - **Claude and Muse cards offer Stop only.** Claude stops a workflow or a
   background Agent task through `_session/async_task/stop`; Muse cancels a
   workflow with `workflow/cancel` and stops a natively spawned subagent with
@@ -338,8 +359,9 @@ conversation stopped showing its history.
 | [src/codex-backend.ts](../src/codex-backend.ts) | `normalizeCodexUpdate`: native subagent events to a synthetic tool call |
 | [src/claude-backend.ts](../src/claude-backend.ts) | `normalizeClaudeUpdate`: subagent hand-back, `Workflow` launch receipt, task-notification notice |
 | [src/claude-workflows.ts](../src/claude-workflows.ts) | `ClaudeWorkflows`: matches task events to the launch, seeds steps from the script, infers step states |
-| [adapters/muse/projection.mts](../adapters/muse/projection.mts) | projects Muse's `workflow` items into `session_info_update._meta["muse/workflow"]` |
-| [src/muse-backend.ts](../src/muse-backend.ts) | lifts that metadata into `workflowUpdate` |
+| [adapters/muse/projection.mts](../adapters/muse/projection.mts) | projects Muse's `workflow` items into `session_info_update._meta["muse/workflow"]`, and `subagent` items into subagent cards; hides the launch and hand-back rows |
+| [adapters/muse/child-activity.mts](../adapters/muse/child-activity.mts) | subscribes to each subagent's session and pages its history, live and on reopen, tagging what it relays with the card's tool call ID |
+| [src/muse-backend.ts](../src/muse-backend.ts) | lifts that metadata into `workflowUpdate`, and routes tagged child activity to its card |
 | [src/run-progress.ts](../src/run-progress.ts) | `parseRunProgressUpdate`, `workflowControlCommand` |
 | [src/workflow-state.ts](../src/workflow-state.ts) | `readWorkflowCompletion`: a Grok run's finish from its state file |
 | [src/sidebar.ts](../src/sidebar.ts) | the live and replay listeners that emit `subagentUpdate`, `runProgress` and `childStream`; `controlWorkflow`; `refreshWorkflowCompletions` |
@@ -372,7 +394,7 @@ npm run test:live -- --only=subagent,subagent-composer,workflow   # Grok
 ```
 
 Among their other checks, these runs ask for a trivial subagent (Grok, Codex,
-Claude) and a trivial workflow (Grok, Claude, Muse), check the wire and the
+Claude, Muse) and a trivial workflow (Grok, Claude, Muse), check the wire and the
 parsed progress, then drive the real desktop app and record what it drew. The evidence lands in
 `.verification/acp-smoke/<run>/`. There,
 `<provider>-render/render-report.md` (Grok: `grok-render/render-report.md`)

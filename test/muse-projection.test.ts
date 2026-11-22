@@ -3,6 +3,67 @@ import { Projection } from "../adapters/muse/projection.mts";
 import { commandOutputForToolCall } from "../src/acp-dispatch";
 
 describe("Muse raw notification projection", () => {
+  it.each([
+    ["assistant", "List the files"],
+    ["workflow-agent", "List the files"],
+    ["Inventory", "Inventory"],
+  ])("uses a readable title for role %s", (role, title) => {
+    const updates: any[] = [];
+    const p = new Projection(u => updates.push(u), () => {});
+    p.accept("item/started", { item: { kind: "subagent", itemId: "card", revision: 1,
+      status: "inProgress", role, objective: "List the files\nReturn the count." } });
+    expect(updates[0]).toMatchObject({ title, rawInput: { prompt: "List the files\nReturn the count." } });
+    expect(updates[0].rawInput.description).toBeUndefined();
+  });
+
+  it.each([
+    [{ result: { ref: "owner-result-ref:example", summary: "brief", text: "ok" } }, "ok"],
+    [{ results: [{ summary: "first" }, { text: "second" }] }, "first\n\nsecond"],
+    [{ result: { text: "notes", count: 3 } }, '````json\n{\n  "result": {\n    "text": "notes",\n    "count": 3\n  }\n}\n````'],
+    [{ count: 3 }, '````json\n{\n  "count": 3\n}\n````'],
+  ])("renders a workflow result %#", (value, expected) => {
+    const updates: any[] = [];
+    const p = new Projection(u => updates.push(u), () => {});
+    const summary = JSON.stringify(value);
+    p.acceptHistory({ kind: "workflow", itemId: "run", workflowRunId: "run", revision: 1, status: "completed",
+      message: `<workflow-launch-reconciled>${JSON.stringify({ final_summary: { summary } })}</workflow-launch-reconciled>` });
+    expect(updates[0]._meta["muse/workflow"].result_summary).toBe(expected);
+  });
+
+  it.each(["subagent_spawn", "subagent_wait", "subagent_list", "subagent_stop", "subagent_read_result", "submit_result"])(
+    "suppresses %s and its streamed output", tool => {
+      const updates: any[] = [];
+      const p = new Projection(u => updates.push(u), () => {});
+      const item = { kind: "toolCall", itemId: "tool", revision: 1, status: "inProgress", tool };
+      p.accept("item/started", { item });
+      p.accept("item/delta", { itemId: "tool", field: "output", delta: "working" });
+      p.accept("item/completed", { item: { ...item, revision: 2, status: "completed", visibleOutput: "working" } });
+      expect(updates).toEqual([]);
+    });
+
+  it.each(["subagent_send_message", "subagent_followup_task"])("keeps %s visible", tool => {
+    const updates: any[] = [];
+    const p = new Projection(u => updates.push(u), () => {});
+    p.acceptHistory({ kind: "toolCall", itemId: "tool", revision: 1, status: "completed", tool });
+    expect(updates[0]).toMatchObject({ title: tool, status: "completed" });
+  });
+
+  it.each([
+    ["completed", "completed", false],
+    ["failed", "failed", false],
+    ["cancelled", "completed", true],
+  ])("replays a native %s result that appears before its card", (resultStatus, status, cancelled) => {
+    const updates: any[] = [];
+    const p = new Projection(u => updates.push(u), () => {});
+    p.stopSubagents = true;
+    p.acceptHistory({ kind: "subagentResult", itemId: "result", subagentId: "worker", revision: 1,
+      status: "completed", resultStatus, text: "Outcome." });
+    p.acceptHistory({ kind: "subagent", itemId: "card", subagentId: "worker", revision: 2,
+      status: "inProgress" });
+    expect(updates).toMatchObject([{ status, rawOutput: { output: "Outcome." },
+      _meta: { "muse/cancelled": cancelled, "muse/canStop": false } }]);
+  });
+
   it("appends live text and authoritative suffixes without duplicating or rewriting a prefix", () => {
     const updates: any[] = [], logs: string[] = [];
     const projection = new Projection(u => updates.push(u), m => logs.push(m));

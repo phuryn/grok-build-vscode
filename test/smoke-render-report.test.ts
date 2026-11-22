@@ -114,11 +114,12 @@ describe("recorded boundary samples and unknown net", () => {
       { name, result: "FAIL", reason: "startup failed", pageErrors: [] },
     ]);
   });
-  it("marks Muse's subagent Stop N/A and still fails a missing Muse workflow Stop", () => {
+  it("fails a missing Muse subagent or workflow Stop: Muse spawns its own subagents too", () => {
     expect(completeRenderScenarios([], "muse", "startup failed", "stop subagent")).toEqual([
-      { name: "stop subagent", result: "N/A", reason: "Muse delegation is a workflow; its agents stop with the workflow", pageErrors: [] },
+      { name: "stop subagent", result: "FAIL", reason: "startup failed", pageErrors: [] },
     ]);
     expect(completeRenderScenarios([], "muse", "startup failed", "stop workflow")[0].result).toBe("FAIL");
+    expect(completeRenderScenarios([], "muse", "startup failed").find((s: any) => s.name === "subagent").result).toBe("FAIL");
   });
   it("accepts recorded Claude AIR and distinguishes a deliberate drop from a new kind", () => {
     const events = claude.map(update => ({ direction: "receive", message: { method: "session/update", params: { update } } }));
@@ -161,8 +162,8 @@ describe("real chat.js render report extraction", () => {
   it("reports every scenario even if desktop startup fails, without silently passing missing work", () => {
     const muse = completeRenderScenarios([], "muse");
     expect(muse).toHaveLength(4);
-    expect(muse.find((s: any) => s.name === "subagent").result).toBe("N/A");
-    expect(muse.filter((s: any) => s.result === "FAIL")).toHaveLength(3);
+    expect(muse.find((s: any) => s.name === "subagent").result).toBe("FAIL");
+    expect(muse.filter((s: any) => s.result === "FAIL")).toHaveLength(4);
     const existing = { name: "plain reply", result: "PASS", pageErrors: [] };
     const codex = completeRenderScenarios([existing], "codex");
     expect(codex[0]).toBe(existing);

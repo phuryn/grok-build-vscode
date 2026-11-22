@@ -1,5 +1,20 @@
 # Changelog
 
+## 4.17.6 — 2026-11-22
+
+**Muse Code's subagents show their work live, come back when you reopen the chat, and can be stopped one at a time.**
+
+### Added
+
+- **Live activity in Muse Code subagent cards.** Each subagent Muse spawns on its own, and each agent of a Muse workflow, now shows its replies, its thinking and its tool calls in its card as it works, and they come back when you reopen the conversation. Tested on Muse 1.4.25; a Muse without the session view this needs shows the card without its activity.
+- **Stop on a Muse Code subagent.** Muse spawns subagents on its own in a trusted workspace; a conversation started or reopened in Allow all is one. While such a subagent runs, its card has **Stop**: it ends that subagent and the main turn keeps going. A workflow agent's card has no Stop of its own; the workflow card's Stop ends the run and its agents.
+
+### Fixed
+
+- **A Muse Code subagent's card settles when its result is ready.** It used to keep running after the subagent had answered. The result reads like a reply, with a copy button, the time it took and the tokens it used; those tokens stay out of the main context meter.
+- **Muse Code subagent cards are titled by the subagent's role or task**, and the rows that only launch a subagent, wait for it or hand its result back are hidden: the card is the record. Messages Muse sends to a running subagent stay in the chat.
+- **Text written after a subagent or workflow card now appears below the card**, instead of joining the reply above it.
+
 ## 4.17.5 — 2026-11-22
 
 **An Antigravity fork now carries the commands agy ran.**

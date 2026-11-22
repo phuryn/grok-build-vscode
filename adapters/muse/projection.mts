@@ -8,6 +8,7 @@ interface ItemState {
   output: string;
   toolCallId?: string;
   delegationTerminal?: boolean;
+  childSessionId?: string;
   /** `subagent`: the workflow run that owns it, when Muse names one. */
   workflowRunId?: string;
   /** `subagent`: the last item Muse sent, to settle the card when its run ends. */
@@ -21,6 +22,39 @@ interface ItemState {
 const newItemState = (): ItemState => ({ revision: -1, text: "", output: "", parts: [], thought: "" });
 
 const MUSE_FAILURE_OUTPUT_LINES = 8;
+const MUSE_MESSAGE_TOOLS = new Set(["subagent_send_message", "subagent_followup_task"]);
+/** A workflow agent hands its result back with this; the card shows that result. */
+const MUSE_RESULT_HANDOFF_TOOL = "submit_result";
+
+function subagentTitle(item: Record<string, any>): string {
+  const role = typeof item.role === "string" ? item.role.trim() : "";
+  if (role && !/^(assistant|workflow-agent|subagent)$/i.test(role)) return role;
+  const objective = typeof item.objective === "string" ? item.objective.trim().split(/\r?\n/, 1)[0].trim() : "";
+  return objective.length > 80 ? `${objective.slice(0, 79).trimEnd()}…` : objective || "Subagent";
+}
+
+function resultText(value: unknown): string | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return;
+  if (Object.keys(value).some(key => key !== "ref" && key !== "text" && key !== "summary")) return;
+  const result = value as { text?: unknown; summary?: unknown };
+  return [result.text, result.summary].find((part): part is string => typeof part === "string" && !!part.trim());
+}
+
+function workflowResult(summary: unknown): string | undefined {
+  if (summary === undefined) return;
+  let value: unknown = summary;
+  if (typeof summary === "string") {
+    try { value = JSON.parse(summary); } catch { return summary; }
+  }
+  if (value && typeof value === "object" && Object.keys(value).length === 1) {
+    const envelope = value as { result?: unknown; results?: unknown };
+    const results = Array.isArray(envelope.results) ? envelope.results : [envelope.result ?? envelope.results];
+    const text = results.map(resultText);
+    if (text.length && text.every(part => part !== undefined)) return text.join("\n\n");
+  }
+  // The shared renderer uses four backticks for validated workflow JSON.
+  return "````json\n" + JSON.stringify(value, null, 2).replace(/`/g, "\\u0060") + "\n````";
+}
 
 /** MSP full workflow snapshots, including the same item in resume history. */
 function workflowUpdate(item: Record<string, any>): Record<string, any> | undefined {
@@ -31,14 +65,6 @@ function workflowUpdate(item: Record<string, any>): Record<string, any> | undefi
   if (match) {
     try { summary = JSON.parse(match[1])?.final_summary?.summary; } catch { /* Incomplete envelope: no output yet. */ }
   }
-  if (typeof summary === "string") {
-    try {
-      // Muse's entire returned value is output, including arbitrary JSON.
-      // Four backticks mark our validated JSON; the shared renderer suppresses
-      // three-backtick CLI envelopes that may have been truncated.
-      summary = "````json\n" + JSON.stringify(JSON.parse(summary), null, 2).replace(/`/g, "\\u0060") + "\n````";
-    } catch { /* Already prose or Markdown. */ }
-  }
   const children = Array.isArray(item.children) ? item.children : [];
   return {
     sessionUpdate: "workflow_updated", run_id: item.workflowRunId,
@@ -47,7 +73,7 @@ function workflowUpdate(item: Record<string, any>): Record<string, any> | undefi
       : item.status === "cancelled" ? "cancelled" : "failed",
     controlsAvailable: false,
     agentProgressDots: true,
-    result_summary: typeof summary === "string" ? summary : undefined,
+    result_summary: workflowResult(summary),
     agents: children.filter((child: any) => child && typeof child.childId === "string").map((child: any, i: number) => ({
       agent_id: child.childId, label: `Agent ${i + 1}`,
       state: child.status === "terminal" ? child.terminal || "stopped"
@@ -86,6 +112,8 @@ export class Projection {
   private readonly stopTargets = new Map<string, string>();
   /** Workflow runs that have ended, with Muse's terminal status. */
   private readonly endedWorkflows = new Map<string, string>();
+  private readonly nativeSubagents = new Map<string, string>();
+  private readonly nativeResults = new Map<string, { status: string; text?: string }>();
   stopWorkflows = false;
   stopSubagents = false;
   forkIds = false;
@@ -94,10 +122,12 @@ export class Projection {
   constructor(
     private readonly emit: (update: SessionUpdate) => void,
     private readonly log: (message: string) => void,
+    private readonly onSubagentActivity?: (cardId: string, childSessionId: string, terminal: boolean) => void,
   ) {}
 
   clear(): void {
     this.items.clear(); this.replyTurns.clear(); this.stopTargets.clear(); this.endedWorkflows.clear();
+    this.nativeSubagents.clear(); this.nativeResults.clear();
     this.lastThoughtItem = undefined;
   }
 
@@ -120,10 +150,16 @@ export class Projection {
   private projectSubagent(id: string, state: ItemState, item: Record<string, any>, live: boolean): void {
     const first = !state.toolCallId;
     const toolCallId = state.toolCallId ??= `muse-subagent:${id}`;
+    const result = !state.workflowRunId ? this.nativeResults.get(item.subagentId) : undefined;
     // A workflow agent's last own update can still say inProgress after its
     // run has ended (observed when Stop cancels the run): the run's end is its end.
-    const museStatus: string = item.status === "inProgress" && state.workflowRunId
-      ? this.endedWorkflows.get(state.workflowRunId) ?? item.status : item.status;
+    // Native result snapshots can also retain inProgress after the work ends.
+    let museStatus: string = item.status;
+    if (museStatus === "inProgress") {
+      if (state.workflowRunId) museStatus = this.endedWorkflows.get(state.workflowRunId) ?? museStatus;
+      else if (result) museStatus = result.status;
+      else if (item.controlStatus === "resultReady") museStatus = item.result?.errorKind ? "failed" : "completed";
+    }
     state.delegationTerminal = museStatus !== "inProgress";
     // Stopping one agent of a workflow ended its whole run (observed, Muse 1.4.24),
     // so a workflow's agents stop only with their run. A native spawn has no run id.
@@ -132,15 +168,34 @@ export class Projection {
     const cancelled = museStatus === "cancelled";
     const stoppedOrDone = cancelled || museStatus === "completed";
     const status = !state.delegationTerminal ? "in_progress" : stoppedOrDone ? "completed" : "failed";
-    const output = item.result?.text || item.result?.summary
+    const output = item.result?.text || result?.text || item.result?.summary
       || (status === "failed" ? museToolFailureMessage({ ...item, status: museStatus }) : "");
     const usage = item.usage;
     const tokens = typeof usage?.inputTokens === "number" && typeof usage?.outputTokens === "number"
       ? usage.inputTokens + usage.outputTokens : undefined;
     this.emit({ sessionUpdate: first ? "tool_call" : "tool_call_update", toolCallId,
-      title: item.role || "Subagent", kind: "think", status, rawInput: { description: item.objective },
+      title: subagentTitle(item), kind: "think", status, rawInput: { prompt: item.objective },
       rawOutput: { output }, _meta: { "muse/subagent": true, "muse/cancelled": cancelled, "muse/canStop": canStop,
         subagentStatusAuthoritative: true, subagentUsage: { durationMs: item.durationMs, tokens } } });
+    this.linkChild(state, item);
+  }
+
+  private linkChild(state: ItemState, item: Record<string, any>): void {
+    if (typeof item.childSessionId === "string" && item.childSessionId) state.childSessionId ??= item.childSessionId;
+    if (state.toolCallId && state.childSessionId) {
+      this.onSubagentActivity?.(state.toolCallId, state.childSessionId, state.delegationTerminal === true);
+    }
+  }
+
+  private acceptNativeResult(item: Record<string, any>, live: boolean): void {
+    const { subagentId, resultStatus, text } = item;
+    if (typeof subagentId !== "string" || typeof resultStatus !== "string" || !resultStatus || resultStatus === "inProgress") return;
+    this.nativeResults.set(subagentId, { status: resultStatus, text: typeof text === "string" ? text : undefined });
+    const id = this.nativeSubagents.get(subagentId);
+    const state = id === undefined ? undefined : this.items.get(id);
+    if (id !== undefined && state?.lastItem && !state.workflowRunId && state.lastItem.status === "inProgress") {
+      this.projectSubagent(id, state, state.lastItem, live);
+    }
   }
 
   /** Settle the cards of a run's agents that are still open when the run ends. */
@@ -221,7 +276,7 @@ export class Projection {
         state = newItemState();
         this.items.set(id, state);
       }
-      if (state.kind === "reminderChild") return;
+      if (state.kind === "reminderChild" || state.kind === "hiddenTool") return;
       const field: string = params.field ?? "text";
       const part = /^summary\.(\d+)$/.exec(field);
       if (part && (state.kind === "reasoning" || state.kind === undefined)) {
@@ -241,8 +296,12 @@ export class Projection {
       this.items.set(id, state);
     }
     if (item.revision <= state.revision) return;
-    if (state.delegationTerminal && item.status === "inProgress") return;
     state.revision = item.revision;
+    if (state.delegationTerminal && item.status === "inProgress" &&
+        !(item.kind === "subagent" && !state.workflowRunId && state.lastItem?.status === "inProgress" && item.controlStatus === "resultReady")) {
+      if (item.kind === "subagent" && !state.childSessionId) this.linkChild(state, item);
+      return;
+    }
     state.kind = item.kind;
     if (this.forkIds && item.kind === "agentMessage" && typeof item.turnId === "string" && item.turnId) {
       this.replyTurns.set(id, item.turnId);
@@ -264,8 +323,16 @@ export class Projection {
     } else if (item.kind === "subagent") {
       state.lastItem = item;
       if (typeof item.workflowRunId === "string" && item.workflowRunId) state.workflowRunId = item.workflowRunId;
+      if (!state.workflowRunId && typeof item.subagentId === "string") this.nativeSubagents.set(item.subagentId, id);
       this.projectSubagent(id, state, item, live);
+    } else if (item.kind === "subagentResult") {
+      this.acceptNativeResult(item, live);
     } else if (item.kind === "toolCall") {
+      if (typeof item.tool === "string" && (item.tool === MUSE_RESULT_HANDOFF_TOOL
+        || (item.tool.startsWith("subagent_") && !MUSE_MESSAGE_TOOLS.has(item.tool)))) {
+        state.kind = "hiddenTool";
+        return;
+      }
       const first = !state.toolCallId;
       state.toolCallId = item.callId || id;
       // MSP's open enum has exactly one nonterminal value. ACP has no

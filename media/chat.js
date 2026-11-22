@@ -15489,6 +15489,7 @@ ${fullText}`
     closeToolGroup();
     clearWelcome();
     hideGrokking();
+    detachAgentBubble();
     const el = document.createElement("div");
     el.className = "subagent-card";
     el.appendChild(makeDelegationHeader("Subagent"));
@@ -16438,6 +16439,7 @@ ${fullText}`
     // Loading older transcript pages must not rewind a live run or its pin.
     if (state.historyHydrating && el) return;
     if (!el) {
+      detachAgentBubble();
       el = document.createElement("div");
       el.className = "run-progress-card workflow-card";
       el.dataset.runId = id;
@@ -16744,6 +16746,16 @@ ${fullText}`
       state.agentRenderScheduled = true;
       requestAnimationFrame(flushAgent);
     }
+  }
+
+  // A delegation card ends the narration above it, as a tool row does: the
+  // reply after the card opens a new bubble below it instead of joining the
+  // one above. Muse hides the rows that launch and await its delegations, so
+  // the card is the only thing between those two replies.
+  function detachAgentBubble() {
+    flushAgent();
+    state.activeAgentEl = null;
+    state.activeAgentRaw = "";
   }
 
   function flushAgent() {

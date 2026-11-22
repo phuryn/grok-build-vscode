@@ -72,6 +72,27 @@ async function ready(methods: string[] = []) {
 }
 
 describe("Muse delegated work control", () => {
+  it.each(["resultReady", "subagentResult"] as const)("settles a native card on %s and removes Stop", async signal => {
+    const { session, command, event, client } = await ready(["subagent/stop"]);
+    const card = { kind: "subagent", itemId: "card", subagentId: "worker", revision: 1, status: "inProgress" };
+    event("item/started", { item: card });
+    if (signal === "resultReady") {
+      event("item/updated", { item: { ...card, revision: 2, controlStatus: "resultReady", result: { text: "ok" } } });
+    } else {
+      event("item/completed", { item: { kind: "subagentResult", itemId: "result", subagentId: "worker",
+        revision: 1, status: "completed", resultStatus: "completed", text: "ok" } });
+    }
+    await expect(session.stopDelegatedWork("session", "subagent", "muse-subagent:card")).resolves.toEqual({ stopped: false });
+    await vi.waitFor(() => {
+      const updates = client.notify.mock.calls.map(([, params]: any) => params.update);
+      expect(updates).toMatchObject([
+        { status: "in_progress", _meta: { "muse/canStop": true } },
+        { status: "completed", rawOutput: { output: "ok" }, _meta: { "muse/canStop": false } },
+      ]);
+    });
+    expect(command).not.toHaveBeenCalledWith("subagent/stop", expect.anything());
+  });
+
   it.each(["workflow", "subagent"] as const)("resolves a live %s in the owning session without touching the admitted turn", async kind => {
     const method = kind === "workflow" ? "workflow/cancel" : "subagent/stop";
     const { session, command, event, client, admission } = await ready([method]);
@@ -174,6 +195,189 @@ describe("Muse delegated work control", () => {
     expect(await session.stopDelegatedWork("session", "workflow", "native-run")).toEqual({ stopped: false });
     expect(await session.stopDelegatedWork("session", "subagent", "muse-subagent:child-item")).toEqual({ stopped: false });
     expect(command.mock.calls.map(([name]) => name)).toEqual(["session/resume"]);
+  });
+});
+
+describe("Muse child activity", () => {
+  const methods = ["view/subscribe", "view/unsubscribe", "view/page"];
+  const card = { kind: "subagent", itemId: "card", subagentId: "worker", revision: 1, status: "inProgress" };
+  const answer = (itemId: string, text: string, revision = 2) =>
+    ({ kind: "agentMessage", itemId, revision, status: "completed", text });
+  const durable = (sessionId: string, viewCursor: string, item: Record<string, unknown>) =>
+    ({ method: "item/completed", params: { sessionId, viewCursor, sourceRange: {}, item } });
+
+  it("fills a late child, streams its activity, and reads its final output before dropping the lane subscription", async () => {
+    const s = await ready([...methods, "skill/list", "session/compact"]);
+    const head = deferred<any>();
+    const child = { sessionId: "child" };
+    const tool = { kind: "toolCall", itemId: "tool", callId: "child-tool", tool: "bash", revision: 1, status: "inProgress" };
+    s.connection.request.mockImplementation(async (method?: string, params?: any) => {
+      if (method === "view/subscribe") return { viewCursor: "head" } as any;
+      if (method === "view/unsubscribe") return {} as any;
+      if (method === "view/page" && !params.cursor) return head.promise;
+      if (method === "view/page" && params.cursor === "live-tool") {
+        return { events: [durable("child", "end", answer("final", "Finished."))], nextCursor: null } as any;
+      }
+      throw new Error(`Unexpected request ${method}`);
+    });
+    s.connection.request.mockClear();
+    const prompt = s.session.prompt("session", [{ type: "text", text: "Check the files" }]);
+    const parentFinished = vi.fn();
+    void prompt.then(parentFinished);
+    s.admission.resolve({ status: "accepted", disposition: "started", turnId: "parent-turn" });
+    s.event("item/started", { item: card });
+    expect(s.connection.request).not.toHaveBeenCalledWith("view/subscribe", expect.anything());
+    const linked = { ...card, childSessionId: "child", revision: 2 };
+    s.event("item/updated", { item: linked });
+    await vi.waitFor(() => expect(s.connection.request).toHaveBeenCalledWith("view/page", {
+      sessionId: "child", direction: "forward", limit: 1000,
+    }));
+    const before = durable("child", "head", answer("prior", "Before subscription."));
+    s.raw("item/completed", durable("child", "prompt", { kind: "userMessage", itemId: "child-prompt",
+      revision: 1, status: "completed", text: "Role: assistant\nObjective: Check the files" }).params);
+    s.raw("item/delta", { ...child, itemId: "in-flight", delta: " the rest." });
+    s.raw("item/completed", durable("child", "committed", answer("in-flight", "Here is the rest.")).params);
+    s.raw("item/started", { ...child, item: { ...answer("stream", "", 1), status: "inProgress" } });
+    s.raw("item/delta", { ...child, itemId: "stream", delta: "Live text." });
+    // The page can include post-subscribe events. The live feed owns that suffix.
+    head.resolve({ events: [before, durable("child", "committed", answer("in-flight", "Here is the rest."))], nextCursor: null });
+    const updates = () => s.client.notify.mock.calls.map(([, params]: any) => params.update);
+    const activity = () => updates().filter(u => u?._meta?.["muse/childCardId"] === "muse-subagent:card");
+    const text = () => activity().filter(u => u.sessionUpdate === "agent_message_chunk").map(u => u.content.text);
+    await vi.waitFor(() => expect(text()).toEqual(["Before subscription.", "Here is the rest.", "Live text."]));
+
+    s.raw("item/completed", durable("child", "live-text", answer("stream", "Live text.")).params);
+    s.raw("item/started", { ...child, item: tool });
+    s.raw("item/completed", durable("child", "live-tool", { ...tool, revision: 2, status: "completed",
+      visibleOutput: "example.txt" }).params);
+    s.raw("turn/started", { ...child, turnId: "parent-turn" });
+    s.raw("turn/completed", { ...child, turnId: "parent-turn", terminal: "completed" });
+    s.raw("session/tokenUsage", { ...child, inputTokens: 9999 });
+    s.raw("session/contextUsage", { ...child, usedTokens: 9999, windowTokens: 10000 });
+    s.raw("usage/changed", { ...child, usage: {} });
+    s.raw("approval/requested", child);
+    s.raw("session/approvalModeChanged", { ...child, mode: "allowAll" });
+    s.raw("item/completed", { ...child, item: { kind: "compaction", itemId: "compact", revision: 1,
+      trigger: "auto", outcome: "compacted", tokensBefore: 9999, tokensAfter: 100 } });
+    s.raw("skill/changed", child);
+    const serverRequest = s.handshake.onServerRequest.mock.calls[0][0] as any;
+    await expect(serverRequest({ method: "approval/request", params: child })).resolves.toEqual({});
+    await vi.waitFor(() => expect(activity().some(u => u.toolCallId === "child-tool" && u.status === "completed")).toBe(true));
+    expect(parentFinished).not.toHaveBeenCalled();
+    expect(s.client.request).not.toHaveBeenCalled();
+    expect(s.fatal).not.toHaveBeenCalled();
+    expect(s.connection.request.mock.calls.map(([method]: any) => method)).toEqual(["view/subscribe", "view/page"]);
+    expect(text()).toEqual(["Before subscription.", "Here is the rest.", "Live text."]);
+    expect(activity().some(u => u.sessionUpdate === "user_message_chunk")).toBe(false);
+    expect(updates().filter(u => u && u.sessionUpdate !== "available_commands_update" && !u._meta?.["muse/childCardId"]))
+      .toMatchObject([{ toolCallId: "muse-subagent:card" }, { toolCallId: "muse-subagent:card" }]);
+    expect(s.client.notify.mock.calls.every(([method, params]: any) =>
+      method === "session/update" && params.sessionId === "session")).toBe(true);
+
+    s.event("item/updated", { item: { ...linked, revision: 3, controlStatus: "resultReady", result: { text: "Done" } } });
+    await vi.waitFor(() => expect(text().at(-1)).toBe("Finished."));
+    expect(s.connection.request.mock.calls.slice(2)).toEqual([
+      ["view/unsubscribe", child], ["view/page", { ...child, direction: "forward", limit: 1000, cursor: "live-tool" }],
+    ]);
+    s.event("item/updated", { item: { ...linked, revision: 4, controlStatus: "resultReady", result: { text: "Done" } } });
+    s.raw("item/completed", durable("child", "after", answer("late", "Ignored after detach.")).params);
+    s.event("turn/completed", { turnId: "parent-turn", terminal: "completed" });
+    await expect(prompt).resolves.toMatchObject({ stopReason: "end_turn" });
+    expect(text()).toEqual(["Before subscription.", "Here is the rest.", "Live text.", "Finished."]);
+    expect(s.connection.request.mock.calls.map(([method]: any) => method).filter((method: string) => method === "view/subscribe"))
+      .toHaveLength(1);
+  });
+
+  it("keeps concurrent workflow lanes distinct and detaches a pending subscription on close", async () => {
+    const s = await ready(methods);
+    const pending = deferred<any>();
+    s.connection.request.mockImplementation(async (method?: string, params?: any) => {
+      if (method === "view/subscribe") return params.sessionId === "two" ? pending.promise : { viewCursor: "" } as any;
+      return { events: [], nextCursor: null } as any;
+    });
+    for (const id of ["one", "two"]) {
+      s.event("item/started", { item: { ...card, itemId: id, subagentId: id, workflowRunId: "run", childSessionId: id } });
+      s.raw("item/completed", durable(id, "same-cursor", answer("same-item", id)).params);
+    }
+    pending.resolve({ viewCursor: "" });
+    await vi.waitFor(() => expect(s.client.notify.mock.calls.map(([, params]: any) => params.update)
+      .filter(update => update?.sessionUpdate === "agent_message_chunk")).toMatchObject([
+      { content: { text: "one" }, _meta: { "muse/childCardId": "muse-subagent:one" } },
+      { content: { text: "two" }, _meta: { "muse/childCardId": "muse-subagent:two" } },
+    ]));
+    const inFlight = deferred<any>();
+    s.connection.request.mockReturnValueOnce(inFlight.promise);
+    s.event("item/started", { item: { ...card, itemId: "three", subagentId: "three", workflowRunId: "run", childSessionId: "three" } });
+    s.exited.resolve({ code: 0, signal: null });
+    await s.session.close();
+    inFlight.resolve({ viewCursor: "head" });
+    await new Promise(resolve => setImmediate(resolve));
+    expect(s.connection.request.mock.calls).toMatchObject([
+      ["model/list", {}],
+      ["view/subscribe", { sessionId: "one" }], ["view/subscribe", { sessionId: "two" }],
+      ["view/subscribe", { sessionId: "three" }],
+      ["view/unsubscribe", { sessionId: "one" }], ["view/unsubscribe", { sessionId: "two" }],
+      ["view/unsubscribe", { sessionId: "three" }],
+    ]);
+  });
+
+  it("replays durable child activity through the host before session/load resolves", async () => {
+    const s = setup(methods);
+    await s.session.initialize();
+    s.command.mockResolvedValueOnce({ session: { sessionId: "session", workspaceRoot: "/work/demo" },
+      history: { mode: "inline", items: [
+        { kind: "agentMessage", itemId: "parent", status: "completed", revision: 2, text: "Parent reply." },
+        { ...card, workflowRunId: "run", childSessionId: "child" },
+        { kind: "workflow", itemId: "run", workflowRunId: "run", revision: 2, status: "completed" },
+      ] } } as any);
+    s.connection.request.mockImplementation(async (method?: string, params?: any) => {
+      if (method === "model/list") return { models: [{ modelId: "model" }] } as any;
+      expect(method).toBe("view/page");
+      expect(params.sessionId).toBe("child");
+      return (params.cursor === "first"
+        ? { events: [durable("child", "last", { kind: "toolCall", itemId: "tool", revision: 2,
+          status: "completed", tool: "bash", args: '{"command":"ls"}', visibleOutput: "demo.txt" })], nextCursor: null }
+        : { events: [durable("child", "first", answer("reply", "Child reply."))], nextCursor: "first" }) as any;
+    });
+    const host = new AcpClient({ cliPath: "/unused", cwd: "/work/demo", backend: new MuseBackend(), log: () => {} });
+    const transcript: any[] = [];
+    const lane: any[] = [];
+    host.on("messageChunk", text => transcript.push(text));
+    host.on("toolCall", call => transcript.push(call));
+    host.on("childStream", activity => {
+      expect((host as any).loadingSessionId).toBe("session");
+      expect(transcript[1].child_session_id).toBe(activity.childSessionId);
+      lane.push(activity);
+    });
+    s.client.notify.mockImplementation(async (...[method, params]: any[]) => {
+      (host as any).onLine(JSON.stringify({ jsonrpc: "2.0", method, params }));
+    });
+    vi.spyOn(host as any, "request").mockImplementation(async (method: string, p: any) => {
+      if (method === "session/load") return s.session.loadSession(p.sessionId, p.cwd, p.mcpServers);
+      throw new Error(`Unexpected request ${method}`);
+    });
+    await host.loadSession("session");
+    expect(transcript).toMatchObject(["Parent reply.", { toolCallId: "muse-subagent:card",
+      child_session_id: "muse-subagent:card", kind: "subagent", stopAvailable: false }]);
+    expect(lane).toMatchObject([
+      { route: { event: "messageChunk", text: "Child reply." } },
+      { route: { event: "toolCall", payload: { title: "bash", status: "completed", rawOutput: { output: "demo.txt" } } } },
+      { route: { event: "toolCallUpdate", payload: { toolCallId: "tool" } } },
+    ]);
+    expect(s.connection.request.mock.calls.map(([method]: any) => method)).toEqual(["view/page", "view/page", "model/list"]);
+  });
+
+  it("keeps the card and skips activity when view/subscribe is absent", async () => {
+    const s = setup(["view/page", "view/unsubscribe"]);
+    await s.session.initialize();
+    s.command.mockResolvedValueOnce({ session: { sessionId: "session", workspaceRoot: "/work/demo" },
+      history: { mode: "inline", items: [{ ...card, childSessionId: "child", status: "completed" }] } } as any);
+    await s.session.loadSession("session", "/work/demo", []);
+    s.raw("item/completed", durable("child", "head", answer("reply", "Child reply.")).params);
+    expect(s.connection.request.mock.calls).toEqual([["model/list", {}]]);
+    expect(s.client.notify.mock.calls.map(([, params]: any) => params.update)).toMatchObject([
+      { toolCallId: "muse-subagent:card", status: "completed" },
+    ]);
   });
 });
 

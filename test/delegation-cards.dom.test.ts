@@ -155,6 +155,24 @@ describe("header dots for long workflows", () => {
   });
 });
 
+describe("a delegation card ends the narration above it", () => {
+  // Muse hides the rows that launch and await a delegation, so nothing but the
+  // card separates the reply before it from the reply after it.
+  it.each(["subagent", "workflow"])("the %s card keeps the replies on either side apart", async kind => {
+    const h = view("muse");
+    dispatch(h.window, { type: "messageChunk", text: "Delegating that now." });
+    const card = kind === "subagent" ? subagent(h) : workflow(h, "muse");
+    dispatch(h.window, { type: "messageChunk", text: "The subagent found three files." });
+    await new Promise(resolve => h.window.requestAnimationFrame(() => resolve(undefined)));
+    const bubbles = [...h.doc.querySelectorAll(".msg.agent")];
+    // The last bubble also carries the turn's time; only the reply text matters here.
+    expect(bubbles.map(b => b.textContent!.trim().replace(/\s*\d{1,2}:\d{2}\s*[AP]M$/, "")))
+      .toEqual(["Delegating that now.", "The subagent found three files."]);
+    expect(bubbles[0].compareDocumentPosition(card) & h.window.Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(card.compareDocumentPosition(bubbles[1]) & h.window.Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+});
+
 describe("quiet delegation card contract", () => {
   it.each(["grok", "claude", "codex"])("%s subagent has the same closed header across running, done and failed", provider => {
     for (const state of ["running", "done", "failed"]) {

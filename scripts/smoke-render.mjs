@@ -76,7 +76,9 @@ export async function runRenderSmoke(provider, evidenceParent, cliOverride, sele
       "grok.readRepliesAloud": false, "grok.soundNotifications": false, "grok.desktop.tray": false };
     fs.writeFileSync(path.join(profile, "config.json"), JSON.stringify(config));
     fs.writeFileSync(path.join(profile, "globalState.json"), JSON.stringify({ "grok.providerConnections.v2": { [provider]: true },
-      "grok.cliUpdateExtVersion": require("../package.json").version }));
+      "grok.cliUpdateExtVersion": require("../package.json").version,
+      // Muse 1.4.25 spawns a native (stoppable) subagent only in a trusted workspace; Allow all trusts it.
+      ...(provider === "muse" && selectedScenario === "stop subagent" ? { "grok.defaultMuseMode": "yolo" } : {}) }));
     app = await electron.launch({ ...desktopLaunch(root, require("electron"), workspace, profile, output, env), timeout: rpcMs });
     // app.process() resolves through a dispatcher that is gone after app.close.
     // Capture the process now so cleanup cannot replace the original failure
@@ -270,12 +272,8 @@ export async function runRenderSmoke(provider, evidenceParent, cliOverride, sele
         Object.assign(scenario, { result: "NOT RUN", reason: "excluded by --scenario; not release validation" });
         continue;
       }
-      if ((name === "workflow" && provider === "codex") || (name === "subagent" && provider === "muse")) {
-        Object.assign(scenario, { result: "N/A", reason: provider === "codex" ? "Codex has no workflows" : "Muse delegation is a workflow" });
-        continue;
-      }
-      if (name === "stop subagent" && provider === "muse") {
-        Object.assign(scenario, { result: "N/A", reason: "Muse delegation is a workflow; its agents stop with the workflow" });
+      if (name === "workflow" && provider === "codex") {
+        Object.assign(scenario, { result: "N/A", reason: "Codex has no workflows" });
         continue;
       }
       try {

@@ -2,6 +2,7 @@ import { MspError, spawnMspConnection, type MspHandshake, type SpawnedMspConnect
 import { RequestError, type AgentContext, type AvailableCommand, type ContentBlock, type PromptResponse, type SessionUpdate } from "@agentclientprotocol/sdk";
 import { museCliInvocation, readMuseMethods } from "./capabilities.mjs";
 import { Projection } from "./projection.mjs";
+import { ChildActivity } from "./child-activity.mjs";
 import { Approvals } from "./approvals.mjs";
 import { museSkillCommands, museSkillInput } from "./skills.mjs";
 // A deep import because the SDK root re-exports nothing from `msp.js`, and
@@ -117,6 +118,8 @@ export class MuseSession {
   private pendingModeRepairs = 0;
   private creating = false;
   private replayBuffer?: { method: string; params: Record<string, any> }[];
+  private replayChildren?: Map<string, { cardId: string; terminal: boolean }>;
+  private childActivity?: ChildActivity;
   private pending?: PendingTurn;
   private updates = Promise.resolve();
   private readonly projection: Projection;
@@ -129,7 +132,11 @@ export class MuseSession {
     private readonly spawn = spawnMspConnection,
     private readonly probeMethods = readMuseMethods,
   ) {
-    this.projection = new Projection(update => this.publish(update), log);
+    this.projection = new Projection(update => this.publish(update), log, (cardId, childSessionId, terminal) => {
+      if (!this.childActivity || this.closing || childSessionId === this.sessionId) return;
+      if (this.replayChildren) this.replayChildren.set(childSessionId, { cardId, terminal });
+      else void this.childActivity.observe(childSessionId, cardId, terminal);
+    });
     this.approvals = new Approvals(
       params => this.client.request("session/request_permission", params),
       params => this.connection().command("approval/decide", params),
@@ -196,8 +203,8 @@ export class MuseSession {
     });
     handshake.onProtocolError(error => this.fail(error));
     handshake.onServerRequest(async request => {
-      if (request.method === "approval/request" && this.sessionId && request.params && request.params.sessionId === this.sessionId) {
-        this.notification("approval/requested", request.params);
+      if (request.method === "approval/request" && request.params && typeof request.params.sessionId === "string") {
+        if (request.params.sessionId === this.sessionId) this.notification("approval/requested", request.params);
         // The server request is only a presentation receipt. The decision is
         // sent separately using the offered choice and requirement ids.
         return {};
@@ -222,6 +229,11 @@ export class MuseSession {
       this.projection.forkIds = this.capabilities().fork;
       this.projection.stopWorkflows = this.methods.has("workflow/cancel");
       this.projection.stopSubagents = this.methods.has("subagent/stop");
+      if (this.methods.has("view/subscribe")) {
+        const { connection } = this.msp;
+        this.childActivity = new ChildActivity((method, params) => connection.request(method, params), this.methods,
+          (cardId, update) => this.publish({ ...update, _meta: { ...update._meta, "muse/childCardId": cardId } }), this.log);
+      }
     } finally { clearTimeout(timeout); }
   }
 
@@ -450,6 +462,7 @@ export class MuseSession {
         } while (true);
         items = [...folded.values()];
       }
+      this.replayChildren = new Map();
       for (const item of items) this.projection.acceptHistory(item);
       if (history?.snapshot?.state?.contextUsage) {
         this.projection.accept("session/contextUsage", history.snapshot.state.contextUsage);
@@ -457,6 +470,9 @@ export class MuseSession {
       const buffered = this.replayBuffer;
       this.replayBuffer = undefined;
       for (const event of buffered) if (!seen.has(event.params.viewCursor)) this.notification(event.method, event.params);
+      const children = this.replayChildren;
+      this.replayChildren = undefined;
+      await Promise.all([...children].map(([id, { cardId, terminal }]) => this.childActivity?.observe(id, cardId, terminal)));
       await this.updates;
       this.assertSandbox(this.approvalMode);
       if (Array.isArray(result.pendingRequests) && result.pendingRequests.length) {
@@ -470,9 +486,10 @@ export class MuseSession {
     } catch (error) {
       this.sessionId = undefined;
       this.projection.clear();
+      this.childActivity?.close();
       this.fail(error);
       throw error;
-    } finally { this.replayBuffer = undefined; this.creating = false; }
+    } finally { this.replayBuffer = undefined; this.replayChildren = undefined; this.creating = false; }
   }
 
   async prompt(sessionId: string, prompt: ContentBlock[]): Promise<PromptResponse> {
@@ -684,6 +701,7 @@ export class MuseSession {
   }
 
   private notification(method: string, params: Record<string, any>): void {
+    if (this.closing) return;
     const leave = this.forkLeave;
     if (method === "session/leaveCompleted" && leave && params.sessionId === leave.sessionId && params.commandId === leave.commandId) {
       leave.settle(params.outcome === "released");
@@ -691,10 +709,16 @@ export class MuseSession {
     }
     // `usage/changed` carries no session id, so the check below would drop it.
     if (method === "usage/changed") {
-      if (this.sessionId) void this.publishSubscriptionUsage(params);
+      if (this.sessionId && (params.sessionId == null || params.sessionId === this.sessionId)) {
+        void this.publishSubscriptionUsage(params);
+      }
       return;
     }
-    if (params.sessionId !== this.sessionId) return;
+    if (!this.sessionId) return;
+    if (params.sessionId !== this.sessionId) {
+      if (typeof params.sessionId === "string") this.childActivity?.accept(params.sessionId, method, params);
+      return;
+    }
     if (this.replayBuffer) { this.replayBuffer.push({ method, params }); return; }
     if (method === "session/approvalModeChanged") {
       void this.publishMode(params.mode).then(() => this.assertSandbox(
@@ -750,6 +774,7 @@ export class MuseSession {
       this.pendingCompact?.reject(new Error("Muse adapter is closing"));
       this.forkLeave?.settle(false);
       this.approvals.clear();
+      this.childActivity?.close();
       const handshake = this.handshake;
       if (!handshake) return;
       try { await handshake.close(); }

@@ -36,7 +36,7 @@ AFK Pilot runs each agent through its vendor's own program, signed in with your 
 | Compact on demand | ✓ | ✓ | ✓ ¹ | — | ✓ | ✓ |
 | Edit an earlier prompt, or branch from a reply | Rewind & Edit | ✓ ² | ✓ ¹ | — | ✓ | ✓ |
 | Fork a conversation | ✓ | ✓ ² | ✓ ¹ | — | ✓ | ✓ |
-| Subagent cards | ✓ | ✓ | via workflows | launch only | ✓ | ✓ |
+| Subagent cards | ✓ | ✓ | ✓ | launch only | ✓ | ✓ |
 | Workflow cards | ✓ | — | ✓ | — | ✓ | — |
 | Plan usage meter | ✓ | ✓ Google sign-in | ✓ | — | ✓ | ✓ |
 | Connectors | ✓ | — | — | — | ✓ | ✓ |
@@ -97,7 +97,7 @@ How it works, and the choices behind it: [research/antigravity-acp.md](https://g
   - **Windows** has no Muse shell sandbox, so every mode runs without it and those settings are hidden; workspace trust still follows your setting. On request is not offered, and an On request conversation reopens in Prompt unmatched with an explanation.
   - **Cloud machines** use the isolated machine as the sandbox: Muse's shell sandbox is off in every mode, Prompt unmatched keeps its approval rules, and On request is not offered. An On request conversation cannot open there.
   - Approval switches apply from the next action; sandbox and trust change on reopen or in a new conversation. Deny unmatched is hidden for now because it delays every turn; conversations and defaults saved in it use Prompt unmatched.
-- **Workflows.** A running workflow shows a card with a dot per agent and **Stop**, which ends that workflow and lets the main turn carry on. Muse delegates through workflows rather than subagents.
+- **Workflows.** A running workflow shows a card with a dot per agent and **Stop**, which ends that workflow and lets the main turn carry on. Muse delegates through workflows or its own subagents; each subagent gets a card (see Subagents below).
 - **Usage meter** after each turn, and compaction at your token limit.
 - **Steer, `/compact`, your skills in the slash menu, forks and editing an earlier prompt** need a Muse Code CLI that offers them.
 - **Not here:** deleting Muse history, and connectors managed by AFK Pilot.
@@ -226,7 +226,7 @@ Switch from the bottom toolbar — even mid-turn, so you can flip to **Auto acce
 <details>
 <summary><strong>Subagents</strong> — delegated tasks render as cards with their result</summary>
 
-When Grok, Claude Code, Codex or Antigravity delegates work to a subagent, the chat shows a card with the same quiet header as a workflow: an icon, "Subagent", the task, its status and a timer. Open it for the subagent's activity where the agent streams it (Grok, Codex, Claude Code, and Antigravity's tool calls; Codex and Claude Code bring it back when you reopen the conversation), its result — which reads like a reply and has a copy button — and the tokens it used where the agent reports them. Background subagents included: their result folds back into the card when it lands. Antigravity reports no result of its own, so its card settles when the turn ends. A Claude Code subagent running in the background has **Stop**: it ends that subagent and the main turn keeps going. Muse Code delegates through workflows instead.
+When Grok, Claude Code, Codex, Muse Code or Antigravity delegates work to a subagent, the chat shows a card with the same quiet header as a workflow: an icon, "Subagent", the task, its status and a timer. Open it for the subagent's activity where the agent streams it (Grok, Codex, Claude Code, Muse Code, and Antigravity's tool calls; Codex, Claude Code and Muse Code bring it back when you reopen the conversation), its result — which reads like a reply and has a copy button — and the tokens it used where the agent reports them. Background subagents included: their result folds back into the card when it lands. Antigravity reports no result of its own, so its card settles when the turn ends. A Claude Code subagent running in the background, and a subagent Muse Code spawns on its own (outside a workflow), have **Stop**: it ends that subagent and the main turn keeps going.
 
 ![A subagent call rendered as a card in the chat](https://raw.githubusercontent.com/phuryn/grok-build-vscode/main/docs/screenshots/subagents.png)
 

@@ -66,10 +66,11 @@ export function selectSmokeModel(response, override) {
   };
   const candidates = models.filter(m => !/^(default|auto)$/i.test(m.modelId));
   const ordered = [...candidates].sort((a, b) => rank(a) - rank(b));
-  // Captured Muse catalog: only versions/privacy variants of Spark, no cost
-  // signals. Preserve the account's selected variant (including consent) rather
-  // than inventing a price order or opting it into contributor data use.
-  const sameSparkFamily = candidates.length > 0 && candidates.every(m => /^muse-spark-\d+(?:\.\d+)*(?:-contributor)?$/.test(m.modelId));
+  // Captured Muse catalogs: Muse's own families (Spark, Wonder, Ember) and their
+  // privacy variants, no cost signals. Preserve the account's selected model
+  // (including consent) rather than inventing a price order or opting it into
+  // contributor data use.
+  const sameSparkFamily = candidates.length > 0 && candidates.every(m => /^muse-[a-z]+-\d+(?:\.\d+)*(?:-contributor)?$/.test(m.modelId));
   const currentSpark = sameSparkFamily && candidates.find(m => m.modelId === response.models.currentModelId);
   const model = override ? models.find(m => m.modelId === override) : currentSpark || ordered[0];
   assert(model, `model override is not in the advertised catalog: ${override}`);
@@ -737,7 +738,6 @@ async function main() {
     };
     if (!steers) record("steering", "N/A", `${provider} does not support mid-turn steering`);
     if (provider === "codex") record("workflow", "N/A", "Codex has no workflow feature");
-    if (provider === "muse") record("subagent", "N/A", "Muse delegation is a workflow; no plain subagent feature");
     if (permissionSmokeNotApplicable(provider)) record("permission", "N/A", permissionSmokeNotApplicable(provider));
     const check = async (capability, fn, ms = Math.min(2_147_483_647, turnMs * 2 + rpcMs)) => {
       if (!requested(capability, provider)) { record(capability, "NOT RUN", "excluded by --scenario; not release validation"); return false; }
@@ -939,7 +939,7 @@ async function main() {
         assert.equal(result._meta?.compactOutcome, "compacted", "compact did not reach a successful terminal outcome");
         return "the advertised /compact reached a successful Muse terminal outcome";
       });
-      if (provider !== "muse") await check("subagent", async () => {
+      await check("subagent", async () => {
         if (provider === "codex") {
           const mode = backend.setMode(sessionId, "agent");
           await peer.request(mode.method, mode.params);

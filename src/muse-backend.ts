@@ -61,9 +61,13 @@ export class MuseBackend implements AcpBackend<"muse"> {
     return { method: "_muse/stop_delegated_work", params: { sessionId, kind, id } };
   }
   normalizeUpdate(update: any, meta: any) {
+    const childCardId = update?._meta?.["muse/childCardId"];
+    if (typeof childCardId === "string" && childCardId) return { update, childSessionId: childCardId };
     if (update?._meta?.["muse/subagent"] === true
         && (update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update")) {
       return { update: { ...update, kind: "subagent",
+        // The card has this id from its first frame, even before Muse reports the child session.
+        child_session_id: update.toolCallId,
         status: update._meta["muse/cancelled"] === true ? "cancelled" : update.status,
         stopAvailable: update._meta["muse/canStop"] === true,
       }, meta };

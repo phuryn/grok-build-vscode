@@ -165,6 +165,11 @@ describe("live smoke catalog selection", () => {
     expect(selectSmokeModel(response).modelId).toBe("muse-spark-1.2");
     response.models.currentModelId = "missing";
     expect(() => selectSmokeModel(response)).toThrow(/no recognizable/);
+    // Muse 1.4.25's catalog mixes families; the account's own choice still wins.
+    response.models.availableModels = ["muse-wonder-1.0", "muse-ember-1.0", "muse-spark-1.2", "muse-spark-1.3"]
+      .map(modelId => ({ modelId, name: modelId }));
+    response.models.currentModelId = "muse-wonder-1.0";
+    expect(selectSmokeModel(response).modelId).toBe("muse-wonder-1.0");
   });
 
   it("validates one cheap scenario before launching a provider", () => {
