@@ -24,6 +24,48 @@ import type {
 import { adapterContextOccupancy } from "./acp-dispatch";
 import { ClaudeWorkflows } from "./claude-workflows";
 import { compactCeiling } from "./auto-compact";
+import { claudeUsageWindows, type SubscriptionWindow } from "./subscription-usage";
+
+/** A usage read starts its own short Claude CLI process (about 10 s, no model
+ *  call, measured 2026-11-22), so it is pulled only when the meter's popup opens,
+ *  and at most this often per conversation. */
+export const CLAUDE_USAGE_MIN_INTERVAL_MS = 5 * 60_000;
+const CLAUDE_USAGE_TIMEOUT_MS = 30_000;
+
+type ClaudeSdk = typeof import("@anthropic-ai/claude-agent-sdk");
+
+/** Ask Claude Code for every account window, without a prompt or a saved
+ *  session: the prompt stream never yields, `persistSession: false` writes no
+ *  transcript, and `settingSources: []` runs none of the user's hooks. The CLI
+ *  is the one the conversation runs, with the same environment, so the login is
+ *  the conversation's own. */
+export async function readClaudeAccountUsage(sdk: ClaudeSdk, cliPath: string, env: NodeJS.ProcessEnv,
+  timeoutMs = CLAUDE_USAGE_TIMEOUT_MS): Promise<unknown> {
+  // One fixed folder, never removed: the CLI can still hold it when close()
+  // returns, and a per-read temp folder was left behind locked (probe, 2026-11-22).
+  const cwd = path.join(os.tmpdir(), "afk-claude-usage");
+  await fs.promises.mkdir(cwd, { recursive: true });
+  let release!: () => void;
+  const idle = new Promise<void>((resolve) => { release = resolve; });
+  async function* prompt(): AsyncGenerator<never> { await idle; }
+  const stringEnv: Record<string, string> = {};
+  for (const [key, value] of Object.entries(env)) if (typeof value === "string") stringEnv[key] = value;
+  delete stringEnv.ELECTRON_RUN_AS_NODE;
+  const q = sdk.query({ prompt: prompt(), options: {
+    cwd, pathToClaudeCodeExecutable: cliPath, env: stringEnv, persistSession: false, settingSources: [],
+  } });
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      q.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET(),
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("usage read timed out")), timeoutMs); }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+    release();
+    try { q.close(); } catch { /* already gone */ }
+  }
+}
 
 const CLAUDE_COMPACT_RESERVE = 33_000;
 const CLAUDE_COMPACT_WINDOW = "CLAUDE_CODE_AUTO_COMPACT_WINDOW";
@@ -526,6 +568,8 @@ export function isClaudeCredentialError(error: unknown): boolean {
 export interface ClaudeBackendOptions {
   adapterPath?: string;
   nodePath?: string;
+  /** Tests inject the usage report; the unit suite never starts a real CLI. */
+  readUsage?: (cliPath: string, env: NodeJS.ProcessEnv) => Promise<unknown>;
 }
 
 export class ClaudeBackend implements AcpBackend {
@@ -539,6 +583,29 @@ export class ClaudeBackend implements AcpBackend {
   constructor(private readonly options: ClaudeBackendOptions = {}) {}
   private compactWindow?: number;
   private compactModelConfig?: string;
+  private usageLaunch?: { cliPath: string; env: NodeJS.ProcessEnv };
+
+  /** Every account window Claude reports; [] when it reports none or the read fails. */
+  async readSubscriptionUsage(): Promise<SubscriptionWindow[]> {
+    const launch = this.usageLaunch;
+    if (!launch?.cliPath) return [];
+    const read = this.options.readUsage
+      ?? (process.env.NODE_ENV === "test" ? undefined
+        : async (cliPath: string, env: NodeJS.ProcessEnv) => readClaudeAccountUsage(await this.loadSdk(), cliPath, env));
+    if (!read) return [];
+    try { return claudeUsageWindows(await read(launch.cliPath, launch.env)) ?? []; }
+    catch { return []; }
+  }
+
+  /** The host compiles to CommonJS. Use native import for the adapter's bundled
+   *  ESM SDK, including in desktop builds with an older Node runtime. */
+  private async loadSdk(): Promise<ClaudeSdk> {
+    const importModule = compileFunction("return import(url)", ["url"], {
+      importModuleDynamically: vmConstants.USE_MAIN_CONTEXT_DEFAULT_LOADER,
+    });
+    const sdkPath = createRequire(this.adapterPath()).resolve("@anthropic-ai/claude-agent-sdk");
+    return importModule(pathToFileURL(sdkPath).href);
+  }
 
   sessionParams() {
     if (this.compactWindow === undefined) return {};
@@ -565,6 +632,7 @@ export class ClaudeBackend implements AcpBackend {
     this.compactWindow = limit !== undefined && own && !own.disabled && limit + CLAUDE_COMPACT_RESERVE < own.window
       ? limit + CLAUDE_COMPACT_RESERVE : undefined;
     this.compactModelConfig = options.env.CLAUDE_MODEL_CONFIG;
+    this.usageLaunch = { cliPath: options.cliPath, env: options.env };
     const command = this.options.nodePath || process.execPath;
     const bridgeUrl = pathToFileURL(path.join(__dirname, "claude-async-task-bridge.mjs")).href;
     // Even a missing or unreadable preload must leave the adapter launchable.

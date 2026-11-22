@@ -5,7 +5,9 @@ import * as path from "node:path";
 import {
   grokSubscriptionWindows, grokBillingReplyShape, claudeSubscriptionWindows, museSubscriptionWindows, subscriptionCredentialContext,
   SubscriptionUsageBinding, SubscriptionUsageCache, SUBSCRIPTION_USAGE_MIN_INTERVAL_MS,
+  claudeUsageWindows, mergeSubscriptionWindows,
 } from "../src/subscription-usage";
+import { ClaudeBackend } from "../src/claude-backend";
 import { GrokSidebar } from "../src/sidebar";
 import { Session, sessionUiSnapshot } from "../src/session";
 import { RemoteClientState } from "../src/remote-client-state";
@@ -269,13 +271,14 @@ describe("host subscription lifecycle", () => {
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 
-  it.each(["grok", "claude", "codex", "muse"] as const)("popover open refreshes only Grok (%s), without accumulating history", async (provider) => {
+  it.each(["grok", "claude", "codex", "muse"] as const)("popover open pulls only Grok and Claude (%s), without accumulating history", async (provider) => {
     const { sidebar, session, read } = hostHarness(provider);
     await sidebar.onMessage({ type: "refreshSubscriptionUsage" }, "remote", "phone");
     await sidebar.refreshSubscriptionUsage(session);
-    expect(read).toHaveBeenCalledTimes(provider === "grok" ? 1 : 0);
+    await new Promise((resolve) => setTimeout(resolve, 0)); // the popup's pull is not awaited by onMessage
+    expect(read).toHaveBeenCalledTimes(provider === "grok" || provider === "claude" ? 1 : 0);
     expect(session.buffer).toEqual([]);
-    if (provider === "grok") expect(sidebar.sendRemoteSession).toHaveBeenLastCalledWith(session, {
+    if (provider === "grok" || provider === "claude") expect(sidebar.sendRemoteSession).toHaveBeenLastCalledWith(session, {
       type: "subscriptionUsage", windows: windows(),
     });
   });
@@ -343,5 +346,120 @@ describe("grokBillingReplyShape (#202)", () => {
   it("copes with a reply that is not an object", () => {
     expect(grokBillingReplyShape(null)).toBe("reply object config undefined currentPeriod undefined");
     expect(grokBillingReplyShape("nope")).toBe("reply string config undefined currentPeriod undefined");
+  });
+});
+
+// The shape measured from Claude's get_usage on a Max plan, 2026-11-22 (SDK 0.3.257), trimmed to the fields read.
+const claudeUsage = (limits: unknown[] | undefined = [
+  { kind: "weekly_all", group: "weekly", percent: 89, resets_at: "2026-11-25T05:00:00.322569+00:00", scope: null, is_active: true },
+  { kind: "weekly_scoped", group: "weekly", percent: 18, resets_at: "2026-11-25T05:00:00.322707+00:00",
+    scope: { model: { id: null, display_name: "Fable" }, surface: null }, is_active: false },
+], extra: object = {}) => ({
+  subscription_type: "max",
+  rate_limits_available: true,
+  rate_limits: {
+    five_hour: null,
+    seven_day: { utilization: 89, resets_at: "2026-11-25T05:00:00.322569+00:00" },
+    seven_day_opus: null,
+    seven_day_sonnet: null,
+    ...(limits ? { limits } : {}),
+    ...extra,
+  },
+});
+
+describe("Claude account windows from get_usage", () => {
+  it("reads the weekly limit and the per-model weekly limit, as percent", () => {
+    expect(claudeUsageWindows(claudeUsage(), now)).toEqual([
+      { usedPercent: 89, label: "Weekly", periodType: "seven_day", periodEnd: "2026-11-25T05:00:00.322Z", observedAt: new Date(now).toISOString() },
+      { usedPercent: 18, label: "Weekly · Fable", periodType: "seven_day_model_fable", periodEnd: "2026-11-25T05:00:00.322Z", observedAt: new Date(now).toISOString() },
+    ]);
+  });
+
+  it("adds a 5-hour window when the plan reports one", () => {
+    const usage = claudeUsage(undefined, { five_hour: { utilization: 40, resets_at: "2026-11-22T20:00:00Z" } });
+    expect(claudeUsageWindows(usage, now)!.map((w) => [w.label, w.usedPercent])).toEqual([["5-hour", 40], ["Weekly", 89], ["Weekly · Fable", 18]]);
+  });
+
+  it("falls back to the named objects when there is no limits list", () => {
+    const usage = claudeUsage(null as any, { seven_day_opus: { utilization: 12, resets_at: "2026-11-25T05:00:00Z" } });
+    expect(claudeUsageWindows(usage, now)!.map((w) => w.label)).toEqual(["Weekly", "Weekly · Opus"]);
+  });
+
+  it("drops kinds, scopes and dates it has not measured, and reports nothing when unavailable", () => {
+    const usage = claudeUsage([
+      { kind: "weekly_scoped", percent: 5, resets_at: "2026-11-25T05:00:00Z", scope: { model: null, surface: { id: "cowork" } } },
+      { kind: "monthly_mystery", percent: 50, resets_at: "2026-11-25T05:00:00Z" },
+      { kind: "weekly_scoped", percent: 7, resets_at: "not a date", scope: { model: { display_name: "Opus" }, surface: null } },
+    ], { seven_day: null });
+    expect(claudeUsageWindows(usage, now)).toEqual([]);
+    expect(claudeUsageWindows({ rate_limits_available: false, rate_limits: claudeUsage().rate_limits }, now)).toBeUndefined();
+    expect(claudeUsageWindows(undefined, now)).toBeUndefined();
+  });
+
+  it("a reply's single window replaces its own row and keeps the per-model one", () => {
+    const read = claudeUsageWindows(claudeUsage(), now)!;
+    const reply = claudeSubscriptionWindows(rateUpdate({ utilization: 0.91, rateLimitType: "seven_day" }), now)!;
+    expect(mergeSubscriptionWindows(read, reply).map((w) => [w.label, w.usedPercent])).toEqual([["Weekly", 91], ["Weekly · Fable", 18]]);
+    expect(mergeSubscriptionWindows(read, [])).toEqual(read);
+  });
+});
+
+describe("Claude usage pull on the host", () => {
+  const fable = () => claudeUsageWindows(claudeUsage(), now)!;
+  const replyWeekly = () => claudeSubscriptionWindows(rateUpdate({ utilization: 0.5, rateLimitType: "seven_day" }), now)!;
+
+  it("reads only when the popup opens, at most every five minutes", async () => {
+    const { sidebar, session, read } = hostHarness("claude");
+    read.mockResolvedValue(fable());
+    await sidebar.refreshSubscriptionUsage(session);
+    expect(read).not.toHaveBeenCalled();
+    await sidebar.refreshSubscriptionUsage(session, true);
+    await sidebar.refreshSubscriptionUsage(session, true);
+    expect(read).toHaveBeenCalledOnce();
+    expect(session.subscriptionUsage!.snapshot().map((w) => w.label)).toEqual(["Weekly", "Weekly · Fable"]);
+  });
+
+  it("an empty or failed read keeps what the replies reported", async () => {
+    for (const result of [[], new Error("CLI missing")]) {
+      const { sidebar, session, read } = hostHarness("claude");
+      if (result instanceof Error) read.mockRejectedValue(result); else read.mockResolvedValue(result);
+      session.subscriptionUsage!.merge(replyWeekly());
+      await sidebar.refreshSubscriptionUsage(session, true);
+      expect(session.subscriptionUsage!.snapshot()).toEqual(replyWeekly());
+    }
+  });
+
+  it("a later reply updates the weekly row and keeps the Fable row", async () => {
+    const { sidebar, session, read } = hostHarness("claude");
+    read.mockResolvedValue(fable());
+    await sidebar.refreshSubscriptionUsage(session, true);
+    session.subscriptionUsage!.merge(replyWeekly());
+    expect(session.subscriptionUsage!.snapshot().map((w) => [w.label, w.usedPercent])).toEqual([["Weekly", 50], ["Weekly · Fable", 18]]);
+  });
+});
+
+describe("ClaudeBackend usage read", () => {
+  const spawnOptions = (env: NodeJS.ProcessEnv = {}) => ({ cwd: "/proj", cliPath: "/bin/claude", env } as any);
+
+  it("asks with the conversation's own CLI and environment, and parses the report", async () => {
+    const readUsage = vi.fn().mockResolvedValue(claudeUsage());
+    const backend = new ClaudeBackend({ adapterPath: "/adapter/dist/index.js", readUsage });
+    expect(await backend.readSubscriptionUsage()).toEqual([]);
+    expect(readUsage).not.toHaveBeenCalled();
+    backend.spawn(spawnOptions({ CLAUDE_CONFIG_DIR: "/home/me/.claude" }));
+    expect((await backend.readSubscriptionUsage()).map((w) => w.label)).toEqual(["Weekly", "Weekly · Fable"]);
+    expect(readUsage).toHaveBeenCalledWith("/bin/claude", { CLAUDE_CONFIG_DIR: "/home/me/.claude" });
+  });
+
+  it("returns nothing when the report is unavailable or the read throws, and never starts a CLI under test", async () => {
+    const unavailable = new ClaudeBackend({ adapterPath: "/a", readUsage: async () => ({ rate_limits_available: false }) });
+    unavailable.spawn(spawnOptions());
+    expect(await unavailable.readSubscriptionUsage()).toEqual([]);
+    const failing = new ClaudeBackend({ adapterPath: "/a", readUsage: async () => { throw new Error("no login"); } });
+    failing.spawn(spawnOptions());
+    expect(await failing.readSubscriptionUsage()).toEqual([]);
+    const real = new ClaudeBackend({ adapterPath: "/a" });
+    real.spawn(spawnOptions());
+    expect(await real.readSubscriptionUsage()).toEqual([]);
   });
 });

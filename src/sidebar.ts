@@ -54,7 +54,7 @@ import {
 import { CODEX_MANAGED_UPGRADE_TIMEOUT_MS, claimManagedCodexUpgrade, updateManagedCodexOnUpgrade } from "./codex-managed-upgrade";
 import { CLI_NPM_PACKAGE, cliUpdatePlan, selfUpdateArgs } from "./cli-update-plan";
 import { warmCodexModelCache } from "./codex-model-cache";
-import { CLAUDE_ACP_ADAPTER_VERSION, CLAUDE_PINNED_CLI_VERSION, ClaudeBackend, isClaudeCredentialError } from "./claude-backend";
+import { CLAUDE_ACP_ADAPTER_VERSION, CLAUDE_PINNED_CLI_VERSION, CLAUDE_USAGE_MIN_INTERVAL_MS, ClaudeBackend, isClaudeCredentialError } from "./claude-backend";
 import { locateClaudeCli, parseClaudeVersionOutput } from "./claude-cli-locator";
 import { warmClaudeModelCache } from "./claude-model-cache";
 import {
@@ -12562,7 +12562,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     });
     client.on("subscriptionUsage", (windows: SubscriptionWindow[]) => {
       if (gen !== session.gen || session.client !== client || session.replaying) return;
-      session.subscriptionUsage?.observe(windows);
+      if (session.provider === "claude") session.subscriptionUsage?.merge(windows);
+      else session.subscriptionUsage?.observe(windows);
       this.publishSubscriptionUsage(session);
     });
     client.on("adapterUsageUpdate", (used: number, window?: number) => {
@@ -13579,7 +13580,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         if (!session.replaying) await session.client?.stopDelegatedWork(msg);
         break;
       case "refreshSubscriptionUsage":
-        void this.refreshSubscriptionUsage(session);
+        void this.refreshSubscriptionUsage(session, true);
         break;
       case "refreshContextDetails":
         if (session.provider === "grok") {
@@ -22542,7 +22543,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     this.emit(session, subscriptionUsageMessage(session));
   }
 
-  private async refreshSubscriptionUsage(session: Session): Promise<void> {
+  private async refreshSubscriptionUsage(session: Session, pulled = false): Promise<void> {
     const binding = session.subscriptionUsage;
     const client = session.client;
     this.publishSubscriptionUsage(session);
@@ -22552,11 +22553,19 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       if (session.client === client && session.subscriptionUsage === binding) this.publishSubscriptionUsage(session);
       return;
     }
-    // Claude and Muse are not pulled from the popover. Claude's window
-    // arrives on the rate-limit event that rides a turn; Muse's adapter
-    // reads after a turn and on usage/changed. `observe()` is the only
-    // writer for both.
-    if (session.provider === "codex") {
+    // Muse is not pulled from the popover: its adapter reads after a turn and
+    // on usage/changed, and `observe()` is its only writer. Claude's main
+    // window rides the rate-limit event of each reply (merged, see the
+    // subscriptionUsage listener); opening the popup also reads every window,
+    // the per-model weekly limits included, from a short CLI process of its own.
+    // An empty or failed read keeps what the replies reported.
+    if (session.provider === "claude") {
+      if (!pulled || !client) return;
+      await binding.refresh(async () => {
+        const windows = await client.getSubscriptionUsage().catch(() => []);
+        return windows.length ? windows : binding.snapshot();
+      }, CLAUDE_USAGE_MIN_INTERVAL_MS);
+    } else if (session.provider === "codex") {
       // A file read, not an RPC — Codex's adapter does not forward the account
       // windows it receives, so the rollout is the only structured source.
       await binding.refresh(async () => readCodexSubscriptionWindows({

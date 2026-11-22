@@ -100,6 +100,58 @@ export function claudeSubscriptionWindows(update: any, now = Date.now()): Subscr
     observedAt: new Date(now).toISOString() }];
 }
 
+/** Every account window from the SDK's experimental `get_usage` request
+ *  (`usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET`). Its numbers
+ *  are PERCENT (0..100), unlike the rate-limit event's fraction above.
+ *
+ *  MEASURED 2026-11-22 on a Max plan (SDK 0.3.257): `rate_limits.limits` lists
+ *  `weekly_all` (percent 89) and `weekly_scoped` whose `scope.model.display_name`
+ *  is "Fable" (percent 18), both with an ISO `resets_at`; `five_hour` is null and
+ *  `seven_day.utilization` repeats the 89. A kind or scope not measured yields no
+ *  window, and so does an unavailable report: undefined, never zeros. */
+export function claudeUsageWindows(usage: any, now = Date.now()): SubscriptionWindow[] | undefined {
+  const rate = usage?.rate_limits;
+  if (usage?.rate_limits_available !== true || !rate || typeof rate !== "object") return undefined;
+  const observedAt = new Date(now).toISOString();
+  const windows: SubscriptionWindow[] = [];
+  const add = (label: string, periodType: string, value: unknown, resetsAt: unknown) => {
+    const usedPercent = percentage(value);
+    const periodEnd = isoDate(resetsAt);
+    if (usedPercent === undefined || (resetsAt !== undefined && resetsAt !== null && !periodEnd)) return;
+    if (windows.some((window) => window.periodType === periodType)) return;
+    windows.push({ usedPercent, label, periodType, ...(periodEnd ? { periodEnd } : {}), observedAt });
+  };
+  const five = rate.five_hour;
+  if (five && typeof five === "object") add("5-hour", "five_hour", five.utilization, five.resets_at);
+  const limits: any[] = Array.isArray(rate.limits) ? rate.limits : [];
+  for (const limit of limits) {
+    if (limit?.kind === "weekly_all") add("Weekly", "seven_day", limit.percent, limit.resets_at);
+  }
+  const week = rate.seven_day;
+  if (week && typeof week === "object") add("Weekly", "seven_day", week.utilization, week.resets_at);
+  for (const limit of limits) {
+    if (limit?.kind !== "weekly_scoped" || (limit.scope?.surface !== null && limit.scope?.surface !== undefined)) continue;
+    const name = limit.scope?.model?.display_name;
+    if (typeof name !== "string" || !name.trim()) continue;
+    add(`Weekly · ${name.trim()}`, `seven_day_model_${name.trim().toLowerCase()}`, limit.percent, limit.resets_at);
+  }
+  if (!limits.length) {
+    for (const key of ["seven_day_opus", "seven_day_sonnet"]) {
+      const scoped = rate[key];
+      if (scoped && typeof scoped === "object") add(CLAUDE_WINDOW_LABELS[key], key, scoped.utilization, scoped.resets_at);
+    }
+  }
+  return windows;
+}
+
+/** A rate-limit event names ONE window. Replace that one and keep the rest a
+ *  usage read found, so a reply does not erase the per-model weekly limit. */
+export function mergeSubscriptionWindows(current: readonly SubscriptionWindow[], observed: readonly SubscriptionWindow[]): SubscriptionWindow[] {
+  const merged = current.map((window) => observed.find((next) => next.periodType === window.periodType) ?? window);
+  for (const window of observed) if (!merged.includes(window)) merged.push(window);
+  return merged;
+}
+
 /** Codex publishes its account windows NOWHERE on the wire we speak: the
  *  adapter receives `account/rateLimits/updated`, files it into its own session
  *  state for the `/status` markdown, and returns null to the client (measured
@@ -207,9 +259,9 @@ export class SubscriptionUsageCache {
     this.pending = undefined;
   }
 
-  async refresh(read: () => Promise<SubscriptionWindow[]>, now = Date.now()): Promise<void> {
+  async refresh(read: () => Promise<SubscriptionWindow[]>, now = Date.now(), minIntervalMs = SUBSCRIPTION_USAGE_MIN_INTERVAL_MS): Promise<void> {
     if (this.pending) return this.pending;
-    if (now - this.attemptedAt < SUBSCRIPTION_USAGE_MIN_INTERVAL_MS) return;
+    if (now - this.attemptedAt < minIntervalMs) return;
     this.attemptedAt = now;
     const revision = this.revision;
     const pending = (async () => {
@@ -238,11 +290,12 @@ export class SubscriptionUsageBinding {
   }
   snapshot(): SubscriptionWindow[] { return this.current() ? this.cache.windows : []; }
   observe(windows: SubscriptionWindow[]): void { if (this.current()) this.cache.windows = windows; }
-  async refresh(read: () => Promise<SubscriptionWindow[]>): Promise<void> {
+  merge(windows: SubscriptionWindow[]): void { if (this.current()) this.cache.windows = mergeSubscriptionWindows(this.cache.windows, windows); }
+  async refresh(read: () => Promise<SubscriptionWindow[]>, minIntervalMs?: number): Promise<void> {
     if (this.current()) await this.cache.refresh(async () => {
       const windows = await read();
       return this.current() ? windows : [];
-    });
+    }, Date.now(), minIntervalMs);
   }
 }
 

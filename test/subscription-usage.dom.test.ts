@@ -199,6 +199,20 @@ describe("subscription usage in the context popover", () => {
     expect(pop.textContent).toContain("Latest reported window; other limits may apply.");
   });
 
+  it("Claude's full account read shows the weekly and per-model rows without the single-window note", () => {
+    const h = bootWebview();
+    dispatch(h.window, { type: "session", provider: "claude", models: [], currentModelId: "model" } as any);
+    const pop = open(h);
+    dispatch(h.window, { type: "subscriptionUsage", windows: [
+      { usedPercent: 89, label: "Weekly", periodType: "seven_day", periodEnd: "2026-11-25T05:00:00.000Z", observedAt: windowUsage.observedAt },
+      { usedPercent: 18, label: "Weekly · Fable", periodType: "seven_day_model_fable", periodEnd: "2026-11-25T05:00:00.000Z", observedAt: windowUsage.observedAt },
+    ] });
+    expect([...pop.querySelectorAll(".subscription-fullness")].map((m) => m.getAttribute("aria-label")))
+      .toEqual(["Weekly subscription used", "Weekly · Fable subscription used"]);
+    expect(pop.textContent).toContain("18% used · 82% left");
+    expect(pop.textContent).not.toContain("Latest reported window");
+  });
+
   it("requests a refresh only on actual open, never on an incoming usage redraw", () => {
     const h = bootWebview();
     open(h);

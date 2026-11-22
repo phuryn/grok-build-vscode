@@ -2849,7 +2849,7 @@
       `Observed ${formatDate(window.observedAt)}`], row);
       subscription.appendChild(row);
     }
-    if (windows.length && state.activeProvider === "claude") note("Latest reported window; other limits may apply.");
+    if (windows.length === 1 && state.activeProvider === "claude") note("Latest reported window; other limits may apply.");
     // CAPABILITY DETECTION: did the frame that feeds this section ever arrive?
     //
     // The phone's client is always as new as the relay deploy while the host is
