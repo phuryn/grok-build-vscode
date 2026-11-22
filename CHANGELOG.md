@@ -1,5 +1,19 @@
 # Changelog
 
+## 4.17.9 — 2026-11-22
+
+**Each model keeps its own effort level, a first prompt can be edited, and Claude's popup shows every limit.**
+
+### Added
+
+- **Edit on the first prompt.** Claude Code, Codex, Muse Code and Antigravity edit a later prompt by continuing in a new chat from the reply before it, so the first prompt had no Edit. It now has the same pencil: it opens a new chat on the same agent, model and folder with the prompt in the composer, ready to change and send. The original conversation is unchanged. Grok Build keeps its Rewind.
+- **Claude Code: every limit in the meter's popup.** A reply reports one window, usually Weekly, so a plan's per-model weekly limit never showed. Opening the popup now asks Claude Code for all of them, Weekly · Fable included, at most every five minutes. The read sends no prompt and saves no session.
+
+### Fixed
+
+- **Effort is remembered per model.** Opus at High, then Sonnet at Low, then back to Opus ran Opus at Low, because the level was remembered per agent and followed the chat. Each model now keeps its last level: switching back to a model, or starting a new chat on it, uses that level when the model offers it. A model you never set keeps the current level, and the agent's last level is still the fallback for a new chat.
+- **A routine no longer picks the next chat's agent.** A scheduled Codex routine saved Codex as the project's agent, so the next New chat opened on Codex. A routine's chat now changes no project default, model default or effort memory until its own turn has run.
+
 ## 4.17.8 — 2026-11-22
 
 **The context meter knows each model's window before the first reply, and tool rows say what they did.**
