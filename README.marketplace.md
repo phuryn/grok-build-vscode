@@ -42,7 +42,7 @@ AFK Pilot runs each agent through its vendor's own program, signed in with your 
 | Connectors | ✓ | — | — | — | ✓ | ✓ |
 | Image & video generation | ✓ | — | — | — | — | — |
 
-¹ With a Muse Code CLI that offers it. ² The new chat gets the earlier turns as text: no tool output, up to 64,000 characters.
+¹ With a Muse Code CLI that offers it. ² The new chat gets the earlier turns as text, with the commands agy ran and their results, up to 64,000 characters.
 
 #### What you get only here
 
@@ -77,7 +77,7 @@ _Click an agent to expand._
 - **One program.** Every Antigravity chat runs on Google's **agy CLI**, which AFK Pilot installs and keeps current: Agent mode, Accept edits, **Plan mode**, Auto accept, **Steer**, `/compact` and `/goal`, and its effort option. A Google sign-in adds the CLI's own **Auto mode** and its Claude and GPT models; a key runs Gemini models, **Gemini 4 Argon** among them. The CLI keeps its own Google sign-in, so it asks you once, at the computer. In Plan mode its plan comes back as a reply or as a file you see as an edit card, and you carry on by replying. Chats the earlier Antigravity server started reopen on the CLI, and AFK Pilot removes the server copy it installed.
 - **Usage meter.** With a Google sign-in, the context popover shows the 5-hour and weekly limits of the quota your model uses.
 - **Subagents and skills.** Delegated work shows as a subagent card with its tool calls, and your skills appear in the slash menu.
-- **Forks as text.** Edit an earlier prompt, branch from a reply, or *Continue in a new chat*: the new `(Fork) …` chat gets the turns before that point as text along with your first message, and the original stays as it was. agy cannot copy a conversation itself, so the new chat has no tool output from before, and a notice says so.
+- **Forks as text.** Edit an earlier prompt, branch from a reply, or *Continue in a new chat*: the new `(Fork) …` chat gets the turns before that point as text along with your first message, and the original stays as it was. agy cannot copy a conversation itself, so the new chat gets your prompts, its replies and the commands it ran with their results, but not other tool output, and a notice says so.
 - **Log Out** signs the agy CLI out of Google, or deletes the saved key.
 - **Voice.** Auto dictates with Google's speech-to-text when you have a Gemini API key: the one saved for Antigravity, or a separate one in **Settings → Voice**. A Google sign-in alone does not include it, so voice then uses xAI or OpenAI if you have them.
 - **Not yet:** connectors, and compacting at your limit (Antigravity keeps its own schedule).
@@ -269,7 +269,7 @@ The green/red dot is an **unread badge** — it survives a VS Code restart and c
 
 The conversation's ⋯ menu → *Continue in a new chat* copies the conversation into a **new session** named `(Fork) <the original's name>` and opens it — try a tangent or a different approach while the original stays **byte-for-byte unchanged** in your history. It branches the conversation, not your code: files on disk are untouched. On Grok, when the chat can move to a new worktree, it asks where: **Use this workspace** or **Use a new worktree**.
 
-On **Claude Code**, **Codex**, **Muse Code** and **Antigravity** you can also branch from a point. Hover a reply and click the branch icon beside copy to continue from there in a new chat, or hover one of your prompts (from the second on) and click the pencil to edit it in a new chat: the new chat stops just before that prompt, with its text in the message box. The icons appear only around replies AFK Pilot saw finish, and they work once the running turn has finished. Grok keeps its own **Rewind** and **Edit**. On Muse Code these need a Muse Code CLI that offers forking. Antigravity cannot copy a conversation, so for all three ways of forking its new chat gets the turns before that point as text with your first message, without their tool output and up to 64,000 characters, and a notice says so. DeepSeek cannot copy a conversation, so it does not offer them.
+On **Claude Code**, **Codex**, **Muse Code** and **Antigravity** you can also branch from a point. Hover a reply and click the branch icon beside copy to continue from there in a new chat, or hover one of your prompts (from the second on) and click the pencil to edit it in a new chat: the new chat stops just before that prompt, with its text in the message box. The icons appear only around replies AFK Pilot saw finish, and they work once the running turn has finished. Grok keeps its own **Rewind** and **Edit**. On Muse Code these need a Muse Code CLI that offers forking. Antigravity cannot copy a conversation, so for all three ways of forking its new chat gets the turns before that point as text with your first message, up to 64,000 characters, and a notice says so. The text keeps each command agy ran with its exit code and the last 2,000 characters of its output; other tool output and images stay behind. When the conversation is longer than that, command output goes first, then the oldest turns. DeepSeek cannot copy a conversation, so it does not offer them.
 
 ![Fork conversation in the gear menu](https://raw.githubusercontent.com/phuryn/grok-build-vscode/main/docs/screenshots/fork.png)
 

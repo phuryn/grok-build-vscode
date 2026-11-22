@@ -20,8 +20,79 @@ const HEADER = AGY_HANDOFF_MARKER + "\n"
 const FOOTER = "[AFK Pilot: end of earlier conversation]";
 const BUDGET = 64_000;
 
+/** Each command's output kept in the text, its end first (where results and errors are). An assumption, not measured. */
+const COMMAND_OUTPUT_CHARS = 2_000;
+const COMMAND_LINE_CHARS = 1_000;
+
 export type AgyForkCut = { id: string; edit: boolean };
-type Turn = { role: "User" | "Assistant"; text: string };
+/** A command agy ran, filled in by its later updates. */
+type Command = { command: string; status?: string; exitCode?: number; output?: string };
+type Turn = { role: "User" | "Assistant"; parts: (string | Command)[] };
+
+function isCommandCall(call: Record<string, unknown>): boolean {
+  return call.tool === "run_command" || (typeof call.kind === "string" && call.kind.toLowerCase() === "execute");
+}
+
+function noteCommand(entry: Command, call: Record<string, unknown>): void {
+  const input = call.rawInput && typeof call.rawInput === "object" ? call.rawInput as Record<string, unknown> : {};
+  const command = [input.command, input.CommandLine, input.command_line].find((value): value is string =>
+    typeof value === "string" && value.trim() !== "");
+  if (command) entry.command = command.trim();
+  if (typeof call.status === "string") entry.status = call.status;
+  const raw = call.rawOutput;
+  if (typeof raw === "string") entry.output = raw;
+  else if (raw && typeof raw === "object") {
+    const record = raw as Record<string, unknown>;
+    const exit = record.exit_code ?? record.exitCode;
+    if (typeof exit === "number") entry.exitCode = exit;
+    if (typeof record.output === "string") entry.output = record.output;
+  }
+  if (entry.output === undefined && Array.isArray(call.content)) {
+    const text = call.content.map((block: any) => typeof block?.content?.text === "string" ? block.content.text : "").join("");
+    if (text) entry.output = text;
+  }
+}
+
+/** agy heads a result with its timestamps and exit line; the output follows "Command output:". */
+function commandOutputBody(output: string): string {
+  const text = output.replace(/\r\n?/g, "\n");
+  const marker = "\nCommand output:\n";
+  const at = text.indexOf(marker);
+  return (text.startsWith("Created At:") && at >= 0 ? text.slice(at + marker.length) : text).trim();
+}
+
+function renderCommand(entry: Command, withOutput: boolean): string {
+  const outcome = entry.exitCode !== undefined ? `exit code ${entry.exitCode}`
+    : entry.status === "failed" || entry.status === "cancelled" ? entry.status
+    : entry.status === "completed" ? "finished" : "no result";
+  const command = entry.command.length > COMMAND_LINE_CHARS ? entry.command.slice(0, COMMAND_LINE_CHARS) + " …" : entry.command;
+  let body = withOutput && entry.output !== undefined ? commandOutputBody(entry.output) : "";
+  if (body.length > COMMAND_OUTPUT_CHARS) {
+    const left = body.length - COMMAND_OUTPUT_CHARS;
+    body = `[first ${left} characters left out]\n` + body.slice(left);
+  }
+  const block = "$ " + command + (body ? "\n" + body : "");
+  const longest = Math.max(0, ...(block.match(/`+/g) ?? []).map(run => run.length));
+  const fence = "`".repeat(Math.max(3, longest + 1));
+  const heading = withOutput || entry.output === undefined ? `Ran a command (${outcome}):` : `Ran a command (${outcome}; output left out):`;
+  return `${heading}\n${fence}\n${block}\n${fence}\n`;
+}
+
+function renderParts(parts: readonly (string | Command)[], withOutput: boolean): string {
+  let text = "";
+  let endsWithCommand = false;
+  for (const part of parts) {
+    if (typeof part === "string") {
+      text += part;
+      endsWithCommand = false;
+    } else if (part.command) {
+      if (text && !text.endsWith("\n")) text += "\n";
+      text += renderCommand(part, withOutput);
+      endsWithCommand = true;
+    }
+  }
+  return endsWithCommand ? text.slice(0, -1) : text;
+}
 
 function userText(text: string, imageCount: number): string {
   return [text, ...Array<string>(imageCount).fill("[image]")].filter(Boolean).join("\n");
@@ -87,18 +158,20 @@ export function buildAgyForkHandoff(buffer: readonly HostMsg[], cut?: AgyForkCut
   const end = cut ? cutEnd(buffer, cut) : buffer.length;
   if (end < 0) return undefined;
   const turns: Turn[] = [];
+  const commands = new Map<string, Command>();
   let replayUser: string | undefined;
-  let reply = "";
+  let reply: (string | Command)[] = [];
   let replyId: string | undefined;
   function finishUser() {
     if (replayUser === undefined) return;
     const text = replayedUserText(replayUser);
-    if (text.trim()) turns.push({ role: "User", text });
+    if (text.trim()) turns.push({ role: "User", parts: [text] });
     replayUser = undefined;
   }
   function finishReply() {
-    if (reply.trim()) turns.push({ role: "Assistant", text: reply });
-    reply = "";
+    // A command entry is kept even before its line arrives: a later update fills it in.
+    if (reply.some(part => typeof part === "string" ? part.trim() : true)) turns.push({ role: "Assistant", parts: reply });
+    reply = [];
     replyId = undefined;
   }
   for (let i = 0; i < end; i++) {
@@ -115,16 +188,34 @@ export function buildAgyForkHandoff(buffer: readonly HostMsg[], cut?: AgyForkCut
         if (frame.type === "userMessageChunk") replayUser = frame.text;
         else {
           const text = userText(frame.text, frame.chips?.filter(isImageChip).length ?? 0);
-          if (text.trim()) turns.push({ role: "User", text });
+          if (text.trim()) turns.push({ role: "User", parts: [text] });
         }
         break;
       }
       case "messageChunk":
         finishUser();
         if (frame.messageId && replyId && frame.messageId !== replyId) finishReply();
-        reply += frame.text;
+        if (typeof reply.at(-1) === "string") reply[reply.length - 1] += frame.text;
+        else reply.push(frame.text);
         replyId = frame.messageId ?? replyId;
         break;
+      case "toolCall":
+      case "toolCallUpdate": {
+        // Live, a command arrives as a call and its updates; reopened, as one
+        // completed call. Both carry the line, exit code and output.
+        const call = frame.call as Record<string, unknown>;
+        const id = typeof call.toolCallId === "string" ? call.toolCallId : "";
+        if (!id || !isCommandCall(call)) break;
+        finishUser();
+        let entry = commands.get(id);
+        if (!entry) {
+          entry = { command: "" };
+          commands.set(id, entry);
+          reply.push(entry);
+        }
+        noteCommand(entry, call);
+        break;
+      }
       case "agentStart":
       case "agentEnd":
       case "agentError":
@@ -139,32 +230,50 @@ export function buildAgyForkHandoff(buffer: readonly HostMsg[], cut?: AgyForkCut
   return formatHandoff(turns);
 }
 
-function formatHandoff(turns: Turn[]): string {
-  const lines = turns.map(({ role, text }) => `${role}: ${text}\n`);
+/**
+ * Everything when it fits. Otherwise the words come first: whole turns
+ * without command output, chosen in priority order, then output added back
+ * to the newest of them while it fits.
+ */
+function formatHandoff(allTurns: Turn[]): string {
+  const turns = allTurns.filter(turn => renderParts(turn.parts, true).trim());
+  const full = turns.map(({ role, parts }) => `${role}: ${renderParts(parts, true)}\n`);
+  const lines = turns.map(({ role, parts }) => `${role}: ${renderParts(parts, false)}\n`);
   const available = BUDGET - HEADER.length - FOOTER.length;
-  if (lines.reduce((length, line) => length + line.length, 0) <= available) {
-    return HEADER + lines.join("") + FOOTER;
-  }
+  const total = (texts: Iterable<string>) => [...texts].reduce((length, text) => length + text.length, 0);
+  if (total(full) <= available) return HEADER + full.join("") + FOOTER;
   const omittedText = (count: number) => count ? `(${count} earlier turn${count === 1 ? "" : "s"} left out)\n` : "";
-  const chosen = new Set<number>();
-  const newestFirst = lines.map((_, i) => i).reverse();
-  const priorities = new Set([
-    newestFirst.find(i => turns[i].role === "User"),
-    newestFirst.find(i => turns[i].role === "Assistant"),
-    turns.findIndex(turn => turn.role === "User"),
-  ]);
-  for (const index of newestFirst) priorities.add(index);
-  let used = 0;
-  for (const index of priorities) {
-    if (index === undefined || index < 0) continue;
-    const length = lines[index].length;
-    if (used + length + omittedText(lines.length - chosen.size - 1).length > available) continue;
-    chosen.add(index);
-    used += length;
+  const chosen = new Map<number, string>();
+  if (total(lines) <= available) {
+    lines.forEach((line, i) => chosen.set(i, line));
+  } else {
+    const newestFirst = lines.map((_, i) => i).reverse();
+    const priorities = new Set([
+      newestFirst.find(i => turns[i].role === "User"),
+      newestFirst.find(i => turns[i].role === "Assistant"),
+      turns.findIndex(turn => turn.role === "User"),
+    ]);
+    for (const index of newestFirst) priorities.add(index);
+    let used = 0;
+    for (const index of priorities) {
+      if (index === undefined || index < 0) continue;
+      const length = lines[index].length;
+      if (used + length + omittedText(lines.length - chosen.size - 1).length > available) continue;
+      chosen.set(index, lines[index]);
+      used += length;
+    }
+  }
+  let used = total(chosen.values()) + omittedText(lines.length - chosen.size).length;
+  for (const index of [...chosen.keys()].sort((a, b) => b - a)) {
+    const extra = full[index].length - lines[index].length;
+    if (extra <= 0 || used + extra > available) continue;
+    chosen.set(index, full[index]);
+    used += extra;
   }
   let omission = omittedText(lines.length - chosen.size);
-  return HEADER + lines.map((line, i) => {
-    if (chosen.has(i)) return line;
+  return HEADER + lines.map((_, i) => {
+    const line = chosen.get(i);
+    if (line !== undefined) return line;
     const note = omission;
     omission = "";
     return note;

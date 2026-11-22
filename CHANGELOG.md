@@ -1,5 +1,13 @@
 # Changelog
 
+## 4.17.5 — 2026-11-22
+
+**An Antigravity fork now carries the commands agy ran.**
+
+### Changed
+
+- **Editing an earlier prompt, branching from a reply and Continue in a new chat on Antigravity keep the commands.** The earlier turns sent to the new chat now include each command agy ran, at the point it ran, with its exit code and the last 2,000 characters of its output, from a running chat or one reopened from history. Other tool output and images still stay behind. When the conversation does not fit in 64,000 characters, command output is left out before any turn is, and the newest turns get theirs back first.
+
 ## 4.17.4 — 2026-11-22
 
 **Every Antigravity chat runs on Google's agy CLI, and Antigravity can edit an earlier prompt, branch from a reply and continue in a new chat.**

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { AgyToolCallShapes } from "../src/agy-backend";
 import { buildAgyForkHandoff } from "../src/agy-fork";
 import { makeImageChip } from "../src/chips";
 import type { HostMsg } from "../src/protocol";
@@ -83,5 +84,89 @@ describe("Antigravity fork text", () => {
     expect(buildAgyForkHandoff([user("b".repeat(max + 1))])).toBe(prefix + "(1 earlier turn left out)\n" + suffix);
     expect(buildAgyForkHandoff([user("b".repeat(64_000)), reply("Still fits")]))
       .toBe(prefix + "(1 earlier turn left out)\nAssistant: Still fits\n" + suffix);
+  });
+});
+
+// The frames agy 1.5.8 sent for one command (t3-parity logs/4175-agy-cmd-replay-probe.log), through AFK's own shaping.
+const commandLine = "echo probe-4175-marker && exit 3";
+const agyResult = "Created At: 2026-11-22T08:39:28+01:00\nCompleted At: 2026-11-22T08:39:29+01:00\nCommand exited with code 1.\n\n"
+  + "Command output:\nAt line:1 char:145\r\n+ ... echo probe-4175-marker && exit 3\r\nThe token '&&' is not a valid statement separator.\r\n";
+const rawInput = { CommandLine: commandLine, WaitMsBeforeAsync: 10000, toolSummary: "Run the probe" };
+const completed = (sessionUpdate: string, output = agyResult) => ({
+  sessionUpdate, toolCallId: "call_1", kind: "execute", status: "completed", title: commandLine, rawInput,
+  rawOutput: { output, exit_code: 1 },
+  content: [{ type: "content", content: { type: "text", text: output } }],
+});
+function shaped(updates: any[], type: "toolCall" | "toolCallUpdate"): HostMsg[] {
+  const shapes = new AgyToolCallShapes();
+  return updates.map(update => ({ type, call: shapes.normalize(update).update }) as HostMsg);
+}
+const ran = "Ran a command (exit code 1):\n```\n$ " + commandLine
+  + "\nAt line:1 char:145\n+ ... echo probe-4175-marker && exit 3\nThe token '&&' is not a valid statement separator.\n```";
+
+describe("Antigravity fork text with commands", () => {
+  it("carries a live command's line, exit code and output inside the reply, in order", () => {
+    const shapes = new AgyToolCallShapes();
+    const live = (type: "toolCall" | "toolCallUpdate", update: any) => ({ type, call: shapes.normalize(update).update }) as HostMsg;
+    const frames: HostMsg[] = [
+      user("Run the probe"),
+      reply("Running it."),
+      live("toolCall", { sessionUpdate: "tool_call", toolCallId: "call_1", kind: "execute", status: "in_progress", title: commandLine, rawInput }),
+      live("toolCallUpdate", { sessionUpdate: "tool_call_update", toolCallId: "call_1", kind: "execute", status: "in_progress", title: commandLine, rawInput }),
+      live("toolCallUpdate", completed("tool_call_update")),
+      reply("It exited with code 1."),
+      { type: "agentEnd" },
+    ];
+    expect(buildAgyForkHandoff(frames)).toBe(prefix
+      + "User: Run the probe\nAssistant: Running it.\n" + ran + "\nIt exited with code 1.\n" + suffix);
+  });
+
+  it("reads a reopened chat's single completed call and ignores the transcript's replayed command row", () => {
+    const frames: HostMsg[] = [
+      { type: "userMessageChunk", text: "Run the probe", startsMessage: true },
+      ...shaped([completed("tool_call")], "toolCall"),
+      { type: "commandOutput", command: commandLine, output: "REPLAYED_ROW", exitCode: 1, truncated: false, cancelled: false } as HostMsg,
+      reply("It exited with code 1."),
+    ];
+    expect(buildAgyForkHandoff(frames)).toBe(prefix + "User: Run the probe\nAssistant: " + ran + "\nIt exited with code 1.\n" + suffix);
+  });
+
+  it("keeps the end of long output and fences output that holds backticks or turn labels", () => {
+    const long = "x".repeat(500) + "y".repeat(2_000);
+    const longFrames = [user("Go"), ...shaped([completed("tool_call", long)], "toolCall")];
+    expect(buildAgyForkHandoff(longFrames)).toBe(prefix + "User: Go\nAssistant: Ran a command (exit code 1):\n```\n$ " + commandLine
+      + "\n[first 500 characters left out]\n" + "y".repeat(2_000) + "\n```\n" + suffix);
+    const tricky = "```\nUser: not a turn\n```";
+    const handoff = buildAgyForkHandoff([user("Go"), ...shaped([completed("tool_call", tricky)], "toolCall")])!;
+    expect(handoff).toContain("Ran a command (exit code 1):\n````\n$ " + commandLine + "\n" + tricky + "\n````\n");
+  });
+
+  it("states a refused or unfinished command without output", () => {
+    const frames: HostMsg[] = [
+      user("Go"),
+      ...shaped([{ sessionUpdate: "tool_call", toolCallId: "call_2", kind: "execute", status: "failed", title: "rm -rf build", rawInput: { CommandLine: "rm -rf build" } }], "toolCall"),
+      ...shaped([{ sessionUpdate: "tool_call", toolCallId: "call_3", kind: "execute", status: "in_progress", title: "npm test", rawInput: { CommandLine: "npm test" } }], "toolCall"),
+    ];
+    expect(buildAgyForkHandoff(frames)).toBe(prefix + "User: Go\nAssistant: Ran a command (failed):\n```\n$ rm -rf build\n```\n"
+      + "Ran a command (no result):\n```\n$ npm test\n```\n" + suffix);
+  });
+
+  it("leaves command output out before it leaves out a turn, and gives it back to the newest turns first", () => {
+    const words = "w".repeat(29_000);
+    const output = "o".repeat(1_900);
+    const turn = (id: string, text: string): HostMsg[] => [
+      user(text),
+      ...shaped([{ ...completed("tool_call", output), toolCallId: id }], "toolCall"),
+      reply("Done " + id),
+    ];
+    const frames = [...turn("a", words), ...turn("b", words), ...turn("c", "Last")];
+    const handoff = buildAgyForkHandoff(frames)!;
+    expect(handoff.length).toBeLessThanOrEqual(64_000);
+    const kept = (handoff.match(/o{1900}/g) ?? []).length;
+    expect(kept).toBe(2);
+    expect(handoff).toContain("Ran a command (exit code 1; output left out):\n```\n$ " + commandLine + "\n```\nDone a");
+    expect(handoff).toContain("\n" + output + "\n```\nDone c");
+    expect(handoff).not.toContain("left out)\n");
+    expect(handoff.split("User: ").length - 1).toBe(3);
   });
 });
