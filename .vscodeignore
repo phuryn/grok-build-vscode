@@ -1,4 +1,7 @@
 .vscode/**
+# CI workflows, and local tool settings a checkout may keep there (hidden from
+# git by .git/info/exclude, which vsce does not read).
+.github/**
 .gitignore
 .env
 .claude/**

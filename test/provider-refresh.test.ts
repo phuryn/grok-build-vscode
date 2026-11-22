@@ -36,6 +36,9 @@ function makeSidebar(connections: Record<string, boolean>): AnySidebar {
     sidebar.providerConnectionState = { ...sidebar.providerConnectionState, [id]: on };
   });
   sidebar.host = { appendLine: vi.fn() };
+  // Never the real agy on the machine running the tests: a refresh reads its
+  // version and may run `agy update` once after an AFK upgrade.
+  sidebar.installedAgyCli = vi.fn(() => undefined);
   // GitHub's independent footer refresh must not invoke the real gh in this harness.
   sidebar.refreshGithubState = vi.fn(async () => {});
   sidebar.settingsEditor = undefined;

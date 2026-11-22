@@ -139,6 +139,8 @@ describe("VSIX excludes desktop app", () => {
     expect(vscodeignore).toMatch(/^\s*electron-builder\.yml\s*$/m);
     expect(vscodeignore).toMatch(/^\s*docs\/desktop-update-spec\.md\s*$/m);
     expect(vscodeignore).toMatch(/^\s*dist-desktop\/\*\*/m);
+    // CI workflows and any local tool settings under .github never ship.
+    expect(vscodeignore).toMatch(/^\s*\.github\/\*\*\s*$/m);
     // Both readmes excluded as files; vsce embeds marketplace content only.
     expect(vscodeignore).toMatch(/^\s*README\.marketplace\.md\s*$/m);
     expect(vscodeignore).toMatch(/^\s*README\.md\s*$/m);

@@ -85,6 +85,8 @@ function host(opts: { connected?: boolean; experimental?: boolean; method?: "goo
   sidebar.post = vi.fn();
   sidebar.postLocal = vi.fn();
   sidebar.postProviderState = vi.fn();
+  // A saved Gemini key also makes Google voice available.
+  sidebar.postVoiceConfigured = vi.fn();
   sidebar.adoptSessionsForConnectedProvider = vi.fn(async () => {});
   sidebar.resetProviderSessionsAfterLogout = vi.fn();
   sidebar.probeProviderVersion = vi.fn(async () => "");
@@ -463,6 +465,8 @@ describe("Use a Gemini API key", () => {
     expect(sidebar.memento["grok.agySignInMethod"]).toBe("api-key");
     expect(sidebar.providerConnectionState.agy).toBe(true);
     expect(sidebar.providerNeedsLogin.agy).toBe(false);
+    expect(sidebar.googleVoiceKeyAvailable).toBe(true);
+    expect(sidebar.postVoiceConfigured).toHaveBeenCalled();
     expect(sidebar.adoptSessionsForConnectedProvider).toHaveBeenCalledWith("agy", sidebar.focused);
     // The start hands it to the relay alone (session-start-retry.test.ts).
     expect(await sidebar.agyCredentialFor()).toEqual({ method: "api-key", key: KEY });
