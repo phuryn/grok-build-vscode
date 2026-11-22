@@ -33,7 +33,7 @@ Two ways to use it:
 
 **1. Install the extension.** In VS Code or Cursor, open **Extensions** (`Ctrl/Cmd+Shift+X`) and search **"AFK Pilot"** — or install from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=PawelHuryn.grok-vscode-phuryn) / [Open VSX Registry](https://open-vsx.org/extension/PawelHuryn/grok-vscode-phuryn).
 
-**2. Open AFK Pilot and connect an agent.** Press `Ctrl/Cmd+;`. The sidebar asks which agent to connect, then **installs its CLI and signs you in**, one click per step (Claude Code uses the `claude` CLI you already have). That's the whole setup.
+**2. Open AFK Pilot and connect an agent.** Press `Ctrl/Cmd+;`. The sidebar asks which agent to connect, then **walks you through its setup**: it installs the CLI for every agent but Claude Code and signs you in with that agent's account or key. Claude Code needs Anthropic's `claude` CLI installed and signed in (`claude auth login`) first.
 
 **3. Add more agents** any time from **Settings → Providers**, each with its own account. [Each agent's section](#each-agent-in-afk-pilot) below says which account or key it takes.
 
@@ -57,7 +57,7 @@ Standalone app for **macOS** (Apple Silicon + Intel), **Windows** (x64) and **Li
 
 (Zip archives are also published for macOS: `…-mac-arm64.zip` / `…-mac-x64.zip`.)
 
-**2. Install and open** the app, then pick a project folder (File → Add Project Folder). Onboarding asks which agent to connect and signs you in, the same way as the extension.
+**2. Install and open** the app, then pick a project folder (File → Add Project Folder). Onboarding asks which agent to connect and walks you through its setup, the same way as the extension.
 
 **macOS is signed and notarised** (since 3.2.7) — the app opens straight from the `.dmg`, with no Gatekeeper warning and nothing to allow through in Settings.
 
@@ -78,9 +78,9 @@ Details, build-from-source, and signing notes: **[docs/desktop.md](docs/desktop.
 Open **Settings** from **+** in VS Code, or the rail gear in Desktop and on your phone.
 
 1. **Open** AFK Pilot — in VS Code: `Ctrl/Cmd+;` (Secondary Side Bar by default); in Desktop: launch the app and add a project folder.
-2. **Type a prompt** and press **Enter**. Grok streams its answer, showing a *Thinking…* line while it reasons. Want the full reasoning inline? Turn on **Show thinking traces** in Settings.
-3. **Approve actions.** When Grok wants to write a file or run a command it may raise a permission card — preview an edit (native diff in VS Code; in-app viewer on Desktop), then *Allow once / always / Reject*.
-4. **Pick your mode** (Agent / Plan / Auto accept), **model**, and **reasoning effort** from the bottom toolbar and model chip.
+2. **Type a prompt** and press **Enter**; the agent's answer streams in. Want its reasoning inline? Turn on **Show thinking traces** in Settings.
+3. **Approve actions.** When the agent wants to write a file or run a command it may raise a permission card — preview an edit (native diff in VS Code; in-app viewer on Desktop), then *Allow once / always / Reject*.
+4. **Pick your mode**, **model** and **reasoning effort** from the bottom toolbar and model chip; [each agent's section](#each-agent-in-afk-pilot) lists the modes it offers.
 5. **Resume anytime** — the clock icon lists past sessions for this project.
 
 ---
