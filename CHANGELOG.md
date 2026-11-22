@@ -1,5 +1,21 @@
 # Changelog
 
+## 4.17.4 — 2026-11-22
+
+**Every Antigravity chat runs on Google's agy CLI, and Antigravity can edit an earlier prompt, branch from a reply and continue in a new chat.**
+
+### Added
+
+- **Edit an earlier prompt, branch from a reply, or continue in a new chat, on Antigravity.** The new `(Fork) …` chat opens with your edited text in the message box, and the original stays as it was. agy cannot copy a conversation, so the new chat sends the turns before that point to Antigravity as text with your first message: your prompts and its replies, without tool output or images, up to 64,000 characters of whole turns. A notice says so when the new chat opens, and the earlier turns do not appear in the new chat's transcript or title.
+- **Plan mode, Steer and `/compact` with a Gemini API key.** A key chat now runs on the agy CLI too, with the modes it offers: Agent mode, Accept edits, Plan mode and Auto accept. A Google sign-in adds the CLI's own Auto mode.
+- **The Gemini API key card links to AI Studio** and says what a free key means.
+
+### Changed
+
+- **AFK Pilot no longer downloads the Antigravity server.** Google sign-in and key chats both run on the agy CLI, and a key chat keeps its own CLI settings, so the key never changes your Google chats' settings. The key reaches agy as `GEMINI_API_KEY`, so commands the agent runs can read it, as they could in your terminal; a `GEMINI_API_KEY` from your environment is no longer passed on. Chats the server started reopen on the CLI, history lists both, and AFK Pilot removes the server copy it installed, only where its folder holds nothing else.
+- **A phone linked to a desk finds the agy CLI's Google sign-in** in the operating system's credential store as well as in its token files.
+- **The usage meter reads the CLI's `/usage`** for Google chats on agy 1.5.8 and later, and the context meter starts at the CLI's 1,048,576-token window until the first usage update.
+
 ## 4.17.3 — 2026-11-22
 
 **Google as a third voice option, Google's agy CLI installed and kept current with Auto accept, and AFK Pilot's own Codex follows the latest release.**
