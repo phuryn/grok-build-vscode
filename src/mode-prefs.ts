@@ -143,6 +143,13 @@ export function configWriteTarget(
 export const MODEL_EFFORT_PREFS_KEY = "grok.defaultEffortByModel";
 export type ModelEffortPrefs = Record<string, Record<string, string>>;
 
+/** Levels an agent advertises that AFK Pilot does not offer. Codex and Muse list
+ *  `ultra` ("Maximum reasoning with automatic task delegation"): Max plus a
+ *  delegation behaviour rather than a reasoning level. acp.ts drops it from every
+ *  model's ladder, and the readers below drop a level saved before that, so a
+ *  new chat or a model switch never sends it. */
+export const HIDDEN_EFFORTS: ReadonlySet<string> = new Set(["ultra"]);
+
 /** Undefined when this model has no level of its own; "" is a remembered Default. */
 export function rememberedModelEffort(
   prefs: ModelEffortPrefs | undefined,
@@ -151,7 +158,7 @@ export function rememberedModelEffort(
 ): string | undefined {
   if (!modelId) return undefined;
   const level = prefs?.[provider]?.[modelId];
-  return typeof level === "string" ? level : undefined;
+  return typeof level === "string" && !HIDDEN_EFFORTS.has(level) ? level : undefined;
 }
 
 export function withModelEffort(
@@ -170,6 +177,6 @@ export function rememberedEffort(
   legacy: string | undefined,
 ): string {
   const own = prefs?.[provider];
-  if (typeof own === "string") return own;
-  return provider === "grok" ? legacy || "" : "";
+  if (typeof own === "string") return HIDDEN_EFFORTS.has(own) ? "" : own;
+  return provider === "grok" && legacy && !HIDDEN_EFFORTS.has(legacy) ? legacy : "";
 }

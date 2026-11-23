@@ -43,6 +43,8 @@ The 1.5.8 command list included `goal`, `compact`, `schedule`, `browser`, `plan`
 
 `AgyUsageMeter` runs the default profile's `agy -p /usage` as a bounded subprocess, starting at the measured CLI version 1.5.8. The meter disables CLI self-update for this invocation. It reads the CLI's own Google sign-in and displays only for Google chats in that same profile. Key and older-profile chats omit quota windows. The measured output was four tab-separated percentage and UTC reset rows, for the Gemini and Claude/GPT weekly and five-hour windows. The CLI exited zero and created no conversation. Key usage is tracked in AI Studio and print mode exits 2 for that sign-in. Failed, empty or malformed output produces no quota windows. In-flight reads are shared and the normal usage cache is per session and memory-only. It does not read or hash credential files. AFK sign-in changes invalidate the cached readings.
 
+Token counts come from two places in 1.5.15. Each model call sends a `usage_update` whose `used` is that call's prompt, and the context meter shows it. The prompt result carries ACP's top-level `usage`, which sums every call in the turn: a turn that read a file made calls at 8,872 and 8,972, and the result said input 11,010 plus cache read 6,738 (`research/agy-multicall-usage-probe.cjs`, 2026-11-24). That sum fills the usage rows (Input, Cache read, Output) and never the meter, so `normalizePromptResult` leaves out `_meta.totalTokens`.
+
 ## Skills in the slash menu
 
 The 1.5.2 server resolves `GEMINI_HOME/config/skills`, the project's

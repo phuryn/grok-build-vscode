@@ -5,6 +5,7 @@ import type { ChildHistoryReplay, DelegatedWorkKind } from "./acp-backend";
 import type { WebviewMsg } from "./protocol";
 import { GrokHookCalls } from "./grok-hooks";
 import { appendPastedTextContext } from "./prompt-builder";
+import { HIDDEN_EFFORTS } from "./mode-prefs";
 import { isAgyHandoff } from "./agy-handoff";
 import { ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { createInterface, Interface } from "node:readline";
@@ -161,12 +162,6 @@ export interface ModelInfo {
    *  off-menu level could reach the backend and 400). */
   reasoningEfforts?: string[];
 }
-
-/** Levels an agent advertises that AFK Pilot does not offer. Codex and Muse list
- *  `ultra` ("Maximum reasoning with automatic task delegation"): Max plus a
- *  delegation behaviour rather than a reasoning level, so no model shows it, a
- *  remembered `ultra` is never applied, and a model switch never carries it. */
-const HIDDEN_EFFORTS = new Set(["ultra"]);
 
 /** A model's `_meta.reasoningEfforts` as the values the picker may offer. */
 export function offeredEffortValues(list: unknown): string[] | undefined {

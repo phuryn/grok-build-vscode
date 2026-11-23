@@ -710,8 +710,19 @@ export class AgyBackend implements AcpBackend<"agy"> {
     this.nativeApprovalModes = this.pickerModes.includes("agent");
     return normalizeAgySessionResponse(response);
   }
-  // Usage arrives as ACP's top-level `usage`, the shape Codex sends (cache reads included).
-  normalizePromptResult(result: any): any { return normalizeAdapterPromptResult(result); }
+  // Usage arrives as ACP's top-level `usage`, the shape Codex sends (cache reads
+  // included), and feeds the usage rows. It is the SUM of the turn's model calls
+  // (agy 1.5.15, research/agy-multicall-usage-probe.cjs: calls at 8,872 and
+  // 8,972, result input + cache 17,748), so it never sets the context meter;
+  // `usage_update` does.
+  normalizePromptResult(result: any): any {
+    const normalized = normalizeAdapterPromptResult(result);
+    if (normalized?._meta && "totalTokens" in normalized._meta) {
+      const { totalTokens: _turnSum, ...meta } = normalized._meta;
+      return { ...normalized, _meta: meta };
+    }
+    return normalized;
+  }
   normalizeUpdate(update: any, meta: any): BackendUpdate {
     if (update?.sessionUpdate === "current_mode_update") {
       const currentModeId = this.pickerMode(update.currentModeId);

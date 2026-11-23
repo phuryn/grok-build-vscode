@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { hasNativeAutoMode, isModeId, modeToRemember, rememberedEffort, sessionModes, startsInNativeAuto, startsInYolo, musePosture, museShellSandboxEnabled, usesClientAutoAccept, resolvedDefaultMode, museSandboxUnavailable } from "../src/mode-prefs";
+import { hasNativeAutoMode, isModeId, modeToRemember, rememberedEffort, rememberedModelEffort, sessionModes, startsInNativeAuto, startsInYolo, musePosture, museShellSandboxEnabled, usesClientAutoAccept, resolvedDefaultMode, museSandboxUnavailable } from "../src/mode-prefs";
 import { GrokSidebar } from "../src/sidebar";
 import { Session } from "../src/session";
 
@@ -144,6 +144,17 @@ describe("remembered effort by provider (#151)", () => {
   it("keeps a cleared adapter preference at the provider default", () => {
     expect(rememberedEffort({ claude: "" }, "claude", "high")).toBe("");
   });
+
+  // 4.17.10 took Ultra off every ladder, but a level picked before the upgrade
+  // was still sent to Codex on every new chat while the chip said Default.
+  it("never hands back an Ultra saved before it left the picker", () => {
+    expect(rememberedEffort({ codex: "ultra" }, "codex", undefined)).toBe("");
+    expect(rememberedEffort({ muse: "ultra" }, "muse", undefined)).toBe("");
+    expect(rememberedEffort(undefined, "grok", "ultra")).toBe("");
+    const byModel = { codex: { "gpt-6-astra": "ultra", "gpt-6.2-sol": "max" } };
+    expect(rememberedModelEffort(byModel, "codex", "gpt-6-astra")).toBeUndefined();
+    expect(rememberedModelEffort(byModel, "codex", "gpt-6.2-sol")).toBe("max");
+  });
 });
 
 describe("effort picker persistence", () => {
@@ -213,10 +224,10 @@ describe("effort picker persistence", () => {
   it("applies a Muse picker change live and reads back its own saved effort", async () => {
     const { sidebar, session, cfg, values } = picker("muse");
     values["grok.defaultEffortByProvider"] = { codex: "medium", claude: "low" };
-    await sidebar.onMessage({ type: "setEffort", level: "ultra" }, "local");
-    expect(session.client!.setReasoningEffort).toHaveBeenCalledWith("ultra");
-    expect(values["grok.defaultEffortByProvider"]).toEqual({ codex: "medium", claude: "low", muse: "ultra" });
-    expect(sidebar.defaultEffortForProvider("muse")).toBe("ultra");
+    await sidebar.onMessage({ type: "setEffort", level: "max" }, "local");
+    expect(session.client!.setReasoningEffort).toHaveBeenCalledWith("max");
+    expect(values["grok.defaultEffortByProvider"]).toEqual({ codex: "medium", claude: "low", muse: "max" });
+    expect(sidebar.defaultEffortForProvider("muse")).toBe("max");
     expect(cfg.update).not.toHaveBeenCalled();
     expect(sidebar.startSession).not.toHaveBeenCalled();
     expect(sidebar.restartSession).not.toHaveBeenCalled();

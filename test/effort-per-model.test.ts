@@ -144,6 +144,19 @@ describe("the picker remembers effort per model", () => {
     expect(sidebar.defaultEffortForProvider("claude")).toBe("low");
   });
 
+  // Picked before 4.17.10 took Ultra off the picker: the chat ran at Ultra and
+  // the chip, which no longer knows the level, said Default.
+  it("an Ultra saved before the upgrade is never sent again", async () => {
+    const { sidebar, client, values } = sidebarFor("codex");
+    values["grok.defaultEffortByProvider"] = { codex: "xhigh" };
+    values["grok.defaultEffortByModel"] = { codex: { "gpt-6-astra": "ultra" } };
+    expect(sidebar.defaultEffortForProvider("codex", "gpt-6-astra")).toBe("xhigh");
+    values["grok.defaultEffortByProvider"] = { codex: "ultra" };
+    expect(sidebar.defaultEffortForProvider("codex", "gpt-6-astra")).toBe("");
+    await sidebar.switchModel("gpt-6-astra");
+    expect(client.setModel).toHaveBeenLastCalledWith("gpt-6-astra", undefined);
+  });
+
   it("one picker close that changed model and effort remembers the level for the target model", async () => {
     const { sidebar, client, values } = sidebarFor("codex");
     sidebar.switchModel = vi.fn(async (modelId: string) => { client.currentModelId = modelId; });
