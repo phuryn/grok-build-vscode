@@ -1,5 +1,20 @@
 # Changelog
 
+## 4.17.10 — 2026-11-23
+
+**The model picker names every effort level, and Antigravity's usage rows fill in.**
+
+### Changed
+
+- **Effort levels are labelled.** The picker shows every level the model offers as a segment with bars over its name, so you can see the levels before you pick one. Windows contrast themes now show them too; the old slider disappeared there. The selected model has a border and a filled check, and a divider separates effort from the model list.
+- **The chip shows the level as bars**, and keeps them on a phone, where the level used to be hidden. At 250px or narrower the bars give way so the model name stays readable.
+- **Ultra is no longer offered.** Codex and Muse list Ultra, which is Max plus automatic task delegation rather than a reasoning level. No model shows it, and a remembered Ultra is not applied.
+
+### Fixed
+
+- **The chip shows the level the agent actually runs at after a model switch.** Opus at Extra high, then Haiku, then Sonnet showed Extra high while Claude ran Sonnet at its default.
+- **Antigravity: Input, Cache read and Output** in the usage popup stayed empty, because agy 1.5.15 reports usage in a field AFK Pilot did not read.
+
 ## 4.17.9 — 2026-11-22
 
 **Each model keeps its own effort level, a first prompt can be edited, and Claude's popup shows every limit.**
