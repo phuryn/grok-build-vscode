@@ -21912,14 +21912,17 @@ ${fullText}`
         const previousEffort = effectiveEffort();
         state.currentModelId = msg.modelId;
         if (!contextPopover.hidden) renderContextPopover();
-        // A model brings back its own remembered level; the host says which.
-        if (typeof msg.effort === "string" && msg.effort && effortLevelsForModel().includes(msg.effort)) {
-          state.effort = msg.effort;
+        // The host reports the level the agent now runs at, and "" when it runs
+        // at its default. Claude drops a level on the way through Haiku, so
+        // keeping the old one here showed X-high on a Sonnet running at its
+        // default. Only a host too old to send the field leaves the old rule.
+        if (typeof msg.effort === "string") {
+          state.effort = msg.effort && effortLevelsForModel().includes(msg.effort) ? msg.effort : "";
         } else if (!effortLevelsForModel().includes(state.effort)) {
           state.effort = currentModel()?.reasoningEffort || "";
         }
         refreshModelControls();
-        if (previousEffort && previousEffort !== effectiveEffort()) announceEffortChange();
+        if (previousEffort && previousEffort !== effectiveEffort() && modelOffersEffort(currentModel())) announceEffortChange();
         // The context window is model-specific (grok-build 512K vs Composer 200K).
         // The initial `session` event carries grok's *default* model, so when we
         // switch (e.g. to the configured default) recompute the max — otherwise the

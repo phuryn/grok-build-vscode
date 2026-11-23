@@ -203,17 +203,24 @@ describe("composer chip", () => {
     expect([...h.doc.querySelectorAll(".effort-strip-stop")].map((el) => el.getAttribute("data-effort"))).toEqual(["low", "medium"]);
   });
 
-  it("shows the level a model brings back after a switch, and keeps the old rule without one", () => {
+  it("shows the level the host reports after a switch, and keeps the old rule only without the field", () => {
     const h = boot();
     dispatch(h.window, { type: "modelChanged", modelId: "grok-fast", effort: "medium" });
     expect(h.doc.querySelector(".model-chip-effort")?.textContent).toBe("Medium");
     dispatch(h.window, { type: "modelChanged", modelId: "grok-build", effort: "xhigh" });
     expect(h.doc.querySelector(".model-chip-effort")?.textContent).toBe("Extra high");
-    // Off-menu or empty: the chip keeps the level it had, as with an older host.
-    dispatch(h.window, { type: "modelChanged", modelId: "grok-build", effort: "max" });
+    // An older host sends no field: the chip keeps an in-ladder level.
+    dispatch(h.window, { type: "modelChanged", modelId: "grok-build" });
     expect(h.doc.querySelector(".model-chip-effort")?.textContent).toBe("Extra high");
+    // "" is the agent at its default (claude-agent-acp 0.76.0 drops X-high on
+    // Opus -> Haiku -> Sonnet), so the chip falls back to the model's own
+    // metadata instead of the level it had.
     dispatch(h.window, { type: "modelChanged", modelId: "grok-build", effort: "" });
-    expect(h.doc.querySelector(".model-chip-effort")?.textContent).toBe("Extra high");
+    expect(h.doc.querySelector(".model-chip-effort")?.textContent).toBe("High");
+    // Off-menu reads the same way: never a level the model does not show.
+    dispatch(h.window, { type: "modelChanged", modelId: "grok-build", effort: "xhigh" });
+    dispatch(h.window, { type: "modelChanged", modelId: "grok-build", effort: "max" });
+    expect(h.doc.querySelector(".model-chip-effort")?.textContent).toBe("High");
   });
 
   it("keeps the advertised effective effort when an older host reports no override", () => {
