@@ -93,6 +93,23 @@ export function modeToRemember(modeId: ModeId): "agent" | "yolo" | "auto" | null
 }
 
 /**
+ * Each agent's own last picked mode, for its new chats: `{provider: modeId}`.
+ * One agent's pick never changes another's; the shared `grok.defaultMode`
+ * stays the default for an agent never picked. Plan is never kept.
+ */
+export const MODE_PREFS_KEY = "grok.defaultModeByProvider";
+export type ModePrefs = Partial<Record<string, ModeId>>;
+
+export function rememberedMode(prefs: ModePrefs | undefined, provider: string): ModeId | undefined {
+  const mode = prefs?.[provider];
+  return isModeId(mode) && mode !== "plan" ? mode : undefined;
+}
+
+export function withRememberedMode(prefs: ModePrefs | undefined, provider: string, modeId: ModeId): ModePrefs {
+  return { ...prefs, [provider]: modeId };
+}
+
+/**
  * Whether a brand-new session should start in Auto accept (YOLO), given the
  * remembered `grok.defaultMode` and whether this start is a resume. Resumed
  * sessions are verdict-driven (plan-restore decides), so they never pre-apply

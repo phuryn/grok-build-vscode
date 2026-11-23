@@ -51,13 +51,13 @@ it("applies remembered Auto accept only after creating a new Codex chat", () => 
   // In the new-session branch, before the composer unlocks: right after session/new.
   const newSession = src.lastIndexOf("await client.newSession(defaultModel || undefined);", call);
   expect(newSession).toBeGreaterThan(0);
-  // Only steps for other starts sit between: agy's CLI Auto accept and the
+  // Only steps for other starts sit between: agy's remembered mode and the
   // native Auto start. Nothing that unlocks the composer.
   const between = src.slice(newSession, call).split("\n").slice(1, -1).map(line => line.trim());
   expect(between).toEqual([
     "if (agyMethod && gen === session.gen) {",
     "const mode = this.defaultModeForProvider(\"agy\");",
-    "if (mode === \"yolo\") await this.setAgyCliMode(session, client, mode, undefined, false);",
+    "if (mode !== \"agent\" && isModeId(mode)) await this.setAgyCliMode(session, client, mode, undefined, false);",
     "}",
     "if (nativeAutoStart && gen === session.gen) await this.startNativeAuto(session, client);",
   ]);

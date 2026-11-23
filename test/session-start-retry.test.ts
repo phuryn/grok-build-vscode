@@ -1166,6 +1166,28 @@ describe("startSession bounded spawn retry", () => {
     expect(sidebar.displayMode(sidebar.focused)).toBe("yolo");
   });
 
+  // Pawel, 2026-11-23: "I choosed Auto for Gemini and the next Gemini session
+  // had Agent". Only Agent and Auto accept were kept, and only Auto accept was
+  // switched to at the start.
+  it.each(["auto", "acceptEdits"])("starts the next chat in the %s picked in the last one, never in Plan", async mode => {
+    const sidebar = googleAgySidebar();
+    sidebar.installedAgyCli.mockReturnValue("fake agy");
+    await sidebar.startSession();
+    await sidebar.setMode(mode, sidebar.focused);
+    await sidebar.setMode("plan", sidebar.focused);
+    expect(sidebar.state.get("grok.defaultModeByProvider")).toEqual({ agy: mode });
+    const next = new Session();
+    next.provider = "agy";
+    next.cwd = "/repo";
+    sidebar.focused = next;
+    // The first paint, before the CLI starts, already says where it will be.
+    expect(sidebar.displayMode(next)).toBe(mode);
+    const client = await sidebar.startSession(undefined, next);
+    expect(client.currentModeId).toBe(mode);
+    expect(sidebar.displayMode(next)).toBe(mode);
+    expect(next.autoApprove).toBe(false);
+  });
+
   it("answers only allow once in CLI Auto accept and leaves plan reviews for the person", async () => {
     const sidebar = googleAgySidebar();
     sidebar.installedAgyCli.mockReturnValue("fake agy");
@@ -1264,6 +1286,38 @@ describe("startSession bounded spawn retry", () => {
       await sidebar.startSession(undefined, next);
       expect(startControl.setModes).toEqual([]);
       expect(modes(sidebar).at(-1)).toMatchObject({ modeId: "agent" });
+    });
+
+    // One agent's pick used to rewrite the shared default every agent starts in.
+    it("keeps Claude's Auto after Agent is picked in a Grok chat; an agent never picked follows the last pick", async () => {
+      const sidebar = claudeSidebar();
+      const config: Record<string, unknown> = {};
+      sidebar.host.getConfiguration = vi.fn(() => ({
+        get: (key: string, fallback: unknown) => key in config ? config[key] : fallback,
+        inspect: (key: string) => ({ key, globalValue: config[key] }),
+        update: vi.fn(async (key: string, value: unknown) => { config[key] = value; }),
+      }));
+      await sidebar.startSession(undefined, sidebar.focused);
+      await sidebar.setMode("auto", sidebar.focused);
+      const grok = new Session();
+      grok.provider = "grok";
+      grok.cwd = "/repo";
+      sidebar.focused = grok;
+      sidebar.providerConnectionState = { claude: true, grok: true };
+      sidebar.connectedProviders = sidebar.usableProviders = vi.fn(() => ["claude", "grok"]);
+      await sidebar.startSession(undefined, grok);
+      await sidebar.setMode("agent", grok);
+      await vi.waitFor(() => expect(config.defaultMode).toBe("agent"));
+      expect(sidebar.state.get("grok.defaultModeByProvider")).toEqual({ claude: "auto", grok: "agent" });
+      startControl.setModes = [];
+      const next = new Session();
+      next.provider = "claude";
+      next.cwd = "/repo";
+      sidebar.focused = next;
+      await sidebar.startSession(undefined, next);
+      expect(startControl.setModes).toEqual(["claude:auto"]);
+      expect(modes(sidebar).at(-1)).toMatchObject({ modeId: "auto" });
+      expect(sidebar.defaultModeForProvider("codex")).toBe("agent");
     });
 
     it("picking Auto by hand on a model without it says so and stays in Agent mode", async () => {

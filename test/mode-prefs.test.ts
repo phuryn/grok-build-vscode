@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { hasNativeAutoMode, isModeId, modeToRemember, rememberedEffort, rememberedModelEffort, sessionModes, startsInNativeAuto, startsInYolo, musePosture, museShellSandboxEnabled, usesClientAutoAccept, resolvedDefaultMode, museSandboxUnavailable } from "../src/mode-prefs";
+import { hasNativeAutoMode, isModeId, modeToRemember, rememberedMode, withRememberedMode, rememberedEffort, rememberedModelEffort, sessionModes, startsInNativeAuto, startsInYolo, musePosture, museShellSandboxEnabled, usesClientAutoAccept, resolvedDefaultMode, museSandboxUnavailable } from "../src/mode-prefs";
 import { GrokSidebar } from "../src/sidebar";
 import { Session } from "../src/session";
 
@@ -24,23 +24,37 @@ describe("remembered mode preference (#25)", () => {
     }
   }
 
+  it("keeps one mode per agent and never keeps Plan", () => {
+    let prefs = withRememberedMode(undefined, "agy", "auto");
+    prefs = withRememberedMode(prefs, "grok", "agent");
+    expect(prefs).toEqual({ agy: "auto", grok: "agent" });
+    expect(rememberedMode(prefs, "agy")).toBe("auto");
+    expect(rememberedMode(prefs, "claude")).toBeUndefined();
+    expect(rememberedMode({ agy: "plan" }, "agy")).toBeUndefined();
+    expect(rememberedMode({ agy: "bogus" as any }, "agy")).toBeUndefined();
+    expect(rememberedMode({ codex: "askApproval", agy: "acceptEdits" }, "agy")).toBe("acceptEdits");
+  });
+
   it.each(["win32", "linux", "darwin"] as const)("resolves Muse's host restriction on %s", platform => {
     expect(museSandboxUnavailable(false, platform)).toBe(platform === "win32" ? "windows" : undefined);
     expect(museSandboxUnavailable(true, platform)).toBe("cloud");
   });
 
-  it.each(["new", "existing"] as const)("approving a Grok plan restores the %s cohort's resolved mode before the verdict", cohort => {
+  it.each(["new", "existing", "own"] as const)("approving a Grok plan restores the %s mode before the verdict", cohort => {
     const sidebar = Object.create(GrokSidebar.prototype) as any;
+    // "own": Grok's own pick wins over a shared Agent another agent left.
+    const own = cohort === "own" ? { grok: "yolo", claude: "agent" } : undefined;
+    sidebar.state = { get: (key: string, fallback: unknown) => key === "grok.defaultModeByProvider" ? own : fallback };
     const session = new Session();
     session.planActive = true;
     session.pendingExitPlans.set(1, { planText: "Implement it" } as any);
     session.client = { respondExitPlan: vi.fn(() => {
       expect(session.planActive).toBe(false);
-      expect(session.autoApprove).toBe(cohort === "new");
+      expect(session.autoApprove).toBe(cohort !== "existing");
       return true;
     }) } as any;
-    sidebar.defaultModeCohort = cohort;
-    sidebar.host = { getConfiguration: () => ({ get: () => "" }) };
+    sidebar.defaultModeCohort = cohort === "own" ? "existing" : cohort;
+    sidebar.host = { getConfiguration: () => ({ get: () => cohort === "own" ? "agent" : "" }) };
     sidebar.setPlanActive = (_session: Session, active: boolean) => { session.planActive = active; };
     for (const method of ["emit", "syncHumanWait", "persistPlanVerdict", "noteAnswered", "autoApprovePendingPermissions"]) sidebar[method] = vi.fn();
     sidebar.handleExitPlan(1, "approved", undefined, session);

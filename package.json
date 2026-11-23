@@ -383,7 +383,7 @@
             "Auto accept — auto-approve every permission request"
           ],
           "default": "",
-          "description": "Mode for new sessions. Updated automatically to remember your last switch between Agent, Auto and Auto accept (Plan is never remembered). Empty keeps existing installs in Agent, and starts new installs in Auto accept for Grok and Antigravity, or Allow all for Muse. Claude uses Auto and Codex uses Agent on all installs. Muse's separately remembered choice wins wherever that mode is offered (On request is not, on Windows or cloud machines). If Claude Code's Auto mode is not available for the model, the conversation stays in Agent mode."
+          "description": "Mode for new chats with an agent you have not picked a mode for yet. Each agent starts its new chats in the mode last picked for it (Plan is never kept); this setting follows your last switch between Agent, Auto and Auto accept. Empty keeps existing installs in Agent, and starts new installs in Auto accept for Grok and Antigravity, or Allow all for Muse. Claude uses Auto and Codex uses Agent on all installs. Muse's On request is not offered on Windows or cloud machines. If Claude Code's Auto mode is not available for the model, the conversation stays in Agent mode."
         },
         "grok.includeActiveFileByDefault": {
           "type": "boolean",

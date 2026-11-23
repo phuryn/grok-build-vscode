@@ -141,7 +141,7 @@ import { DEEPSEEK_API_KEY_SECRET, deepseekKey, validDeepSeekKey, isDeepSeekCrede
 import { locateDeepSeek, installManagedDeepSeek, DEEPSEEK_VERSION } from "./deepseek-managed-installer";
 import { MediaRef, adapterCompactSignal, adapterContextOccupancy, agentTimestampMsFromMeta, autoCompactStartedNote, childStreamFromRoute, commandOutputForToolCall, commandOutputFromLiveTerminal, contextUsedFromCompactNotification, enforceCompleteSessionCost, errorDetail, gateZeroTokenMeta, isAuthErrorText, isCredentialError, isIncompatibleAgentError, isResumeNotFound, isRateLimitError, isSubagentLifecycleUpdate, occupancyFromAdapterTurn, parseSessionInfoContext, permissionOutcomeFor, promptErrorText, rateLimitNoticeText, sessionInfoCacheFresh, sumUsage, summarizeBackgroundCommand, usageIsRealMeasurement, type UpdateRoute } from "./acp-dispatch";
 import { createMcpPrepareState, prepareMcpToolCall } from "./mcp-tool";
-import { CODEX_ASK_APPROVAL_PREF_KEY, CODEX_MODE_WAITS_FOR_PLAN, EFFORT_PREFS_KEY, MODEL_EFFORT_PREFS_KEY, MUSE_MODE_PREF_KEY, MUSE_ON_REQUEST_UNAVAILABLE, museSandboxUnavailable, museOnRequestUnavailable, resolvedDefaultMode, configWriteTarget, isMuseModeId, modeToRemember, rememberedEffort, rememberedModelEffort, withModelEffort, sessionModes, startsInNativeAuto, startsInYolo, musePosture, museShellSandboxEnabled, usesClientAutoAccept, type ModeId, type MuseSettings, type EffortPrefs, type ModelEffortPrefs } from "./mode-prefs";
+import { CODEX_ASK_APPROVAL_PREF_KEY, CODEX_MODE_WAITS_FOR_PLAN, EFFORT_PREFS_KEY, MODEL_EFFORT_PREFS_KEY, MUSE_MODE_PREF_KEY, MODE_PREFS_KEY, MUSE_ON_REQUEST_UNAVAILABLE, museSandboxUnavailable, museOnRequestUnavailable, resolvedDefaultMode, configWriteTarget, isModeId, isMuseModeId, modeToRemember, rememberedMode, withRememberedMode, rememberedEffort, rememberedModelEffort, withModelEffort, sessionModes, startsInNativeAuto, startsInYolo, musePosture, museShellSandboxEnabled, usesClientAutoAccept, type ModeId, type MuseSettings, type EffortPrefs, type ModelEffortPrefs, type ModePrefs } from "./mode-prefs";
 import { supportsApprovalModeSwitching } from "./acp-backend";
 import { beginAuthRecovery, oauthShadowsXaiApiKey } from "./auth-recovery";
 import {
@@ -4177,6 +4177,8 @@ See design doc for the full state machine diagram.`;
   }
 
   private defaultModeForProvider(provider: string): string {
+    const own = rememberedMode(this.state.get<ModePrefs>(MODE_PREFS_KEY), provider);
+    if (own) return own;
     if (provider === "codex" && this.state.get<boolean>(CODEX_ASK_APPROVAL_PREF_KEY)) return "askApproval";
     const shared = this.host.getConfiguration("grok").get<string>("defaultMode", "");
     const remembered = provider === "muse" ? this.state.get<string>(MUSE_MODE_PREF_KEY) ?? shared : shared;
@@ -4187,6 +4189,8 @@ See design doc for the full state machine diagram.`;
     const mode = this.defaultModeForProvider(provider);
     if (provider === "muse") return musePosture(mode, false, undefined, this.museSettings(), !!museSandboxUnavailable(isCloudEnvironment())).mode;
     if (provider === "codex" && mode === "askApproval") return mode;
+    // Antigravity's own modes, switched to right after session/new.
+    if (provider === "agy" && (mode === "auto" || mode === "acceptEdits")) return mode;
     return startsInYolo(mode, false) ? "yolo" : startsInNativeAuto(provider, mode, false) ? "auto" : "agent";
   }
 
@@ -4430,6 +4434,19 @@ Only continue if you trust this code.`,
     }
   }
 
+  /**
+   * A picked mode is where this agent's next new chat starts, whatever the
+   * other agents were last set to. It also stays the shared `grok.defaultMode`
+   * where that setting has the value, the start for an agent never picked.
+   * Plan is per task and is never kept.
+   */
+  private rememberMode(provider: string, modeId: ModeId): void {
+    if (modeId === "plan") return;
+    void this.state.update(MODE_PREFS_KEY, withRememberedMode(this.state.get<ModePrefs>(MODE_PREFS_KEY), provider, modeId));
+    const shared = modeToRemember(modeId);
+    if (shared) void this.rememberGrokConfig("defaultMode", shared);
+  }
+
   private async setAgyCliMode(session: Session, client: AcpClient, modeId: ModeId, requester?: RemoteRequester, remember = true): Promise<void> {
     if (!client.pickerModes?.includes(modeId)) return;
     const wireMode = modeId === "yolo" ? "agent" : modeId;
@@ -4443,9 +4460,7 @@ Only continue if you trust this code.`,
     session.autoApprove = modeId === "yolo";
     this.setPlanActive(session, modeId === "plan");
     if (session.autoApprove) this.autoApprovePendingPermissions(session);
-    if (remember && (modeId === "yolo" || modeId === "agent")) {
-      void this.rememberGrokConfig("defaultMode", modeId);
-    }
+    if (remember) this.rememberMode(session.provider, modeId);
   }
 
   private async setCodexPickerMode(modeId: ModeId, session: Session, client: AcpClient, requester?: RemoteRequester): Promise<void> {
@@ -4474,8 +4489,7 @@ Only continue if you trust this code.`,
         const ask = modeId === "askApproval";
         await this.rememberCodexApproval(client.sessionId, ask);
         await this.state.update(CODEX_ASK_APPROVAL_PREF_KEY, ask || undefined);
-        const remember = modeToRemember(modeId);
-        if (remember) void this.rememberGrokConfig("defaultMode", remember);
+        this.rememberMode(session.provider, modeId);
         return true;
       } catch (e) {
         if (session.client === client) this.reportRequester(requester, "error", `Couldn't switch mode: ${(e as Error).message}`);
@@ -4531,7 +4545,6 @@ Only continue if you trust this code.`,
         );
         return;
       }
-      const remember = modeToRemember(modeId);
       const client = session.client;
       if (modeId === "onRequest" && session.museShellSandbox !== true) {
         this.reportRequester(requester, "warning", MUSE_ON_REQUEST_UNAVAILABLE);
@@ -4547,7 +4560,7 @@ Only continue if you trust this code.`,
         }
       }
       if (session.client !== client) return;
-      if (remember) void this.rememberGrokConfig("defaultMode", remember);
+      this.rememberMode(session.provider, modeId);
       if (session.provider === "muse") await this.state.update(MUSE_MODE_PREF_KEY, modeId);
       if (session.client !== client) return;
       session.autoApprove = modeId === "yolo";
@@ -4593,11 +4606,8 @@ Only continue if you trust this code.`,
     // Remember the user's last non-plan mode so new sessions start in it (#25).
     // setMode is only ever called from the webview (user action), so this
     // captures intent, not restore/replay bookkeeping (those use client.setMode
-    // directly). `modeToRemember` drops Plan (a transient per-task choice).
-    const remember = modeToRemember(modeId);
-    if (remember) {
-      void this.rememberGrokConfig("defaultMode", remember);
-    }
+    // directly). `rememberMode` keeps it per agent and drops Plan (per task).
+    this.rememberMode(session.provider, modeId);
     if (modeId === "auto") {
       // The agent's own Auto: it decides what is safe and asks about the
       // rest, so those questions still reach the person (no client auto-accept).
@@ -13021,7 +13031,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         await client.newSession(defaultModel || undefined);
         if (agyMethod && gen === session.gen) {
           const mode = this.defaultModeForProvider("agy");
-          if (mode === "yolo") await this.setAgyCliMode(session, client, mode, undefined, false);
+          if (mode !== "agent" && isModeId(mode)) await this.setAgyCliMode(session, client, mode, undefined, false);
         }
         if (nativeAutoStart && gen === session.gen) await this.startNativeAuto(session, client);
         if (rememberedYolo && session.provider === "codex" && gen === session.gen) await this.startCodexFullAccess(session, client);

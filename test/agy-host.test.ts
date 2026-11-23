@@ -143,6 +143,7 @@ describe("Antigravity approval and installation", () => {
     expect(sidebar.displayMode(session)).toBe("yolo");
     expect(sidebar.memento["grok.agyAcceptEdits"]).toBeUndefined();
     expect(sidebar.configUpdate).toHaveBeenCalledWith("defaultMode", "yolo", "global");
+    expect(sidebar.memento["grok.defaultModeByProvider"]).toEqual({ agy: "yolo" });
   });
 
   it("answers the approval already on screen when a native session switches to Auto accept", async () => {
