@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { bootWebview, click, dispatch } from "./webview-harness";
 
@@ -22,18 +23,29 @@ function boot(surface = "vscode", connected = true) {
 }
 type H = ReturnType<typeof boot>;
 const open = (h: H, id = "gear-btn") => click(h.window, h.doc.getElementById(id)!);
+const effortGroup = (h: H) => h.doc.querySelector('#gear-popover [role="radiogroup"][aria-label="Reasoning effort"]')!;
+const effortButton = (h: H, level: string) => effortGroup(h).querySelector<HTMLButtonElement>(`[data-effort="${level}"]`)!;
 const sequence = (h: H) => [...h.doc.querySelector("#add-popover")!.children].map((el) =>
   (el.classList.contains("popover-section") ? "heading: " : "row: ") + el.textContent?.trim());
 
 describe("composer chip", () => {
+  it("outlines both picker selections in forced colours", () => {
+    const css = readFileSync(new URL("../media/chat.css", import.meta.url), "utf8");
+    const blocks = [...css.matchAll(/@media \(forced-colors: active\)\s*\{((?:[^{}]|\{[^{}]*\})*)\}/g)];
+    const picker = blocks.find(([, rules]) => rules.includes(".effort-strip-stop"))?.[1];
+    expect(picker).toMatch(/\.effort-strip-stop\[aria-checked="true"\]\s*\{[^}]*outline:\s*2px solid Highlight/);
+    expect(picker).toMatch(/\.model-picker-row\.active\s*\{[^}]*outline:\s*1px solid CanvasText/);
+  });
+
   it.each(["vscode", "desktop", "remote", "phone"])("opens directly with pinned effort/models/recovery on %s", (surface) => {
     const h = boot(surface);
     const chip = h.doc.getElementById("gear-btn")!;
-    // Name and effort only: no provider glyph, no chevron (research/composer-chip.md).
     expect([...chip.children].map((el) => el.classList[0])).toEqual([
-      "model-chip-name", "model-chip-effort",
+      "model-chip-name", "effort-bars", "model-chip-effort",
     ]);
     expect(chip.textContent).toBe("Grok BuildHigh");
+    const bars = chip.querySelector('.effort-bars[aria-hidden="true"]')!;
+    expect([...bars.children].map((bar) => bar.classList.contains("filled"))).toEqual([true, true, true, false]);
     open(h);
     const pop = h.doc.getElementById("gear-popover")!;
     expect(pop.hidden).toBe(false);
@@ -44,6 +56,39 @@ describe("composer chip", () => {
     expect(chip.getAttribute("aria-expanded")).toBe("true");
     open(h); expect(pop.hidden).toBe(true);
     expect(chip.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it.each([
+    { levels: ["low", "medium", "high", "xhigh"], words: ["Low", "Medium", "High", "Extra high"] },
+    { levels: ["minimal", "low", "medium", "high", "xhigh"], words: ["Minimal", "Low", "Medium", "High", "X-high"] },
+    { levels: ["none", "minimal", "low", "medium", "high", "xhigh"], words: ["None", "Minimal", "Low", "Medium", "High", "X-high"] },
+  ])("labels every segment when the model offers $levels.length levels", ({ levels, words }) => {
+    const h = boot();
+    dispatch(h.window, { type: "session", provider: "grok", currentModelId: "grok-build",
+      models: [{ ...models[0], reasoningEfforts: levels }] });
+    open(h);
+    const segments = [...effortGroup(h).querySelectorAll('[role="radio"]')];
+    expect(segments.map((el) => el.textContent)).toEqual(words);
+    expect(segments.map((el) => el.getAttribute("data-effort"))).toEqual(levels);
+    const extraHigh = effortButton(h, "xhigh");
+    click(h.window, extraHigh);
+    expect(extraHigh.getAttribute("aria-label")).toBe("Extra high");
+    expect(extraHigh.title).toBe("Extra high — deepest reasoning, slowest");
+    expect(h.doc.querySelector(".effort-strip-tip")?.textContent).toBe(extraHigh.title);
+    expect(h.doc.querySelector(".model-chip-effort")?.textContent).toBe("Extra high");
+    expect(h.doc.getElementById("gear-btn")?.getAttribute("aria-label")).toContain("Extra high");
+    expect(h.doc.querySelectorAll("#gear-btn .effort-bars .filled")).toHaveLength(levels.length);
+  });
+
+  it("moves the active model row and its check on preview", () => {
+    const h = boot();
+    open(h);
+    const active = () => h.doc.querySelector('.model-picker-list .model-picker-row.active[aria-checked="true"]');
+    expect(active()?.textContent).toBe("Grok Build✓");
+    click(h.window, h.doc.querySelector('.model-picker-list .model-picker-row[aria-checked="false"]')!);
+    expect(active()?.textContent).toBe("Grok Fast✓");
+    expect(h.doc.querySelectorAll(".model-picker-list .popover-check")).toHaveLength(1);
+    expect(h.posted.filter((m) => m.type === "setModel")).toEqual([]);
   });
 
   it.each(["grok", "codex", "claude"])("keeps recovery actionable when %s is signed out", (provider) => {
@@ -61,26 +106,23 @@ describe("composer chip", () => {
 
   const efforts = (h: H) => h.posted.filter((m) => m.type === "setEffort");
 
-  it("previews on click and keyboard but commits ONCE, on close, at the level it ended on", () => {
+  it("previews each click and commits only the last choice on close", () => {
     const h = boot();
     open(h);
-    const track = h.doc.querySelector(".effort-strip-track")!;
-    const low = h.doc.querySelector('[data-effort="low"]') as HTMLElement;
-    click(h.window, low);
-    // The chip follows immediately; the host hears nothing yet. Committing here
-    // is what restarted an empty session mid-gesture, locked the control through
-    // `busy`, and left every correction to be dropped by the priming guard.
-    expect(h.doc.querySelector(".model-chip-effort")?.textContent).toBe("Low");
-    expect(efforts(h)).toEqual([]);
-    expect(h.doc.querySelector(".effort-strip-track")).toBe(track);
-    low.dispatchEvent(new h.window.KeyboardEvent("keydown", { key: "End", bubbles: true }));
-    expect(h.doc.querySelector('[data-effort="xhigh"]')?.getAttribute("aria-checked")).toBe("true");
-    expect(efforts(h)).toEqual([]);
+    const group = effortGroup(h);
+    for (const [level, label] of [["low", "Low"], ["medium", "Medium"], ["xhigh", "Extra high"]]) {
+      const button = effortButton(h, level);
+      click(h.window, button);
+      expect(h.doc.querySelector(".model-chip-effort")?.textContent).toBe(label);
+      expect(group.querySelector('[aria-checked="true"][tabindex="0"]')).toBe(button);
+      expect(effortGroup(h)).toBe(group);
+      expect(efforts(h)).toEqual([]);
+    }
     open(h);
     expect(efforts(h)).toEqual([{ type: "setEffort", level: "xhigh" }]);
   });
 
-  it("commits nothing when the knob ends where it started", () => {
+  it("commits nothing when the selection ends where it started", () => {
     const h = boot(); // boots at high
     open(h);
     click(h.window, h.doc.querySelector('[data-effort="low"]')!);
@@ -89,34 +131,40 @@ describe("composer chip", () => {
     expect(efforts(h)).toEqual([]);
   });
 
-  it("drags the knob across stops and commits the one the finger is lifted on", () => {
+  it("roves focus and previews with arrows, Home and End until Escape commits", () => {
     const h = boot();
-    open(h);
-    const track = h.doc.querySelector(".effort-strip-track") as HTMLElement;
-    // Four stops over 400px: low 0-100, medium 100-200, high 200-300, xhigh 300+.
-    track.getBoundingClientRect = () => ({ left: 0, width: 400, top: 0, height: 42,
-      right: 400, bottom: 42, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect;
-    const at = (type: string, clientX: number) => track.dispatchEvent(
-      new h.window.PointerEvent(type, { clientX, bubbles: true, pointerId: 1 }));
-    at("pointerdown", 10);
-    expect(h.doc.querySelector(".model-chip-effort")?.textContent).toBe("Low");
-    at("pointermove", 150);
-    expect(h.doc.querySelector(".model-chip-effort")?.textContent).toBe("Medium");
-    at("pointermove", 350);
-    expect(h.doc.querySelector(".model-chip-effort")?.textContent).toBe("Extra high");
-    at("pointerup", 350);
-    expect(efforts(h)).toEqual([]);
-    open(h);
+    const chip = h.doc.getElementById("gear-btn")!;
+    const press = (el: Element, key: string) => el.dispatchEvent(new h.window.KeyboardEvent("keydown", { key, bubbles: true }));
+    press(chip, "ArrowDown");
+    expect(h.doc.activeElement).toBe(effortButton(h, "high"));
+    for (const [key, level, label] of [
+      ["ArrowLeft", "medium", "Medium"], ["ArrowUp", "low", "Low"], ["ArrowLeft", "xhigh", "Extra high"],
+      ["ArrowRight", "low", "Low"], ["ArrowDown", "medium", "Medium"], ["Home", "low", "Low"], ["End", "xhigh", "Extra high"],
+    ]) {
+      press(h.doc.activeElement!, key);
+      const button = effortButton(h, level);
+      expect(h.doc.activeElement).toBe(button);
+      expect([...effortGroup(h).querySelectorAll('[tabindex="0"]')]).toEqual([button]);
+      expect([...effortGroup(h).querySelectorAll('[aria-checked="true"]')]).toEqual([button]);
+      expect(h.doc.querySelector(".model-chip-effort")?.textContent).toBe(label);
+      expect(efforts(h)).toEqual([]);
+    }
+    press(h.doc.activeElement!, "Escape");
+    expect(h.doc.activeElement).toBe(chip);
     expect(efforts(h)).toEqual([{ type: "setEffort", level: "xhigh" }]);
   });
 
-  it("a move with no button down does not drag the knob", () => {
+  it("disables all segments and Reset while the picker is locked", () => {
     const h = boot();
+    dispatch(h.window, { type: "setBusy", value: true, locked: true });
     open(h);
-    const track = h.doc.querySelector(".effort-strip-track") as HTMLElement;
-    track.getBoundingClientRect = () => ({ left: 0, width: 400, top: 0, height: 42,
-      right: 400, bottom: 42, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect;
-    track.dispatchEvent(new h.window.PointerEvent("pointermove", { clientX: 10, bubbles: true, pointerId: 1 }));
+    const segments = [...effortGroup(h).querySelectorAll<HTMLButtonElement>("button")];
+    expect(segments).toHaveLength(4);
+    expect(segments.every((el) => el.disabled)).toBe(true);
+    const reset = h.doc.querySelector<HTMLButtonElement>(".effort-reset")!;
+    expect(reset.disabled).toBe(true);
+    click(h.window, segments[0]);
+    click(h.window, reset);
     expect(h.doc.querySelector(".model-chip-effort")?.textContent).toBe("High");
     open(h);
     expect(efforts(h)).toEqual([]);
@@ -132,6 +180,7 @@ describe("composer chip", () => {
     expect(h.doc.getElementById("gear-popover")!.hidden).toBe(false);
     click(h.window, h.doc.querySelector(".effort-reset")!);
     expect(h.doc.querySelectorAll('.effort-strip-stop[aria-checked="true"]')).toHaveLength(0);
+    expect(h.doc.querySelector("#gear-btn .effort-bars, #gear-btn .model-chip-effort")).toBeNull();
     open(h, "donut"); // opening another popover closes this one, which commits
     expect(efforts(h)).toEqual([{ type: "setEffort", level: "" }]);
     dispatch(h.window, { type: "initialState", effort: "medium", appPurpose: "coding" });
@@ -187,11 +236,25 @@ describe("composer chip", () => {
     const h = bootWebview();
     dispatch(h.window, { type: "session", currentModelId: "grok-build", models: [{ modelId: "grok-build", name: "Grok Build" }] });
     open(h);
-    expect(h.doc.querySelector(".model-chip-effort")?.textContent).toBe("");
-    expect(h.doc.querySelector(".effort-strip-header strong")?.textContent).toBe("Default");
+    expect(h.doc.querySelector("#gear-btn .effort-bars, #gear-btn .model-chip-effort")).toBeNull();
+    expect(h.doc.querySelector(".effort-strip-header")?.textContent).toBe("EffortReset");
+    expect(h.doc.querySelector(".effort-strip-tip")?.textContent).toBe("Uses the provider default");
+    expect(effortGroup(h).querySelectorAll('[aria-checked="false"]')).toHaveLength(6);
+    expect(effortGroup(h).querySelector('[tabindex="0"]')).toBe(effortButton(h, "none"));
     const logout = [...h.doc.querySelectorAll(".model-picker-footer .toolbar-popover-item")].find((el) => el.textContent === "Log out")!;
     click(h.window, logout);
     expect(h.posted).toContainEqual({ type: "logout" });
+  });
+
+  it("omits effort on an Orchestrator even when a previous model used it", () => {
+    const h = boot();
+    dispatch(h.window, { type: "providerState", providers: [{ id: "agy", connected: true }] });
+    dispatch(h.window, { type: "session", provider: "agy", currentModelId: "orchestrator",
+      models: [{ provider: "agy", modelId: "orchestrator", name: "Orchestrator (Neon)", supportsReasoningEffort: false }] });
+    open(h);
+    expect(h.doc.querySelector("#gear-btn .effort-bars, #gear-btn .model-chip-effort")).toBeNull();
+    expect(h.doc.querySelector(".model-effort-strip")).toBeNull();
+    expect(h.doc.querySelector(".model-picker-row.active")?.textContent).toContain("Orchestrator (Neon)");
   });
 });
 

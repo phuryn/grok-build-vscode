@@ -61,6 +61,9 @@ body.vscode-light {
   --repo-color-amber: oklch(0.62 0.15 75);
   --repo-color-coral: oklch(0.56 0.18 25);
   --repo-color-purple: oklch(0.52 0.20 305);
+}
+
+body.vscode-light, body.vscode-high-contrast-light .effort-bars {
   --e1: #1a8f7d;
   --e2: #1a85ff;
   --e3: #8250df;
@@ -4421,7 +4424,6 @@ textarea#input {
 #gear-btn.model-chip.model-chip-loading:hover { background: transparent; }
 .model-chip-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .model-chip-effort { flex: none; color: var(--vscode-descriptionForeground); }
-.model-chip-effort:empty { display: none; }
 #chips:empty { display: none; }
 .composer-effort-notice {
   position: absolute; bottom: calc(100% + 4px); left: var(--pad); right: var(--pad);
@@ -4448,15 +4450,22 @@ textarea#input {
 @container composer-card (max-width: 300px) {
   .model-chip-name { max-width: 66px; }
 }
-/* The name is the chip's whole content now, so these rungs trim it rather than
-   hiding it -- the glyph that used to stand in its place is gone. */
+/* Keep the model name visible alongside the effort bars at the narrow rungs. */
 @container composer-card (max-width: 272px) {
   .model-chip-name { max-width: 44px; }
+  #gear-btn.model-chip:has(> .effort-bars) { padding-inline: 2px; gap: 2px; }
+  #gear-btn.model-chip .effort-bars { margin-left: 0; }
 }
 /* Only here, with the name already down to a stub, is there nothing cheaper
    left to spend than the figure itself. */
 @container composer-card (max-width: 224px) {
   .context-donut #donut-label { display: none; }
+}
+/* At 250px the chip is down to a name stub, and the effort bars (~16px)
+   would squeeze it to nothing. The name outranks the effort (#172), so the
+   bars go here; the picker still shows the level. */
+@container composer-card (max-width: 250px) {
+  #gear-btn .effort-bars { display: none; }
 }
 @media (hover: none), (pointer: coarse) {
   /* min-width, not just height: the mode word is the first rung of the collapse
@@ -4464,7 +4473,7 @@ textarea#input {
      glyph button is under the tap floor the rest of the app is held to. */
   #gear-btn.model-chip, #mode-btn { height: 36px; font-size: 15px; }
   #mode-btn { min-width: 36px; justify-content: center; }
-  /* Unconditional touch rule: effort is one tap away in the chip. */
+  /* The bars keep the effort visible while the word makes room on touch. */
   .model-chip-effort { display: none; }
   @container composer-card (max-width: 296px) {
     .model-chip-name { max-width: 82px; }
@@ -4500,11 +4509,19 @@ textarea#input {
   font: inherit; text-align: left;
 }
 .model-picker button.toolbar-popover-item:hover { background: var(--vscode-list-hoverBackground); }
+/* Every row sits in a 4px gutter with rounded corners. The selected row is
+   outlined, and an edge-to-edge row put that outline on the popover's own border
+   on one side and against the scrollbar on the other. The effort segments sit on
+   the same 4px edge, so the two outlined things line up. */
+#gear-popover.model-picker .toolbar-popover-item {
+  width: calc(100% - 8px); margin-inline: 4px; padding-inline: 6px; border-radius: 6px;
+}
+.model-picker-list { padding-block: 4px; }
 /* Locked is not faded. `opacity` here made the whole picker look half-erased
    over the transcript for the length of a turn (owner, 2026-09-13: "this should
    never be semi-transparent. Like during a round. It just looks bad") -- and it
    washed out the effort ramp, whose colour IS the readout. Say it in the text
-   colour instead and leave the dots and the gradient at full strength; the
+   colour instead and leave the bars at full strength; the
    `disabled` attribute is what actually stops the interaction. */
 .model-picker button:disabled {
   cursor: default;
@@ -4514,7 +4531,20 @@ textarea#input {
 .model-picker button:focus-visible, .context-compact:focus-visible {
   outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px;
 }
-.model-effort-strip { padding: 6px 6px 4px; }
+.model-picker button.model-picker-row.active {
+  background: var(--vscode-list-inactiveSelectionBackground, var(--vscode-list-hoverBackground));
+  outline: 1px solid var(--vscode-contrastActiveBorder, var(--vscode-contrastBorder, var(--vscode-textLink-foreground)));
+  outline-offset: -1px;
+}
+.model-picker-row.active .popover-check {
+  width: 16px; height: 16px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--vscode-textLink-foreground); color: var(--vscode-editorWidget-background);
+  font-size: 10px; line-height: 1;
+}
+/* Effort and the model list are two groups, divided by the same rule that sits
+   above Manage providers. 8px under the hint line, 4px (the list's own padding)
+   above the first row. */
+.model-effort-strip { padding: 6px 6px 8px; border-bottom: 1px solid var(--vscode-editorWidget-border); }
 .effort-strip-header { display: flex; align-items: center; gap: 8px; padding: 0 2px; }
 .effort-strip-header > span { color: var(--vscode-descriptionForeground); }
 .effort-reset {
@@ -4523,53 +4553,57 @@ textarea#input {
   font: inherit; cursor: pointer;
 }
 .effort-reset:hover { background: var(--vscode-toolbar-hoverBackground); }
-.effort-strip-track {
-  position: relative; height: 34px; margin: 2px 2px 0;
-  display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; align-items: center;
-  /* The knob is draggable, so the browser must not claim the gesture as a
-     scroll the moment the finger moves vertically -- on a phone it always does.
-     `none` on the track covers the stops too, but they set it themselves
-     because a press that starts ON a dot is the common case. */
-  touch-action: none; user-select: none;
-}
-/* Rail and fill share a box. Clip the gradient slice, never compress it by
-   sizing the fill's width: the same effort must always have the same colour. */
-.effort-strip-rail, .effort-strip-fill {
-  position: absolute; top: 50%; height: 5px; margin-top: -2.5px; border-radius: 3px;
-  left: calc(50% / var(--n)); right: calc(50% / var(--n));
-}
-.effort-strip-rail { background: var(--vscode-editorWidget-border); }
-.effort-strip-fill {
-  background: linear-gradient(90deg, var(--e1), var(--e2) 38%, var(--e3) 70%, var(--e4));
-  clip-path: inset(0 calc((1 - var(--f)) * 100%) 0 0);
-  transition: clip-path 160ms ease;
+.effort-strip-segments {
+  display: grid; grid-auto-flow: column; grid-auto-columns: minmax(min-content, 1fr); gap: 2px;
+  margin: 6px -2px 0; padding: 2px; border-radius: 8px;
+  border: 1px solid var(--vscode-contrastBorder, var(--vscode-editorWidget-border));
 }
 .effort-strip-stop {
-  height: 34px; padding: 0; border: 0; background: transparent; cursor: pointer;
-  display: grid; place-items: center; position: relative; z-index: 1;
-  touch-action: none;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  min-height: 44px; padding: 4px 2px; border: 0; border-radius: 6px;
+  background: transparent; color: var(--vscode-descriptionForeground); font: inherit; font-size: 11.5px;
+  white-space: nowrap; cursor: pointer;
 }
-.effort-strip-stop.current { cursor: grab; }
-.effort-strip-track:active .effort-strip-stop.current { cursor: grabbing; }
-.effort-strip-stop i {
-  width: 8px; height: 8px; border-radius: 50%; display: block;
-  background: var(--vscode-editorWidget-border);
-  transition: width 160ms ease, height 160ms ease;
+/* Seven or more levels (Muse has eight) get a wider picker: at 300px eight
+   words fit but touch ("None Minimal"). 348px adds about 6px a column, and
+   still sits inside a 400px phone viewport. */
+#gear-popover.model-picker:has(.effort-strip-segments > :nth-child(7)) { width: 348px; }
+.effort-strip-segments:has(> :nth-child(7)) { gap: 1px; }
+.effort-strip-segments:has(> :nth-child(7)) .effort-strip-stop { padding-inline: 1px; }
+.effort-strip-stop:enabled:hover { background: var(--vscode-list-hoverBackground); color: var(--vscode-foreground); }
+.model-picker button.effort-strip-stop[aria-checked="true"] {
+  background: var(--vscode-list-inactiveSelectionBackground, var(--vscode-list-hoverBackground));
+  outline: 1px solid var(--vscode-contrastActiveBorder, var(--vscode-contrastBorder, var(--vscode-textLink-foreground)));
+  outline-offset: -1px;
 }
-.effort-strip-stop.past i { background: var(--vscode-editorWidget-background); opacity: .6; }
-.effort-strip-stop.current i {
-  width: 16px; height: 16px; background: var(--knob);
-  box-shadow: 0 0 0 3px var(--vscode-editorWidget-background), 0 1px 4px rgba(0,0,0,.35);
+.effort-strip-stop[aria-checked="true"]:enabled { color: var(--vscode-foreground); }
+.model-picker button:is(.model-picker-row, .effort-strip-stop):focus-visible {
+  outline: 2px dashed var(--vscode-focusBorder); outline-offset: -2px;
 }
+.effort-bars {
+  --effort-bar-width: 3px; --effort-bar-gap: 2px;
+  display: inline-flex; align-items: flex-end; gap: var(--effort-bar-gap); height: 13px; flex: none; forced-color-adjust: none;
+}
+.effort-bars i {
+  display: block; width: var(--effort-bar-width); border-radius: 1px;
+  background: color-mix(in srgb, var(--vscode-descriptionForeground) 25%, var(--vscode-editorWidget-background));
+}
+.effort-bars .filled { background: color-mix(in srgb, var(--vscode-descriptionForeground) 50%, var(--vscode-editorWidget-background)); }
+.effort-strip-stop:where(:enabled):hover .effort-bars .filled { background: var(--vscode-descriptionForeground); }
+.effort-strip-stop[aria-checked="true"] .effort-bars .filled, #gear-btn .effort-bars .filled { background: var(--effort-bar-color); }
+:where(#gear-btn) .effort-bars { --effort-bar-width: 2.5px; --effort-bar-gap: 1.5px; height: 11px; margin-left: 2px; }
+.effort-bars:has(> :nth-child(7)) { --effort-bar-width: 2px; --effort-bar-gap: 1px; }
 .effort-strip-tip { font-size: 11.5px; color: var(--vscode-descriptionForeground); padding: 2px 4px 0; min-height: 16px; }
-@media (prefers-reduced-motion: reduce) {
-  .effort-strip-fill, .effort-strip-stop i { transition: none; }
+@media (forced-colors: active) {
+  .effort-bars i { background: GrayText; }
+  .effort-bars .filled, .effort-strip-stop:where(:enabled):hover .effort-bars .filled, #gear-btn .effort-bars .filled { background: CanvasText; }
+  .effort-strip-stop[aria-checked="true"] .effort-bars .filled { background: Highlight; }
+  .model-picker button.effort-strip-stop[aria-checked="true"] { outline: 2px solid Highlight; outline-offset: -2px; }
+  .model-picker button.model-picker-row.active { outline: 1px solid CanvasText; }
+  .model-picker button:is(.model-picker-row, .effort-strip-stop):focus-visible { outline: 2px dashed Highlight; outline-offset: -2px; }
 }
 @media (hover: none), (pointer: coarse) {
   .model-picker-list { max-height: none; }
-  .effort-strip-track, .effort-strip-stop { height: 42px; }
-  .effort-strip-stop.current i { width: 20px; height: 20px; }
-  .effort-strip-rail, .effort-strip-fill { height: 6px; margin-top: -3px; }
   .model-picker button.toolbar-popover-item { min-height: 40px; }
 }
 #mode-btn.disabled { opacity: .45; cursor: not-allowed; pointer-events: none; }

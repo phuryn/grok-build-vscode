@@ -1,112 +1,95 @@
-// Do the effort knob and the check mark actually READ in High Contrast?
-//
-// #139 was fixed by reading VS Code's own theme data — `button.background` is
-// literally black for hcDark — and that is strong evidence about the cause but
-// it is not a look at a pixel. This renders the SHIPPED media/chat.css against
-// the REAL palette values from VS Code's bundled workbench, at the old token and
-// the new one, and measures the contrast of each mark against the surface behind
-// it. Frames land in .screens/ for a person to look at.
-//
-// Honest about what it is: real CSS, real palette, real layout engine — not a
-// live VS Code window. What it cannot catch is a theme that overrides something
-// we did not model.
+// Check the shipped picker CSS with desktop palettes, VS Code contrast
+// tokens and Chromium forced colours. Captures use a small picker fixture.
 import { chromium } from "playwright";
+import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-const root = process.cwd();
-const OUT = process.env.SCREENS_DIR || ".screens";
-fs.mkdirSync(OUT, { recursive: true });
-// A stylesheet BOM is valid at byte zero, but becomes part of the :root
-// selector when embedded after other rules in a <style> element.
-const css = fs.readFileSync(path.join(root, "media", "chat.css"), "utf8").replace(/^\uFEFF/, "");
-const log = (m) => console.log(`[hc-colour] ${m}`);
-
-// Straight from vs/workbench/workbench.desktop.main.js (VS Code 1.131.0).
-// descriptionForeground is foreground at 70% alpha in every dark theme.
-const THEMES = {
-  "dark-modern": {
-    "editorWidget-background": "#252526",
-    foreground: "#CCCCCC",
-    descriptionForeground: "rgba(204,204,204,0.7)",
-    "button-background": "#0E639C",
-    "textLink-foreground": "#3794FF",
-    contrastBorder: "transparent",
-  },
-  "dark-high-contrast": {
-    "editorWidget-background": "#0C141F",
-    foreground: "#FFFFFF",
-    descriptionForeground: "rgba(255,255,255,0.7)",
-    "button-background": "#000000", // hcDark: Color.black — the whole bug
-    "textLink-foreground": "#21A6FF",
-    contrastBorder: "#6FC3DF",
-  },
-};
-
-const page = async (browser, theme, token) => {
-  const vars = Object.entries(THEMES[theme]).map(([k, v]) => `--vscode-${k}: ${v};`).join("\n");
-  // The one line under test, applied as the old token or the new one.
-  const override = token === "old"
-    ? `.effort-strip-stop.current i { background: var(--vscode-button-background); }
-       .popover-check { color: var(--vscode-button-background); }`
-    : "";
-  const p = await browser.newPage({ viewport: { width: 320, height: 150 }, deviceScaleFactor: 2 });
-  await p.setContent(`<!doctype html><html><head><style>
-    :root { ${vars} }
-    body { margin: 0; background: var(--vscode-editorWidget-background); color: var(--vscode-foreground);
-           font: 13px system-ui; padding: 14px; }
-    ${css}
-    .gear-popover { background: var(--vscode-editorWidget-background); padding: 8px; }
-    ${override}
-  </style></head><body>
-    <div class="gear-popover">
-      <div class="model-effort-strip">
-        <div class="effort-strip-track" style="--n:3;--f:.5;--knob:var(--e3)">
-          <span class="effort-strip-rail"></span><span class="effort-strip-fill"></span>
-          <button class="effort-strip-stop past"><i></i></button>
-          <button class="effort-strip-stop current"><i></i></button>
-          <button class="effort-strip-stop"><i></i></button>
-        </div>
-      </div>
-      <div class="toolbar-popover-item"><span class="gear-lead"><span>Coding</span></span><span class="popover-check">&#10003;</span></div>
-    </div>
-  </body></html>`);
-  return p;
-};
-
-// Relative luminance contrast, the WCAG ratio. 3:1 is the floor for a
-// non-text graphical object; below ~1.5 a mark is effectively invisible.
-const lum = (hex) => {
-  const n = hex.replace("#", "");
-  const [r, g, b] = [0, 2, 4].map((i) => parseInt(n.slice(i, i + 2), 16) / 255)
-    .map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
-};
-const ratio = (a, b) => {
-  const [x, y] = [lum(a), lum(b)].sort((m, n) => n - m);
-  return (x + 0.05) / (y + 0.05);
-};
+const out = process.env.SCREENS_DIR || ".screens";
+fs.mkdirSync(out, { recursive: true });
+const css = fs.readFileSync("media/chat.css", "utf8").replace(/^\uFEFF/, "");
+const desktop = fs.readFileSync("src/desktop/electron-webview.ts", "utf8");
+const palette = desktop.match(/:root \{[\s\S]*?\n\}/)[0];
+const light = desktop.match(/:root\[data-theme="light"\] \{[\s\S]*?\n\}/)[0];
+const cases = [
+  { name: "dark" },
+  { name: "light", light: true },
+  // Dark High Contrast tokens from VS Code’s bundled workbench.
+  { name: "dark-high-contrast", body: "vscode-high-contrast", tokens: `
+    --vscode-editorWidget-background: #0c141f; --vscode-foreground: #fff;
+    --vscode-descriptionForeground: rgba(255,255,255,.7); --vscode-textLink-foreground: #21a6ff;
+    --vscode-contrastBorder: #6fc3df; --vscode-list-inactiveSelectionBackground: #0c141f;` },
+  { name: "light-high-contrast", light: true, body: "vscode-high-contrast-light", tokens: `
+    --vscode-editorWidget-background: #fff; --vscode-contrastBorder: #0f4a85;
+    --vscode-list-inactiveSelectionBackground: #fff;` },
+  { name: "forced-colours", light: true, forced: true },
+];
+const levels = ["Low", "Medium", "High", "Extra high"];
+const bars = (index) => `<span class="effort-bars" aria-hidden="true" style="--effort-bar-color:color-mix(in srgb,var(--e2),var(--e3) 89.583333%)">${
+  [4, 7, 10, 13].map((height, i) => `<i class="${i <= index ? "filled" : ""}" style="height:${height}px"></i>`).join("")
+}</span>`;
+const segments = levels.map((label, i) => `<button type="button" class="effort-strip-stop" role="radio" aria-checked="${i === 2}">${bars(i)}<span>${label}</span></button>`).join("");
 
 const browser = await chromium.launch({ executablePath: process.env.COMPOSER_CHROMIUM ||
   (process.platform === "win32" && fs.existsSync("C:/Program Files/Google/Chrome/Application/chrome.exe")
     ? "C:/Program Files/Google/Chrome/Application/chrome.exe" : undefined) });
-for (const theme of Object.keys(THEMES)) {
-  for (const token of ["old", "new"]) {
-    const p = await page(browser, theme, token);
-    const file = path.join(OUT, `hc-${theme}-${token}.png`);
+try {
+  for (const fixture of cases) {
+    const p = await browser.newPage({ viewport: { width: 330, height: 290 }, deviceScaleFactor: 2,
+      colorScheme: fixture.light ? "light" : "dark", forcedColors: fixture.forced ? "active" : "none" });
+    await p.setContent(`<!doctype html><html data-theme="${fixture.light ? "light" : "dark"}"><head><style>
+      ${palette}${light}${css}
+      body { ${fixture.tokens || ""} padding: 14px; background: var(--vscode-editorWidget-background); }
+      #gear-popover { position: relative; }
+    </style></head><body class="${fixture.body || (fixture.light ? "vscode-light" : "")}">
+      <div id="gear-popover" class="toolbar-popover gear-popover model-picker">
+        <div class="model-effort-strip">
+          <div class="effort-strip-header"><span>Effort</span><button class="effort-reset">Reset</button></div>
+          <div class="effort-strip-segments" role="radiogroup" aria-label="Reasoning effort">${segments}</div>
+          <div class="effort-strip-tip">High — deeper reasoning</div>
+        </div>
+        <div class="model-picker-list" role="radiogroup" aria-label="Model">
+          <button class="toolbar-popover-item model-picker-row active" role="radio" aria-checked="true">
+            <span class="model-picker-name">Gemini 4 Neon</span><span class="popover-check">✓</span>
+          </button>
+          <button class="toolbar-popover-item model-picker-row" role="radio" aria-checked="false">Gemini 4 Carbon</button>
+        </div>
+      </div>
+      <div><button id="gear-btn" class="toolbar-btn model-chip">
+        <span class="model-chip-name">Gemini 4 Neon</span>${bars(2)}<span class="model-chip-effort">High</span>
+      </button></div>
+    </body></html>`);
+    const mark = await p.evaluate(() => {
+      const stop = document.querySelector(".effort-strip-stop[aria-checked=true]");
+      const other = document.querySelector(".effort-strip-stop[aria-checked=false]");
+      const row = document.querySelector(".model-picker-row.active");
+      const check = row.querySelector(".popover-check");
+      const bg = (el) => getComputedStyle(el).backgroundColor;
+      const outlines = [stop, row].map((el) => getComputedStyle(el).outlineStyle);
+      const bar = bg(stop.querySelector(".filled")), empty = bg(stop.querySelector("i:not(.filled)"));
+      const filled = bg(other.querySelector(".filled")), chip = bg(document.querySelector("#gear-btn .filled"));
+      const surface = bg(document.querySelector("#gear-popover"));
+      // Canvas resolves both rgb() and color-mix() results and composites washes.
+      const canvas = document.createElement("canvas").getContext("2d");
+      const luminance = (...colors) => {
+        canvas.clearRect(0, 0, 1, 1);
+        for (const color of colors) { canvas.fillStyle = color; canvas.fillRect(0, 0, 1, 1); }
+        const rgb = [...canvas.getImageData(0, 0, 1, 1).data].slice(0, 3).map((v) => v / 255)
+          .map((v) => v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+        return .2126 * rgb[0] + .7152 * rgb[1] + .0722 * rgb[2];
+      };
+      const ratio = (a, b) => (Math.max(a, b) + .05) / (Math.min(a, b) + .05);
+      const barRatio = ratio(luminance(surface, bg(stop), bar), luminance(surface, bg(stop)));
+      const checkRatio = ratio(luminance(surface, bg(row), bg(check), getComputedStyle(check).color), luminance(surface, bg(row), bg(check)));
+      return { outlines, bar, empty, filled, chip, barRatio, checkRatio };
+    });
+    const file = path.join(out, `hc-picker-${fixture.name}.png`);
     await p.screenshot({ path: file });
-    const dot = await p.$eval(".effort-strip-stop.current i", (el) =>
-      getComputedStyle(el).backgroundColor);
-    const check = await p.$eval(".popover-check", (el) => getComputedStyle(el).color);
+    assert.deepEqual(mark.outlines, ["solid", "solid"], `${fixture.name}: selection outlines`);
+    assert.equal(new Set([mark.bar, mark.empty, mark.filled]).size, 3, `${fixture.name}: distinguish all three bar tones`);
+    assert(mark.barRatio >= 3 && mark.checkRatio >= 3, `${fixture.name}: visible selected marks ${JSON.stringify(mark)}`);
+    assert.equal(mark.chip, fixture.forced ? mark.filled : mark.bar, `${fixture.name}: chip bar colour`);
+    console.log(`[hc-colour] ${fixture.name}: selected effort ${mark.barRatio.toFixed(2)}:1, model check ${mark.checkRatio.toFixed(2)}:1 → ${file}`);
     await p.close();
-    const surface = THEMES[theme]["editorWidget-background"];
-    const asHex = (rgb) => {
-      const m = rgb.match(/\d+/g);
-      return "#" + m.slice(0, 3).map((v) => Number(v).toString(16).padStart(2, "0")).join("");
-    };
-    log(`${theme.padEnd(20)} ${token.padEnd(4)} dot=${asHex(dot)} check=${asHex(check)} ` +
-      `contrast dot ${ratio(asHex(dot), surface).toFixed(2)}:1  check ${ratio(asHex(check), surface).toFixed(2)}:1  -> ${file}`);
   }
-}
-await browser.close();
-log("frames in .screens/ — look at hc-dark-high-contrast-old.png next to -new.png");
+} finally { await browser.close(); }

@@ -359,7 +359,7 @@ Click the model chip in the composer to open the model picker (it opens once the
 <details>
 <summary><strong>Reasoning effort</strong> — trade tokens for depth</summary>
 
-Click the composer model chip, then choose a stop on the effort strip. The available levels follow the selected model, and each model keeps the last level you chose for it: switch back to a model, or start a new chat on it, and it runs at that level again. On recent CLIs it applies **live** to the running session; older ones restart, with an optional *Summarize & Restart* that carries context forward.
+Click the composer model chip, choose a labelled effort level, then close the picker to apply it. The available levels follow the selected model, and each model remembers the last level you chose. On recent CLIs it applies **live** to the running session. Older ones restart, with an optional *Summarize & Restart* that carries context forward.
 
 </details>
 

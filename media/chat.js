@@ -5387,32 +5387,60 @@
     const model = currentModel();
     const levels = effortLevelsForModel();
     // Metadata is the fallback, never an invented provider default. Old hosts
-    // can omit it; the strip then says Default without claiming a scale stop.
+    // can omit it; the picker then shows the default with no segment selected.
     if (levels.includes(state.effort)) return state.effort;
     return levels.includes(model?.reasoningEffort) ? model.reasoningEffort : "";
   }
 
   function effortLabel(level) { return level === "xhigh" ? "Extra high" : capitalize(level); }
 
+  function modelOffersEffort(model) {
+    return model?.supportsReasoningEffort !== false || !!model.reasoningEfforts?.length;
+  }
+
+  function effortBars(index, count) {
+    const bars = document.createElement("span");
+    bars.className = "effort-bars";
+    bars.setAttribute("aria-hidden", "true");
+    const fraction = count > 1 ? index / (count - 1) : 1;
+    const anchors = [0, .38, .7, 1];
+    const segment = fraction <= .38 ? 0 : fraction <= .7 ? 1 : 2;
+    const mix = (fraction - anchors[segment]) / (anchors[segment + 1] - anchors[segment]) * 100;
+    bars.style.setProperty("--effort-bar-color", `color-mix(in srgb, var(--e${segment + 1}), var(--e${segment + 2}) ${mix}%)`);
+    for (let i = 0; i < count; i++) {
+      const bar = document.createElement("i");
+      bar.style.height = `${4 + 9 * i / Math.max(1, count - 1)}px`;
+      bar.classList.toggle("filled", i <= index);
+      bars.appendChild(bar);
+    }
+    return bars;
+  }
+
   function syncModelChip() {
     const unavailable = state.providersKnown && !state.providers.some((p) => p.connected && !p.needsLogin);
-    const name = unavailable ? "Models unavailable" : currentModel()
+    const current = currentModel();
+    const name = unavailable ? "Models unavailable" : current
       ? modelDisplayName(state.currentModelId, state.availableModels.filter((m) => !m.provider || m.provider === state.activeProvider))
       : "Loading…";
-    const effort = currentModel() && !unavailable ? effortLabel(effectiveEffort()) : "";
-    // Name and effort, and nothing else. The provider is already spelled out by
-    // the model name itself, and a chevron on this button and none on the mode
-    // button beside it made one of the two look like the menu (owner, 2026-09-13
-    // -- both are toolbar buttons that open a popover). Dropping the glyph also
-    // takes away the last rung's fallback, so the name now narrows instead of
-    // disappearing: an empty button is not a smaller button.
+    const level = current && !unavailable && modelOffersEffort(current) ? effectiveEffort() : "";
+    const effort = effortLabel(level);
+    // Name, effort bars and effort word, and nothing else. The provider is
+    // already spelled out by the model name itself, and a chevron on this button
+    // and none on the mode button beside it made one of the two look like the
+    // menu (owner, 2026-09-13 -- both are toolbar buttons that open a popover).
+    // The bars stay when a narrow or touch composer hides the word, so a phone
+    // still shows the level (owner chose this on 2026-11-23).
     const model = document.createElement("span");
     model.className = "model-chip-name";
     model.textContent = name;
-    const word = document.createElement("span");
-    word.className = "model-chip-effort";
-    word.textContent = effort;
-    gearBtn.replaceChildren(model, word);
+    gearBtn.replaceChildren(model);
+    if (level) {
+      const levels = effortLevelsForModel();
+      const word = document.createElement("span");
+      word.className = "model-chip-effort";
+      word.textContent = effort;
+      gearBtn.append(effortBars(levels.indexOf(level), levels.length), word);
+    }
     // Selection can lock and stay openable, because provider recovery lives
     // in there. Only a catalog still on its way closes the chip itself.
     const loading = modelChipLoading();
@@ -5450,10 +5478,9 @@
   // The PICKER previews while it is open and commits ONCE, when it closes --
   // the effort strip and the model list alike. Committing per tap was unusable
   // on an empty session: the first tap restarts the session, `busy` locks the
-  // control mid-gesture, and the host drops every later change with its own
+  // control mid-selection, and the host drops every later change with its own
   // `session.priming` guard -- so a mis-tap could not be corrected until the
-  // restart finished, which reads as "nothing happens". One commit at the end
-  // is also one restart, not one per stop a finger crosses.
+  // restart finished, which reads as "nothing happens".
   //
   // The model list joined the strip on 2026-09-13 (owner: "I wouldn't close the
   // model and effort picker when someone changes the model. Their next step may
@@ -5543,10 +5570,10 @@
 
   function renderEffortStrip() {
     const model = currentModel();
-    if (model?.supportsReasoningEffort === false && !model.reasoningEfforts?.length) return;
+    if (!modelOffersEffort(model)) return;
     const box = document.createElement("div");
     box.className = "model-effort-strip";
-    const levels = currentModel() ? effortLevelsForModel() : [];
+    const levels = model ? effortLevelsForModel() : [];
     const locked = modelSelectionLocked();
     const preview = (level) => {
       if (modelSelectionLocked()) return;
@@ -5564,7 +5591,6 @@
     header.className = "effort-strip-header";
     const label = document.createElement("span");
     label.textContent = "Effort";
-    const value = document.createElement("strong");
     const reset = document.createElement("button");
     reset.type = "button";
     reset.className = "effort-reset";
@@ -5572,16 +5598,14 @@
     reset.title = "Reset to the provider default";
     reset.disabled = locked;
     reset.onclick = (e) => { e.stopPropagation(); preview(""); };
-    header.append(label, value, reset);
-    const track = document.createElement("div");
-    track.className = "effort-strip-track";
-    track.setAttribute("role", "radiogroup");
-    track.setAttribute("aria-label", "Reasoning effort");
-    track.style.setProperty("--n", String(Math.max(1, levels.length)));
-    track.innerHTML = '<span class="effort-strip-rail"></span><span class="effort-strip-fill"></span>';
+    header.append(label, reset);
+    const group = document.createElement("div");
+    group.className = "effort-strip-segments";
+    group.setAttribute("role", "radiogroup");
+    group.setAttribute("aria-label", "Reasoning effort");
     const tip = document.createElement("div");
     tip.className = "effort-strip-tip";
-    const stops = levels.map((level, index) => {
+    const segments = levels.map((level, index) => {
       const stop = document.createElement("button");
       stop.type = "button";
       stop.className = "effort-strip-stop";
@@ -5590,78 +5614,35 @@
       stop.setAttribute("aria-label", effortLabel(level));
       stop.title = effortTooltip(level);
       stop.disabled = locked;
-      stop.innerHTML = "<i></i>";
+      const word = document.createElement("span");
+      word.textContent = level === "xhigh" && levels.length >= 5 ? "X-high" : effortLabel(level);
+      stop.append(effortBars(index, levels.length), word);
       stop.onclick = (e) => { e.stopPropagation(); preview(level); };
       stop.onkeydown = (e) => {
+        if (modelSelectionLocked()) return;
         const delta = e.key === "ArrowRight" || e.key === "ArrowDown" ? 1
           : e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1 : 0;
         const next = e.key === "Home" ? 0 : e.key === "End" ? levels.length - 1
           : delta ? (index + delta + levels.length) % levels.length : -1;
         if (next < 0) return;
         e.preventDefault(); e.stopPropagation();
-        preview(levels[next]); stops[next].focus();
+        preview(levels[next]); segments[next].focus();
       };
-      track.appendChild(stop);
+      group.appendChild(stop);
       return stop;
     });
-    // Drag the knob. The track is a grid of equal columns, so the column under
-    // the pointer IS the stop -- no rail-geometry maths that could disagree with
-    // where the dots are actually painted. Pointer capture keeps the gesture
-    // alive once the finger leaves the 42px band, which on a phone it always
-    // does, and `touch-action: none` (chat.css) stops the popover scrolling
-    // underneath it instead.
-    const levelAt = (clientX) => {
-      const r = track.getBoundingClientRect();
-      if (!levels.length || !(r.width > 0)) return null;
-      const i = Math.floor((clientX - r.left) / (r.width / levels.length));
-      return levels[Math.min(levels.length - 1, Math.max(0, i))];
-    };
-    let dragging = false;
-    track.addEventListener("pointerdown", (e) => {
-      if (modelSelectionLocked() || e.button > 0) return;
-      dragging = true;
-      try { track.setPointerCapture(e.pointerId); } catch {}
-      const level = levelAt(e.clientX);
-      if (level !== null) preview(level);
-      e.preventDefault();
-      e.stopPropagation();
-    });
-    track.addEventListener("pointermove", (e) => {
-      if (!dragging) return;
-      const level = levelAt(e.clientX);
-      if (level !== null && level !== state.effort) preview(level);
-      e.preventDefault();
-    });
-    const endDrag = (e) => {
-      if (!dragging) return;
-      dragging = false;
-      try { track.releasePointerCapture(e.pointerId); } catch {}
-    };
-    track.addEventListener("pointerup", endDrag);
-    track.addEventListener("pointercancel", endDrag);
 
     const update = () => {
       const level = effectiveEffort();
       const index = levels.indexOf(level);
-      const fraction = Math.max(0, index) / Math.max(1, levels.length - 1);
-      track.style.setProperty("--f", String(fraction));
-      // Interpolate at the same positions and in the same colour space as
-      // the strip, so a knob between palette anchors matches its ramp slice.
-      const anchors = [0, .38, .7, 1];
-      const segment = fraction <= .38 ? 0 : fraction <= .7 ? 1 : 2;
-      const mix = (fraction - anchors[segment]) / (anchors[segment + 1] - anchors[segment]) * 100;
-      track.style.setProperty("--knob", `color-mix(in srgb, var(--e${segment + 1}), var(--e${segment + 2}) ${mix}%)`);
-      stops.forEach((stop, i) => {
-        stop.classList.toggle("current", i === index);
-        stop.classList.toggle("past", i < index);
+      segments.forEach((stop, i) => {
         stop.setAttribute("aria-checked", String(i === index));
         stop.tabIndex = i === Math.max(0, index) ? 0 : -1;
       });
-      value.textContent = !currentModel() ? "Loading…" : level ? effortLabel(level) : "Default";
       tip.textContent = level ? effortTooltip(level) : "Uses the provider default";
     };
     update();
-    box.append(header, track, tip);
+    box.append(header, group, tip);
     gearPopover.appendChild(box);
   }
 

@@ -23,8 +23,17 @@ mkdirSync(out, { recursive: true });
 const chrome = process.env.COMPOSER_CHROMIUM || (process.platform === "win32"
   && existsSync("C:/Program Files/Google/Chrome/Application/chrome.exe")
   ? "C:/Program Files/Google/Chrome/Application/chrome.exe" : undefined);
+const ladders = [
+  ["agy", "Gemini 4 Neon", ["Low", "Medium", "High", "Extra high"]],
+  ["grok", "Grok 4.7", ["None", "Minimal", "Low", "Medium", "High", "X-high"]],
+  ["codex", "GPT-6 Astra", ["Low", "Medium", "High", "X-high", "Ultra"]],
+  ["claude", "Sonnet 5", ["Low", "Medium", "High", "Max"]],
+  ["deepseek", "DeepSeek V4 Flash", ["Off", "Low", "High", "Max"]],
+  ["muse", "Muse", ["None", "Minimal", "Low", "Medium", "High", "X-high", "Max", "Ultra"]],
+];
 const browser = await chromium.launch({ headless: true, ...(chrome ? { executablePath: chrome } : {}) });
 const measurements = [];
+let ladderCases = 0;
 try {
   for (const surface of ["vscode", "desktop", "phone", "remote"]) {
     const touch = surface === "phone";
@@ -80,7 +89,7 @@ try {
           const card = document.querySelector(".composer-card"), cardStyle = getComputedStyle(card);
           return { composer: box(".composer"), query: card.clientWidth - parseFloat(cardStyle.paddingLeft) - parseFloat(cardStyle.paddingRight),
             toolbar: box(".composer-toolbar"), left: box(".toolbar-left"), mode: box("#mode-btn .btn-label"),
-            name: box(".model-chip-name"), effort: box(".model-chip-effort"), chip: box("#gear-btn"),
+            name: box(".model-chip-name"), effort: box(".model-chip-effort"), chip: box("#gear-btn"), glyph: box("#gear-btn .effort-bars"),
             donutLabel: box("#donut-label"),
             buttons: ["#add-btn", "#mic-btn", "#gear-btn", "#donut", "#mode-btn", "#send-btn"].map(box),
             padding: ["#input", ".input-highlight"].map((s) => {
@@ -102,22 +111,24 @@ try {
         for (const c of m.buttons.slice(0, 4)) {
           if (c.display !== "none") assert(c.right <= m.left.right + .5, `${tag}: left-group clipping ${JSON.stringify(c)}`);
         }
-        // The donut's numbers go first — before the mode word — and come back
-        // on a wide surface, where nothing is competing for the room. Touch
-        // drops them outright, and did so before the chip existed (chat.css's
-        // coarse-pointer block): the arc alone reads fine at phone scale.
-        assert.equal(m.donutLabel.display === "none", touch || m.query <= 470, `${tag}: donut rung`);
+        // The effort word goes first on desktop, then mode, then the donut numbers.
+        assert.equal(m.donutLabel.display === "none", touch || m.query <= 224, `${tag}: donut rung`);
         assert.equal(m.mode.display === "none", m.query <= 430, `${tag}: mode rung`);
-        assert.equal(m.effort.display === "none", touch || m.query <= 300, `${tag}: effort rung`);
-        // The name never hides: it is the only thing the chip says once the
-        // effort word has gone, so the last rungs narrow it instead.
+        assert.equal(m.effort.display === "none", touch || m.query <= 470, `${tag}: effort word rung`);
+        // The chip's effort bars outlive the word, down to the last rung, where
+        // the name stub outranks them (#172).
+        assert.equal(m.glyph.display === "none", m.query <= 250, `${tag}: effort glyph rung`);
+        if (m.query > 250) {
+          assert(m.glyph.width > 0 && m.glyph.right <= m.chip.right + .5, `${tag}: effort glyph stays visible ${JSON.stringify({ glyph: m.glyph, chip: m.chip, name: m.name })}`);
+        }
         assert.notEqual(m.name.display, "none", `${tag}: name rung`);
         assert(m.name.width > 0, `${tag}: name must not silently shrink away`);
         assert(m.name.x >= m.chip.x && m.name.right <= m.chip.right + .5, `${tag}: name clipped by the chip`);
         if (surface === "vscode" && width === 334) {
-          assert(m.effort.width > 0 && m.effort.client >= m.effort.scroll, `${tag}: effort rendered and unclipped`);
-          assert(m.effort.right <= m.chip.right && m.effort.right <= m.left.right, `${tag}: effort ancestor clipping`);
           assert(m.name.width > 0 && m.name.client >= m.name.scroll, `${tag}: model rendered and unclipped`);
+        }
+        if (m.effort.display !== "none") {
+          assert(m.effort.client >= m.effort.scroll && m.effort.right <= m.chip.right + .5, `${tag}: effort word rendered and unclipped`);
         }
         if (touch) assert.equal(m.buttons[1].width, 36, `${tag}: mic sized once`);
         measurements.push({ surface, theme, width, ...m });
@@ -141,23 +152,17 @@ try {
       await page.locator(".model-picker-list").evaluate((el) => { el.scrollTop = el.scrollHeight; });
       assert.deepEqual(await pinned(), before, `${surface}: pinned effort/footer`);
       assert(before.footer[1] <= before.pop[1] && before.strip[0] >= before.pop[0], `${surface}: footer reachable`);
-      const ramp = await page.evaluate(() => {
-        const rail = document.querySelector(".effort-strip-rail").getBoundingClientRect();
-        const fill = document.querySelector(".effort-strip-fill").getBoundingClientRect();
+      const listScrolled = await page.evaluate(() => {
         const list = document.querySelector(".model-picker-list");
-        return { rail: [rail.x, rail.width], fill: [fill.x, fill.width], scrollable: list.scrollHeight > list.clientHeight, scrolled: list.scrollTop > 0 };
+        return list.scrollHeight > list.clientHeight && list.scrollTop > 0;
       });
-      assert.deepEqual(ramp.rail, ramp.fill, `${surface}: gradient is clipped, never resized`);
-      assert(ramp.scrollable && ramp.scrolled, `${surface}: list really scrolls`);
+      assert(listScrolled, `${surface}: list really scrolls`);
       await page.evaluate(() => { document.querySelector(".model-chip-name").textContent = "Sonnet 5"; });
       const clip = await page.evaluate(() => {
         const c = document.querySelector(".composer").getBoundingClientRect(), p = document.querySelector("#gear-popover").getBoundingClientRect();
         return { x: Math.max(0, c.x), y: Math.max(0, p.y - 8), width: c.width, height: c.bottom - Math.max(0, p.y - 8) };
       });
       await page.screenshot({ path: path.join(out, `${surface}-${theme}.png`), clip });
-      await page.emulateMedia({ reducedMotion: "reduce" });
-      assert.deepEqual(await page.evaluate(() => [".effort-strip-fill", ".effort-strip-stop i"].map((s) => getComputedStyle(document.querySelector(s)).transitionDuration)), ["0s", "0s"]);
-      await page.emulateMedia({ reducedMotion: "no-preference" });
       for (const purpose of ["knowledge", "coding"]) {
         await page.evaluate((purpose) => {
           window.dispatchEvent(new MessageEvent("message", { data: { type: "initialState", appPurpose: purpose } }));
@@ -178,10 +183,47 @@ try {
         assert.notEqual(contextBar.button, "rgba(0, 0, 0, 0)");
         await page.locator("#donut").click();
       }
+      if (touch) await page.setViewportSize({ width: 400, height: 850 });
+      await setWidth(touch ? 400 : 640);
+      for (const [provider, name, words] of ladders) {
+        const levels = words.map((word) => word === "X-high" || word === "Extra high" ? "xhigh" : word.toLowerCase());
+        await page.evaluate(({ provider, name, levels }) => {
+          const dispatch = (data) => window.dispatchEvent(new MessageEvent("message", { data }));
+          dispatch({ type: "providerState", providers: [{ id: provider, connected: true }] });
+          dispatch({ type: "session", provider, currentModelId: "picker-fixture", models: [{
+            modelId: "picker-fixture", name, provider, reasoningEffort: "high", reasoningEfforts: levels,
+          }] });
+          dispatch({ type: "setBusy", value: false });
+        }, { provider, name, levels });
+        const tag = `${surface}/${theme}/${provider}`;
+        const nameClipping = await page.evaluate(() => {
+          const name = document.querySelector(".model-chip-name"), glyph = document.querySelector("#gear-btn .effort-bars");
+          const withGlyph = name.scrollWidth > name.clientWidth;
+          glyph.style.display = "none";
+          const withoutGlyph = name.scrollWidth > name.clientWidth;
+          glyph.style.removeProperty("display");
+          return { withGlyph, withoutGlyph };
+        });
+        if (!touch) assert.equal(nameClipping.withGlyph, nameClipping.withoutGlyph, `${tag}: glyph brings forward name truncation`);
+        await page.locator("#gear-btn").click();
+        const stops = await page.locator(".effort-strip-stop").evaluateAll((buttons) => buttons.map((button) => {
+          const box = button.getBoundingClientRect(), group = button.parentElement.getBoundingClientRect();
+          const label = button.lastElementChild, text = label.getBoundingClientRect();
+          return { word: label.innerText, top: box.top, height: box.height,
+            fits: text.left >= box.left && text.right <= box.right && box.right <= group.right,
+            glyphFits: button.scrollWidth <= button.clientWidth };
+        }));
+        assert.deepEqual(stops.map(({ word }) => word), words, tag);
+        assert(stops.every((s) => s.top === stops[0].top && s.height >= 44 && s.fits && s.glyphFits),
+          `${tag}: segment layout ${JSON.stringify(stops)}`);
+        ladderCases++;
+        await page.locator("#gear-btn").click();
+      }
+      if (touch) await page.setViewportSize({ width: 1400, height: 850 });
       assert.deepEqual(errors, [], `${surface}: renderer errors`);
     }
     await context.close();
   }
   writeFileSync(path.join(out, "measurements.json"), JSON.stringify(measurements, null, 2));
-  console.log(`Composer layout: ${measurements.length} surface/theme/width cases passed, including 334px unclipped text, touch sizing, collapse order and pinned picker.`);
+  console.log(`Composer layout: ${measurements.length} surface/theme/width cases and ${ladderCases} effort ladder cases passed, including 334px unclipped text, 400px phone segment labels, touch sizing, collapse order and pinned picker.`);
 } finally { await browser.close(); }

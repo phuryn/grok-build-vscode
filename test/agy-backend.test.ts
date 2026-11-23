@@ -215,6 +215,30 @@ describe("Antigravity updates", () => {
     const result = normalizeAgyUpdate({ sessionUpdate: "usage_update", used: 13224, size: 1048576 }, undefined, new AgyToolCallMerger());
     expect(result).toMatchObject({ contextUsed: 13224, contextWindow: 1048576 });
   });
+
+  // agy 1.5.15, measured 2026-11-23: the second one-word turn of a session. The
+  // usage is top-level ACP `usage` with no `_meta`, and inputTokens excludes the
+  // cache read, so the usage rows (Input, cache read, Output) had nothing to show.
+  it("maps the prompt result's top-level usage onto the usage rows", () => {
+    const usage = { inputTokens: 2117, outputTokens: 1, cachedReadTokens: 6717, cachedWriteTokens: 0, thoughtTokens: 0, totalTokens: 8835 };
+    const result = new AgyBackend().normalizePromptResult({ stopReason: "end_turn", usage });
+    expect(result.stopReason).toBe("end_turn");
+    expect(result._meta).toMatchObject({
+      inputTokens: 2117,
+      outputTokens: 1,
+      cachedReadTokens: 6717,
+      cachedWriteTokens: 0,
+      reasoningTokens: 0,
+      // Occupancy, not the billed sum: input + cache read + cache write.
+      totalTokens: 8834,
+      usage: { inputTokens: 2117, outputTokens: 1, cachedReadTokens: 6717, cachedWriteTokens: 0, reasoningTokens: 0, totalTokens: 8835 },
+    });
+  });
+
+  it("leaves a prompt result without usage alone", () => {
+    const plain = { stopReason: "cancelled" };
+    expect(new AgyBackend().normalizePromptResult(plain)).toBe(plain);
+  });
 });
 
 describe("Antigravity history", () => {

@@ -13,7 +13,7 @@ import type {
   BackendSpawnSpec,
   BackendUpdate,
 } from "./acp-backend";
-import { adapterContextOccupancy } from "./acp-dispatch";
+import { normalizeAdapterPromptResult } from "./acp-dispatch";
 import { compactCeiling } from "./auto-compact";
 import { resolveCodexHome } from "./codex-cli-locator";
 
@@ -114,31 +114,10 @@ function finiteNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
+/** Codex sends ACP's `PromptResponse.usage`; the shared mapper lives in acp-dispatch
+ *  because Antigravity sends the same shape. */
 export function normalizeCodexPromptResult(result: any): any {
-  const usage = result?.usage;
-  if (!usage || typeof usage !== "object") return result;
-  const normalizedUsage = {
-    inputTokens: finiteNumber(usage.inputTokens),
-    outputTokens: finiteNumber(usage.outputTokens),
-    totalTokens: finiteNumber(usage.totalTokens),
-    cachedReadTokens: finiteNumber(usage.cachedReadTokens),
-    cachedWriteTokens: finiteNumber(usage.cachedWriteTokens),
-    reasoningTokens: finiteNumber(usage.thoughtTokens),
-  };
-  return {
-    ...result,
-    _meta: {
-      ...(result?._meta ?? {}),
-      // Donut occupancy, not the billed sum the adapter puts in usage.totalTokens.
-      totalTokens: adapterContextOccupancy(normalizedUsage) ?? finiteNumber(usage.totalTokens),
-      inputTokens: finiteNumber(usage.inputTokens),
-      outputTokens: finiteNumber(usage.outputTokens),
-      cachedReadTokens: finiteNumber(usage.cachedReadTokens),
-      cachedWriteTokens: finiteNumber(usage.cachedWriteTokens),
-      reasoningTokens: finiteNumber(usage.thoughtTokens),
-      usage: normalizedUsage,
-    },
-  };
+  return normalizeAdapterPromptResult(result);
 }
 
 function normalizeDiffContent(content: unknown): unknown {

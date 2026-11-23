@@ -5,6 +5,7 @@ import { discoverAgySkills, rewriteAgyPrompt } from "./agy-skills";
 import type { AgyUsageMeter } from "./agy-usage";
 import type { PromptContentBlock, SlashCommand } from "./acp";
 import { isCliFile } from "./cli-path";
+import { normalizeAdapterPromptResult } from "./acp-dispatch";
 import type {
   AcpBackend,
   BackendConfigState,
@@ -709,7 +710,8 @@ export class AgyBackend implements AcpBackend<"agy"> {
     this.nativeApprovalModes = this.pickerModes.includes("agent");
     return normalizeAgySessionResponse(response);
   }
-  normalizePromptResult(result: any): any { return result; }
+  // Usage arrives as ACP's top-level `usage`, the shape Codex sends (cache reads included).
+  normalizePromptResult(result: any): any { return normalizeAdapterPromptResult(result); }
   normalizeUpdate(update: any, meta: any): BackendUpdate {
     if (update?.sessionUpdate === "current_mode_update") {
       const currentModeId = this.pickerMode(update.currentModeId);

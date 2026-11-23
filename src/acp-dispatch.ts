@@ -549,6 +549,42 @@ export function adapterContextOccupancy(usage: {
   return billed;
 }
 
+/**
+ * An adapter's `PromptResponse.usage` (ACP's top-level field) mapped onto the
+ * `_meta` the host already reads for grok: the usage rows' breakdown, and the
+ * donut's occupancy rather than the billed sum in `usage.totalTokens`. Codex and
+ * Antigravity send this shape. Antigravity 1.5.15, measured 2026-11-23: a second
+ * one-word turn reported inputTokens 2117, cachedReadTokens 6717,
+ * cachedWriteTokens 0, thoughtTokens 0, totalTokens 8835 -- input excludes the
+ * cache read, as with Claude.
+ */
+export function normalizeAdapterPromptResult(result: any): any {
+  const usage = result?.usage;
+  if (!usage || typeof usage !== "object") return result;
+  const num = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : undefined);
+  const normalizedUsage = {
+    inputTokens: num(usage.inputTokens),
+    outputTokens: num(usage.outputTokens),
+    totalTokens: num(usage.totalTokens),
+    cachedReadTokens: num(usage.cachedReadTokens),
+    cachedWriteTokens: num(usage.cachedWriteTokens),
+    reasoningTokens: num(usage.thoughtTokens),
+  };
+  return {
+    ...result,
+    _meta: {
+      ...(result?._meta ?? {}),
+      totalTokens: adapterContextOccupancy(normalizedUsage) ?? num(usage.totalTokens),
+      inputTokens: num(usage.inputTokens),
+      outputTokens: num(usage.outputTokens),
+      cachedReadTokens: num(usage.cachedReadTokens),
+      cachedWriteTokens: num(usage.cachedWriteTokens),
+      reasoningTokens: num(usage.thoughtTokens),
+      usage: normalizedUsage,
+    },
+  };
+}
+
 function positiveTokens(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
 }
