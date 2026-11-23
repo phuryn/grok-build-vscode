@@ -6,7 +6,7 @@ import { INTERNAL_PROVIDERS, supportsCompaction } from "../src/acp-backend";
 const description = "Your content, including inter-session messages, may be used for product improvement.";
 const reason = "This provider is disabled by the host administrator";
 
-it.each([false, true])("renders Muse's advertised effort tiers and commits the selected effort (remote=%s)", remote => {
+it.each([false, true])("renders Muse's advertised effort tiers without Ultra and commits the selected effort (remote=%s)", remote => {
   const h = bootWebview({ remote });
   const levels = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
   dispatch(h.window, { type: "providerState", providers: [{ id: "muse", connected: true }] });
@@ -15,12 +15,14 @@ it.each([false, true])("renders Muse's advertised effort tiers and commits the s
       reasoningEfforts: levels, reasoningEffort: "medium" }] });
   click(h.window, h.doc.getElementById("gear-btn"));
   expect(h.doc.querySelector(".model-effort-strip")).not.toBeNull();
-  expect([...h.doc.querySelectorAll(".effort-strip-stop")].map(el => el.getAttribute("data-effort"))).toEqual(levels);
-  click(h.window, h.doc.querySelector('[data-effort="ultra"]'));
-  expect(h.doc.querySelector(".model-chip-effort")?.textContent).toBe("Ultra");
+  // Ultra is Max plus automatic delegation, not a reasoning level: no model offers it.
+  expect([...h.doc.querySelectorAll(".effort-strip-stop")].map(el => el.getAttribute("data-effort"))).toEqual(levels.slice(0, -1));
+  expect(h.doc.querySelector('[data-effort="ultra"]')).toBeNull();
+  click(h.window, h.doc.querySelector('[data-effort="max"]'));
+  expect(h.doc.querySelector(".model-chip-effort")?.textContent).toBe("Max");
   expect(h.posted.filter(m => m.type === "setEffort")).toEqual([]);
   click(h.window, h.doc.getElementById("gear-btn"));
-  expect(h.posted.filter(m => m.type === "setEffort")).toEqual([{ type: "setEffort", level: "ultra" }]);
+  expect(h.posted.filter(m => m.type === "setEffort")).toEqual([{ type: "setEffort", level: "max" }]);
 });
 
 it.each(INTERNAL_PROVIDERS)("omits the effort strip when %s explicitly advertises no effort capability or tiers", provider => {

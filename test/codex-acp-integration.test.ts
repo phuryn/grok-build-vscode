@@ -53,7 +53,8 @@ describe("Codex ACP integration (real subprocess, fake adapter)", () => {
     expect(client.currentModelId).toBe("gpt-5.6-sol");
     expect(client.currentReasoningEffort).toBe("high");
     expect(client.availableModels).toHaveLength(2);
-    expect(client.availableModels[0].reasoningEfforts).toEqual(["low", "high", "ultra"]);
+    // Codex advertises `ultra` (Max plus automatic delegation); AFK Pilot offers no model it.
+    expect(client.availableModels[0].reasoningEfforts).toEqual(["low", "high"]);
 
     await client.setModel("gpt-5.6-terra");
     expect(client.currentModelId).toBe("gpt-5.6-terra");
@@ -72,7 +73,9 @@ describe("Codex ACP integration (real subprocess, fake adapter)", () => {
 
   it.each([
     // Advertised by the current model: publish it, because the RPC below applies it.
-    ["ultra", "ultra"],
+    ["low", "low"],
+    // Advertised but never offered: a remembered `ultra` is not applied.
+    ["ultra", "high"],
     // Not on this model's menu: the RPC below is refused, so the CLI's own value
     // is the honest one to publish.
     ["medium", "high"],
@@ -99,7 +102,7 @@ describe("Codex ACP integration (real subprocess, fake adapter)", () => {
       configured.once("session", () => { catalog = configured.availableModels.map((m) => ({ ...m })); });
       await configured.newSession();
       const current = catalog.find((m) => m.modelId === configured.currentModelId);
-      expect(current?.reasoningEfforts).toEqual(["low", "high", "ultra"]);
+      expect(current?.reasoningEfforts).toEqual(["low", "high"]);
       expect(current?.reasoningEffort).toBe(announced);
     } finally {
       configured.removeAllListeners();

@@ -556,9 +556,13 @@
   // model advertises no menu (`max` is not a real grok level — see #3/#4).
   const EFFORT_LEVELS = ["none", "minimal", "low", "medium", "high", "xhigh"];
   // Sort order for ADVERTISED levels, wider than the fallback ladder: DeepSeek
-  // offers off/low/high/max and Codex max/ultra, which otherwise trailed the
-  // known ids in arrival order ("Low, High, Off, Max").
-  const EFFORT_ORDER = ["off", "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
+  // offers off/low/high/max, which otherwise trailed the known ids in arrival
+  // order ("Low, High, Off, Max").
+  const EFFORT_ORDER = ["off", "none", "minimal", "low", "medium", "high", "xhigh", "max"];
+  // Codex and Muse advertise `ultra`: Max plus automatic task delegation, not a
+  // reasoning level, so no model offers it. The host drops it too; this covers
+  // an older host behind the relay.
+  const HIDDEN_EFFORTS = new Set(["ultra"]);
   const GROK_ACTIVITY_VERB = "Grokking";
   const THINKING_ACTIVITY_VERB = "Thinking";
   const CLAUDE_ACTIVITY_VERB = "Clauding";
@@ -597,7 +601,7 @@
   function effortLevelsForModel() {
     const m = (state.availableModels || []).find((x) => x && x.modelId === state.currentModelId && (!x.provider || x.provider === state.activeProvider));
     const adv = m && Array.isArray(m.reasoningEfforts)
-      ? m.reasoningEfforts.filter((v) => typeof v === "string" && v)
+      ? m.reasoningEfforts.filter((v) => typeof v === "string" && v && !HIDDEN_EFFORTS.has(v))
       : [];
     if (!adv.length) return EFFORT_LEVELS.slice();
     const known = EFFORT_ORDER.filter((id) => adv.includes(id));

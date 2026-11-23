@@ -26,10 +26,10 @@ const chrome = process.env.COMPOSER_CHROMIUM || (process.platform === "win32"
 const ladders = [
   ["agy", "Gemini 4 Neon", ["Low", "Medium", "High", "Extra high"]],
   ["grok", "Grok 4.7", ["None", "Minimal", "Low", "Medium", "High", "X-high"]],
-  ["codex", "GPT-6 Astra", ["Low", "Medium", "High", "X-high", "Ultra"]],
+  ["codex", "GPT-6 Astra", ["Low", "Medium", "High", "X-high", "Max"]],
   ["claude", "Sonnet 5", ["Low", "Medium", "High", "Max"]],
   ["deepseek", "DeepSeek V4 Flash", ["Off", "Low", "High", "Max"]],
-  ["muse", "Muse", ["None", "Minimal", "Low", "Medium", "High", "X-high", "Max", "Ultra"]],
+  ["muse", "Muse", ["None", "Minimal", "Low", "Medium", "High", "X-high", "Max"]],
 ];
 const browser = await chromium.launch({ headless: true, ...(chrome ? { executablePath: chrome } : {}) });
 const measurements = [];

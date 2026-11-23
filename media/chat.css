@@ -4564,7 +4564,7 @@ textarea#input {
   background: transparent; color: var(--vscode-descriptionForeground); font: inherit; font-size: 11.5px;
   white-space: nowrap; cursor: pointer;
 }
-/* Seven or more levels (Muse has eight) get a wider picker: at 300px eight
+/* Seven or more levels (Muse has seven) get a wider picker: at 300px Muse's
    words fit but touch ("None Minimal"). 348px adds about 6px a column, and
    still sits inside a 400px phone viewport. */
 #gear-popover.model-picker:has(.effort-strip-segments > :nth-child(7)) { width: 348px; }

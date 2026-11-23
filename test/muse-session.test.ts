@@ -1011,14 +1011,15 @@ describe("Muse reasoning effort", () => {
       throw new Error(`Unexpected request: ${method}`);
     });
     await host.newSession();
-    expect(host.availableModels[0].reasoningEfforts).toEqual(levels);
+    // Muse advertises `ultra` (Max plus automatic delegation); AFK Pilot offers no model it.
+    expect(host.availableModels[0].reasoningEfforts).toEqual(levels.filter(level => level !== "ultra"));
     expect(host.currentModelSupportsEffort()).toBe(true);
     s.command.mockResolvedValueOnce({ status: "accepted" } as any);
-    await expect(host.setReasoningEffort("ultra")).resolves.toBe(true);
-    expect(host.currentReasoningEffort).toBe("ultra");
+    await expect(host.setReasoningEffort("max")).resolves.toBe(true);
+    expect(host.currentReasoningEffort).toBe("max");
     s.command.mockResolvedValueOnce({ status: "rejected" } as any);
-    await expect(host.setReasoningEffort("max")).rejects.toThrow('Muse reasoning effort "max" was rejected');
-    expect(host.currentReasoningEffort).toBe("ultra");
+    await expect(host.setReasoningEffort("xhigh")).rejects.toThrow('Muse reasoning effort "xhigh" was rejected');
+    expect(host.currentReasoningEffort).toBe("max");
   });
 });
 

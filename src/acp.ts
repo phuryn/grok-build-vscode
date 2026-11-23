@@ -162,6 +162,18 @@ export interface ModelInfo {
   reasoningEfforts?: string[];
 }
 
+/** Levels an agent advertises that AFK Pilot does not offer. Codex and Muse list
+ *  `ultra` ("Maximum reasoning with automatic task delegation"): Max plus a
+ *  delegation behaviour rather than a reasoning level, so no model shows it, a
+ *  remembered `ultra` is never applied, and a model switch never carries it. */
+const HIDDEN_EFFORTS = new Set(["ultra"]);
+
+/** A model's `_meta.reasoningEfforts` as the values the picker may offer. */
+export function offeredEffortValues(list: unknown): string[] | undefined {
+  if (!Array.isArray(list)) return undefined;
+  return list.map((e: any) => e?.value).filter((v: unknown): v is string => typeof v === "string" && !HIDDEN_EFFORTS.has(v));
+}
+
 export interface SlashCommand {
   name: string;
   description?: string;
@@ -667,9 +679,7 @@ export class AcpClient extends EventEmitter {
       contextWindowSizes: this.provider === "grok" ? contextWindowSizes(m._meta?.contextWindows, m._meta?.totalContextTokens) : undefined,
       supportsReasoningEffort: m._meta?.supportsReasoningEffort === true,
       reasoningEffort: typeof m._meta?.reasoningEffort === "string" ? m._meta.reasoningEffort : undefined,
-      reasoningEfforts: Array.isArray(m._meta?.reasoningEfforts)
-        ? m._meta.reasoningEfforts.map((e: any) => e?.value).filter((v: unknown): v is string => typeof v === "string")
-        : undefined,
+      reasoningEfforts: offeredEffortValues(m._meta?.reasoningEfforts),
     }));
     this.currentModelId = resolveModelId(res.models?.currentModelId, this.availableModels);
     // The active session effort is authoritative from the advertised current
@@ -782,9 +792,7 @@ export class AcpClient extends EventEmitter {
       contextWindowSizes: this.provider === "grok" ? contextWindowSizes(m._meta?.contextWindows, m._meta?.totalContextTokens) : undefined,
         supportsReasoningEffort: m._meta?.supportsReasoningEffort === true,
         reasoningEffort: typeof m._meta?.reasoningEffort === "string" ? m._meta.reasoningEffort : undefined,
-      reasoningEfforts: Array.isArray(m._meta?.reasoningEfforts)
-        ? m._meta.reasoningEfforts.map((e: any) => e?.value).filter((v: unknown): v is string => typeof v === "string")
-        : undefined,
+      reasoningEfforts: offeredEffortValues(m._meta?.reasoningEfforts),
       }));
     }
     this.currentModelId =
@@ -2009,7 +2017,7 @@ export class AcpClient extends EventEmitter {
           totalContextTokens: this.availableModels.find(old => old.modelId === model.modelId)?.totalContextTokens,
           supportsReasoningEffort: model._meta?.supportsReasoningEffort === true,
           reasoningEffort: model._meta?.reasoningEffort,
-          reasoningEfforts: model._meta?.reasoningEfforts?.map((effort: any) => effort.value),
+          reasoningEfforts: offeredEffortValues(model._meta?.reasoningEfforts),
         }));
       }
       const state = this.backend.configState({ configOptions: r.configOptions }, {
