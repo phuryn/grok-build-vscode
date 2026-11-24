@@ -734,6 +734,9 @@ export interface Host {
   // ── Env metadata ───────────────────────────────────────────────────────
   readonly appName: string;
   readonly language: string;
+  /** Panel text in the display language, when the host ships that language.
+   *  Absent means English: hosts without a bundle leave it out. */
+  readonly webviewStrings?: Readonly<Record<string, string>>;
   readonly isTelemetryEnabled: boolean;
 
   // ── Host-kind capabilities (declared at the ownership boundary) ────────

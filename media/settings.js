@@ -8,6 +8,15 @@
  * through the existing set* / open* messages so the sidebar cannot desync.
  */
 (function (root) {
+  // Panel text in the display language (see webview-helpers.js). The fallback
+  // covers a page that loads this file alone: English, with its arguments.
+  const { l10n, l10nSource } = root.GrokWebviewHelpers || {
+    l10n: (key, ...args) => args.length
+      ? key.replace(/\{(\d+)\}/g, (match, index) => (index in args ? String(args[index]) : match))
+      : key,
+    l10nSource: (text) => text,
+  };
+
   const CATEGORIES = [
     { id: "general", title: "General", restore: true },
     { id: "voice", title: "Voice", restore: true },

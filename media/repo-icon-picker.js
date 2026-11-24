@@ -16,6 +16,7 @@
 (function (root) {
   "use strict";
 
+  const { l10n } = root.GrokWebviewHelpers;
   const ALL = "all";
 
   /**

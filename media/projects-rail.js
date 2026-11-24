@@ -6,6 +6,7 @@
 (function () {
   "use strict";
 
+  const { l10n } = window.GrokWebviewHelpers;
   const vscode = acquireVsCodeApi();
 
   const ICON = {

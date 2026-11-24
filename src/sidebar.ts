@@ -1,6 +1,7 @@
 import { decideDefaultModeCohort } from "./default-mode-cohort";
 import { autoCompactNotice, DEFAULT_AUTO_COMPACT_AT, isAutoCompactPreset, type AutoCompactSettings, type ReportedAutoCompaction } from "./auto-compact";
 import { workspaceGrokHome } from "./workspace-grok-home";
+import { webviewHtmlText, webviewLang, webviewStringsScript } from "./webview-l10n";
 import { parseContextWindowSize, type ContextWindowSelection } from "./context-selection";
 import { remoteHandoffUrl, remoteHandoffQr, type HandoffSession } from "./remote-handoff";
 import type { RemoteHandoffSource } from "./protocol";
@@ -24659,8 +24660,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     const nonce = getNonce();
     const mediaUri = (file: string) =>
       webview.asWebviewUri(Uri.joinPath(this.context.extensionUri, "media", file));
+    const strings = this.host.webviewStrings;
+    const l10n = webviewHtmlText(strings);
     return `<!DOCTYPE html>
-<html lang="en">
+<html lang="${webviewLang(strings, this.host.language)}">
 <head>
 <meta charset="UTF-8" />
 <meta http-equiv="Content-Security-Policy"
@@ -24676,15 +24679,16 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
 <link rel="stylesheet" href="${mediaUri("projects-rail.css")}" />
 </head>
 <body>
-  <aside id="projects-rail" class="projects-rail" aria-label="Projects">
+  <aside id="projects-rail" class="projects-rail" aria-label="${l10n("Projects")}">
     <div class="rail-search-wrap">
       <span class="rail-search-icon" aria-hidden="true">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
       </span>
-      <input id="rail-search" class="rail-search" type="search" placeholder="Filter projects…" autocomplete="off" spellcheck="false" aria-label="Filter projects" />
+      <input id="rail-search" class="rail-search" type="search" placeholder="${l10n("Filter projects…")}" autocomplete="off" spellcheck="false" aria-label="${l10n("Filter projects")}" />
     </div>
     <div id="rail-scroll" class="rail-scroll"></div>
   </aside>
+  ${webviewStringsScript(strings, nonce)}
   <script nonce="${nonce}" src="${mediaUri("webview-helpers.js")}"></script>
   <!-- Project marks. Data, then picker, then rail: each reads the previous
        one's global at load time, and a missing one degrades to the folder. -->
@@ -24765,6 +24769,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     const mediaUri = (file: string) =>
       webview.asWebviewUri(Uri.joinPath(this.context.extensionUri, "media", file));
     const cfg = this.host.getConfiguration("grok");
+    const strings = this.host.webviewStrings;
     const boot = {
       snapshot: {
         appPurpose: this.appPurpose() || DEFAULT_APP_PURPOSE,
@@ -24838,7 +24843,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     };
     const bootJson = JSON.stringify(boot).replace(/</g, "\\u003c");
     return `<!DOCTYPE html>
-<html lang="en" class="settings-page">
+<html lang="${webviewLang(strings, this.host.language)}" class="settings-page">
 <head>
 <meta charset="UTF-8" />
 <meta http-equiv="Content-Security-Policy"
@@ -24856,6 +24861,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
 <body class="settings-page">
   <div id="settings-root"></div>
   <script nonce="${nonce}">window.__grokSettingsBoot = ${bootJson};</script>
+  ${webviewStringsScript(strings, nonce)}
   <script nonce="${nonce}" src="${mediaUri("webview-helpers.js")}"></script>
   <script nonce="${nonce}" src="${mediaUri("settings.js")}"></script>
   <script nonce="${nonce}">
@@ -24939,6 +24945,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
 
   private getHtml(webview: HostWebview): string {
     const nonce = getNonce();
+    const strings = this.host.webviewStrings;
+    const l10n = webviewHtmlText(strings);
     // Join under extensionUri so remote hosts keep vscode-remote:// (Uri.file
     // on extensionPath.fsPath would point the webview at a missing local path).
     const mediaUri = (file: string) =>
@@ -25011,7 +25019,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       : "";
 
     return `<!DOCTYPE html>
-<html lang="en">
+<html lang="${webviewLang(strings, this.host.language)}">
 <head>
 <meta charset="UTF-8" />
 <meta http-equiv="Content-Security-Policy"
@@ -25049,10 +25057,10 @@ ${openMain}
       <span id="session-name-repo" class="session-name-repo" hidden></span>
       <button id="session-name-edit" class="session-name-edit icon-btn" type="button" hidden></button>
     </div>
-    <button id="repo-btn" class="repo-chip" type="button" title="Choose repository"></button>
-    <button id="remote-btn" class="icon-btn remote-btn" title="Remote control" hidden></button>
-    <button id="history-btn" class="icon-btn" title="Session history"></button>
-    <button id="new-btn" class="icon-btn" title="New session"></button>
+    <button id="repo-btn" class="repo-chip" type="button" title="${l10n("Choose repository")}"></button>
+    <button id="remote-btn" class="icon-btn remote-btn" title="${l10n("Remote control")}" hidden></button>
+    <button id="history-btn" class="icon-btn" title="${l10n("Session history")}"></button>
+    <button id="new-btn" class="icon-btn" title="${l10n("New session")}"></button>
     ${this.host.canSwitchWorkspaceFolder ? `<div id="session-head-actions"></div>` : ""}
     ${this.host.canSwitchWorkspaceFolder ? "" : `<div id="vscode-session-actions"></div>`}
     <div id="repo-popover" class="toolbar-popover repo-popover" hidden></div>
@@ -25069,19 +25077,19 @@ ${fileShellOpen}
   </main>
 
   <footer class="composer">
-    <button id="scroll-bottom-btn" class="scroll-bottom-btn" type="button" title="Scroll to bottom"></button>
+    <button id="scroll-bottom-btn" class="scroll-bottom-btn" type="button" title="${l10n("Scroll to bottom")}"></button>
     <div class="composer-card">
       <div id="attachments" class="attachments"></div>
       <div class="composer-input-wrap">
         <div id="input-highlight" class="input-highlight" aria-hidden="true" dir="auto"></div>
-        <textarea id="input" placeholder="Ask Grok..." rows="2" dir="auto"></textarea>
+        <textarea id="input" placeholder="${l10n("Ask Grok...")}" rows="2" dir="auto"></textarea>
       </div>
       <div class="composer-toolbar">
         <div class="toolbar-left">
-          <button id="add-btn" class="icon-btn" title="Add context"></button>
-          <button id="mic-btn" class="icon-btn mic-btn" title="Voice control"></button>
-          <button id="gear-btn" class="toolbar-btn model-chip" title="Model and effort"></button>
-          <div class="context-donut" id="donut" title="Context usage">
+          <button id="add-btn" class="icon-btn" title="${l10n("Add context")}"></button>
+          <button id="mic-btn" class="icon-btn mic-btn" title="${l10n("Voice control")}"></button>
+          <button id="gear-btn" class="toolbar-btn model-chip" title="${l10n("Model and effort")}"></button>
+          <div class="context-donut" id="donut" title="${l10n("Context usage")}">
             <svg width="16" height="16" viewBox="0 0 16 16">
               <circle cx="8" cy="8" r="6" fill="none" stroke="var(--vscode-editorWidget-border,#444)" stroke-width="3"/>
               <circle id="donut-arc" cx="8" cy="8" r="6" fill="none" stroke="var(--vscode-charts-green,#4ec9b0)" stroke-width="3" stroke-dasharray="0 999" transform="rotate(-90 8 8)"/>
@@ -25091,7 +25099,7 @@ ${fileShellOpen}
           <div id="chips"></div>
         </div>
         <div class="toolbar-right">
-          <button id="mode-btn" class="toolbar-btn" title="Pick mode"></button>
+          <button id="mode-btn" class="toolbar-btn" title="${l10n("Pick mode")}"></button>
           <button id="send-btn" class="send"></button>
         </div>
       </div>
@@ -25124,6 +25132,7 @@ ${closeMain}
       startup: { typeset: false }
     };
   </script>
+  ${webviewStringsScript(strings, nonce)}
   <script nonce="${nonce}" src="${mediaUri("mathjax/tex-svg-full.js")}"></script>
   <script nonce="${nonce}" src="${mediaUri("mermaid/mermaid.min.js")}"></script>
   <script nonce="${nonce}" src="${mediaUri("webview-helpers.js")}"></script>

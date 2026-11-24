@@ -1,4 +1,47 @@
 (function (root) {
+  // Panel text in the editor's display language. The English sentence is the
+  // key, `{0}` marks an argument. The host injects the bundle before any script
+  // (src/webview-l10n.ts); without one, or for a key it lacks, the English
+  // shows. Desktop, phones and browsers have no bundle. Only text a person
+  // reads goes through here: never a value that is compared, stored or sent.
+  function l10n(key, ...args) {
+    const strings = root.__grokL10n;
+    const value = strings && Object.hasOwn(strings, key) ? strings[key] : "";
+    const text = typeof value === "string" && value ? value : key;
+    return args.length
+      ? text.replace(/\{(\d+)\}/g, (match, index) => (index in args ? String(args[index]) : match))
+      : text;
+  }
+  // Names a key for a later lookup. l10n:extract collects both calls.
+  const l10nKey = (key) => key;
+  // The English behind a translated text, so search finds it by either word.
+  let l10nSources = null;
+  function l10nSource(text) {
+    const strings = root.__grokL10n;
+    if (!strings) return text;
+    if (!l10nSources) l10nSources = new Map(Object.entries(strings).map(([key, value]) => [value, key]));
+    return l10nSources.get(text) || text;
+  }
+  // The host writes these dialogs once, in English, for every surface holding
+  // the session, so the page that draws one translates it. Line by line: the
+  // quoted prompt in the middle is the user's own and matches nothing here.
+  const HOST_DIALOG_LINES = new Set([
+    l10nKey("Edit this message?"),
+    l10nKey("Edit your last message?"),
+    l10nKey("It will be removed from the conversation and put back in the composer so you can change it and send again."),
+    l10nKey("Grok's reply to it will be discarded and any files it changed in that turn will be restored."),
+    l10nKey("Edit"),
+    l10nKey("Rewind past this message?"),
+    l10nKey("Rewind to this message?"),
+    l10nKey("This message and everything after it will be discarded, and files restored to the snapshot taken before it."),
+    l10nKey("This cannot be undone (unless you have the changes in git)."),
+    l10nKey("Rewind"),
+  ]);
+  function l10nHostDialog(text) {
+    return typeof text !== "string" ? text
+      : text.split("\n").map(line => (HOST_DIALOG_LINES.has(line) ? l10n(line) : line)).join("\n");
+  }
+
   // Kept set-equal to INTERNAL_PROVIDERS by provider-enumerations.test.ts.
   const PROVIDER_ACTIONS = {
     // `fork`: "Continue in a new chat" has something that works. Only Grok's
@@ -3236,7 +3279,7 @@
 
   const api = { WELCOME_TIPS, welcomeTipById, welcomeTipsFor, welcomeTipCopy, splitWelcomeTipCopy, addProjectMenuItems, addProjectFolderPreview, addProjectForm, parseCloneQuery, filterGithubRepos, githubRepoNameParts, formatWaitElapsed, FILE_EXTS, HOST_MESSAGE_TYPES, WEBVIEW_MESSAGE_TYPES, isKnownHostMessage, composerHasSendIntent, explicitVisibleChips, normalizeQueuedSends, queuedSendsText, queuedSendsChips, contextOverheadTokens, nextContextBreakdown, contextBreakdownIsCurrent, parseContextWindowSize, contextWindowShrinkRisk, createPendingOverlay, getMentionQuery, applyMentionPick, looksLikeFileRef, formatRelativeTime, modelPickerLabel, modelDisplayName, MIC_STATES, nextMicState, trailingSendPhrase, versionedSiblingUrl, buildQuestionAnswers, isFreeTextOptionLabel, isSubagentToolCall, subagentLabel, cleanSubagentOutput, parseSubagentTaskResult, shouldStickToBottom, stickThresholdPx, splitMath, stripUnsupportedTex, toolFailureText, isMediaGenToolCall, mediaGenZeroRetentionHint, TOOL_LABEL_MAX, middleElide, isAdvertisedSkill, getSlashQuery, applySlashPick, filterCommands, highlightQueryParts, appendHighlightedText, commandProgramLabel, commandTextPreview, MAX_COMMAND_OUTPUT_CHARS, capCommandOutput, extractToolResultOutput, commandOutputWasCancelled, commandOutputTruncationNote, computeLineDiff, normalizeTurnEditPathKey, parseShellDeletePaths, aggregateTurnEdits, turnDiffSummaryTitle, parseAttachmentContext, parseSelectionBlocks, parseImageTags, orderPermissionOptions, defaultPermissionIndex, shouldFocusPermissionCard, isTypeThroughKey, isInterjectionText, stripInterjectionEnvelope, spokenTextFromMarkdown, isRelaySendRejection, panelReclampOnResizeAllowed, wireFullscreenSafeReclamp, distributeSidePanelWidths, chatZoomFactor, unzoomClientPx, exportSessionMarkdown, exportSessionFilename, isExportableSessionEvent, replayedUserBubbleVerdict, truncateExportEvents, flattenHistoryMessages, splitHistoryWindow, countHistoryReplayCounters, partitionHistoryCards, GITHUB_FINE_GRAINED_TOKEN_URL, fillFineGrainedTokenHint };
 
-  Object.assign(api, { PROVIDER_ACTIONS, providerSupports, clearHistoryConfirmation });
+  Object.assign(api, { PROVIDER_ACTIONS, providerSupports, clearHistoryConfirmation, l10n, l10nKey, l10nSource, l10nHostDialog });
 
   if (typeof module !== "undefined" && module.exports) {
     module.exports = api;

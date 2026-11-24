@@ -1,4 +1,5 @@
 (function () {
+  const { l10n, l10nKey, l10nSource, l10nHostDialog } = globalThis.GrokWebviewHelpers;
   const hostApi = acquireVsCodeApi();
   let museAdvertised = false;
   let museAvailable = false;
@@ -21606,9 +21607,9 @@ ${fullText}`
           .some((el) => el.dataset.confirmReqId === String(msg.id))) break;
         uiConfirm({
           requestId: msg.id,
-          title: msg.title,
-          body: msg.body,
-          confirmLabel: msg.confirmLabel,
+          title: l10nHostDialog(msg.title),
+          body: l10nHostDialog(msg.body),
+          confirmLabel: l10nHostDialog(msg.confirmLabel),
           danger: msg.danger,
         }).then((ok) => {
           if (ok === undefined) return;

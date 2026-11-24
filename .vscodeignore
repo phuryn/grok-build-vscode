@@ -93,6 +93,7 @@ out/desktop/**
 src/desktop/**
 vitest.desktop.config.ts
 scripts/run-desktop.cjs
+scripts/l10n-extract.cjs
 scripts/lifecycle-host.mjs
 electron-builder.yml
 dist-desktop/**

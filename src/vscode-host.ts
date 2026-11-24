@@ -630,6 +630,9 @@ export function createVsCodeHost(
     get language() {
       return vscode.env.language;
     },
+    get webviewStrings() {
+      return vscode.l10n.bundle;
+    },
     get isTelemetryEnabled() {
       return vscode.env.isTelemetryEnabled;
     },

@@ -58,6 +58,7 @@
   ],
   "icon": "resources/grok-icon.png",
   "main": "./out/extension.js",
+  "l10n": "./l10n",
   "activationEvents": [
     "onStartupFinished"
   ],
@@ -636,6 +637,7 @@
     "watch": "tsc -p . -w",
     "test": "vitest run",
     "test:watch": "vitest",
+    "l10n": "node scripts/l10n-extract.cjs",
     "test:perf": "vitest run --config vitest.perf.config.ts",
     "compile:integration": "node -e \"require('fs').rmSync('out-integration',{recursive:true,force:true})\" && tsc -p integration/tsconfig.json",
     "test:integration": "npm run compile && npm run compile:integration && vscode-test",
