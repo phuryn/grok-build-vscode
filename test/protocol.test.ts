@@ -11,11 +11,19 @@ import {
 import { HOST_MESSAGE_TYPES as JS_HOST, WEBVIEW_MESSAGE_TYPES as JS_WEBVIEW } from "../media/webview-helpers.js";
 import { CONFIG_DEFAULTS } from "../src/desktop/config-store";
 import { parseWebviewMsg } from "../src/desktop/webview-msg-validate";
+import { manifestLabel } from "../test-support/manifest-nls";
 
 // chat.js is loaded as a raw <script> in the webview, so there's nothing to import
 // — we assert against its source text instead.
 const chatSrc = readFileSync(new URL("../media/chat.js", import.meta.url), "utf8");
 const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+
+// Titles and categories are %key% placeholders (see package.nls.json); localize
+// them so the assertions below keep checking the label a person reads.
+for (const command of packageJson.contributes.commands) {
+  command.title = manifestLabel(command.title);
+  if (command.category) command.category = manifestLabel(command.category);
+}
 
 const sorted = (a: readonly string[]) => [...a].sort();
 

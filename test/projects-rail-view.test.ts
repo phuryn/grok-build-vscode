@@ -18,17 +18,24 @@ import {
   collectRecentSessions,
   RAIL_RECENT_CAP,
 } from "../src/projects-rail";
+import { manifestLabel } from "../test-support/manifest-nls";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 describe("projects rail view registration", () => {
-  const pkg = () =>
-    JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")) as {
+  const pkg = () => {
+    const manifest = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")) as {
       contributes: {
         viewsContainers: { activitybar: { id: string; icon: string }[] };
         views: Record<string, { id: string; type: string; name: string }[]>;
       };
     };
+    // View names ship as %key% placeholders; localize before matching on them.
+    for (const views of Object.values(manifest.contributes.views)) {
+      for (const view of views) view.name = manifestLabel(view.name);
+    }
+    return manifest;
+  };
 
   it("registers grok.projects in its own activity bar container", () => {
     const containers = pkg().contributes.viewsContainers.activitybar;
