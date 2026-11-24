@@ -438,7 +438,7 @@ A ` ```mermaid ` block renders as a real diagram via [Mermaid](https://mermaid.j
 
 ## Configuration
 
-Command names and setting descriptions follow VS Code's display language: Simplified Chinese when VS Code runs in Chinese, English otherwise. The chat and its own Settings page are in English.
+Command names and setting descriptions follow VS Code's display language: Simplified Chinese when VS Code runs in Simplified Chinese, English in every other language, Traditional Chinese included. The chat and its own Settings page are in English.
 
 <details>
 <summary><strong>All <code>grok.*</code> settings</strong> (VS Code Settings → search "grok")</summary>

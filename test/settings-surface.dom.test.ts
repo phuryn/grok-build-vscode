@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { connectorViews, CONNECTOR_UNAVAILABLE_MESSAGE, TIER1_CONNECTORS } from "../src/mcp-connectors";
 import { parseWebviewMsg } from "../src/desktop/webview-msg-validate";
 import { openAppSettings, bootWebview, click, dispatch } from "./webview-harness";
+import { manifestLabel } from "../test-support/manifest-nls";
 
 const settingsSrc = readFileSync(
   fileURLToPath(new URL("../media/settings.js", import.meta.url)),
@@ -3391,8 +3392,10 @@ describe("the Previous-prompt row (#150)", () => {
 
     // The word is gone from both places a person reads it.
     expect(row.title).toBe("Previous prompt button");
-    expect(contributed.markdownDescription).not.toMatch(/Experimental/i);
-    expect(contributed.markdownDescription).not.toMatch(/Off by default/i);
+    const description = manifestLabel(contributed.markdownDescription);
+    expect(description).not.toMatch(/%/);
+    expect(description).not.toMatch(/Experimental/i);
+    expect(description).not.toMatch(/Off by default/i);
   });
 });
 

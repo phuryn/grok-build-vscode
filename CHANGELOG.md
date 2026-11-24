@@ -6,7 +6,7 @@
 
 ### Added
 
-- **Simplified Chinese in the Command Palette and Settings.** When VS Code's display language is Chinese, AFK Pilot's commands, its view names and every setting's description show in Chinese; any other language keeps English. The chat stays in English. Contributed by @dingzhencoding (#234).
+- **Simplified Chinese in the Command Palette and Settings.** When VS Code's display language is Simplified Chinese, AFK Pilot's commands, its view names and every setting's description show in Chinese; any other language, Traditional Chinese included, keeps English. The chat stays in English. Contributed by @dingzhencoding (#234).
 
 ## 4.17.11 — 2026-11-24
 
