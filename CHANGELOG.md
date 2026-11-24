@@ -1,5 +1,15 @@
 # Changelog
 
+## 4.17.11 — 2026-11-24
+
+**Each agent starts its new chats in the mode you last picked for it.**
+
+### Fixed
+
+- **Each agent remembers its own mode.** Picking Auto in an Antigravity chat left the next one in Agent mode, because Antigravity's Auto was not remembered. And Agent, Auto and Auto accept were one choice shared by every agent, so picking Agent in an Antigravity chat started the next Claude chat in Agent instead of Auto. Each agent's new chats now start in the mode last picked for it, Antigravity's Auto and Accept edits included. Plan is still never remembered, and an agent you have not set yet still starts from your last Agent, Auto accept or Claude's Auto pick, as before.
+- **A remembered Ultra is no longer sent.** 4.17.10 took Ultra off the picker, but a Codex or Muse chat could still start at an Ultra picked before the upgrade while the chip said Default. It now falls back to the agent's level or the default.
+- **Antigravity's context meter no longer jumps at the end of a turn.** agy reports the turn's total across its model calls there, about double after one file read. The meter now follows only the per-call reading.
+
 ## 4.17.10 — 2026-11-23
 
 **The model picker names every effort level, and Antigravity's usage rows fill in.**
