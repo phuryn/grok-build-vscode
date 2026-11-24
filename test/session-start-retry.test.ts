@@ -1203,6 +1203,22 @@ describe("startSession bounded spawn retry", () => {
     expect(sidebar.displayMode(sidebar.focused)).toBe("agent");
   });
 
+  // ...and the reverse: Antigravity's Auto never becomes the shared Auto that starts Claude in its own.
+  it("keeps an Antigravity Auto pick out of the shared setting; Agent and Auto accept still reach it", async () => {
+    const sidebar = googleAgySidebar();
+    sidebar.installedAgyCli.mockReturnValue("fake agy");
+    const update = vi.fn(async () => {});
+    sidebar.host.getConfiguration.mockReturnValue({
+      get: (_key: string, fallback: unknown) => fallback, inspect: () => undefined, update,
+    });
+    await sidebar.startSession();
+    await sidebar.setMode("auto", sidebar.focused);
+    expect(sidebar.state.get("grok.defaultModeByProvider")).toEqual({ agy: "auto" });
+    await sidebar.setMode("yolo", sidebar.focused);
+    await sidebar.setMode("agent", sidebar.focused);
+    expect(update.mock.calls.filter(([key]) => key === "defaultMode").map(([, value]) => value)).toEqual(["yolo", "agent"]);
+  });
+
   it("answers only allow once in CLI Auto accept and leaves plan reviews for the person", async () => {
     const sidebar = googleAgySidebar();
     sidebar.installedAgyCli.mockReturnValue("fake agy");

@@ -4446,7 +4446,9 @@ Only continue if you trust this code.`,
   private rememberMode(provider: string, modeId: ModeId): void {
     if (modeId === "plan") return;
     void this.state.update(MODE_PREFS_KEY, withRememberedMode(this.state.get<ModePrefs>(MODE_PREFS_KEY), provider, modeId));
-    const shared = modeToRemember(modeId);
+    // The shared Auto is Claude Code's. Antigravity's own Auto stays in its own slot,
+    // as in 4.17.10, so it never starts a Claude chat in Auto or moves the others' start.
+    const shared = modeId === "auto" && !hasNativeAutoMode(provider) ? null : modeToRemember(modeId);
     if (shared) void this.rememberGrokConfig("defaultMode", shared);
   }
 
