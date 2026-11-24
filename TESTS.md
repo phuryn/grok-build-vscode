@@ -565,7 +565,7 @@ The operator runs `npm run smoke:acp -- --provider=<claude|muse> --scenario=<sto
 ### `test/webview-l10n-chat.dom.test.ts`, `test/webview-l10n-cards.dom.test.ts`, `test/webview-l10n-settings.dom.test.ts` — drawn in a pseudo-language (23 tests)
 
 - The real chat, its context popover, plan and question cards, tips and connect panels, the projects rail and the Settings page are drawn with a bundle that wraps every key in `⟦ ⟧`, and any visible English outside the marks fails unless it is listed as a name, host text, user content or a status line left in English on purpose
-- Values that travel stay English: a deleted session's name, menu values, the rewind dialog's preview text, a plan's verdict, a question's answer and "Other". An agent's own answers, install errors and progress the host words, and the approval result line are drawn as they arrive. Settings search and the icon picker find a row by its translated words and by its English ones, except an English description with a value filled in. Settings search waits for an input method to finish the word
+- Values that travel are never translated: a deleted session's name, menu values, the rewind dialog's preview text, a plan's verdict, and a question's answer, whether an option's own label or what the user typed (the painted "Other" is a label only). An agent's own answers, install errors and progress the host words, and the approval result line are drawn as they arrive. Settings search and the icon picker find a row by its translated words and by its English ones, except an English description with a value filled in. Settings search waits for an input method to finish the word
 
 ---
 
