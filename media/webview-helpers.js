@@ -68,41 +68,56 @@
       if (!api || api.ROWS.some(row => row.id === "voiceBackend")) return;
       const known = s => !!(s && s.voiceBackendState);
       const google = s => typeof s?.voiceBackendState?.hasGoogle === "boolean";
-      const googleDataUse = "On Google’s free tier, Google may use your audio to improve its products.";
       api.ROWS.splice(api.ROWS.findIndex(row => row.id === "voiceSendPhrase"), 0, {
-        id: "voiceBackend", category: "voice", title: "Transcription backend", kind: "select",
-        description: "Auto prefers OpenAI for Codex and xAI for Grok or Claude, using the other when its credential is available. A change applies to the next recording.",
+        id: "voiceBackend", category: "voice", title: l10n("Transcription backend"), kind: "select",
+        description: l10n("Auto prefers OpenAI for Codex and xAI for Grok or Claude, using the other when its credential is available. A change applies to the next recording."),
         describe(s) {
           return google(s)
-            ? "Auto prefers Google for Antigravity, OpenAI for Codex, and xAI for other agents. If needed, it tries available credentials in this order: xAI, OpenAI, Google. A change applies to the next recording."
+            ? l10n("Auto prefers Google for Antigravity, OpenAI for Codex, and xAI for other agents. If needed, it tries available credentials in this order: xAI, OpenAI, Google. A change applies to the next recording.")
             : this.description;
         },
-        options: [{ value: "auto", label: "Auto" }, { value: "xai", label: "xAI" }, { value: "openai", label: "OpenAI" }],
+        options: [{ value: "auto", label: l10n("Auto") }, { value: "xai", label: "xAI" }, { value: "openai", label: "OpenAI" }],
         optionsFor(s) { return google(s) ? [...this.options, { value: "google", label: "Google" }] : this.options; },
         defaultValue: "auto", visible: known,
         get: s => (google(s) && s.voiceBackendState.googlePreference) || s.voiceBackendState.preference,
         message: value => ({ type: "setVoiceBackend", value }),
       }, {
-        id: "voiceBackendAvailability", category: "voice", title: "Transcription credentials", kind: "status",
+        id: "voiceBackendAvailability", category: "voice", title: l10n("Transcription credentials"), kind: "status",
         visible: known,
-        describe: (s, env) => "OpenAI: " + (s.voiceBackendState.hasOpenAi ? "key available" : "needs an API key")
-          + ". xAI: " + (s.voiceBackendState.hasXai ? "credential available" : "needs a key or Grok sign-in")
-          + (google(s) ? ". Google: " + (s.voiceBackendState.hasGoogle ? "key available" : "needs a Gemini API key") : "")
-          + ". Codex / ChatGPT sign-in does not include transcription API access. OpenAI API usage is billed separately."
-          + (google(s) && env?.isRemote ? " " + googleDataUse : ""),
+        describe: (s, env) => {
+          const { hasOpenAi, hasXai, hasGoogle } = s.voiceBackendState;
+          const credentials = hasOpenAi
+            ? l10n(hasXai
+              ? "OpenAI: key available. xAI: credential available."
+              : "OpenAI: key available. xAI: needs a key or Grok sign-in.")
+            : l10n(hasXai
+              ? "OpenAI: needs an API key. xAI: credential available."
+              : "OpenAI: needs an API key. xAI: needs a key or Grok sign-in.");
+          if (!google(s)) {
+            return l10n("{0} Codex / ChatGPT sign-in does not include transcription API access. OpenAI API usage is billed separately.", credentials);
+          }
+          if (env?.isRemote) {
+            return l10n(hasGoogle
+              ? "{0} Google: key available. Codex / ChatGPT sign-in does not include transcription API access. OpenAI API usage is billed separately. On Google’s free tier, Google may use your audio to improve its products."
+              : "{0} Google: needs a Gemini API key. Codex / ChatGPT sign-in does not include transcription API access. OpenAI API usage is billed separately. On Google’s free tier, Google may use your audio to improve its products.", credentials);
+          }
+          return l10n(hasGoogle
+            ? "{0} Google: key available. Codex / ChatGPT sign-in does not include transcription API access. OpenAI API usage is billed separately."
+            : "{0} Google: needs a Gemini API key. Codex / ChatGPT sign-in does not include transcription API access. OpenAI API usage is billed separately.", credentials);
+        },
       }, {
-        id: "configureOpenAiVoice", category: "voice", title: "OpenAI voice API key", kind: "action",
-        description: "Set the key on this host, or use OPENAI_API_KEY in its environment. The key is never sent to the chat or remote clients.",
-        actionLabel: "Set API key", hostLocal: true, visible: known,
+        id: "configureOpenAiVoice", category: "voice", title: l10n("OpenAI voice API key"), kind: "action",
+        description: l10n("Set the key on this host, or use OPENAI_API_KEY in its environment. The key is never sent to the chat or remote clients."),
+        actionLabel: l10n("Set API key"), hostLocal: true, visible: known,
         message: () => ({ type: "configureOpenAiVoice" }),
       }, {
-        id: "configureGoogleVoice", category: "voice", title: "Google voice API key", kind: "action",
-        description: "Uses the Gemini API key saved for Antigravity, or set one here. A free key works, but Google may then use your audio to improve its products. Google AI Pro and Ultra credits can pay for a paid key.",
+        id: "configureGoogleVoice", category: "voice", title: l10n("Google voice API key"), kind: "action",
+        description: l10n("Uses the Gemini API key saved for Antigravity, or set one here. A free key works, but Google may then use your audio to improve its products. Google AI Pro and Ultra credits can pay for a paid key."),
         links: [
-          { label: "Get a key in AI Studio", href: "https://aistudio.google.com/api-keys" },
-          { label: "Which key?", href: "https://github.com/phuryn/grok-build-vscode/blob/main/docs/voice-setup.md#google--gemini-api-key" },
+          { label: l10n("Get a key in AI Studio"), href: "https://aistudio.google.com/api-keys" },
+          { label: l10n("Which key?"), href: "https://github.com/phuryn/grok-build-vscode/blob/main/docs/voice-setup.md#google--gemini-api-key" },
         ],
-        actionLabel: "Set API key", hostLocal: true, visible: google,
+        actionLabel: l10n("Set API key"), hostLocal: true, visible: google,
         message: () => ({ type: "configureGoogleVoice" }),
       });
     },

@@ -18,21 +18,21 @@
   };
 
   const CATEGORIES = [
-    { id: "general", title: "General", restore: true },
-    { id: "voice", title: "Voice", restore: true },
-    { id: "notifications", title: "Notifications", restore: true },
-    { id: "providers", title: "Providers", restore: false },
+    { id: "general", title: l10n("General"), restore: true },
+    { id: "voice", title: l10n("Voice"), restore: true },
+    { id: "notifications", title: l10n("Notifications"), restore: true },
+    { id: "providers", title: l10n("Providers"), restore: false },
     // Things you have SET UP, next to the other things you have set up —
     // apart from General/Voice/Notifications, which are preferences.
-    { id: "routines", title: "Routines", restore: false },
-    { id: "connectors", title: "Connectors", restore: false },
+    { id: "routines", title: l10n("Routines"), restore: false },
+    { id: "connectors", title: l10n("Connectors"), restore: false },
     // "Remote control" rather than "Account": the page is about driving this
     // desk from a phone or browser — linking, the device list, the AFK Pilot
     // sign-in that enables it. "Account" invited confusion with the agent
     // accounts (Grok / Codex / Claude), which live under Providers.
-    { id: "account", title: "Remote control", restore: false },
-    { id: "advanced", title: "Advanced", restore: false },
-    { id: "about", title: "About", restore: false },
+    { id: "account", title: l10n("Remote control"), restore: false },
+    { id: "advanced", title: l10n("Advanced"), restore: false },
+    { id: "about", title: l10n("About"), restore: false },
   ];
 
   // Lucide-style stroke icons — same language as chat.js ICON. Labels stay
@@ -104,17 +104,17 @@
 
   const GITHUB_REPO_URL = "https://github.com/phuryn/grok-build-vscode";
   const GROK_CONNECTORS_URL = "https://grok.com/connectors";
-  const CONNECTOR_SECTION_HERE = "On this computer";
+  const CONNECTOR_SECTION_HERE = l10n("On this computer");
   // A phone is not the computer these live on. The desk-written heading
   // sitting directly above the remote-written blurb named two different
   // machines on one screen, which is most of why the section read as
   // confusing. "Workspace machine" is true of a laptop and of a cloud
   // machine, so one word covers both remote cases.
-  const CONNECTOR_SECTION_HERE_REMOTE = "On the workspace machine";
-  const CONNECTOR_SECTION_GROK = "Grok.com connectors";
-  const CONNECTOR_SECTION_LOCAL = "Local Grok connectors";
+  const CONNECTOR_SECTION_HERE_REMOTE = l10n("On the workspace machine");
+  const CONNECTOR_SECTION_GROK = l10n("Grok.com connectors");
+  const CONNECTOR_SECTION_LOCAL = l10n("Local Grok connectors");
   const CONNECTOR_BLURB_HERE =
-    "These apps are available to Grok, Codex, and Claude. Most open a browser to sign in; GitHub takes a token you paste here. Credentials stay on this machine.";
+    l10n("These apps are available to Grok, Codex, and Claude. Most open a browser to sign in; GitHub takes a token you paste here. Credentials stay on this machine.");
   // Remote, and allowed to connect. The old copy put three referents in
   // two sentences — "the machine running this workspace", "this device",
   // "here" — so "approve access on this device" read as the host when it
@@ -122,17 +122,17 @@
   // holding (openConnectorConsent calls window.open here); only the
   // credential travels.
   const CONNECTOR_BLURB_HERE_REMOTE_CONNECT =
-    "These apps are available to Grok, Codex, and Claude on the machine running this workspace. Sign-in opens in this browser; GitHub takes a token you paste here. The credentials are saved on that machine, not on this one.";
+    l10n("These apps are available to Grok, Codex, and Claude on the machine running this workspace. Sign-in opens in this browser; GitHub takes a token you paste here. The credentials are saved on that machine, not on this one.");
   const CONNECTOR_BLURB_HERE_REMOTE =
-    "These apps are connected on the machine running this workspace. Connecting and disconnecting are done there, not from this page.";
+    l10n("These apps are connected on the machine running this workspace. Connecting and disconnecting are done there, not from this page.");
   const CONNECTOR_DISCONNECT_COPY =
-    "Disconnect affects future conversations and reopened ones. Tools in already running sessions remain available. It does not revoke access at the vendor or clear saved OAuth sign-ins.";
+    l10n("Disconnect affects future conversations and reopened ones. Tools in already running sessions remain available. It does not revoke access at the vendor or clear saved OAuth sign-ins.");
   const CONNECTOR_BLURB_GROK =
-    "These follow your Grok account, so they are shared across every Grok session on every machine.";
+    l10n("These follow your Grok account, so they are shared across every Grok session on every machine.");
   const CONNECTOR_BLURB_LOCAL =
-    "Declared in this machine's Grok config files. Grok only.";
+    l10n("Declared in this machine's Grok config files. Grok only.");
   const CONNECTOR_BLURB_LOCAL_REMOTE =
-    "Declared in this machine's Grok config files. Grok only. These are managed on the host machine only.";
+    l10n("Declared in this machine's Grok config files. Grok only. These are managed on the host machine only.");
   const ICON_EXTERNAL_LINK =
     '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>';
   // lucide `settings` — same path as chat.js ICON.gear. Local Open is config,
@@ -156,21 +156,18 @@
   const GITHUB_ISSUE_FEATURE_URL = GITHUB_REPO_URL + "/issues/new?labels=enhancement";
   const SUPPORT_MAILTO = "mailto:contact@afkpilot.com";
   const ABOUT_DISCLAIMER =
-    "Unofficial · community-built · Fair Source (FSL-1.1-MIT) | " +
-    "One chat for Grok Build, Muse Code, DeepSeek, Codex, Claude Code and Google Antigravity - " +
-    "not affiliated with or endorsed by SpaceXAI (formerly xAI), Meta, DeepSeek, OpenAI, Anthropic or Google. " +
-    "Product names are trademarks of their owners; this project uses them only to describe what it’s compatible with.";
+    l10n("Unofficial · community-built · Fair Source (FSL-1.1-MIT) | One chat for Grok Build, Muse Code, DeepSeek, Codex, Claude Code and Google Antigravity - not affiliated with or endorsed by SpaceXAI (formerly xAI), Meta, DeepSeek, OpenAI, Anthropic or Google. Product names are trademarks of their owners; this project uses them only to describe what it’s compatible with.");
 
   const TELEMETRY_COPY =
-    "Anonymous usage stats only: a single session-start event with an anonymous install id — never prompts, code, file paths or names, and no identity. The IP address is discarded, never stored.";
+    l10n("Anonymous usage stats only: a single session-start event with an anonymous install id — never prompts, code, file paths or names, and no identity. The IP address is discarded, never stored.");
 
   // Says what the OFF state does as well as the ON state: the whole point of
   // the row is that closing the window no longer means quitting, and a person
   // looking for "why didn't it quit" needs to recognise this row as the answer.
-  const TRAY_COPY = "Closing the window leaves the app running in the tray, so your agent "
-    + "and any linked phone keep working. Turn this off to quit on close.";
+  const TRAY_COPY =
+    l10n("Closing the window leaves the app running in the tray, so your agent and any linked phone keep working. Turn this off to quit on close.");
   const THUMBS_COPY =
-    "Show thumbs on a finished Grok turn so you can send a rating to SpaceXAI. Off by default. On, thumbs appear only when this Grok session supports feedback — never on Codex or Claude.";
+    l10n("Show thumbs on a finished Grok turn so you can send a rating to SpaceXAI. Off by default. On, thumbs appear only when this Grok session supports feedback — never on Codex or Claude.");
 
   function escapeHtml(s) {
     return String(s ?? "")
@@ -252,22 +249,22 @@
       return flow.message;
     }
     if (g.message) return g.message;
-    if (g.cliPresent === false) return "The GitHub CLI (gh) is not installed on this machine.";
+    if (g.cliPresent === false) return l10n("The GitHub CLI (gh) is not installed on this machine.");
     if (g.error && g.envTokenInForce) {
       return "A token in this machine's GH_TOKEN environment variable is in force, and it is not working.";
     }
     if (!g.connected) {
-      return "Connect GitHub to clone private repositories and list the ones this account can see.";
+      return l10n("Connect GitHub to clone private repositories and list the ones this account can see.");
     }
     const who = g.login ? "@" + g.login : "GitHub";
     if (g.error) {
       return "Signed in as " + who + ", but the credential is not working.";
     }
-    return "Signed in as " + who + ".";
+    return l10n("Signed in as {0}.", who);
   }
 
   function githubAction(snapshot) {
-    return githubConnectedNow(snapshot) ? "Sign out" : "Connect with GitHub CLI";
+    return l10n(githubConnectedNow(snapshot) ? "Sign out" : "Connect with GitHub CLI");
   }
 
   function githubTokenAvailable(snapshot, env) {
@@ -316,17 +313,16 @@
   function fillGithubTokenHint(el) {
     const doc = el.ownerDocument;
     el.textContent = "";
-    el.appendChild(doc.createTextNode("Paste a "));
+    const [before, after] = l10n("Paste a {0} (one repository, Contents: Read, an expiry) or a classic PAT. It is sent once and never shown again.").split("{0}");
+    el.appendChild(doc.createTextNode(before));
     const a = doc.createElement("a");
     a.href = GITHUB_FINE_GRAINED_TOKEN_URL;
     a.target = "_blank";
     a.rel = "noopener noreferrer";
     a.className = "settings-github-token-link";
-    a.textContent = "fine-grained token";
+    a.textContent = l10n("fine-grained token");
     el.appendChild(a);
-    el.appendChild(doc.createTextNode(
-      " (one repository, Contents: Read, an expiry) or a classic PAT. It is sent once and never shown again.",
-    ));
+    el.appendChild(doc.createTextNode(after));
   }
 
   /**
@@ -357,13 +353,10 @@
       return flow.message;
     }
     const provider = providerOf(s, id);
-    const base = providerDescription(provider, true);
+    const recommended = id === "grok" && hostIsCloud(env) && !provider.connected;
     // On a cloud machine the three agents are NOT equal offers — Grok is the
     // native one (owner, 2026-08-31).
-    if (id === "grok" && hostIsCloud(env) && !(provider && provider.connected)) {
-      return "Recommended. " + base;
-    }
-    return base;
+    return providerDescription(provider, true, recommended);
   }
 
   /** The same test `message` uses to choose between logout and sign-in. */
@@ -381,12 +374,12 @@
   function providerAction(provider) {
     const connected = provider.connected === true;
     const needsLogin = connected && provider.needsLogin === true;
-    if (needsLogin) return "Sign in again";
-    if (!connected) return "Connect";
+    if (needsLogin) return l10n("Sign in again");
+    if (!connected) return l10n("Connect");
     // The host says what its button does (#203). A cloud environment, and any
     // host older than the flag, clears the CLI's credentials — and keeps the
     // word that says so.
-    return provider.keepsCliSignIn === true ? "Disconnect" : "Sign out";
+    return l10n(provider.keepsCliSignIn === true ? "Disconnect" : "Sign out");
   }
 
   const PROVIDER_CLI_NAMES = { grok: "Grok", codex: "Codex", claude: "Claude Code", muse: "Muse" };
@@ -398,30 +391,34 @@
 
   /** `remote`: a remote row has no Disconnect button to explain (desk hosts
    *  keep `logout` host-local), so it keeps the plain sentence. */
-  function providerDescription(provider, remote) {
+  function providerDescription(provider, remote, recommended) {
     const connected = provider.connected === true;
     const needsLogin = connected && provider.needsLogin === true;
-    if (needsLogin) return "This account is connected but needs to sign in again before it can be used.";
+    if (needsLogin) return l10n("This account is connected but needs to sign in again before it can be used.");
     if (connected && !needsLogin && provider.id === "agy") {
-      const how = provider.signInMethod === "api-key" ? "a Gemini API key" : "your Google account";
-      if (remote) return "Connected with " + how + " on the computer running this workspace.";
-      return "Connected with " + how + "."
-        + (provider.keepsCliSignIn === true
-          ? " Disconnect turns it off here and keeps the " + (provider.signInMethod === "api-key" ? "saved key" : "Google sign-in") + "."
-          : "");
+      const usesKey = provider.signInMethod === "api-key";
+      if (remote) return l10n(usesKey
+        ? "Connected with a Gemini API key on the computer running this workspace."
+        : "Connected with your Google account on the computer running this workspace.");
+      if (provider.keepsCliSignIn === true) return l10n(usesKey
+        ? "Connected with a Gemini API key. Disconnect turns it off here and keeps the saved key."
+        : "Connected with your Google account. Disconnect turns it off here and keeps the Google sign-in.");
+      return l10n(usesKey ? "Connected with a Gemini API key." : "Connected with your Google account.");
     }
     if (connected && provider.keepsCliSignIn === true && !remote) {
-      const cli = PROVIDER_CLI_NAMES[provider.id] || "agent";
-      return "This account is connected on this machine. Disconnect turns it off here; the " + cli + " CLI stays signed in.";
+      const cli = PROVIDER_CLI_NAMES[provider.id];
+      return cli
+        ? l10n("This account is connected on this machine. Disconnect turns it off here; the {0} CLI stays signed in.", cli)
+        : l10n("This account is connected on this machine. Disconnect turns it off here; the agent CLI stays signed in.");
     }
-    if (connected) return "This account is connected on this machine.";
-    return "Connect this account to use it for new conversations.";
+    if (connected) return l10n("This account is connected on this machine.");
+    return l10n(recommended
+      ? "Recommended. Connect this account to use it for new conversations."
+      : "Connect this account to use it for new conversations.");
   }
 
   function logsLabel(env) {
-    return env && env.hostCaps && env.hostCaps.showOutput === false
-      ? "Logs"
-      : "Show extension logs";
+    return l10n(env && env.hostCaps && env.hostCaps.showOutput === false ? "Logs" : "Show extension logs");
   }
 
   function grokProvider(snapshot) {
@@ -490,10 +487,10 @@
   function grokUpdateStatusText(snapshot) {
     const u = grokUpdateOf(snapshot);
     if (u.checking) return "Checking for updates";
-    if (grokUpdateBlocked(snapshot)) return "On the supported version";
+    if (grokUpdateBlocked(snapshot)) return l10n("On the supported version");
     if (u.error) return "Couldn’t check — try updating anyway";
-    if (u.updateAvailable) return "Update available · v" + (u.latest || "");
-    if (u.current || u.latest) return "CLI is up to date";
+    if (u.updateAvailable) return l10n("Update available · v{0}", u.latest || "");
+    if (u.current || u.latest) return l10n("CLI is up to date");
     return "—";
   }
 
@@ -512,7 +509,7 @@
       category: "providers",
       title: name,
       kind: "action",
-      actionLabel: "Update " + name,
+      actionLabel: l10n("Update {0}", name),
       keepOpen: true,
       // The version rides along, because a bare Update button on this page
       // would be asking someone to act with nothing to act on. `latestCliVersion`
@@ -520,20 +517,13 @@
       // rather than claiming an up-to-date it cannot know.
       describe: (s) => {
         const p = entry(s) || {};
-        const newer = p.updateAvailable && p.latestCliVersion
-          ? "v" + p.latestCliVersion + " is available. "
-          : "";
-        // Two bare version numbers side by side leave the reader to work out
-        // which one is theirs -- rendered, "v0.152.1 · v0.153.4 is available"
-        // can be read as a range. The label settles it. A middot rather than a
-        // full stop between them for the same reason: "v0.152.1. v0.153.4 is
-        // available" reads as one broken sentence.
-        const installed = p.cliVersion
-          ? "Installed v" + p.cliVersion + (newer ? " · " : ". ")
-          : "";
-        return installed + newer
-          + "Runs its updater on the connected machine. This stops this provider’s "
-          + "running sessions, then resumes visible conversations.";
+        const newer = p.updateAvailable && p.latestCliVersion;
+        if (newer && p.cliVersion) {
+          return l10n("Installed v{0} · v{1} is available. Runs its updater on the connected machine. This stops this provider’s running sessions, then resumes visible conversations.", p.cliVersion, newer);
+        }
+        if (newer) return l10n("v{0} is available. Runs its updater on the connected machine. This stops this provider’s running sessions, then resumes visible conversations.", newer);
+        if (p.cliVersion) return l10n("Installed v{0}. Runs its updater on the connected machine. This stops this provider’s running sessions, then resumes visible conversations.", p.cliVersion);
+        return l10n("Runs its updater on the connected machine. This stops this provider’s running sessions, then resumes visible conversations.");
       },
       // Only when there is something to take. Offering to update software that
       // is already current is noise, and this particular offer costs minutes
@@ -567,7 +557,7 @@
     }, {
       id: "about" + suffix + "UpdateStatus",
       category: "providers",
-      title: name + " updates",
+      title: l10n("{0} updates", name),
       kind: "status",
       visible: (s) => !!(update(s) && update(s).message),
       describe: (s) => update(s).message,
@@ -579,12 +569,12 @@
     {
       id: "appPurpose",
       category: "general",
-      title: "Use this app for",
-      description: "Knowledge work hides worktrees, thinking traces, and tool details. Coding unlocks those controls, still off by default.",
+      title: l10n("Use this app for"),
+      description: l10n("Knowledge work hides worktrees, thinking traces, and tool details. Coding unlocks those controls, still off by default."),
       kind: "select",
       options: [
-        { value: "knowledge", label: "Knowledge work" },
-        { value: "coding", label: "Coding" },
+        { value: "knowledge", label: l10n("Knowledge work") },
+        { value: "coding", label: l10n("Coding") },
       ],
       defaultValue: "knowledge",
       get: (s) => purposeOf(s),
@@ -593,8 +583,8 @@
     {
       id: "chatFontScale",
       category: "general",
-      title: "Text size",
-      description: "Chat text size on this device only. Keyboard zoom stays in sync with this slider.",
+      title: l10n("Text size"),
+      description: l10n("Chat text size on this device only. Keyboard zoom stays in sync with this slider."),
       kind: "range",
       min: 80,
       max: 160,
@@ -607,18 +597,18 @@
     {
       id: "openChatFontScale",
       category: "general",
-      title: "Text size",
-      description: "Chat zoom lives in VS Code settings so it can stay a user or workspace preference.",
+      title: l10n("Text size"),
+      description: l10n("Chat zoom lives in VS Code settings so it can stay a user or workspace preference."),
       kind: "action",
-      actionLabel: "Open VS Code settings",
+      actionLabel: l10n("Open VS Code settings"),
       visible: (s, env) => !!(env && !env.isRemote && !env.clientOwnsFontScale && !env.isDesktop),
       message: () => ({ type: "openSettings", section: "grok.chatFontScale" }),
     },
     {
       id: "showThinking",
       category: "general",
-      title: "Show thinking traces",
-      description: "Show the agent's reasoning traces in chat, including on already-loaded sessions.",
+      title: l10n("Show thinking traces"),
+      description: l10n("Show the agent's reasoning traces in chat, including on already-loaded sessions."),
       kind: "toggle",
       defaultValue: false,
       visible: (s) => purposeOf(s) === "coding",
@@ -628,8 +618,8 @@
     {
       id: "expandCommandOutputs",
       category: "general",
-      title: "Expand tool details",
-      description: "Pre-open each command's IN/OUT block and each edit's inline diff instead of clicking a row to expand it.",
+      title: l10n("Expand tool details"),
+      description: l10n("Pre-open each command's IN/OUT block and each edit's inline diff instead of clicking a row to expand it."),
       kind: "toggle",
       defaultValue: false,
       visible: (s) => purposeOf(s) === "coding",
@@ -639,8 +629,8 @@
     {
       id: "expandDiffCard",
       category: "general",
-      title: "Expand diff card",
-      description: "Open each turn's Changed-files card by default instead of showing only its header.",
+      title: l10n("Expand diff card"),
+      description: l10n("Open each turn's Changed-files card by default instead of showing only its header."),
       kind: "toggle",
       defaultValue: false,
       visible: (s) => purposeOf(s) === "coding",
@@ -652,8 +642,8 @@
     {
       id: "steerByDefault",
       category: "general",
-      title: "Steer by default",
-      description: "Send straight into the running turn instead of queueing until it finishes. Steering does not cancel work in progress.",
+      title: l10n("Steer by default"),
+      description: l10n("Send straight into the running turn instead of queueing until it finishes. Steering does not cancel work in progress."),
       kind: "toggle",
       defaultValue: false,
       visible: (s, env) => !env || env.steerSupported !== false,
@@ -663,7 +653,7 @@
     {
       id: "telemetryDesktop",
       category: "general",
-      title: "Anonymous usage stats",
+      title: l10n("Anonymous usage stats"),
       description: TELEMETRY_COPY,
       kind: "toggle",
       defaultValue: true,
@@ -676,31 +666,32 @@
     {
       id: "telemetryVsCode",
       category: "general",
-      title: "Anonymous usage stats",
+      title: l10n("Anonymous usage stats"),
       description: TELEMETRY_COPY,
       kind: "action",
-      actionLabel: "Open VS Code settings",
+      actionLabel: l10n("Open VS Code settings"),
       visible: (s, env) => !!(env && !env.isRemote && !env.isDesktop),
       message: () => ({ type: "openSettings", section: "grok.telemetry.enabled" }),
     },
     {
       id: "telemetryRemote",
       category: "general",
-      title: "Anonymous usage stats",
+      title: l10n("Anonymous usage stats"),
       description: "",
       kind: "status",
       visible: (s, env) => !!(env && env.isRemote && !hostIsCloud(env)),
       describe: (s) => {
-        const known = s && typeof s.telemetryEnabled === "boolean";
-        const state = known ? (s.telemetryEnabled ? "On. " : "Off. ") : "";
-        return state + TELEMETRY_COPY;
+        if (!s || typeof s.telemetryEnabled !== "boolean") return TELEMETRY_COPY;
+        return l10n(s.telemetryEnabled
+          ? "On. Anonymous usage stats only: a single session-start event with an anonymous install id — never prompts, code, file paths or names, and no identity. The IP address is discarded, never stored."
+          : "Off. Anonymous usage stats only: a single session-start event with an anonymous install id — never prompts, code, file paths or names, and no identity. The IP address is discarded, never stored.");
       },
     },
     {
       id: "promptNav",
       category: "general",
-      title: "Previous prompt button",
-      description: "Show a button above the message box that jumps back to your previous prompt and highlights it. This device only.",
+      title: l10n("Previous prompt button"),
+      description: l10n("Show a button above the message box that jumps back to your previous prompt and highlights it. This device only."),
       kind: "toggle",
       defaultValue: true,
       get: (s) => !!(s && s.promptNav),
@@ -714,33 +705,33 @@
     {
       id: "autoCompactEnabled",
       category: "general",
-      title: "Compact at a token limit",
+      title: l10n("Compact at a token limit"),
       kind: "toggle",
       defaultValue: false,
       visible: (s) => !!s?.autoCompactSettings,
-      describe: (s) => (s?.autoCompactSettings?.enabled
-        ? "On. Supported agents compact at the limit below or at their own earlier threshold."
-        : "Off. Each agent uses its own compaction settings.") + " This setting does not apply to Antigravity.",
+      describe: (s) => l10n(s?.autoCompactSettings?.enabled
+        ? "On. Supported agents compact at the limit below or at their own earlier threshold. This setting does not apply to Antigravity."
+        : "Off. Each agent uses its own compaction settings. This setting does not apply to Antigravity."),
       get: (s) => s?.autoCompactSettings?.enabled === true,
       message: (value) => ({ type: "setAutoCompact", key: "enabled", value }),
     },
     {
       id: "autoCompactAt",
       category: "general",
-      title: "Compact at",
-      description: "Tokens of context. Applies to conversations you start or reopen after changing it.",
+      title: l10n("Compact at"),
+      description: l10n("Tokens of context. Applies to conversations you start or reopen after changing it."),
       kind: "select",
       defaultValue: "300000",
       visible: (s) => !!s?.autoCompactSettings,
       enabled: (s) => s?.autoCompactSettings?.enabled === true,
-      options: [200, 300, 400, 500, 750].map(k => ({ value: String(k * 1000), label: k + "K tokens" })),
+      options: [200, 300, 400, 500, 750].map(k => ({ value: String(k * 1000), label: l10n("{0}K tokens", k) })),
       get: (s) => String(s?.autoCompactSettings?.tokens ?? 300000),
       message: (value) => ({ type: "setAutoCompact", key: "tokens", value: Number(value) }),
     },
     {
       id: "thumbsFeedback",
       category: "general",
-      title: "Thumbs feedback to SpaceXAI",
+      title: l10n("Thumbs feedback to SpaceXAI"),
       description: THUMBS_COPY,
       kind: "toggle",
       defaultValue: false,
@@ -751,7 +742,7 @@
     {
       id: "desktopTray",
       category: "general",
-      title: "Keep running in the tray",
+      title: l10n("Keep running in the tray"),
       description: TRAY_COPY,
       kind: "toggle",
       defaultValue: true,
@@ -767,21 +758,22 @@
     {
       id: "thumbsFeedbackRemote",
       category: "general",
-      title: "Thumbs feedback to SpaceXAI",
+      title: l10n("Thumbs feedback to SpaceXAI"),
       description: "",
       kind: "status",
       visible: (s, env) => !!(env && env.isRemote && !hostIsCloud(env)),
       describe: (s) => {
-        const known = s && typeof s.thumbsFeedback === "boolean";
-        const state = known ? (s.thumbsFeedback ? "On. " : "Off. ") : "";
-        return state + THUMBS_COPY;
+        if (!s || typeof s.thumbsFeedback !== "boolean") return THUMBS_COPY;
+        return l10n(s.thumbsFeedback
+          ? "On. Show thumbs on a finished Grok turn so you can send a rating to SpaceXAI. Off by default. On, thumbs appear only when this Grok session supports feedback — never on Codex or Claude."
+          : "Off. Show thumbs on a finished Grok turn so you can send a rating to SpaceXAI. Off by default. On, thumbs appear only when this Grok session supports feedback — never on Codex or Claude.");
       },
     },
     {
       id: "voiceSendPhrase",
       category: "voice",
-      title: "Send phrase",
-      description: "Spoken phrase that submits the message when it ends a transcription. Leave empty to disable hands-free send.",
+      title: l10n("Send phrase"),
+      description: l10n("Spoken phrase that submits the message when it ends a transcription. Leave empty to disable hands-free send."),
       kind: "text",
       placeholder: "grok send",
       defaultValue: "grok send",
@@ -791,10 +783,10 @@
     {
       id: "voiceKeyterms",
       category: "voice",
-      title: "Dictionary terms",
-      description: "Words or phrases that help streaming recognition spell project vocabulary. Press Enter to add a term.",
+      title: l10n("Dictionary terms"),
+      description: l10n("Words or phrases that help streaming recognition spell project vocabulary. Press Enter to add a term."),
       kind: "tags",
-      placeholder: "Add a term",
+      placeholder: l10n("Add a term"),
       defaultValue: [],
       get: (s) => (s && Array.isArray(s.voiceKeyterms)) ? s.voiceKeyterms : [],
       message: (value) => ({ type: "setVoiceKeyterms", value }),
@@ -802,15 +794,15 @@
     {
       id: "voiceConfigured",
       category: "voice",
-      title: "Voice input",
+      title: l10n("Voice input"),
       description: "",
       kind: "action",
-      actionLabel: "Open voice settings",
+      actionLabel: l10n("Open voice settings"),
       describe: (s) => (s && s.voiceConfigured)
-        ? "Voice is ready on this machine."
+        ? l10n("Voice is ready on this machine.")
         : typeof s?.voiceBackendState?.hasGoogle === "boolean"
-          ? "Voice needs a Gemini or OpenAI API key, an xAI key, or a signed-in Grok account before the mic can start."
-        : "Voice needs a key or a signed-in Grok account before the mic can start.",
+          ? l10n("Voice needs a Gemini or OpenAI API key, an xAI key, or a signed-in Grok account before the mic can start.")
+        : l10n("Voice needs a key or a signed-in Grok account before the mic can start."),
       visible: (s, env) => !!(env && !env.isRemote && !env.isDesktop),
       message: s => ({ type: "openSettings", section: s?.voiceBackendState?.googlePreference === "google"
         || (s?.voiceBackendState?.hasGoogle !== undefined && s.voiceBackendState.preference === "auto" && s.voiceBackendState.provider === "agy")
@@ -819,19 +811,19 @@
     {
       id: "voiceConfiguredStatus",
       category: "voice",
-      title: "Voice input",
+      title: l10n("Voice input"),
       description: "",
       kind: "status",
       describe: (s) => (s && s.voiceConfigured)
-        ? "Voice is ready on this machine."
-        : "Voice is not configured on the machine hosting this session.",
+        ? l10n("Voice is ready on this machine.")
+        : l10n("Voice is not configured on the machine hosting this session."),
       visible: (s, env) => !!(env && (env.isRemote || env.isDesktop)),
     },
     {
       id: "readRepliesAloud",
       category: "voice",
-      title: "Read replies aloud",
-      description: "Read completed replies aloud. Code blocks are skipped.",
+      title: l10n("Read replies aloud"),
+      description: l10n("Read completed replies aloud. Code blocks are skipped."),
       kind: "toggle",
       defaultValue: false,
       visible: (s, env) => !env || env.ttsAvailable !== false,
@@ -842,8 +834,8 @@
     {
       id: "summarizeRepliesAloud",
       category: "voice",
-      title: "Read simplified summaries",
-      description: "Use xAI to speak a brief summary of each reply. This costs an extra call and falls back to the full text on failure.",
+      title: l10n("Read simplified summaries"),
+      description: l10n("Use xAI to speak a brief summary of each reply. This costs an extra call and falls back to the full text on failure."),
       kind: "toggle",
       defaultValue: true,
       visible: (s, env) => !env || env.ttsAvailable !== false,
@@ -855,16 +847,16 @@
     {
       id: "ttsUnavailable",
       category: "voice",
-      title: "Read replies aloud",
-      description: "Speech synthesis is not supported in this client.",
+      title: l10n("Read replies aloud"),
+      description: l10n("Speech synthesis is not supported in this client."),
       kind: "status",
       visible: (s, env) => !!(env && env.ttsAvailable === false),
     },
     {
       id: "deskAlerts",
       category: "notifications",
-      title: "Desk alerts",
-      description: "Show alerts when a turn finishes, fails, or needs your input while you’re away from the conversation.",
+      title: l10n("Desk alerts"),
+      description: l10n("Show alerts when a turn finishes, fails, or needs your input while you’re away from the conversation."),
       kind: "toggle",
       defaultValue: true,
       get: (s) => s.deskAlerts,
@@ -874,8 +866,8 @@
     {
       id: "soundNotifications",
       category: "notifications",
-      title: "Sound notifications",
-      description: "Play a short sound when a turn finishes or errors, only when the AFK Pilot panel is not focused.",
+      title: l10n("Sound notifications"),
+      description: l10n("Play a short sound when a turn finishes or errors, only when the AFK Pilot panel is not focused."),
       kind: "toggle",
       defaultValue: false,
       get: (s) => !!(s && s.soundNotifications),
@@ -884,8 +876,8 @@
     {
       id: "processingSound",
       category: "notifications",
-      title: "Still-processing sound",
-      description: "Play a quiet reminder while a turn is still working. It starts after seven seconds and repeats every eight seconds.",
+      title: l10n("Still-processing sound"),
+      description: l10n("Play a quiet reminder while a turn is still working. It starts after seven seconds and repeats every eight seconds."),
       kind: "toggle",
       defaultValue: false,
       get: (s) => !!(s && s.processingSound),
@@ -894,8 +886,8 @@
     {
       id: "inputNeededSound",
       category: "notifications",
-      title: "Sound when input is needed",
-      description: "Play a short sound when a conversation needs your input, only when the AFK Pilot panel is not focused or visible.",
+      title: l10n("Sound when input is needed"),
+      description: l10n("Play a short sound when a conversation needs your input, only when the AFK Pilot panel is not focused or visible."),
       kind: "toggle",
       defaultValue: false,
       get: (s) => !!(s && s.inputNeededSound),
@@ -1142,23 +1134,23 @@
       message: (s) => ({ type: providerConnectedNow(s, "muse") ? "logout" : "runGrokLogin", provider: "muse" }),
     },
     {
-      id: "museShellSandbox", category: "providers", group: "museSettings", title: "Shell sandbox",
-      description: "For new Muse Code conversations in Prompt unmatched. On request always uses the sandbox; Allow all disables it. On request is unavailable in a running process without the sandbox.", kind: "toggle", hostLocal: true,
+      id: "museShellSandbox", category: "providers", group: "museSettings", title: l10n("Shell sandbox"),
+      description: l10n("For new Muse Code conversations in Prompt unmatched. On request always uses the sandbox; Allow all disables it. On request is unavailable in a running process without the sandbox."), kind: "toggle", hostLocal: true,
       visible: (s) => !s.museSandboxUnavailable && !!s.museSettings && (s.providers || []).some(p => p.id === "muse"),
       defaultValue: true, get: (s) => s.museSettings.shellSandbox,
       message: (value) => ({ type: "setMuseSetting", key: "museShellSandbox", value }),
     },
     {
-      id: "museSandboxNetwork", category: "providers", group: "museSettings", title: "Sandbox network",
-      description: "Sandbox network access for new Muse Code conversations in Prompt unmatched or On request.", kind: "select", hostLocal: true,
+      id: "museSandboxNetwork", category: "providers", group: "museSettings", title: l10n("Sandbox network"),
+      description: l10n("Sandbox network access for new Muse Code conversations in Prompt unmatched or On request."), kind: "select", hostLocal: true,
       visible: (s) => !s.museSandboxUnavailable && !!s.museSettings && (s.providers || []).some(p => p.id === "muse"),
       defaultValue: "proxy-only", get: (s) => s.museSettings.sandboxNetwork,
-      options: [{ value: "proxy-only", label: "Proxy only" }, { value: "restricted", label: "Restricted" }, { value: "enabled", label: "Enabled" }],
+      options: [{ value: "proxy-only", label: l10n("Proxy only") }, { value: "restricted", label: l10n("Restricted") }, { value: "enabled", label: l10n("Enabled") }],
       message: (value) => ({ type: "setMuseSetting", key: "museSandboxNetwork", value }),
     },
     {
-      id: "museTrustWorkspaces", category: "providers", group: "museSettings", title: "Trust workspaces",
-      description: "For new Muse Code conversations in Prompt unmatched or On request. Allow all always trusts the workspace. A trusted workspace also runs the repository's hooks.",
+      id: "museTrustWorkspaces", category: "providers", group: "museSettings", title: l10n("Trust workspaces"),
+      description: l10n("For new Muse Code conversations in Prompt unmatched or On request. Allow all always trusts the workspace. A trusted workspace also runs the repository's hooks."),
       kind: "toggle", hostLocal: true,
       visible: (s) => !!s.museSettings && (s.providers || []).some(p => p.id === "muse"),
       defaultValue: false, get: (s) => s.museSettings.trustWorkspaces,
@@ -1171,13 +1163,13 @@
       describe: (s) => {
         const provider = providerOf(s, "agy");
         const cli = provider.agyCli;
-        if (cli?.installing) return "Installing the Antigravity CLI…";
+        if (cli?.installing) return l10n("Installing the Antigravity CLI…");
         const description = providerDescription(provider);
         if (cli?.reason) return description + " " + cli.reason;
-        return cli?.version ? "Antigravity CLI v" + cli.version + ". " + description : description;
+        return cli?.version ? l10n("Antigravity CLI v{0}. {1}", cli.version, description) : description;
       },
       local: (s, env) => env && (env.isRemote || env.isDesktop) && !providerOf(s, "agy").agyCli?.installing && !providerConnectedNow(s, "agy") ? "connectWizard:agy" : "",
-      actionLabel: (s) => providerOf(s, "agy").agyCli?.installing ? "Cancel" : providerAction(providerOf(s, "agy")),
+      actionLabel: (s) => providerOf(s, "agy").agyCli?.installing ? l10n("Cancel") : providerAction(providerOf(s, "agy")),
       message: (s, env) => providerOf(s, "agy").agyCli?.installing ? { type: "cancelAgyInstall" }
         : ({ type: providerConnectedNow(s, "agy") ? (env.isRemote && providerOf(s, "agy").keepsCliSignIn === true ? "disconnectProvider" : "logout") : "runGrokLogin", provider: "agy" }),
     },
@@ -1187,13 +1179,19 @@
       visible: (s, env) => !!(env && env.isRemote && providerOf(s, "agy").remoteSetup !== true && env.providersKnown && agyAdvertised(s)),
       describe: (s) => providerConnectedNow(s, "agy")
         ? providerDescription(providerOf(s, "agy"), true)
-        : "Connect Antigravity on the computer running this workspace.",
+        : l10n("Connect Antigravity on the computer running this workspace."),
     },
     {
       id: "providerDeepseek", category: "providers", logo: "deepseek", provider: "deepseek",
       title: "DeepSeek", vendor: "DeepSeek", description: "", kind: "action", keepOpen: true,
       visible: (s, env) => !!(env && (!env.isRemote || providerOf(s, "deepseek").remoteSetup === true) && env.providersKnown && deepseekAdvertised(s)),
-      describe: (s) => providerDescription(providerOf(s, "deepseek")) + " Key source: " + (providerOf(s, "deepseek").keySource || "not configured") + ". Environment takes precedence.",
+      describe: (s) => {
+        const provider = providerOf(s, "deepseek");
+        const description = providerDescription(provider);
+        return provider.keySource
+          ? l10n("{0} Key source: {1}. Environment takes precedence.", description, provider.keySource)
+          : l10n("{0} Key source: not configured. Environment takes precedence.", description);
+      },
       local: (s, env) => env && (env.isRemote || env.isDesktop) && !providerConnectedNow(s, "deepseek") ? "connectWizard:deepseek" : "",
       actionLabel: (s) => providerAction(providerOf(s, "deepseek")),
       message: (s, env) => ({ type: providerConnectedNow(s, "deepseek") ? (env.isRemote && providerOf(s, "deepseek").keepsCliSignIn === true ? "disconnectProvider" : "logout") : "runGrokLogin", provider: "deepseek" }),
@@ -1204,7 +1202,7 @@
       visible: (s, env) => !!(env && env.isRemote && providerOf(s, "deepseek").remoteSetup !== true && env.providersKnown && deepseekAdvertised(s)),
       describe: (s) => providerConnectedNow(s, "deepseek")
         ? providerDescription(providerOf(s, "deepseek"), true)
-        : "Connect DeepSeek on the computer running this workspace.",
+        : l10n("Connect DeepSeek on the computer running this workspace."),
     },
     {
       id: "githubConnection",
@@ -1247,10 +1245,10 @@
     {
       id: "githubToken",
       category: "providers",
-      title: "Use a GitHub token",
-      description: "A fine-grained token can be scoped to one repository, with an expiry. It is stored by the GitHub CLI, not by us.",
+      title: l10n("Use a GitHub token"),
+      description: l10n("A fine-grained token can be scoped to one repository, with an expiry. It is stored by the GitHub CLI, not by us."),
       kind: "action",
-      actionLabel: "Paste token",
+      actionLabel: l10n("Paste token"),
       // Folded into the GitHub row as the quieter advanced path. The row
       // stays in the catalog so existing ids do not vanish; it does not paint.
       visible: () => false,
@@ -1260,7 +1258,7 @@
     {
       id: "providerConfigFiles",
       category: "providers",
-      title: "Provider config files",
+      title: l10n("Provider config files"),
       description: "~/.grok/config.toml · ~/.codex/config.toml · ~/.claude/settings.json",
       kind: "providerConfigs",
       visible: (s, env) => !!(env && env.hostCaps && env.hostCaps.editProviderConfigFiles && env.hostCaps.editProjectFiles),
@@ -1268,19 +1266,19 @@
     {
       id: "remoteMachineStatus",
       category: "account",
-      title: "This machine",
+      title: l10n("This machine"),
       kind: "status",
-      describe: (s, env) => env.remoteLinked === null ? "Checking…" : !env.remoteLinked ? "Not linked"
-        : env.remoteViewerCount > 0 ? "Linked · phone connected" : "Linked",
+      describe: (s, env) => env.remoteLinked === null ? "Checking…" : !env.remoteLinked ? l10n("Not linked")
+        : env.remoteViewerCount > 0 ? l10n("Linked · phone connected") : l10n("Linked"),
       visible: (s, env) => !!(env && !env.isRemote),
     },
     {
       id: "continueOnPhone",
       category: "account",
-      title: "Continue on phone",
-      description: "Show a code for the conversation open in chat.",
+      title: l10n("Continue on phone"),
+      description: l10n("Show a code for the conversation open in chat."),
       kind: "action",
-      actionLabel: "Show code",
+      actionLabel: l10n("Show code"),
       visible: (s, env) => !!(env && !env.isRemote && env.remoteLinked === true),
       message: (s, env) => env.remoteHandoffSupported
         ? { type: "showRemoteHandoff", source: "settings" }
@@ -1289,40 +1287,40 @@
     {
       id: "yourAccount",
       category: "account",
-      title: "Your account",
-      description: "Open the AFK Pilot account page for this linked device.",
+      title: l10n("Your account"),
+      description: l10n("Open the AFK Pilot account page for this linked device."),
       kind: "action",
-      actionLabel: "Open",
+      actionLabel: l10n("Open"),
       visible: (s, env) => !!(env && !env.isRemote && env.remoteLinked === true),
       message: () => ({ type: "openRemotePortal", source: "settings" }),
     },
     {
       id: "unlinkDevice",
       category: "account",
-      title: "Unlink this device",
-      description: "Stop advertising this machine to AFK Pilot. Other devices lose this desk until you link it again.",
+      title: l10n("Unlink this device"),
+      description: l10n("Stop advertising this machine to AFK Pilot. Other devices lose this desk until you link it again."),
       kind: "action",
-      actionLabel: "Unlink…",
+      actionLabel: l10n("Unlink…"),
       visible: (s, env) => !!(env && !env.isRemote && env.isDesktop && env.remoteLinked === true),
       message: () => ({ type: "unlinkRemoteDevice" }),
     },
     {
       id: "remoteSignIn",
       category: "account",
-      title: "Sign in",
-      description: "Link this device to an AFK Pilot account so you can continue remotely.",
+      title: l10n("Sign in"),
+      description: l10n("Link this device to an AFK Pilot account so you can continue remotely."),
       kind: "action",
-      actionLabel: "Link this device",
+      actionLabel: l10n("Link this device"),
       visible: (s, env) => !!(env && !env.isRemote && env.remoteLinked === false),
       message: () => ({ type: "remoteSignIn", source: "settings" }),
     },
     {
       id: "remoteHowItWorks",
       category: "account",
-      title: "How it works",
-      description: "AFK Pilot keeps this machine awake and lets you continue from a phone without storing prompts or code.",
+      title: l10n("How it works"),
+      description: l10n("AFK Pilot keeps this machine awake and lets you continue from a phone without storing prompts or code."),
       kind: "action",
-      actionLabel: "Learn more",
+      actionLabel: l10n("Learn more"),
       visible: (s, env) => !!(env && !env.isRemote && env.remoteLinked === false),
       local: (s, env) => env.standalone ? null : "explainRemote",
       message: (s, env) => !env.standalone ? null : env.remoteHandoffSupported
@@ -1333,41 +1331,41 @@
       id: "remoteAccountStatus",
       category: "account",
       title: "AFK Pilot",
-      description: "This browser is signed in and talking to the linked desk.",
+      description: l10n("This browser is signed in and talking to the linked desk."),
       kind: "status",
       visible: (s, env) => !!(env && env.isRemote),
     },
     {
       id: "remoteDeviceManager",
       category: "account",
-      title: "Device manager",
-      description: "Open the AFK Pilot device list for this account.",
+      title: l10n("Device manager"),
+      description: l10n("Open the AFK Pilot device list for this account."),
       kind: "action",
-      actionLabel: "Open",
+      actionLabel: l10n("Open"),
       visible: (s, env) => !!(env && env.isRemote),
       local: "openDeviceManager",
     },
     {
       id: "openProjectConfig",
       category: "advanced",
-      title: "Open project config",
-      description: "Open this project's Grok config file.",
+      title: l10n("Open project config"),
+      description: l10n("Open this project's Grok config file."),
       kind: "action",
-      actionLabel: "Open",
+      actionLabel: l10n("Open"),
       hostLocal: true,
       message: () => ({ type: "openProjectConfig" }),
     },
     {
       id: "routinesList",
       category: "routines",
-      title: "Routines",
-      description: "Send the same prompt to a project on a schedule. Each run opens a session you can read later.",
+      title: l10n("Routines"),
+      description: l10n("Send the same prompt to a project on a schedule. Each run opens a session you can read later."),
       kind: "routines",
     },
     {
       id: "connectorsCatalog",
       category: "connectors",
-      title: "Connectors",
+      title: l10n("Connectors"),
       description: CONNECTOR_BLURB_HERE,
       kind: "connectors",
       visible: (s, env) => mcpSettingsEnabled(env),
@@ -1375,7 +1373,7 @@
     {
       id: "mcpCatalog",
       category: "connectors",
-      title: "Grok connectors",
+      title: l10n("Grok connectors"),
       description: CONNECTOR_BLURB_GROK,
       kind: "mcp",
       visible: (s, env) => mcpSettingsEnabled(env),
@@ -1383,8 +1381,8 @@
     {
       id: "showLogs",
       category: "advanced",
-      title: "Show logs",
-      description: "Open the host log for this AFK Pilot client.",
+      title: l10n("Show logs"),
+      description: l10n("Open the host log for this AFK Pilot client."),
       kind: "action",
       actionLabel: (s, env) => logsLabel(env),
       hostLocal: true,
@@ -1393,10 +1391,10 @@
     {
       id: "toggleDevTools",
       category: "advanced",
-      title: "Toggle Developer Tools",
-      description: "Open or close Chromium Developer Tools for this window.",
+      title: l10n("Toggle Developer Tools"),
+      description: l10n("Open or close Chromium Developer Tools for this window."),
       kind: "action",
-      actionLabel: "Toggle",
+      actionLabel: l10n("Toggle"),
       hostLocal: true,
       visible: (s, env) => !!(env && env.hostCaps && env.hostCaps.toggleDevTools === true),
       message: () => ({ type: "toggleDevTools" }),
@@ -1404,10 +1402,10 @@
     {
       id: "openVsCodeSettings",
       category: "advanced",
-      title: "Open VS Code settings",
-      description: "Open the host Settings editor focused on AFK Pilot.",
+      title: l10n("Open VS Code settings"),
+      description: l10n("Open the host Settings editor focused on AFK Pilot."),
       kind: "action",
-      actionLabel: "Open",
+      actionLabel: l10n("Open"),
       hostLocal: true,
       visible: (s, env) => !!(env && !env.isDesktop),
       message: () => ({ type: "openSettings", section: "grok" }),
@@ -1415,10 +1413,10 @@
     {
       id: "moveView",
       category: "advanced",
-      title: "Move view",
-      description: "Open the editor's own picker so you can move the AFK Pilot chat to another dock.",
+      title: l10n("Move view"),
+      description: l10n("Open the editor's own picker so you can move the AFK Pilot chat to another dock."),
       kind: "action",
-      actionLabel: "Move view…",
+      actionLabel: l10n("Move view…"),
       hostLocal: true,
       visible: (s, env) => !!(
         env &&
@@ -1431,19 +1429,19 @@
     {
       id: "hostConfigRemote",
       category: "advanced",
-      title: "Host configuration",
+      title: l10n("Host configuration"),
       description: "",
       kind: "status",
       // "The desk" was nonsense on a cloud machine — there is no desk.
       describe: (s, env) => hostIsCloud(env)
-        ? "Host configuration lives on your cloud machine and is not editable from this page."
-        : "Host config is managed on the machine running this workspace.",
+        ? l10n("Host configuration lives on your cloud machine and is not editable from this page.")
+        : l10n("Host config is managed on the machine running this workspace."),
       visible: (s, env) => !!(env && env.isRemote),
     },
     {
       id: "aboutWebApp",
       category: "about",
-      title: "Web app",
+      title: l10n("Web app"),
       kind: "value",
       visible: (s, env) => remoteAbout(s, env),
       get: () => versionLabel(webAppVersion()),
@@ -1451,20 +1449,22 @@
     {
       id: "aboutConnectedTo",
       category: "about",
-      title: "Connected to",
+      title: l10n("Connected to"),
       kind: "value",
       visible: (s, env) => remoteAbout(s, env),
       get: (s) => {
-        const gui = s && s.hostKind === "desktop" ? "Desktop app" : "Extension";
-        return s && s.hostName ? `${s.hostName} · ${gui}` : gui;
+        const desktop = s && s.hostKind === "desktop";
+        return s && s.hostName
+          ? l10n(desktop ? "{0} · Desktop app" : "{0} · Extension", s.hostName)
+          : l10n(desktop ? "Desktop app" : "Extension");
       },
     },
     {
       id: "aboutCloudHostUpdate",
       category: "about",
-      title: "Cloud host update",
+      title: l10n("Cloud host update"),
       kind: "action",
-      actionLabel: "Update now",
+      actionLabel: l10n("Update now"),
       visible: (s, env) => !!(env && env.isRemote && s.cloudHostUpdate &&
         ["available", "failed"].includes(s.cloudHostUpdate.state) && s.cloudHostUpdate.installed && s.cloudHostUpdate.latest),
       describe: (s) => s.cloudHostUpdateText,
@@ -1473,7 +1473,7 @@
     {
       id: "aboutCloudHostUpdateStatus",
       category: "about",
-      title: "Cloud host update",
+      title: l10n("Cloud host update"),
       kind: "status",
       visible: (s, env) => !!(env && env.isRemote && s.cloudHostUpdate &&
         !(["available", "failed"].includes(s.cloudHostUpdate.state) && s.cloudHostUpdate.installed && s.cloudHostUpdate.latest)),
@@ -1482,7 +1482,7 @@
     {
       id: "aboutHostProduct",
       category: "about",
-      title: (s) => (s && s.hostKind === "desktop") ? "Grok Build Desktop" : "AFK Pilot extension",
+      title: (s) => (s && s.hostKind === "desktop") ? "Grok Build Desktop" : l10n("AFK Pilot extension"),
       kind: "value",
       visible: (s, env) => remoteAbout(s, env),
       get: (s) => versionLabel(s && s.extVersion),
@@ -1490,7 +1490,7 @@
     {
       id: "aboutThisExtension",
       category: "about",
-      title: "This extension",
+      title: l10n("This extension"),
       kind: "value",
       visible: (s, env) => !remoteAbout(s, env),
       get: (s) => versionLabel(s && s.extVersion),
@@ -1553,7 +1553,7 @@
     {
       id: "aboutGrokUpdateStatus",
       category: "about",
-      title: "Grok Build CLI updates",
+      title: l10n("Grok Build CLI updates"),
       kind: "status",
       visible: (s, env) => showGrokAbout(s, env) && !remoteAbout(s, env),
       describe: (s) => grokUpdateStatusText(s),
@@ -1561,31 +1561,31 @@
     {
       id: "aboutGrokUpdatePolicy",
       category: "about",
-      title: "Updates paused",
+      title: l10n("Updates paused"),
       kind: "status",
       visible: (s, env) => showGrokAbout(s, env) && !remoteAbout(s, env) && grokUpdateBlocked(s),
       describe: (s) => {
         const policy = grokUpdateOf(s).policy;
-        return (policy && policy.note) || "Updates are paused for compatibility.";
+        return (policy && policy.note) || l10n("Updates are paused for compatibility.");
       },
     },
     {
       id: "aboutUpdateGrok",
       category: "about",
-      title: "Update Grok Build CLI",
-      description: "Download and install the latest Grok Build CLI on this machine.",
+      title: l10n("Update Grok Build CLI"),
+      description: l10n("Download and install the latest Grok Build CLI on this machine."),
       kind: "action",
-      actionLabel: "Update Grok Build CLI",
+      actionLabel: l10n("Update Grok Build CLI"),
       visible: (s, env) => showGrokAbout(s, env) && !remoteAbout(s, env) && canUpdateGrok(s),
       message: () => ({ type: "updateGrok" }),
     },
     {
       id: "aboutUpdateGrokBlocked",
       category: "about",
-      title: "Update Grok Build CLI",
-      description: "Updates are paused for compatibility.",
+      title: l10n("Update Grok Build CLI"),
+      description: l10n("Updates are paused for compatibility."),
       kind: "action",
-      actionLabel: "Update Grok Build CLI",
+      actionLabel: l10n("Update Grok Build CLI"),
       visible: (s, env) => showGrokAbout(s, env) && !remoteAbout(s, env) && grokUpdateBlocked(s),
       enabled: () => false,
       message: () => ({ type: "updateGrok" }),
@@ -1593,42 +1593,44 @@
     {
       id: "aboutRemoteCliUpdate",
       category: "about",
-      title: "CLI update",
+      title: l10n("CLI update"),
       kind: "status",
       visible: (s, env) => !!(env && env.isRemote && grokUpdateOf(s).updateAvailable),
       describe: (s) => {
         const latest = grokUpdateOf(s).latest;
-        return `CLI update available${latest ? ` · v${latest}` : ""}. Update it at the desk — this device can’t.`;
+        return latest
+          ? l10n("CLI update available · v{0}. Update it at the desk — this device can’t.", latest)
+          : l10n("CLI update available. Update it at the desk — this device can’t.");
       },
     },
     {
       id: "reportBug",
       category: "about",
       icon: "bug",
-      title: "Report a bug",
-      description: "Open a new issue on the GitHub tracker.",
+      title: l10n("Report a bug"),
+      description: l10n("Open a new issue on the GitHub tracker."),
       kind: "action",
-      actionLabel: "Open",
+      actionLabel: l10n("Open"),
       href: GITHUB_ISSUE_BUG_URL,
     },
     {
       id: "requestFeature",
       category: "about",
       icon: "lightbulb",
-      title: "Request a feature",
-      description: "Open a new issue on the GitHub tracker.",
+      title: l10n("Request a feature"),
+      description: l10n("Open a new issue on the GitHub tracker."),
       kind: "action",
-      actionLabel: "Open",
+      actionLabel: l10n("Open"),
       href: GITHUB_ISSUE_FEATURE_URL,
     },
     {
       id: "contactSupport",
       category: "about",
       icon: "mail",
-      title: "Contact",
+      title: l10n("Contact"),
       description: "contact@afkpilot.com",
       kind: "action",
-      actionLabel: "Email",
+      actionLabel: l10n("Email"),
       href: SUPPORT_MAILTO,
     },
     {
@@ -1636,9 +1638,9 @@
       category: "about",
       icon: "github",
       title: "phuryn/grok-build-vscode",
-      description: "Source repository on GitHub.",
+      description: l10n("Source repository on GitHub."),
       kind: "action",
-      actionLabel: "Open",
+      actionLabel: l10n("Open"),
       href: GITHUB_REPO_URL,
     },
   ];
@@ -1682,7 +1684,7 @@
 
   function rowActionLabel(row, snapshot, env) {
     if (typeof row.actionLabel === "function") return row.actionLabel(snapshot, env);
-    return row.actionLabel || "Open";
+    return row.actionLabel || l10n("Open");
   }
 
   function rowValue(row, snapshot) {
@@ -1717,18 +1719,21 @@
           CONNECTOR_BLURB_GROK,
           CONNECTOR_BLURB_LOCAL,
           ...snapshot.mcpServers.map((s) => [s.displayName, s.name, s.scopeName, s.configFile].filter(Boolean).join(" ")),
-        ].join(" ")
-      : "";
+        ]
+      : [""];
     const section = connectorSection(row, env);
-    return [
+    const texts = [
       rowTitle(row, snapshot, env),
       rowDescription(row, snapshot, env),
       extraConnectors,
-      extraMcp,
+      ...extraMcp,
       section,
       cat ? cat.title : "",
       row.id,
-    ].join(" ").toLowerCase();
+    ];
+    const visible = texts.join(" ");
+    const english = texts.map(l10nSource).join(" ");
+    return (visible === english ? visible : visible + " " + english).toLowerCase();
   }
 
   function filterRows(query, snapshot, env) {
@@ -1768,7 +1773,7 @@
   }
 
   function restoreValueLabel(row, value) {
-    if (row.kind === "toggle") return value ? "On" : "Off";
+    if (row.kind === "toggle") return l10n(value ? "On" : "Off");
     if (row.kind === "select") {
       const opt = (row.options || []).find((o) => o.value === value);
       return opt ? opt.label : String(value);
@@ -2078,10 +2083,10 @@
 
   function mcpDetail(server) {
     const parts = [];
-    if (server.enabled === false) parts.push("Disabled");
+    if (server.enabled === false) parts.push(l10n("Disabled"));
     if (server.status) parts.push(server.status);
     if (Number.isFinite(server.toolCount)) {
-      parts.push(`${server.toolCount} ${server.toolCount === 1 ? "tool" : "tools"}`);
+      parts.push(l10n(server.toolCount === 1 ? "{0} tool" : "{0} tools", server.toolCount));
     }
     if (server.url) parts.push(server.url);
     else if (server.command) parts.push([server.command].concat(server.args || []).join(" "));
@@ -2187,7 +2192,7 @@
       }
       const detail = document.createElement("div");
       detail.className = "settings-row-desc";
-      detail.textContent = mcpDetail(server) || (server.enabled ? "Enabled" : "Disabled");
+      detail.textContent = mcpDetail(server) || l10n(server.enabled ? "Enabled" : "Disabled");
       copy.append(name, detail);
       row.appendChild(copy);
       list.appendChild(row);
@@ -2228,7 +2233,7 @@
     grokIcon.setAttribute("aria-hidden", "true");
     grokIcon.innerHTML = ICON_EXTERNAL_LINK;
     grokOpen.appendChild(grokIcon);
-    grokOpen.appendChild(document.createTextNode("Open"));
+    grokOpen.appendChild(document.createTextNode(l10n("Open")));
     grokHead.appendChild(grokOpen);
     el.appendChild(grokHead);
     const grokBlurb = document.createElement("div");
@@ -2240,7 +2245,7 @@
     } else if (error) {
       el.appendChild(renderMcpSectionState(error, true));
     } else if (!managed.length) {
-      el.appendChild(renderMcpSectionState("No grok.com connectors reported."));
+      el.appendChild(renderMcpSectionState(l10n("No grok.com connectors reported.")));
     } else {
       const grokList = document.createElement("div");
       grokList.className = "settings-mcp-list";
@@ -2264,7 +2269,7 @@
       localIcon.setAttribute("aria-hidden", "true");
       localIcon.innerHTML = ICON_SETTINGS;
       localOpen.appendChild(localIcon);
-      localOpen.appendChild(document.createTextNode("Open"));
+      localOpen.appendChild(document.createTextNode(l10n("Open")));
       localHead.appendChild(localOpen);
     }
     el.appendChild(localHead);
@@ -2277,7 +2282,7 @@
     } else if (error) {
       el.appendChild(renderMcpSectionState(error, true));
     } else if (!local.length) {
-      el.appendChild(renderMcpSectionState("No local Grok connectors reported."));
+      el.appendChild(renderMcpSectionState(l10n("No local Grok connectors reported.")));
     } else {
       const localList = document.createElement("div");
       localList.className = "settings-mcp-list";
@@ -2304,20 +2309,20 @@
     if (connector.status === "error" && connector.error) return connector.error;
     if (env && env.isRemote && !canManageConnectors(snapshot, env)) {
       if (isKeyConnectorView(connector) && connector.connected && connector.keySet !== true) {
-        return connector.description + " Connected, but no key on the desk.";
+        return l10n("{0} Connected, but no key on the desk.", connector.description);
       }
       return connector.connected
-        ? connector.description + " Connected on the desk machine."
-        : connector.description + " Sign-in happens on the desk.";
+        ? l10n("{0} Connected on the desk machine.", connector.description)
+        : l10n("{0} Sign-in happens on the desk.", connector.description);
     }
     if (isKeyConnectorView(connector) && connector.connected && connector.keySet === true) {
-      return connector.description + " Key is set. Applies to new conversations and when you reopen one.";
+      return l10n("{0} Key is set. Applies to new conversations and when you reopen one.", connector.description);
     }
     if (isKeyConnectorView(connector) && connector.connected) {
-      return connector.description + " Connected, but no key on this machine. Paste a token to use it here.";
+      return l10n("{0} Connected, but no key on this machine. Paste a token to use it here.", connector.description);
     }
     if (connector.connected) {
-      return connector.description + " Applies to new conversations and when you reopen one.";
+      return l10n("{0} Applies to new conversations and when you reopen one.", connector.description);
     }
     if (isKeyConnectorView(connector) && connector.keyHint) return connector.keyHint;
     return connector.description;
@@ -2331,15 +2336,16 @@
     input.className = "settings-text settings-connector-key-input";
     input.autocomplete = "off";
     input.spellcheck = false;
-    input.setAttribute("aria-label", connector.name + " personal access token");
-    input.placeholder = "Paste token";
+    input.setAttribute("aria-label", l10n("{0} personal access token", connector.name));
+    input.placeholder = l10n("Paste token");
     input.value = keyForm && keyForm.id === connector.id ? String(keyForm.value || "") : "";
     input.dataset.id = connector.id;
     form.appendChild(input);
     if (connector.keyDocsUrl) {
       const hint = document.createElement("div");
       hint.className = "settings-connector-key-hint";
-      hint.appendChild(document.createTextNode("Get a token at "));
+      const [before, after] = l10n("Get a token at {0}.").split("{0}");
+      hint.appendChild(document.createTextNode(before));
       const link = document.createElement("a");
       link.className = "settings-connector-key-docs";
       link.href = connector.keyDocsUrl;
@@ -2349,7 +2355,7 @@
       link.textContent = keyDocsLabel(connector.keyDocsUrl);
       link.dataset.href = connector.keyDocsUrl;
       hint.appendChild(link);
-      hint.appendChild(document.createTextNode("."));
+      hint.appendChild(document.createTextNode(after));
       form.appendChild(hint);
     }
     const readonly = document.createElement("label");
@@ -2360,7 +2366,7 @@
     box.dataset.id = connector.id;
     box.checked = !!(keyForm && keyForm.id === connector.id ? keyForm.readOnly : connector.readOnly);
     readonly.appendChild(box);
-    readonly.appendChild(document.createTextNode("Read-only (the agent can look, not write)"));
+    readonly.appendChild(document.createTextNode(l10n("Read-only (the agent can look, not write)")));
     form.appendChild(readonly);
     const actions = document.createElement("div");
     actions.className = "settings-connector-key-actions";
@@ -2368,12 +2374,12 @@
     submit.type = "button";
     submit.className = "settings-action settings-connector-key-submit";
     submit.dataset.id = connector.id;
-    submit.textContent = connector.connected ? "Save key" : "Connect";
+    submit.textContent = l10n(connector.connected ? "Save key" : "Connect");
     const cancel = document.createElement("button");
     cancel.type = "button";
     cancel.className = "settings-action settings-connector-key-cancel";
     cancel.dataset.id = connector.id;
-    cancel.textContent = "Cancel";
+    cancel.textContent = l10n("Cancel");
     actions.append(submit, cancel);
     form.appendChild(actions);
     return form;
@@ -2396,7 +2402,7 @@
     if (!connectors.length) {
       const empty = document.createElement("div");
       empty.className = "settings-mcp-state";
-      empty.textContent = "Connector list has not arrived from the host yet.";
+      empty.textContent = l10n("Connector list has not arrived from the host yet.");
       el.appendChild(empty);
       return el;
     }
@@ -2433,7 +2439,7 @@
           replace.className = "settings-action settings-connector-key-open";
           replace.dataset.id = connector.id;
           replace.dataset.action = "replace";
-          replace.textContent = connector.keySet === true ? "Replace" : "Paste token";
+          replace.textContent = l10n(connector.keySet === true ? "Replace" : "Paste token");
           replace.disabled = connecting;
           control.appendChild(replace);
         }
@@ -2445,10 +2451,10 @@
         btn.dataset.connected = connector.connected ? "true" : "false";
         if (connector.connected) btn.title = CONNECTOR_DISCONNECT_COPY;
         if (isKeyConnectorView(connector) && !connector.connected) {
-          btn.textContent = connecting ? "Connecting…" : (formOpen ? "Cancel" : "Connect");
+          btn.textContent = connecting ? "Connecting…" : l10n(formOpen ? "Cancel" : "Connect");
           btn.dataset.action = formOpen ? "cancel" : "open";
         } else {
-          btn.textContent = connecting ? "Connecting…" : (connector.connected ? "Disconnect" : "Connect");
+          btn.textContent = connecting ? "Connecting…" : l10n(connector.connected ? "Disconnect" : "Connect");
         }
         btn.disabled = connecting;
         if (connecting) btn.setAttribute("aria-busy", "true");
@@ -2456,7 +2462,7 @@
       } else {
         const span = document.createElement("span");
         span.className = "settings-value";
-        span.textContent = connector.connected ? "Connected" : "Not connected";
+        span.textContent = l10n(connector.connected ? "Connected" : "Not connected");
         control.appendChild(span);
       }
       row.append(copy, control);
@@ -2471,7 +2477,7 @@
         box.checked = connector.readOnly === true;
         box.disabled = connecting;
         readonly.appendChild(box);
-        readonly.appendChild(document.createTextNode("Read-only (the agent can look, not write)"));
+        readonly.appendChild(document.createTextNode(l10n("Read-only (the agent can look, not write)")));
         row.appendChild(readonly);
       }
       if (canManage && isKeyConnectorView(connector) && formOpen && !connecting) {
@@ -2487,9 +2493,9 @@
           link.href = authorization.url;
           link.target = "_blank";
           link.rel = "noopener noreferrer";
-          link.textContent = "Open sign-in";
+          link.textContent = l10n("Open sign-in");
           form.appendChild(link);
-          form.appendChild(renderMcpSectionState("Approve access, then return here. Connection completes automatically."));
+          form.appendChild(renderMcpSectionState(l10n("Approve access, then return here. Connection completes automatically.")));
         }
         row.appendChild(form);
       }
@@ -2625,24 +2631,24 @@
    */
   function formatRoutineCountdown(ms) {
     if (!Number.isFinite(ms)) return "";
-    if (ms <= 0) return "due now";
+    if (ms <= 0) return l10n("due now");
     const mins = Math.floor(ms / 60000);
-    if (mins < 60) return "in " + Math.max(1, mins) + "m";
+    if (mins < 60) return l10n("in {0}m", Math.max(1, mins));
     const hours = Math.floor(mins / 60);
     if (hours < 24) {
       const rem = mins % 60;
-      return rem ? "in " + hours + "h " + rem + "m" : "in " + hours + "h";
+      return rem ? l10n("in {0}h {1}m", hours, rem) : l10n("in {0}h", hours);
     }
     const days = Math.floor(hours / 24);
     const remH = hours % 24;
-    return remH ? "in " + days + "d " + remH + "h" : "in " + days + "d";
+    return remH ? l10n("in {0}d {1}h", days, remH) : l10n("in {0}d", days);
   }
 
   function routineRunLabel(run) {
-    if (run.outcome === "ran") return "Ran";
-    if (run.outcome === "running") return "Running now";
-    if (run.outcome === "skipped") return run.detail || "Skipped";
-    if (run.outcome === "interrupted") return run.detail || "Interrupted";
+    if (run.outcome === "ran") return l10n("Ran");
+    if (run.outcome === "running") return l10n("Running now");
+    if (run.outcome === "skipped") return run.detail || l10n("Skipped");
+    if (run.outcome === "interrupted") return run.detail || l10n("Interrupted");
     return run.detail || "Failed";
   }
 
@@ -2680,7 +2686,7 @@
     const count = document.createElement("span");
     count.className = "settings-routine-count";
     const health = routine.health || { ran: 0, total: 0 };
-    count.textContent = health.total ? health.ran.toLocaleString("en-US") + "/" + health.total.toLocaleString("en-US") : "no runs yet";
+    count.textContent = health.total ? health.ran.toLocaleString("en-US") + "/" + health.total.toLocaleString("en-US") : l10n("no runs yet");
     const wrap = document.createElement("span");
     wrap.className = "settings-routine-strip-wrap";
     wrap.append(strip, count);
@@ -2711,18 +2717,18 @@
     name.type = "text";
     name.className = "settings-routine-input";
     name.value = draft.title;
-    name.placeholder = "Morning brief";
+    name.placeholder = l10n("Morning brief");
     name.dataset.field = "title";
-    body.appendChild(labelledField("Name", name));
+    body.appendChild(labelledField(l10n("Name"), name));
 
     const prompt = document.createElement("textarea");
     prompt.className = "settings-routine-input settings-routine-prompt";
     prompt.value = draft.prompt;
     prompt.rows = 4;
-    prompt.placeholder = "Summarise what changed in this repo since your last run.";
+    prompt.placeholder = l10n("Summarise what changed in this repo since your last run.");
     prompt.dataset.field = "prompt";
     body.appendChild(
-      labelledField("Prompt", prompt, "Sent as the first message of a new session."),
+      labelledField(l10n("Prompt"), prompt, l10n("Sent as the first message of a new session.")),
     );
 
     const pair = document.createElement("div");
@@ -2735,18 +2741,18 @@
     for (const p of projects) {
       const opt = document.createElement("option");
       opt.value = p.cwd;
-      opt.textContent = p.archived ? p.label + " (archived)" : p.label;
+      opt.textContent = p.archived ? l10n("{0} (archived)", p.label) : p.label;
       if (p.cwd === draft.cwd) opt.selected = true;
       project.appendChild(opt);
     }
     if (!projects.some((p) => p.cwd === draft.cwd) && draft.cwd) {
       const opt = document.createElement("option");
       opt.value = draft.cwd;
-      opt.textContent = draft.cwd + " (unavailable)";
+      opt.textContent = l10n("{0} (unavailable)", draft.cwd);
       opt.selected = true;
       project.appendChild(opt);
     }
-    pair.appendChild(labelledField("Project", project));
+    pair.appendChild(labelledField(l10n("Project"), project));
 
     const models = (Array.isArray(snapshot.routineModels) ? snapshot.routineModels : []).filter(m => m.provider !== "muse" || (snapshot.providers || []).some(p => p.id === "muse" && !p.unavailableReason));
     const model = document.createElement("select");
@@ -2785,12 +2791,12 @@
     }
     pair.appendChild(
       labelledField(
-        "Model",
+        l10n("Model"),
         model,
         // "No model" would be wrong twice over: a provider with no cached
         // model list still offers its default, so an empty list can only mean
         // no PROVIDER is connected at all.
-        models.length ? "Only connected models are listed." : "No provider connected.",
+        l10n(models.length ? "Only connected models are listed." : "No provider connected."),
       ),
     );
     body.appendChild(pair);
@@ -2799,7 +2805,7 @@
     cadence.className = "settings-routine-cadence";
     const every = document.createElement("span");
     every.className = "settings-routine-word";
-    every.textContent = "Every";
+    every.textContent = l10n("Every");
     const count = document.createElement("input");
     count.type = "number";
     count.min = "1";
@@ -2809,10 +2815,10 @@
     const unit = document.createElement("select");
     unit.className = "settings-routine-input";
     unit.dataset.field = "unit";
-    for (const u of ["minutes", "hours", "days"]) {
+    for (const [u, label] of [["minutes", l10n("minutes")], ["hours", l10n("hours")], ["days", l10n("days")]]) {
       const opt = document.createElement("option");
       opt.value = u;
-      opt.textContent = u;
+      opt.textContent = label;
       if (u === draft.unit) opt.selected = true;
       unit.appendChild(opt);
     }
@@ -2820,7 +2826,7 @@
     if (draft.unit === "days") {
       const at = document.createElement("span");
       at.className = "settings-routine-word";
-      at.textContent = "at";
+      at.textContent = l10n("at");
       const time = document.createElement("input");
       time.type = "time";
       time.className = "settings-routine-input settings-routine-time";
@@ -2830,11 +2836,11 @@
     }
     body.appendChild(
       labelledField(
-        "Cadence",
+        l10n("Cadence"),
         cadence,
-        draft.unit === "days"
+        l10n(draft.unit === "days"
           ? "Anchored to the clock, so it holds through daylight saving."
-          : "At most once every 15 minutes.",
+          : "At most once every 15 minutes."),
       ),
     );
 
@@ -2857,8 +2863,8 @@
     const head = document.createElement("div");
     head.className = "settings-routine-runs-head";
     head.textContent = routine.runs.length
-      ? "Last " + routine.runs.length.toLocaleString("en-US") + (routine.runs.length === 1 ? " run" : " runs")
-      : "No runs yet";
+      ? l10n(routine.runs.length === 1 ? "Last {0} run" : "Last {0} runs", routine.runs.length.toLocaleString("en-US"))
+      : l10n("No runs yet");
     wrap.appendChild(head);
     for (const run of routine.runs) {
       const line = document.createElement("div");
@@ -2875,7 +2881,7 @@
         link.className = "settings-routine-open";
         link.dataset.session = run.sessionId;
         link.dataset.cwd = run.cwd || routine.cwd;
-        link.textContent = "Ran — open session";
+        link.textContent = l10n("Ran — open session");
         what.appendChild(link);
       } else {
         what.textContent = routineRunLabel(run);
@@ -2896,12 +2902,12 @@
    */
   function routinesHostNote(env) {
     if (env && env.isRemote) {
-      return "Routines run on your computer, while the desktop app or an editor window is open.";
+      return l10n("Routines run on your computer, while the desktop app or an editor window is open.");
     }
     if (env && env.isDesktop) {
-      return "Routines run while this app or an editor window is open. Nothing runs once they are all closed.";
+      return l10n("Routines run while this app or an editor window is open. Nothing runs once they are all closed.");
     }
-    return "Routines run while this IDE or the desktop app is open. Nothing runs once they are all closed.";
+    return l10n("Routines run while this IDE or the desktop app is open. Nothing runs once they are all closed.");
   }
 
   function renderRoutines(snapshot, env) {
@@ -2942,15 +2948,15 @@
       empty.className = "settings-routines-empty";
       const h = document.createElement("div");
       h.className = "settings-routines-empty-title";
-      h.textContent = "No routines yet";
+      h.textContent = l10n("No routines yet");
       const p = document.createElement("div");
       p.className = "settings-routines-empty-copy";
       p.textContent =
-        "A routine sends one prompt to one project on a schedule you set — a morning summary of what changed, or a weekly dependency check. Each run becomes a session, and the last twenty stay here so you can see it working.";
+        l10n("A routine sends one prompt to one project on a schedule you set — a morning summary of what changed, or a weekly dependency check. Each run becomes a session, and the last twenty stay here so you can see it working.");
       const add = document.createElement("button");
       add.type = "button";
       add.className = "settings-action settings-routine-new";
-      add.textContent = "New routine";
+      add.textContent = l10n("New routine");
       empty.append(h, p, add);
       el.appendChild(empty);
       return el;
@@ -2969,7 +2975,7 @@
       head.className = "settings-routine-head";
       const title = document.createElement("span");
       title.className = "settings-routine-name";
-      title.textContent = "New routine";
+      title.textContent = l10n("New routine");
       head.appendChild(title);
       card.appendChild(head);
       card.appendChild(renderRoutineForm(draft, snapshot, true));
@@ -2978,11 +2984,11 @@
       const save = document.createElement("button");
       save.type = "button";
       save.className = "settings-action is-primary settings-routine-save";
-      save.textContent = "Create routine";
+      save.textContent = l10n("Create routine");
       const cancel = document.createElement("button");
       cancel.type = "button";
       cancel.className = "settings-action settings-routine-cancel";
-      cancel.textContent = "Cancel";
+      cancel.textContent = l10n("Cancel");
       foot.append(save, cancel);
       card.appendChild(foot);
       list.appendChild(card);
@@ -3008,7 +3014,7 @@
       if (routine.paused) {
         const tag = document.createElement("span");
         tag.className = "settings-routine-tag";
-        tag.textContent = "Paused";
+        tag.textContent = l10n("Paused");
         name.appendChild(tag);
       }
       const meta = document.createElement("span");
@@ -3023,7 +3029,7 @@
 
       const next = document.createElement("span");
       next.className = "settings-routine-next";
-      next.textContent = routine.paused ? "Paused" : formatRoutineCountdown(routine.nextRunAt - Date.now());
+      next.textContent = routine.paused ? l10n("Paused") : formatRoutineCountdown(routine.nextRunAt - Date.now());
 
       const chev = document.createElement("span");
       chev.className = "settings-routine-chev";
@@ -3049,23 +3055,23 @@
         const save = document.createElement("button");
         save.type = "button";
         save.className = "settings-action is-primary settings-routine-save";
-        save.textContent = "Save changes";
+        save.textContent = l10n("Save changes");
         const pause = document.createElement("button");
         pause.type = "button";
         pause.className = "settings-action settings-routine-pause";
         pause.dataset.paused = routine.paused ? "1" : "";
-        pause.textContent = routine.paused ? "Resume" : "Pause";
+        pause.textContent = l10n(routine.paused ? "Resume" : "Pause");
         const runNow = document.createElement("button");
         runNow.type = "button";
         runNow.className = "settings-action settings-routine-run-now";
-        runNow.textContent = "Run now";
+        runNow.textContent = l10n("Run now");
         left.append(save, pause, runNow);
 
         const remove = document.createElement("button");
         remove.type = "button";
         remove.className = "settings-action is-danger settings-routine-remove";
         remove.textContent =
-          ROUTINE_UI.confirmRemove === routine.id ? "Remove for good" : "Remove";
+          l10n(ROUTINE_UI.confirmRemove === routine.id ? "Remove for good" : "Remove");
         foot.append(left, remove);
         card.appendChild(foot);
       }
@@ -3078,7 +3084,7 @@
       const add = document.createElement("button");
       add.type = "button";
       add.className = "settings-action settings-routine-new";
-      add.textContent = "New routine";
+      add.textContent = l10n("New routine");
       el.appendChild(add);
     }
     return el;
@@ -3095,23 +3101,23 @@
     if (status === "starting") {
       const heading = document.createElement("div");
       heading.className = "settings-github-flow-heading";
-      heading.textContent = "Connecting GitHub";
+      heading.textContent = l10n("Connecting GitHub");
       const p = document.createElement("p");
       p.className = "settings-github-flow-desc";
       p.textContent = opts && opts.terminal
-        ? "A terminal opened for GitHub sign-in. When it finishes, re-check."
-        : "Asking the GitHub CLI for a sign-in code…";
+        ? l10n("A terminal opened for GitHub sign-in. When it finishes, re-check.")
+        : l10n("Asking the GitHub CLI for a sign-in code…");
       box.appendChild(heading);
       box.appendChild(p);
     } else {
       const heading = document.createElement("div");
       heading.className = "settings-github-flow-heading";
-      heading.textContent = "Finish signing in to GitHub";
+      heading.textContent = l10n("Finish signing in to GitHub");
       const p = document.createElement("p");
       p.className = "settings-github-flow-desc";
-      p.textContent = flow.code
+      p.textContent = l10n(flow.code
         ? "Open the link, then confirm this code:"
-        : "Open the link to finish signing in.";
+        : "Open the link to finish signing in.");
       box.appendChild(heading);
       box.appendChild(p);
       if (flow.code) {
@@ -3122,13 +3128,13 @@
         const copy = document.createElement("button");
         copy.type = "button";
         copy.className = "settings-github-flow-copy";
-        copy.textContent = "Copy";
+        copy.textContent = l10n("Copy");
         copy.addEventListener("click", function (e) {
           e.stopPropagation();
           if (!navigator.clipboard || typeof navigator.clipboard.writeText !== "function") return;
           navigator.clipboard.writeText(flow.code).then(function () {
-            copy.textContent = "Copied";
-            setTimeout(function () { copy.textContent = "Copy"; }, 1500);
+            copy.textContent = l10n("Copied");
+            setTimeout(function () { copy.textContent = l10n("Copy"); }, 1500);
           }).catch(function () { /* clipboard blocked */ });
         });
         cmd.appendChild(code);
@@ -3141,12 +3147,12 @@
         open.href = flow.url;
         open.target = "_blank";
         open.rel = "noopener noreferrer";
-        open.textContent = "Open the sign-in page";
+        open.textContent = l10n("Open the sign-in page");
         box.appendChild(open);
       }
       const note = document.createElement("p");
       note.className = "settings-github-flow-note";
-      note.textContent = "Keep this page open — it finishes on its own.";
+      note.textContent = l10n("Keep this page open — it finishes on its own.");
       box.appendChild(note);
     }
     if (opts && opts.terminal) {
@@ -3157,13 +3163,13 @@
       // a SECOND sign-in terminal — before its own listener could ask for a
       // refresh. It styles itself completely, so the class bought nothing.
       recheck.className = "settings-github-flow-recheck";
-      recheck.textContent = "Re-check connection";
+      recheck.textContent = l10n("Re-check connection");
       box.appendChild(recheck);
     }
     const cancel = document.createElement("button");
     cancel.type = "button";
     cancel.className = "settings-github-flow-cancel";
-    cancel.textContent = "Cancel";
+    cancel.textContent = l10n("Cancel");
     box.appendChild(cancel);
     el.appendChild(box);
   }
@@ -3172,7 +3178,7 @@
     const link = document.createElement("button");
     link.type = "button";
     link.className = "settings-github-advanced";
-    link.textContent = "Use a token instead";
+    link.textContent = l10n("Use a token instead");
     el.appendChild(link);
   }
 
@@ -3188,18 +3194,18 @@
     input.className = "settings-github-token-input";
     input.autocomplete = "off";
     input.spellcheck = false;
-    input.setAttribute("aria-label", "GitHub token");
+    input.setAttribute("aria-label", l10n("GitHub token"));
     input.value = githubTokenForm.value || "";
     const actions = document.createElement("div");
     actions.className = "settings-github-token-actions";
     const submit = document.createElement("button");
     submit.type = "button";
     submit.className = "settings-action settings-github-token-submit";
-    submit.textContent = "Connect with token";
+    submit.textContent = l10n("Connect with token");
     const cancel = document.createElement("button");
     cancel.type = "button";
     cancel.className = "settings-action settings-github-token-cancel";
-    cancel.textContent = "Cancel";
+    cancel.textContent = l10n("Cancel");
     actions.appendChild(submit);
     actions.appendChild(cancel);
     form.appendChild(hint);
@@ -3215,7 +3221,7 @@
    * open state is announced. Collapsed by default.
    */
   const ROW_GROUPS = {
-    museSettings: { title: "Muse Code (Meta) settings" },
+    museSettings: { title: l10n("Muse Code (Meta) settings") },
   };
 
   function renderRowGroup(id, open, onToggle) {
@@ -3236,9 +3242,9 @@
       const el = document.createElement("details");
       el.className = "settings-row settings-provider-configs";
       el.dataset.id = row.id;
-      el.innerHTML = `<summary class="settings-row-title">Provider config files</summary>` +
+      el.innerHTML = `<summary class="settings-row-title">${escapeHtml(l10n("Provider config files"))}</summary>` +
         [["grok", "Grok", "~/.grok/config.toml"], ["codex", "Codex", "~/.codex/config.toml"], ["claude", "Claude", "~/.claude/settings.json"]]
-          .map(([provider, name, path]) => `<div class="settings-provider-config"><div class="settings-row-copy"><div class="settings-row-title">${name}</div><div class="settings-row-desc">${path}</div></div><button type="button" class="settings-action" data-provider="${provider}" aria-label="Open ${path}">Open</button></div>`).join("");
+          .map(([provider, name, path]) => `<div class="settings-provider-config"><div class="settings-row-copy"><div class="settings-row-title">${name}</div><div class="settings-row-desc">${path}</div></div><button type="button" class="settings-action" data-provider="${provider}" aria-label="${escapeHtml(l10n("Open {0}", path))}">${escapeHtml(l10n("Open"))}</button></div>`).join("");
       return el;
     }
     if (row.kind === "mcp") return renderMcpCatalog(snapshot, env);
@@ -3281,7 +3287,7 @@
     if (row.vendor) {
       const vendor = document.createElement("span");
       vendor.className = "settings-row-vendor";
-      vendor.textContent = " by " + row.vendor;
+      vendor.textContent = " " + l10n("by {0}", row.vendor);
       name.appendChild(vendor);
     }
     const desc = document.createElement("div");
@@ -3291,7 +3297,7 @@
       desc.setAttribute("role", "status");
       const progress = document.createElement("progress");
       progress.className = "settings-install-progress";
-      progress.setAttribute("aria-label", "Installing the Antigravity CLI");
+      progress.setAttribute("aria-label", l10n("Installing the Antigravity CLI"));
       desc.appendChild(progress);
     }
     title.appendChild(name);
@@ -3373,7 +3379,7 @@
         const remove = document.createElement("button");
         remove.type = "button";
         remove.className = "settings-tag-remove";
-        remove.setAttribute("aria-label", "Remove " + term);
+        remove.setAttribute("aria-label", l10n("Remove {0}", term));
         remove.textContent = "×";
         chip.appendChild(label);
         chip.appendChild(remove);
@@ -3383,7 +3389,7 @@
       input.type = "text";
       input.className = "settings-tags-input";
       input.setAttribute("aria-label", row.title);
-      input.placeholder = row.placeholder || "Add a term";
+      input.placeholder = row.placeholder || l10n("Add a term");
       wrap.appendChild(list);
       wrap.appendChild(input);
       control.appendChild(wrap);
@@ -3403,7 +3409,7 @@
         const busy = document.createElement("button");
         busy.type = "button";
         busy.className = "settings-action";
-        busy.textContent = "Connecting…";
+        busy.textContent = l10n("Connecting…");
         busy.disabled = true;
         busy.setAttribute("aria-busy", "true");
         control.appendChild(busy);
@@ -3443,12 +3449,12 @@
       recheck.type = "button";
       recheck.className = "settings-action settings-provider-recheck";
       recheck.dataset.provider = row.provider;
-      recheck.textContent = "Re-check connection";
+      recheck.textContent = l10n("Re-check connection");
       const cancel = document.createElement("button");
       cancel.type = "button";
       cancel.className = "settings-action settings-provider-terminal-cancel";
       cancel.dataset.provider = row.provider;
-      cancel.textContent = "Cancel";
+      cancel.textContent = l10n("Cancel");
       bar.append(recheck, cancel);
       el.appendChild(bar);
     }
@@ -3492,7 +3498,7 @@
     const modal = !opts.standalone;
     container.classList.add("settings-surface");
     container.setAttribute("role", "dialog");
-    container.setAttribute("aria-label", "Settings");
+    container.setAttribute("aria-label", l10n("Settings"));
     if (modal) {
       container.setAttribute("aria-modal", "true");
       coverSiblings(container, true);
@@ -3792,19 +3798,19 @@
 
       const nav = document.createElement("nav");
       nav.className = "settings-nav";
-      nav.setAttribute("aria-label", "Settings categories");
+      nav.setAttribute("aria-label", l10n("Settings categories"));
       if (modal && onClose) {
         const back = document.createElement("button");
         back.type = "button";
         back.className = "settings-back";
-        back.setAttribute("aria-label", "Back to app");
+        back.setAttribute("aria-label", l10n("Back to app"));
         const arrow = document.createElement("span");
         arrow.className = "settings-back-arrow";
         arrow.setAttribute("aria-hidden", "true");
         arrow.textContent = "←";
         const backLabel = document.createElement("span");
         backLabel.className = "settings-back-label";
-        backLabel.textContent = "Back to app";
+        backLabel.textContent = l10n("Back to app");
         back.append(arrow, backLabel);
         back.onclick = (e) => { e.stopPropagation(); onClose(); };
         nav.appendChild(back);
@@ -3815,8 +3821,8 @@
       search.type = "search";
       search.id = "settings-search";
       search.className = "settings-search";
-      search.placeholder = "Search settings";
-      search.setAttribute("aria-label", "Search settings");
+      search.placeholder = l10n("Search settings");
+      search.setAttribute("aria-label", l10n("Search settings"));
       search.value = query;
       searchWrap.appendChild(search);
       nav.appendChild(searchWrap);
@@ -3843,7 +3849,7 @@
       const navSelect = document.createElement("select");
       navSelect.className = "settings-nav-select settings-select";
       navSelect.id = "settings-category";
-      navSelect.setAttribute("aria-label", "Settings category");
+      navSelect.setAttribute("aria-label", l10n("Settings category"));
       if (!phoneNav) navSelect.hidden = true;
       for (const cat of shownCats) {
         const option = document.createElement("option");
@@ -3860,9 +3866,8 @@
       head.className = "settings-head";
       const crumb = document.createElement("div");
       crumb.className = "settings-crumb";
-      crumb.innerHTML = searching
-        ? `<span>Settings</span><span class="settings-crumb-sep">/</span><span>Search</span>`
-        : `<span>Settings</span><span class="settings-crumb-sep">/</span><span>${escapeHtml(page ? page.title : "General")}</span>`;
+      const pageTitle = searching ? l10n("Search") : page ? page.title : l10n("General");
+      crumb.innerHTML = `<span>${escapeHtml(l10n("Settings"))}</span><span class="settings-crumb-sep">/</span><span>${escapeHtml(pageTitle)}</span>`;
       head.appendChild(crumb);
       const headActions = document.createElement("div");
       headActions.className = "settings-head-actions";
@@ -3873,7 +3878,7 @@
         const refresh = document.createElement("button");
         refresh.type = "button";
         refresh.className = "settings-refresh";
-        refresh.textContent = checking ? "Checking…" : "Refresh";
+        refresh.textContent = l10n(checking ? "Checking…" : "Refresh");
         refresh.disabled = checking;
         if (checking) refresh.setAttribute("aria-busy", "true");
         // A person pressed it, so this is the one that may prove the accounts.
@@ -3884,7 +3889,7 @@
         const refresh = document.createElement("button");
         refresh.type = "button";
         refresh.className = "settings-refresh";
-        refresh.textContent = snapshot.mcpLoading ? "Loading…" : "Refresh";
+        refresh.textContent = snapshot.mcpLoading ? "Loading…" : l10n("Refresh");
         refresh.disabled = snapshot.mcpLoading === true;
         if (refresh.disabled) refresh.setAttribute("aria-busy", "true");
         refresh.onclick = (e) => { e.stopPropagation(); requestMcpRefresh(); paint(); };
@@ -3897,7 +3902,7 @@
         const restore = document.createElement("button");
         restore.type = "button";
         restore.className = "settings-restore";
-        restore.textContent = "Restore defaults";
+        restore.textContent = l10n("Restore defaults");
         restore.onclick = (e) => { e.stopPropagation(); beginRestoreConfirm(); };
         headActions.appendChild(restore);
       }
@@ -3908,15 +3913,15 @@
         const confirm = document.createElement("div");
         confirm.className = "settings-restore-confirm";
         confirm.setAttribute("role", "region");
-        confirm.setAttribute("aria-label", "Confirm restore defaults");
+        confirm.setAttribute("aria-label", l10n("Confirm restore defaults"));
         const lead = document.createElement("div");
         lead.className = "settings-restore-confirm-lead";
-        lead.textContent = "These settings on this page will change:";
+        lead.textContent = l10n("These settings on this page will change:");
         const list = document.createElement("ul");
         list.className = "settings-restore-confirm-list";
         for (const row of pendingRestore) {
           const item = document.createElement("li");
-          item.textContent = `${row.title} → ${restoreValueLabel(row, row.defaultValue)}`;
+          item.textContent = l10n("{0} → {1}", row.title, restoreValueLabel(row, row.defaultValue));
           list.appendChild(item);
         }
         const actions = document.createElement("div");
@@ -3924,12 +3929,12 @@
         const go = document.createElement("button");
         go.type = "button";
         go.className = "settings-restore-confirm-go";
-        go.textContent = "Restore";
+        go.textContent = l10n("Restore");
         go.onclick = (e) => { e.stopPropagation(); commitRestoreConfirm(); };
         const cancel = document.createElement("button");
         cancel.type = "button";
         cancel.className = "settings-restore-confirm-cancel";
-        cancel.textContent = "Cancel";
+        cancel.textContent = l10n("Cancel");
         cancel.onclick = (e) => { e.stopPropagation(); cancelRestoreConfirm(); };
         actions.append(go, cancel);
         confirm.append(lead, list, actions);
@@ -3941,7 +3946,7 @@
       if (!rows.length) {
         const empty = document.createElement("div");
         empty.className = "settings-empty";
-        empty.textContent = searching ? "No settings match that search." : "No settings on this page.";
+        empty.textContent = l10n(searching ? "No settings match that search." : "No settings on this page.");
         body.appendChild(empty);
       } else if (searching) {
         let lastCat = "";
