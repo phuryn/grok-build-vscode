@@ -2990,7 +2990,7 @@
     const fine = document.createElement("div");
     fine.className = "popover-fineprint";
     fine.textContent = turn || sess
-      ? l10n("Context is how full the window is.") + " " + l10n("Token counts are billed usage tracked here — each model call re-sends the conversation, so a turn bills far more than the context it holds.")
+      ? l10n("Context is how full the window is. Token counts are billed usage tracked here — each model call re-sends the conversation, so a turn bills far more than the context it holds.")
       : l10n("Counted by the CLI at the end of each turn.");
     if (state.activeProvider !== "deepseek" || turn || sess) contextPopover.appendChild(fine);
 
@@ -10541,8 +10541,7 @@
     el.setAttribute("role", "status");
     const text = document.createElement("span");
     text.textContent = update.message ||
-      l10n("Codex CLI v{0} is older than v{1}, the version included with this app.", codex.cliVersion, codex.latestCliVersion) +
-      " " + l10n("Update to discover newer models.") + " ";
+      l10n("Codex CLI v{0} is older than v{1}, the version included with this app. Update to discover newer models.", codex.cliVersion, codex.latestCliVersion) + " ";
     el.appendChild(text);
     if (offer) {
       const button = document.createElement("button");
@@ -10552,8 +10551,7 @@
       button.onclick = async () => {
         const ok = await uiConfirm({
           title: l10n("Update Codex CLI?"),
-          body: l10n("This runs Codex’s updater on the connected machine.") + " " +
-            l10n("Running Codex sessions will stop, then visible conversations will resume."),
+          body: l10n("This runs Codex’s updater on the connected machine. Running Codex sessions will stop, then visible conversations will resume."),
           confirmLabel: l10n("Update Codex CLI"),
         });
         if (ok) vscode.postMessage({ type: "updateCodex" });
@@ -11546,8 +11544,7 @@
       .join("");
     return `<div class="onb">` +
       `<p class="onb-heading">${provider ? escapeHtml(l10n("Connect {0}", name)) : "Connect an agent"}</p>` +
-      `<p class="onb-desc">${escapeHtml(l10n("Sign in with your own account.") + " " +
-        l10n("You will open a link and confirm a short code — no password is typed here, and nothing is stored on this page."))}</p>` +
+      `<p class="onb-desc">${escapeHtml(l10n("Sign in with your own account. You will open a link and confirm a short code — no password is typed here, and nothing is stored on this page."))}</p>` +
       buttons +
     `</div>`;
   }
@@ -11832,8 +11829,7 @@
     return `<div class="onb"><p class="onb-heading">${escapeHtml(l10n("Muse Code is not installed"))}</p>`
       + `<p class="onb-desc">${IS_REMOTE
         ? "Muse Code is not installed on the machine running this workspace. Install it on that machine, then Re-check."
-        : escapeHtml(l10n("Install Meta's Muse Code CLI on this computer.") + " " +
-          l10n("When installation finishes, click Re-check, then Connect Muse Code."))}</p>`
+        : escapeHtml(l10n("Install Meta's Muse Code CLI on this computer. When installation finishes, click Re-check, then Connect Muse Code."))}</p>`
       + (!IS_REMOTE ? `<div class="onb-cmd"><code>${escapeHtml(command)}</code><button class="onb-copy" type="button" title="${escapeAttr(l10n("Copy"))}" data-cmd="${escapeHtml(command)}">${ICON.copy}</button></div>` : "")
       + (!IS_REMOTE && state.hostCaps && state.hostCaps.installMuse === true
         ? `<button class="onb-action" type="button" data-act="installMuse">${escapeHtml(l10n("Install Muse Code"))}</button>` : "")
@@ -11852,7 +11848,7 @@
       : install.phase === "installing" ? l10n("Installing DeepSeek") : "";
     const reason = info?.reason || install.reason;
     return `<div class="onb"><p class="onb-heading">${escapeHtml(l10n("Install DeepSeek"))}</p>`
-      + `<p class="onb-desc">${escapeHtml(l10n("Install the pinned official dsh harness and its private Node runtime into this app's storage.") + " " + l10n("Your system Node is unchanged."))}</p>`
+      + `<p class="onb-desc">${escapeHtml(l10n("Install the pinned official dsh harness and its private Node runtime into this app's storage. Your system Node is unchanged."))}</p>`
       + (reason ? `<p class="onb-install-error" role="alert">${escapeHtml(reason)}</p>` : "")
       + (installing
         ? `<div class="onb-install-progress" role="status"><span>${escapeHtml(progressLabel) + BLINK_DOTS}</span>`
@@ -11899,8 +11895,10 @@
     if (provider.keySource === "environment") {
       return `<div class="onb"><p class="onb-heading">${escapeHtml(l10n("Connect DeepSeek"))}</p><p class="onb-desc">${escapeHtml(l10n("Uses the key from the {0} environment variable.", "DEEPSEEK_API_KEY"))}</p><button class="onb-action" data-act="deepseekConnect">${escapeHtml(l10n("Connect"))}</button></div>`;
     }
-    const source = l10n(provider.keySource === "saved" ? "Key source: saved key." : "Key source: no key configured.");
-    return `<div class="onb"><p class="onb-heading">${escapeHtml(l10n("Connect DeepSeek"))}</p><p class="onb-desc">${escapeHtml(source + " " + l10n("Environment takes precedence.") + " " + l10n("A saved key stays in secure storage on the workspace machine."))}</p>
+    const source = l10n(provider.keySource === "saved"
+      ? "Key source: saved key. Environment takes precedence. A saved key stays in secure storage on the workspace machine."
+      : "Key source: no key configured. Environment takes precedence. A saved key stays in secure storage on the workspace machine.");
+    return `<div class="onb"><p class="onb-heading">${escapeHtml(l10n("Connect DeepSeek"))}</p><p class="onb-desc">${escapeHtml(source)}</p>
       <input class="onb-code-input onb-deepseek-key" type="password" maxlength="512" autocomplete="off" spellcheck="false" placeholder="${escapeAttr(l10n("Paste API key"))}" aria-label="${escapeAttr(l10n("DeepSeek API key"))}">
       <button class="onb-action" data-act="deepseekConnect">${escapeHtml(l10n(provider.keySource ? "Connect (or replace saved key)" : "Save key and connect"))}</button></div>`;
   }
@@ -11964,13 +11962,12 @@
           ? "Open Google's sign-in page, then paste the full address from the page that does not load."
           : escapeHtml(l10n("Opens Google's sign-in page in your browser."))}</p>`
       + `<p class="onb-or">${escapeHtml(l10n("or"))}</p>` : "")
-      + `<p class="onb-desc">${localizedMarkup(l10n("{0} — {1}."),
+      + `<p class="onb-desc">${localizedMarkup(l10n(provider.agyCli?.installed === false
+        ? "{0} — {1}. It is kept in this app's secure storage on the workspace machine. Using it installs the Antigravity CLI first."
+        : "{0} — {1}. It is kept in this app's secure storage on the workspace machine."),
         `<strong>${escapeHtml(keyLabel)}</strong>`,
-        `<a href="https://aistudio.google.com/api-keys" target="_blank" rel="noopener noreferrer">${escapeHtml(l10n("get one in AI Studio"))}</a>`)} `
-      + escapeHtml(l10n("It is kept in this app's secure storage on the workspace machine."))
-      + (provider.agyCli?.installed === false ? " " + escapeHtml(l10n("Using it installs the Antigravity CLI first.")) : "") + `</p>`
-      + `<p class="onb-desc">${escapeHtml(l10n("A free key works, but Google may use what you send to improve its products."))} `
-      + `${escapeHtml(l10n("Google AI Pro and Ultra may include Cloud credits that pay for a paid key."))}</p>`
+        `<a href="https://aistudio.google.com/api-keys" target="_blank" rel="noopener noreferrer">${escapeHtml(l10n("get one in AI Studio"))}</a>`)}</p>`
+      + `<p class="onb-desc">${escapeHtml(l10n("A free key works, but Google may use what you send to improve its products. Google AI Pro and Ultra may include Cloud credits that pay for a paid key."))}</p>`
       + (saved.includes("api-key")
         ? `<button class="onb-action onb-secondary" type="button" data-act="agySignInSavedKey">${escapeHtml(l10n("Use the saved key"))}</button>`
           + `<p class="onb-desc">${escapeHtml(l10n("Or replace it:"))}</p>`
@@ -12060,7 +12057,7 @@
       onb.innerHTML =
         `<div class="onb">` +
           `<p class="onb-heading">${escapeHtml(l10n("No project folder"))}</p>` +
-          `<p class="onb-desc">${escapeHtml(l10n("A conversation needs a project folder before it can start.") + " " + l10n("Add one to continue."))}</p>` +
+          `<p class="onb-desc">${escapeHtml(l10n("A conversation needs a project folder before it can start. Add one to continue."))}</p>` +
           `<button class="onb-action" type="button" data-act="addProjectFolder">${escapeHtml(l10n("Add project folder"))}</button>` +
         `</div>`;
       updateSendButton();
@@ -12190,7 +12187,7 @@
       onb.innerHTML =
         `<div class="onb">` +
           `<p class="onb-heading">${escapeHtml(l10n("Install Claude Code"))}</p>` +
-          `<p class="onb-desc">${escapeHtml(l10n("This app does not install or sign in to Claude for you."))} ${localizedMarkup(l10n("Install Anthropic's own Claude Code CLI, sign in with {0}, then re-check."), "<code>claude auth login</code>")}</p>` +
+          `<p class="onb-desc">${localizedMarkup(l10n("This app does not install or sign in to Claude for you. Install Anthropic's own Claude Code CLI, sign in with {0}, then re-check."), "<code>claude auth login</code>")}</p>` +
           `<div class="onb-cmd"><code>claude --version</code><button class="onb-copy" type="button" title="${escapeAttr(l10n("Copy"))}" data-cmd="claude --version">${ICON.copy}</button></div>` +
           `<button class="onb-action" type="button" data-act="recheckProvider" data-provider="claude">${escapeHtml(l10n("Re-check"))}</button>` +
         `</div>`;
@@ -12199,8 +12196,7 @@
       onb.innerHTML =
         `<div class="onb">` +
           `<p class="onb-heading">${escapeHtml(l10n("Sign in with Claude Code"))}</p>` +
-          `<p class="onb-desc">${escapeHtml(l10n("This app never implements, proxies, holds, or forwards Claude credentials.") + " " +
-            l10n("Sign-in happens entirely inside Anthropic's own CLI, which may use your Claude subscription or an Anthropic Console account depending on how you sign in."))}</p>` +
+          `<p class="onb-desc">${escapeHtml(l10n("This app never implements, proxies, holds, or forwards Claude credentials. Sign-in happens entirely inside Anthropic's own CLI, which may use your Claude subscription or an Anthropic Console account depending on how you sign in."))}</p>` +
           `<button class="onb-action onb-secondary" type="button" data-act="connectProvider" data-provider="claude">${localizedMarkup(l10n("Open terminal & run {0}"), "<code>claude auth login</code>")}</button>` +
           `<button class="onb-action" type="button" data-act="recheckProvider" data-provider="claude">${escapeHtml(l10n("Done - connect Claude"))}</button>` +
         `</div>`;
@@ -12213,14 +12209,15 @@
             `<strong>${escapeHtml(l10n("SuperGrok or X Premium+ subscription"))}</strong>`, "<em>Grok Build</em>")}</p>` +
           `<button class="onb-action" type="button" data-act="runLogin">${localizedMarkup(l10n("Open terminal & run {0}"), "<code>grok login</code>")}</button>` +
           `<p class="onb-or">${escapeHtml(l10n("or"))}</p>` +
-          `<p class="onb-desc">${localizedMarkup(l10n("{0} — pay per token."), `<strong>${escapeHtml(l10n("API key"))}</strong>`)} ${localizedMarkup(
-            l10n("Get a key at {0}, then add to your shell or a workspace {1}:"),
+          `<p class="onb-desc">${localizedMarkup(
+            l10n("{0} — pay per token. Get a key at {1}, then add to your shell or a workspace {2}:"),
+            `<strong>${escapeHtml(l10n("API key"))}</strong>`,
             '<a href="https://console.x.ai" class="onb-link">console.x.ai</a>', "<code>.env</code>")}</p>` +
           `<div class="onb-cmd">` +
             `<code>XAI_API_KEY=your-key-here</code>` +
             `<button class="onb-copy" type="button" title="${escapeAttr(l10n("Copy"))}" data-cmd="XAI_API_KEY=">${ICON.copy}</button>` +
           `</div>` +
-          `<p class="onb-desc">${localizedMarkup(l10n("A cached sign-in takes precedence over the API key — run {0} first to use the key."), "<code>grok logout</code>")} ${escapeHtml(l10n("If signing in succeeds but prompts still fail, check the error in the chat: your account may lack the Grok Build entitlement."))}</p>` +
+          `<p class="onb-desc">${localizedMarkup(l10n("A cached sign-in takes precedence over the API key — run {0} first to use the key. If signing in succeeds but prompts still fail, check the error in the chat: your account may lack the Grok Build entitlement."), "<code>grok logout</code>")}</p>` +
           `<button class="onb-action onb-secondary" type="button" data-act="recheckProvider" data-provider="grok">${escapeHtml(l10n("Re-check connection"))}</button>` +
         `</div>`;
     } else {
@@ -17842,7 +17839,7 @@ ${fullText}`
     const sub = document.createElement("div");
     sub.className = "card-subtitle";
     sub.textContent = hasPlan
-      ? l10n("Nothing has been written yet.") + " " + l10n("Choose how to continue.")
+      ? l10n("Nothing has been written yet. Choose how to continue.")
       : l10n("The agent asked to leave plan mode, but did not include the plan text.");
     el.appendChild(sub);
 
@@ -18533,8 +18530,7 @@ ${fullText}`
 
     const sub = document.createElement("div");
     sub.className = "card-subtitle";
-    sub.textContent = l10n("Nothing has been written yet.") + " " +
-      l10n("Approve, reject with feedback, or cancel to leave plan mode.");
+    sub.textContent = l10n("Nothing has been written yet. Approve, reject with feedback, or cancel to leave plan mode.");
     el.appendChild(sub);
 
     const planText = req.plan || "";

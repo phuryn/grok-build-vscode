@@ -359,7 +359,7 @@ it("localizes the Codex update offer and confirmation and shows host progress ve
   dispatch(window, { type: "providerState", providers: [{ ...codex, cliUpdate: { status: "idle" } }] });
   const offer = el(doc, "#welcome-codex-update");
   expectLocalized(offer, "tips");
-  expect(offer.textContent).toContain(pseudo("Codex CLI v0.149.0 is older than v0.153.4, the version included with this app."));
+  expect(offer.textContent).toContain(pseudo("Codex CLI v0.149.0 is older than v0.153.4, the version included with this app. Update to discover newer models."));
   click(window, el(offer, "button"));
   const dialog = el(doc, ".confirm-overlay");
   expectLocalized(dialog, "tips");
