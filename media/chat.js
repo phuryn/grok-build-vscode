@@ -2740,7 +2740,7 @@
     const used = state.usedTokens || 0;
     const pct = Math.min(100, Math.round((used / state.contextWindow) * 100));
     info(
-      "Context used",
+      l10n("Context used"),
       `${tok(used)} / ${tok(state.contextWindow)} (${pct}%)`,
       lead,
     );
@@ -2748,7 +2748,7 @@
     const bar = document.createElement("div");
     bar.className = "context-fullness";
     bar.setAttribute("role", "meter");
-    bar.setAttribute("aria-label", "Context used");
+    bar.setAttribute("aria-label", l10n("Context used"));
     bar.setAttribute("aria-valuemin", "0");
     bar.setAttribute("aria-valuemax", "100");
     bar.setAttribute("aria-valuenow", String(pct));
@@ -2767,11 +2767,11 @@
       mark.style.left = (compact.tokens / state.contextWindow * 100) + "%";
       bar.classList.add("has-compact-tick");
       bar.appendChild(mark);
-      info("Auto-compact at", tok(compact.tokens) + (own ? " · " + agent + "'s own" : ""), lead);
+      info(l10n("Auto-compact at"), own ? l10n("{0} · {1}'s own", tok(compact.tokens), agent) : tok(compact.tokens), lead);
       const details = document.createElement("div");
       details.className = "popover-fineprint context-compact-guide";
-      details.textContent = own ? "This is the active compaction threshold for " + agent + "."
-        : "Your limit, set in Settings › General.";
+      details.textContent = own ? l10n("This is the active compaction threshold for {0}.", agent)
+        : l10n("Your limit, set in Settings › General.");
       lead.appendChild(details);
     }
 
@@ -2779,8 +2779,8 @@
     act.type = "button";
     act.className = "context-compact";
     act.disabled = !used;
-    act.textContent = "Compact conversation";
-    act.title = used ? "Summarize the conversation so far to free up context" : "Nothing to compact yet";
+    act.textContent = l10n("Compact conversation");
+    act.title = l10n(used ? "Summarize the conversation so far to free up context" : "Nothing to compact yet");
     if (used) {
       act.onclick = (e) => {
         e.stopPropagation();
@@ -2793,7 +2793,7 @@
     if (state.activeProvider === "deepseek") {
       const note = document.createElement("div");
       note.className = "popover-fineprint";
-      note.textContent = "Manual compaction is unavailable through DeepSeek's ACP connection.";
+      note.textContent = l10n("Manual compaction is unavailable through DeepSeek's ACP connection.");
       lead.appendChild(note);
     }
     contextPopover.insertBefore(lead, keep);
@@ -2801,8 +2801,8 @@
 
     const subscription = document.createElement("section");
     subscription.className = "subscription-usage";
-    subscription.setAttribute("aria-label", "Subscription usage across your account");
-    section("Subscription usage · account", subscription);
+    subscription.setAttribute("aria-label", l10n("Subscription usage across your account"));
+    section(l10n("Subscription usage · account"), subscription);
     // Lines, not paragraphs: several notes about ONE meter are one remark on
     // several lines, and giving each its own element gave each its own gap.
     const note = (text, parent = subscription) => {
@@ -2831,9 +2831,9 @@
       // first version of this said so in two clauses and wrapped to three lines
       // on a phone; WHY Claude has nothing is our problem, not the reader's, and
       // what they can do about it is the whole message.
-      note(state.activeProvider === "claude"
+      note(l10n(state.activeProvider === "claude"
         ? "Fills in after the next reply."
-        : "No subscription usage reported yet.");
+        : "No subscription usage reported yet."));
     }
     const formatPercent = (value) => new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(value);
     const formatDate = (value) => new Date(value).toLocaleString(undefined, {
@@ -2842,11 +2842,11 @@
     for (const window of windows) {
       const row = document.createElement("div");
       row.className = "subscription-window";
-      info(window.label, `${formatPercent(window.usedPercent)}% used · ${formatPercent(100 - window.usedPercent)}% left`, row);
+      info(window.label, l10n("{0}% used · {1}% left", formatPercent(window.usedPercent), formatPercent(100 - window.usedPercent)), row);
       const meter = document.createElement("div");
       meter.className = "subscription-fullness";
       meter.setAttribute("role", "meter");
-      meter.setAttribute("aria-label", `${window.label} subscription used`);
+      meter.setAttribute("aria-label", l10n("{0} subscription used", window.label));
       meter.setAttribute("aria-valuemin", "0");
       meter.setAttribute("aria-valuemax", "100");
       meter.setAttribute("aria-valuenow", String(window.usedPercent));
@@ -2855,12 +2855,12 @@
       meter.appendChild(fill);
       row.appendChild(meter);
       note([window.periodEnd
-        ? `${Date.parse(window.periodEnd) > Date.now() ? "Resets" : "Reported reset"} ${formatDate(window.periodEnd)}`
-        : "Reset time not reported.",
-      `Observed ${formatDate(window.observedAt)}`], row);
+        ? l10n(Date.parse(window.periodEnd) > Date.now() ? "Resets {0}" : "Reported reset {0}", formatDate(window.periodEnd))
+        : l10n("Reset time not reported."),
+      l10n("Observed {0}", formatDate(window.observedAt))], row);
       subscription.appendChild(row);
     }
-    if (windows.length === 1 && state.activeProvider === "claude") note("Latest reported window; other limits may apply.");
+    if (windows.length === 1 && state.activeProvider === "claude") note(l10n("Latest reported window; other limits may apply."));
     // CAPABILITY DETECTION: did the frame that feeds this section ever arrive?
     //
     // The phone's client is always as new as the relay deploy while the host is
@@ -2923,12 +2923,12 @@
         breakdown.systemPromptTokens,
         breakdown.messageTokens,
       );
-      section("In this window");
-      if (breakdown.systemPromptTokens != null) info("System", tok(breakdown.systemPromptTokens));
-      if (breakdown.messageTokens != null) info("Messages", tok(breakdown.messageTokens));
-      if (overheadTokens != null) info("Reasoning/overhead", tok(overheadTokens));
-      if (breakdown.freeTokens != null) info("Free", tok(breakdown.freeTokens));
-      if (!compact && breakdown.autoCompactPct != null) info("Auto-compact at", `${breakdown.autoCompactPct}%`);
+      section(l10n("In this window"));
+      if (breakdown.systemPromptTokens != null) info(l10n("System"), tok(breakdown.systemPromptTokens));
+      if (breakdown.messageTokens != null) info(l10n("Messages"), tok(breakdown.messageTokens));
+      if (overheadTokens != null) info(l10n("Reasoning/overhead"), tok(overheadTokens));
+      if (breakdown.freeTokens != null) info(l10n("Free"), tok(breakdown.freeTokens));
+      if (!compact && breakdown.autoCompactPct != null) info(l10n("Auto-compact at"), `${breakdown.autoCompactPct}%`);
       const hasCounted =
         breakdown.toolDefinitionsTokens != null ||
         (breakdown.categories && breakdown.categories.length);
@@ -2936,12 +2936,12 @@
         // Collapsed by default, like the two ledgers below. Every row here is a
         // breakdown of a number ALREADY shown above, so it is the least likely
         // reason the donut was opened and the worst thing to unroll by default.
-        const counted = foldSection("Already counted above", "counted", "countedOpen");
+        const counted = foldSection(l10n("Already counted above"), "counted", "countedOpen");
         if (breakdown.toolDefinitionsTokens != null) {
           const n = breakdown.toolDefinitionsCount;
           const toolsLabel = typeof n === "number"
-            ? `Tool definitions (${n} ${n === 1 ? "tool" : "tools"})`
-            : "Tool definitions";
+            ? l10n(n === 1 ? "Tool definitions ({0} tool)" : "Tool definitions ({0} tools)", n)
+            : l10n("Tool definitions");
           info(toolsLabel, tok(breakdown.toolDefinitionsTokens), counted);
         }
         if (breakdown.categories) {
@@ -2965,33 +2965,33 @@
     // figure, and a popover that unrolls two ledgers every time buries it.
     // Each remembers its own state, so opening one costs one click, once.
     if (sess) {
-      const body = foldSection("Session total", "session", "sessionTotalOpen");
-      row(sess, "Input", "inputTokens", null, body);
-      row(sess, "↳ cache read", "cachedReadTokens", null, body);
-      row(sess, "↳ cache write", "cachedWriteTokens", null, body);
-      row(sess, "Output", "outputTokens", null, body);
-      row(sess, "Cost", "costUsdTicks", usdTicks, body);
+      const body = foldSection(l10n("Session total"), "session", "sessionTotalOpen");
+      row(sess, l10n("Input"), "inputTokens", null, body);
+      row(sess, "↳ " + l10n("cache read"), "cachedReadTokens", null, body);
+      row(sess, "↳ " + l10n("cache write"), "cachedWriteTokens", null, body);
+      row(sess, l10n("Output"), "outputTokens", null, body);
+      row(sess, l10n("Cost"), "costUsdTicks", usdTicks, body);
     }
     if (turn) {
-      const body = foldSection("Last turn", "lastTurn", "lastTurnOpen");
-      row(turn, "Input", "inputTokens", null, body);
-      row(turn, "↳ cache read", "cachedReadTokens", null, body);
-      row(turn, "↳ cache write", "cachedWriteTokens", null, body);
-      row(turn, "Output", "outputTokens", null, body);
-      row(turn, "↳ reasoning", "reasoningTokens", null, body);
-      row(turn, "Cost", "costUsdTicks", usdTicks, body);
+      const body = foldSection(l10n("Last turn"), "lastTurn", "lastTurnOpen");
+      row(turn, l10n("Input"), "inputTokens", null, body);
+      row(turn, "↳ " + l10n("cache read"), "cachedReadTokens", null, body);
+      row(turn, "↳ " + l10n("cache write"), "cachedWriteTokens", null, body);
+      row(turn, l10n("Output"), "outputTokens", null, body);
+      row(turn, "↳ " + l10n("reasoning"), "reasoningTokens", null, body);
+      row(turn, l10n("Cost"), "costUsdTicks", usdTicks, body);
       // The row that makes the arithmetic legible: a turn re-sends the whole
       // conversation on EVERY model call, so billed input ≈ context × calls and
       // routinely dwarfs "Context used". Without this the two numbers look like
       // a bug (they aren't — they're different quantities).
-      row(turn, "Model calls", "modelCalls", String, body);
+      row(turn, l10n("Model calls"), "modelCalls", String, body);
     }
 
     const fine = document.createElement("div");
     fine.className = "popover-fineprint";
     fine.textContent = turn || sess
-      ? "Context is how full the window is. Token counts are billed usage tracked here — each model call re-sends the conversation, so a turn bills far more than the context it holds."
-      : "Counted by the CLI at the end of each turn.";
+      ? l10n("Context is how full the window is.") + " " + l10n("Token counts are billed usage tracked here — each model call re-sends the conversation, so a turn bills far more than the context it holds.")
+      : l10n("Counted by the CLI at the end of each turn.");
     if (state.activeProvider !== "deepseek" || turn || sess) contextPopover.appendChild(fine);
 
     showContextPopover();
@@ -4561,7 +4561,7 @@
     const row = document.createElement("div");
     row.className = "popover-info context-window-row";
     const label = document.createElement("label");
-    label.htmlFor = "deepseek-harness"; label.textContent = "Harness";
+    label.htmlFor = "deepseek-harness"; label.textContent = l10n("Harness");
     const select = document.createElement("select");
     select.id = "deepseek-harness"; select.className = "settings-select context-window-select";
     select.innerHTML = '<option value="default">Default</option><option value="minimal">Minimal</option>';
@@ -4585,9 +4585,9 @@
     select.onchange = () => { const next = select.value; select.value = value; choose(next); };
     row.append(label, select); wrap.append(row);
     const note = document.createElement("div"); note.className = "popover-fineprint";
-    note.textContent = locked ? "Start a new session to use a different DeepSeek harness."
+    note.textContent = l10n(locked ? "Start a new session to use a different DeepSeek harness."
       : busy ? "Waiting for the harness to be ready."
-        : "Choose before your first message.";
+        : "Choose before your first message.");
     wrap.append(note);
     return wrap;
   }
@@ -4604,8 +4604,8 @@
       wrap.appendChild(el);
     };
     if (!selection.available) {
-      note(selection.reason || "Native selection is unavailable in this session.");
-      wrap.dataset.key = JSON.stringify([selection.sessionId, selection.modelId, selection.generation, wrap.innerHTML]);
+      note(selection.reason || l10n("Native selection is unavailable in this session."));
+      wrap.dataset.key = JSON.stringify([selection.sessionId, selection.modelId, selection.generation, false, selection.reason || ""]);
       return wrap;
     }
     // While the host confirms, show the size that was asked for rather than
@@ -4617,26 +4617,34 @@
     row.className = "popover-info context-window-row";
     const label = document.createElement("label");
     label.htmlFor = "context-window-select";
-    label.textContent = "Context window";
+    label.textContent = l10n("Context window");
     const select = document.createElement("select");
     select.id = "context-window-select";
     select.className = "settings-select context-window-select";
     select.disabled = contextWindowLocked(selection);
-    select.title = "Applies to this session; server access limits still apply.";
+    select.title = l10n("Applies to this session; server access limits still apply.");
     // A size nothing has confirmed, or one the model does not offer, gets a
     // placeholder rather than letting the first choice claim to be the window.
     const offered = selection.sizes.includes(shown);
+    const placeholderLabel = shown === undefined ? "—" : compactTokens(shown);
     if (!offered) {
       const placeholder = document.createElement("option");
       placeholder.value = "";
       placeholder.disabled = true;
-      placeholder.textContent = shown === undefined ? "—" : compactTokens(shown);
+      placeholder.textContent = placeholderLabel;
       select.appendChild(placeholder);
     }
+    const optionState = [];
     for (const size of selection.sizes) {
       const option = document.createElement("option");
       option.value = String(size);
-      option.textContent = compactTokens(size) + (size === selection.defaultSize ? " · CLI default" : "") + (size < state.usedTokens ? " · will compact" : "");
+      const isDefault = size === selection.defaultSize;
+      const willCompact = size < state.usedTokens;
+      const tokens = compactTokens(size);
+      option.textContent = isDefault
+        ? l10n(willCompact ? "{0} · CLI default · will compact" : "{0} · CLI default", tokens)
+        : willCompact ? l10n("{0} · will compact", tokens) : tokens;
+      optionState.push([size, isDefault, willCompact]);
       select.appendChild(option);
     }
     const value = offered ? String(shown) : "";
@@ -4653,9 +4661,10 @@
     wrap.appendChild(row);
     // The standing disclaimer lives in the tooltip; only a state that needs
     // reading takes a line.
-    if (selection.changing) note("Waiting for native confirmation…");
-    else if (selection.stale) note("Last confirmed selection; native state needs a refresh.");
-    wrap.dataset.key = JSON.stringify([selection.sessionId, selection.modelId, selection.generation, value, wrap.innerHTML]);
+    if (selection.changing) note(l10n("Waiting for native confirmation…"));
+    else if (selection.stale) note(l10n("Last confirmed selection; native state needs a refresh."));
+    wrap.dataset.key = JSON.stringify([selection.sessionId, selection.modelId, selection.generation, true,
+      value, offered ? null : placeholderLabel, select.disabled, optionState, !!selection.changing, !selection.changing && !!selection.stale]);
     return wrap;
   }
 
@@ -10140,6 +10149,10 @@
    * `moveViewHint` is decided by the host and goes false the moment that picker
    * is opened from anywhere, so taking the advice retires the advice.
    */
+  function localizedMarkup(text, ...markup) {
+    return escapeHtml(text).replace(/\{(\d+)\}/g, (match, index) => markup[index] ?? match);
+  }
+
   function renderMoveViewTip() {
     const welcome = $("welcome");
     if (!welcome) return;
@@ -10167,10 +10180,11 @@
     // exist. `role`/`tabindex`/keydown put back the semantics the anchor was
     // providing.
     tip.innerHTML =
-      `<span class="welcome-tip-bulb">${ICON.idea}</span> <b>To move AFK Pilot to the right</b>` +
-      "<br>After moving, click <b>Toggle Agents Side Bar</b> to show it." +
-      '<br><span id="welcome-tip-link" class="muted-link" role="button" tabindex="0">Click here</span>' +
-      " and select <b>New Secondary Side Bar Entry</b>.";
+      `<span class="welcome-tip-bulb">${ICON.idea}</span> <b>${escapeHtml(l10n("To move AFK Pilot to the right"))}</b><br>` +
+      localizedMarkup(l10n("After moving, click {0} to show it."), "<b>Toggle Agents Side Bar</b>") + "<br>" +
+      localizedMarkup(l10n("{0} and select {1}."),
+        `<span id="welcome-tip-link" class="muted-link" role="button" tabindex="0">${escapeHtml(l10n("Click here"))}</span>`,
+        `<b>${escapeHtml(l10n("New Secondary Side Bar Entry"))}</b>`);
     welcome.appendChild(tip);
     const link = $("welcome-tip-link");
     if (link) {
@@ -10475,8 +10489,8 @@
     const close = document.createElement("button");
     close.type = "button";
     close.className = "welcome-tip-dismiss";
-    close.title = "Not today";
-    close.setAttribute("aria-label", "Hide this tip until tomorrow");
+    close.title = l10n("Not today");
+    close.setAttribute("aria-label", l10n("Hide this tip until tomorrow"));
     close.textContent = "\u00d7";
     close.onclick = (e) => {
       e.preventDefault();
@@ -10527,18 +10541,20 @@
     el.setAttribute("role", "status");
     const text = document.createElement("span");
     text.textContent = update.message ||
-      `Codex CLI v${codex.cliVersion} is older than v${codex.latestCliVersion}, the version included with this app. Update to discover newer models. `;
+      l10n("Codex CLI v{0} is older than v{1}, the version included with this app.", codex.cliVersion, codex.latestCliVersion) +
+      " " + l10n("Update to discover newer models.") + " ";
     el.appendChild(text);
     if (offer) {
       const button = document.createElement("button");
       button.type = "button";
-      button.textContent = "Update Codex CLI";
+      button.textContent = l10n("Update Codex CLI");
       button.disabled = (state.providers || []).some((p) => p.cliUpdate && p.cliUpdate.status === "running");
       button.onclick = async () => {
         const ok = await uiConfirm({
-          title: "Update Codex CLI?",
-          body: "This runs Codex’s updater on the connected machine. Running Codex sessions will stop, then visible conversations will resume.",
-          confirmLabel: "Update Codex CLI",
+          title: l10n("Update Codex CLI?"),
+          body: l10n("This runs Codex’s updater on the connected machine.") + " " +
+            l10n("Running Codex sessions will stop, then visible conversations will resume."),
+          confirmLabel: l10n("Update Codex CLI"),
         });
         if (ok) vscode.postMessage({ type: "updateCodex" });
       };
@@ -11279,7 +11295,7 @@
       if (btn) {
         btn.disabled = true;
         btn.setAttribute("aria-busy", "true");
-        (btn.querySelector("small") || btn).textContent = "Checking…";
+        (btn.querySelector("small") || btn).textContent = l10n("Checking…");
       }
     }
     if (state.onboardingRanMode !== state.onboardingMode) return;
@@ -11364,21 +11380,21 @@
       `</div>`;
     }
     const cancel = `<button class="onb-action onb-secondary" type="button" data-act="cancelDeviceLogin" `
-      + `data-provider="${escapeHtml(provider)}">Cancel</button>`;
+      + `data-provider="${escapeHtml(provider)}">${escapeHtml(l10n("Cancel"))}</button>`;
 
     if (device && device.status === "waiting" && device.url) {
       const paste = !!device.needsCode;
       const pasteAddress = provider === "agy" && paste;
       status(paste ? (device.submitted ? "Confirming sign-in" : pasteAddress ? "Paste the address" : "Paste the code") : "Confirm the code");
       const codeChip = !paste && device.code
-        ? `<p class="onb-desc">Open the link, then confirm this code:</p>` +
+        ? `<p class="onb-desc">${escapeHtml(l10n("Open the link, then confirm this code:"))}</p>` +
           // Same markup as every other copyable value in this panel, so it
           // inherits the existing copy handler and its copied state.
           `<div class="onb-cmd">` +
             `<code>${escapeHtml(device.code)}</code>` +
-            `<button class="onb-copy" type="button" title="Copy" data-cmd="${escapeHtml(device.code)}">${ICON.copy}</button>` +
+            `<button class="onb-copy" type="button" title="${escapeAttr(l10n("Copy"))}" data-cmd="${escapeHtml(device.code)}">${ICON.copy}</button>` +
           `</div>`
-        : (!paste ? `<p class="onb-desc">Open the link to finish signing in.</p>` : "");
+        : (!paste ? `<p class="onb-desc">${escapeHtml(l10n("Open the link to finish signing in."))}</p>` : "");
       // Paste-code is a SEQUENCE, and the card now reads in that order: what
       // you are about to do, the link that does it, then the field for what it
       // gives you back. The field used to sit ABOVE the link, so the first
@@ -11394,7 +11410,7 @@
           `</div>`
         : "";
       return `<div class="onb">` +
-        `<p class="onb-heading">${device.preflight ? "Step 2 of 2 &mdash; confirm the code" : `Finish signing in to ${escapeHtml(name)}`}</p>` +
+        `<p class="onb-heading">${device.preflight ? "Step 2 of 2 &mdash; confirm the code" : escapeHtml(l10n("Finish signing in to {0}", name))}</p>` +
         // The vendor's own page warns that device codes are used in phishing
         // and to continue only if the CLI started the sign-in. Saying that
         // BEFORE they meet it turns an alarming page into an expected one
@@ -11402,7 +11418,7 @@
         (device.note ? `<p class="onb-desc onb-note">${onbRich(device.note)}</p>` : "") +
         codeChip +
         pasteIntro +
-        `<a class="onb-action" href="${escapeHtml(device.url)}" target="_blank" rel="noopener noreferrer">Open the sign-in page</a>` +
+        `<a class="onb-action" href="${escapeHtml(device.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(l10n("Open the sign-in page"))}</a>` +
         // This field is deliberately neither .confirm-input nor .settings-text:
         // the remote client's authored-text capture must never retain an auth code.
         (pasteAddress && !device.submitted
@@ -11424,19 +11440,19 @@
           ? (device.submitted
             ? `${pasteAddress ? "Address" : "Code"} sent &mdash; keep this page open, it finishes on its own.`
             : `This page stays open so you can paste the ${pasteAddress ? "address" : "code"} back.`)
-          : "Keep this page open &mdash; it finishes on its own."}</p>` +
+          : escapeHtml(l10n("Keep this page open — it finishes on its own."))}</p>` +
       `</div>`;
     }
 
     if (device && device.status === "starting") {
       status("Starting sign-in");
       return `<div class="onb">` +
-        `<p class="onb-heading">Connecting ${escapeHtml(name)}</p>` +
+        `<p class="onb-heading">${escapeHtml(l10n("Connecting {0}", name))}</p>` +
         `<p class="onb-desc">${provider === "agy"
           ? (googlePaste
             ? "Starting Antigravity&hellip; the Google sign-in link will appear here."
-            : "Starting Antigravity&hellip; Google's sign-in opens in your browser in a moment.")
-          : `Asking the ${escapeHtml(name)} CLI for a sign-in code&hellip;`}</p>` +
+            : escapeHtml(l10n("Starting Antigravity… Google's sign-in opens in your browser in a moment.")))
+          : escapeHtml(l10n("Asking the {0} CLI for a sign-in code…", name))}</p>` +
         cancel +
       `</div>`;
     }
@@ -11444,16 +11460,16 @@
     if (device && device.status === "verifying") {
       status("Confirming sign-in");
       return `<div class="onb">` +
-        `<p class="onb-heading">Almost there</p>` +
-        `<p class="onb-desc">Signed in — confirming the credential on this machine…</p>` +
+        `<p class="onb-heading">${escapeHtml(l10n("Almost there"))}</p>` +
+        `<p class="onb-desc">${escapeHtml(l10n("Signed in — confirming the credential on this machine…"))}</p>` +
       `</div>`;
     }
 
     if (device && device.status === "done") {
       status("Connected");
       return `<div class="onb">` +
-        `<p class="onb-heading">${escapeHtml(name)} connected</p>` +
-        `<p class="onb-desc">You can start a conversation.</p>` +
+        `<p class="onb-heading">${escapeHtml(l10n("{0} connected", name))}</p>` +
+        `<p class="onb-desc">${escapeHtml(l10n("You can start a conversation."))}</p>` +
       `</div>`;
     }
 
@@ -11496,7 +11512,7 @@
         `<p class="onb-desc">${escapeHtml(device.message || "")}</p>` +
         (stuck
           ? ""
-          : `<button class="onb-action" type="button" data-act="${googlePaste ? "agySignInGoogle" : "connectRemote"}" data-provider="${escapeHtml(provider)}">${googlePaste ? "Start again" : "Try again"}</button>`) +
+          : `<button class="onb-action" type="button" data-act="${googlePaste ? "agySignInGoogle" : "connectRemote"}" data-provider="${escapeHtml(provider)}">${googlePaste ? "Start again" : escapeHtml(l10n("Try again"))}</button>`) +
       `</div>`;
     }
 
@@ -11520,17 +11536,18 @@
     const cloudHost = !!(state.hostCaps && state.hostCaps.remoteAgentSignOut);
     const buttons = offer
       .map((id) => {
-        const rec = cloudHost && id === "grok" ? " (recommended)" : "";
+        const label = cloudHost && id === "grok" ? `Connect ${NAMES[id]} (recommended)` : l10n("Connect {0}", NAMES[id]);
         // The mark the reader already knows from the model picker and the
         // provider rows. currentColor, so it takes the button's foreground.
         return `<button class="onb-action" type="button" data-act="connectRemote" data-provider="${id}">`
           + providerLogoMarkup(id)
-          + `<span>Connect ${NAMES[id]}${rec}</span></button>`;
+          + `<span>${escapeHtml(label)}</span></button>`;
       })
       .join("");
     return `<div class="onb">` +
-      `<p class="onb-heading">${provider ? `Connect ${escapeHtml(name)}` : "Connect an agent"}</p>` +
-      `<p class="onb-desc">Sign in with your own account. You will open a link and confirm a short code &mdash; no password is typed here, and nothing is stored on this page.</p>` +
+      `<p class="onb-heading">${provider ? escapeHtml(l10n("Connect {0}", name)) : "Connect an agent"}</p>` +
+      `<p class="onb-desc">${escapeHtml(l10n("Sign in with your own account.") + " " +
+        l10n("You will open a link and confirm a short code — no password is typed here, and nothing is stored on this page."))}</p>` +
       buttons +
     `</div>`;
   }
@@ -11584,7 +11601,7 @@
     panel.className = "confirm-panel connect-wizard-panel";
     panel.setAttribute("role", "dialog");
     panel.setAttribute("aria-modal", "true");
-    panel.setAttribute("aria-label", `Connect ${provider}`);
+    panel.setAttribute("aria-label", l10n("Connect {0}", provider));
     const body = document.createElement("div");
     body.className = "connect-wizard-body";
     panel.appendChild(body);
@@ -11593,7 +11610,7 @@
     const closeBtn = document.createElement("button");
     closeBtn.type = "button";
     closeBtn.className = "confirm-btn";
-    closeBtn.textContent = "Close";
+    closeBtn.textContent = l10n("Close");
     // Closing the window never cancels the sign-in: the flow lives on the host
     // and finishes on its own, which is exactly what the card promises.
     // Cancelling is a separate, explicit button inside the panel.
@@ -11643,13 +11660,13 @@
       const command = provider === "claude" ? "claude auth login" : `${provider} login`;
       const launched = connectWizard.launched;
       connectWizard.body.innerHTML = connectWizard.checking
-        ? `<div class="onb"><p class="onb-heading">Checking…</p><p class="onb-desc">Checking the CLI's existing sign-in.</p></div>`
+        ? `<div class="onb"><p class="onb-heading">${escapeHtml(l10n("Checking…"))}</p><p class="onb-desc">${escapeHtml(l10n("Checking the CLI's existing sign-in."))}</p></div>`
         : provider === "muse" ? museOnboardingPanel("muse-login", {})
         : provider === "agy" ? agyChoicePanel({})
-        : `<div class="onb"><p class="onb-heading">Sign in to continue</p>`
-          + `<p class="onb-desc">${launched ? "Finish signing in in the terminal, then continue here." : "Start sign-in with the CLI when you are ready."}</p>`
-          + `<button class="onb-action" data-act="connectProvider" data-provider="${provider}">Open terminal &amp; run <code>${command}</code></button>`
-          + `<button class="onb-action onb-secondary" data-act="recheckProvider" data-provider="${provider}">Re-check connection</button></div>`;
+        : `<div class="onb"><p class="onb-heading">${escapeHtml(l10n("Sign in to continue"))}</p>`
+          + `<p class="onb-desc">${escapeHtml(l10n(launched ? "Finish signing in in the terminal, then continue here." : "Start sign-in with the CLI when you are ready."))}</p>`
+          + `<button class="onb-action" data-act="connectProvider" data-provider="${provider}">${localizedMarkup(l10n("Open terminal & run {0}"), `<code>${escapeHtml(command)}</code>`)}</button>`
+          + `<button class="onb-action onb-secondary" data-act="recheckProvider" data-provider="${provider}">${escapeHtml(l10n("Re-check connection"))}</button></div>`;
       return;
     }
     // `ver` is null on purpose: the welcome status line belongs to the welcome
@@ -11804,22 +11821,23 @@
     if (mode !== "missing-muse") {
       if (IS_REMOTE) return remoteConnectPanel(mode, { provider: "muse" }, null);
       const connected = provider && provider.connected;
-      return `<div class="onb"><p class="onb-heading">${connected ? "Sign in to Muse Code" : "Connect Muse Code"}</p>`
-        + `<p class="onb-desc">${connected ? "Start sign-in with Meta's CLI, then open the link shown here." : "Use Meta's CLI's existing sign-in."}</p>`
-        + `<button class="onb-action" data-act="connectProvider" data-provider="muse">${connected ? "Sign in with Muse Code" : "Connect Muse Code"}</button>`
-        + `<button class="onb-action" data-act="recheckProvider" data-provider="muse">Re-check</button></div>`;
+      return `<div class="onb"><p class="onb-heading">${escapeHtml(l10n(connected ? "Sign in to Muse Code" : "Connect Muse Code"))}</p>`
+        + `<p class="onb-desc">${escapeHtml(l10n(connected ? "Start sign-in with Meta's CLI, then open the link shown here." : "Use Meta's CLI's existing sign-in."))}</p>`
+        + `<button class="onb-action" data-act="connectProvider" data-provider="muse">${escapeHtml(l10n(connected ? "Sign in with Muse Code" : "Connect Muse Code"))}</button>`
+        + `<button class="onb-action" data-act="recheckProvider" data-provider="muse">${escapeHtml(l10n("Re-check"))}</button></div>`;
     }
     const command = info.platform === "win32"
       ? "irm https://dev.meta.ai/install.ps1 | iex"
       : "curl -fsSL https://dev.meta.ai/install.sh | bash";
-    return `<div class="onb"><p class="onb-heading">Muse Code is not installed</p>`
+    return `<div class="onb"><p class="onb-heading">${escapeHtml(l10n("Muse Code is not installed"))}</p>`
       + `<p class="onb-desc">${IS_REMOTE
         ? "Muse Code is not installed on the machine running this workspace. Install it on that machine, then Re-check."
-        : "Install Meta's Muse Code CLI on this computer. When installation finishes, click Re-check, then Connect Muse Code."}</p>`
-      + (!IS_REMOTE ? `<div class="onb-cmd"><code>${escapeHtml(command)}</code><button class="onb-copy" type="button" title="Copy" data-cmd="${escapeHtml(command)}">${ICON.copy}</button></div>` : "")
+        : escapeHtml(l10n("Install Meta's Muse Code CLI on this computer.") + " " +
+          l10n("When installation finishes, click Re-check, then Connect Muse Code."))}</p>`
+      + (!IS_REMOTE ? `<div class="onb-cmd"><code>${escapeHtml(command)}</code><button class="onb-copy" type="button" title="${escapeAttr(l10n("Copy"))}" data-cmd="${escapeHtml(command)}">${ICON.copy}</button></div>` : "")
       + (!IS_REMOTE && state.hostCaps && state.hostCaps.installMuse === true
-        ? '<button class="onb-action" type="button" data-act="installMuse">Install Muse Code</button>' : "")
-      + '<button class="onb-action onb-secondary" type="button" data-act="recheckProvider" data-provider="muse">Re-check</button></div>';
+        ? `<button class="onb-action" type="button" data-act="installMuse">${escapeHtml(l10n("Install Muse Code"))}</button>` : "")
+      + `<button class="onb-action onb-secondary" type="button" data-act="recheckProvider" data-provider="muse">${escapeHtml(l10n("Re-check"))}</button></div>`;
   }
 
   function deepSeekInstallPanel(info) {
@@ -11829,19 +11847,19 @@
       ? Math.min(100, Math.round((install.receivedBytes / install.totalBytes) * 100))
       : null;
     const progressLabel = install.phase === "downloading"
-      ? "Downloading DeepSeek" + (percent == null ? "" : " (" + percent + "%)")
-      : install.phase === "verifying" ? "Verifying the download"
-      : install.phase === "installing" ? "Installing DeepSeek" : "";
+      ? l10n(percent == null ? "Downloading DeepSeek" : "Downloading DeepSeek ({0}%)", percent)
+      : install.phase === "verifying" ? l10n("Verifying the download")
+      : install.phase === "installing" ? l10n("Installing DeepSeek") : "";
     const reason = info?.reason || install.reason;
-    return `<div class="onb"><p class="onb-heading">Install DeepSeek</p>`
-      + `<p class="onb-desc">Install the pinned official dsh harness and its private Node runtime into this app's storage. Your system Node is unchanged.</p>`
+    return `<div class="onb"><p class="onb-heading">${escapeHtml(l10n("Install DeepSeek"))}</p>`
+      + `<p class="onb-desc">${escapeHtml(l10n("Install the pinned official dsh harness and its private Node runtime into this app's storage.") + " " + l10n("Your system Node is unchanged."))}</p>`
       + (reason ? `<p class="onb-install-error" role="alert">${escapeHtml(reason)}</p>` : "")
       + (installing
         ? `<div class="onb-install-progress" role="status"><span>${escapeHtml(progressLabel) + BLINK_DOTS}</span>`
           + (percent == null ? "" : `<progress max="100" value="${percent}">${percent}%</progress>`)
-          + `<button class="onb-action onb-secondary" type="button" data-act="cancelDeepSeekInstall">Cancel</button></div>`
-        : `<button class="onb-action" type="button" data-act="installDeepSeek">Install DeepSeek</button>`)
-      + `<button class="onb-action onb-secondary" type="button" data-act="recheckProvider" data-provider="deepseek">Re-check</button></div>`;
+          + `<button class="onb-action onb-secondary" type="button" data-act="cancelDeepSeekInstall">${escapeHtml(l10n("Cancel"))}</button></div>`
+        : `<button class="onb-action" type="button" data-act="installDeepSeek">${escapeHtml(l10n("Install DeepSeek"))}</button>`)
+      + `<button class="onb-action onb-secondary" type="button" data-act="recheckProvider" data-provider="deepseek">${escapeHtml(l10n("Re-check"))}</button></div>`;
   }
 
   function agyCliInstallPanel(info) {
@@ -11852,17 +11870,22 @@
     const installing = cli?.installing || install.phase !== "idle";
     const percent = install.totalBytes > 0
       ? Math.min(100, Math.round((install.receivedBytes / install.totalBytes) * 100)) : null;
-    const legacyProgress = install.phase === "downloading" ? "Downloading Antigravity" : install.phase === "verifying" ? "Verifying the download" : "Installing Antigravity";
-    const progress = cli?.installing ? "Installing the Antigravity CLI" : legacyProgress;
-    return `<div class="onb"><p class="onb-heading">Install Antigravity</p>`
+    const progress = cli?.installing
+      ? l10n(percent == null ? "Installing the Antigravity CLI" : "Installing the Antigravity CLI ({0}%)", percent)
+      : install.phase === "downloading"
+        ? l10n(percent == null ? "Downloading Antigravity" : "Downloading Antigravity ({0}%)", percent)
+        : install.phase === "verifying"
+          ? l10n(percent == null ? "Verifying the download" : "Verifying the download ({0}%)", percent)
+          : l10n(percent == null ? "Installing Antigravity" : "Installing Antigravity ({0}%)", percent);
+    return `<div class="onb"><p class="onb-heading">${escapeHtml(l10n("Install Antigravity"))}</p>`
       + (reason ? `<p class="onb-install-error" role="alert">${escapeHtml(reason)}</p>` : "")
       + (installing
-        ? `<div class="onb-install-progress" role="status"><span>${progress}${percent == null ? "" : " (" + percent + "%)"}${BLINK_DOTS}</span>`
-          + (percent == null ? `<progress aria-label="${progress}"></progress>` : `<progress max="100" value="${percent}">${percent}%</progress>`)
-          + `<button class="onb-action onb-secondary" type="button" data-act="cancelAgyInstall">Cancel</button></div>`
-        : `<button class="onb-action" type="button" data-act="installAgy">Install Antigravity</button>`
-          + (cli ? `<button class="onb-action onb-secondary" type="button" data-act="agyChooseKey">Use a Gemini API key</button>` : ""))
-      + `<button class="onb-action onb-secondary" type="button" data-act="recheckProvider" data-provider="agy">Re-check</button></div>`;
+        ? `<div class="onb-install-progress" role="status"><span>${escapeHtml(progress)}${BLINK_DOTS}</span>`
+          + (percent == null ? `<progress aria-label="${escapeAttr(progress)}"></progress>` : `<progress max="100" value="${percent}">${percent}%</progress>`)
+          + `<button class="onb-action onb-secondary" type="button" data-act="cancelAgyInstall">${escapeHtml(l10n("Cancel"))}</button></div>`
+        : `<button class="onb-action" type="button" data-act="installAgy">${escapeHtml(l10n("Install Antigravity"))}</button>`
+          + (cli ? `<button class="onb-action onb-secondary" type="button" data-act="agyChooseKey">${escapeHtml(l10n("Use a Gemini API key"))}</button>` : ""))
+      + `<button class="onb-action onb-secondary" type="button" data-act="recheckProvider" data-provider="agy">${escapeHtml(l10n("Re-check"))}</button></div>`;
   }
 
   function paintDeepSeekCard(mode, info, onb) {
@@ -11874,12 +11897,12 @@
     if (mode === "missing-deepseek") return deepSeekInstallPanel(info);
     const provider = state.providers.find(p => p.id === "deepseek") || {};
     if (provider.keySource === "environment") {
-      return '<div class="onb"><p class="onb-heading">Connect DeepSeek</p><p class="onb-desc">Uses the key from the DEEPSEEK_API_KEY environment variable.</p><button class="onb-action" data-act="deepseekConnect">Connect</button></div>';
+      return `<div class="onb"><p class="onb-heading">${escapeHtml(l10n("Connect DeepSeek"))}</p><p class="onb-desc">${escapeHtml(l10n("Uses the key from the {0} environment variable.", "DEEPSEEK_API_KEY"))}</p><button class="onb-action" data-act="deepseekConnect">${escapeHtml(l10n("Connect"))}</button></div>`;
     }
-    const source = provider.keySource === "environment" ? "DEEPSEEK_API_KEY environment variable" : provider.keySource === "saved" ? "saved key" : "no key configured";
-    return `<div class="onb"><p class="onb-heading">Connect DeepSeek</p><p class="onb-desc">Key source: ${source}. Environment takes precedence. A saved key stays in secure storage on the workspace machine.</p>
-      <input class="onb-code-input onb-deepseek-key" type="password" maxlength="512" autocomplete="off" spellcheck="false" placeholder="Paste API key" aria-label="DeepSeek API key">
-      <button class="onb-action" data-act="deepseekConnect">${provider.keySource ? "Connect (or replace saved key)" : "Save key and connect"}</button></div>`;
+    const source = l10n(provider.keySource === "saved" ? "Key source: saved key." : "Key source: no key configured.");
+    return `<div class="onb"><p class="onb-heading">${escapeHtml(l10n("Connect DeepSeek"))}</p><p class="onb-desc">${escapeHtml(source + " " + l10n("Environment takes precedence.") + " " + l10n("A saved key stays in secure storage on the workspace machine."))}</p>
+      <input class="onb-code-input onb-deepseek-key" type="password" maxlength="512" autocomplete="off" spellcheck="false" placeholder="${escapeAttr(l10n("Paste API key"))}" aria-label="${escapeAttr(l10n("DeepSeek API key"))}">
+      <button class="onb-action" data-act="deepseekConnect">${escapeHtml(l10n(provider.keySource ? "Connect (or replace saved key)" : "Save key and connect"))}</button></div>`;
   }
 
   function renderDeepSeekHarness() {
@@ -11908,10 +11931,10 @@
     const provider = (state.providers || []).find(p => p.id === "agy");
     const connected = !!(provider && provider.connected);
     const reason = info && info.reason;
-    return `<div class="onb"><p class="onb-heading">${connected ? "Sign in to Antigravity" : "Connect Antigravity"}</p>`
+    return `<div class="onb"><p class="onb-heading">${escapeHtml(l10n(connected ? "Sign in to Antigravity" : "Connect Antigravity"))}</p>`
       + (reason ? `<p class="onb-install-error" role="alert">${escapeHtml(reason)}</p>` : "")
-      + `<p class="onb-desc">Sign in with your Google account, or use a Gemini API key.</p>`
-      + `<button class="onb-action" data-act="connectProvider" data-provider="agy">${connected ? "Sign in again" : "Connect Antigravity"}</button></div>`;
+      + `<p class="onb-desc">${escapeHtml(l10n("Sign in with your Google account, or use a Gemini API key."))}</p>`
+      + `<button class="onb-action" data-act="connectProvider" data-provider="agy">${escapeHtml(l10n(connected ? "Sign in again" : "Connect Antigravity"))}</button></div>`;
   }
 
   /**
@@ -11928,32 +11951,33 @@
     const saved = Array.isArray(provider.savedSignIns) ? provider.savedSignIns : [];
     const last = provider.signInMethod;
     const reason = info && info.reason;
-    const lastUsed = (method) => last === method ? " (last used)" : "";
-    return `<div class="onb onb-agy-choice"><p class="onb-heading">Connect Antigravity</p>`
+    const keyLabel = l10n(last === "api-key" ? "Gemini API key (last used)" : "Gemini API key");
+    return `<div class="onb onb-agy-choice"><p class="onb-heading">${escapeHtml(l10n("Connect Antigravity"))}</p>`
       + (reason ? `<p class="onb-install-error" role="alert">${escapeHtml(reason)}</p>` : "")
-      + `<p class="onb-desc">Choose how Antigravity signs in on this computer.</p>`
-      + (!info?.agyKeyOnly && agyGoogleAvailable() ? `<button class="onb-action" type="button" data-act="agySignInGoogle">Sign in with Google${lastUsed("google")}</button>`
+      + `<p class="onb-desc">${escapeHtml(l10n("Choose how Antigravity signs in on this computer."))}</p>`
+      + (!info?.agyKeyOnly && agyGoogleAvailable() ? `<button class="onb-action" type="button" data-act="agySignInGoogle">${escapeHtml(l10n(last === "google" ? "Sign in with Google (last used)" : "Sign in with Google"))}</button>`
       + `<p class="onb-desc">${provider.agyCli && saved.includes("google")
-        ? "The Antigravity CLI may ask you to sign in once."
+        ? escapeHtml(l10n("The Antigravity CLI may ask you to sign in once."))
         : saved.includes("google")
-        ? "Already signed in on this computer, so no browser is needed."
+        ? escapeHtml(l10n("Already signed in on this computer, so no browser is needed."))
         : provider.googleSignInPaste === true
           ? "Open Google's sign-in page, then paste the full address from the page that does not load."
-          : "Opens Google's sign-in page in your browser."}</p>`
-      + `<p class="onb-or">or</p>` : "")
-      + `<p class="onb-desc"><strong>Gemini API key${lastUsed("api-key")}</strong> &mdash; `
-      + `<a href="https://aistudio.google.com/api-keys" target="_blank" rel="noopener noreferrer">get one in AI Studio</a>. `
-      + `It is kept in this app's secure storage on the workspace machine.`
-      + (provider.agyCli?.installed === false ? " Using it installs the Antigravity CLI first." : "") + `</p>`
-      + `<p class="onb-desc">A free key works, but Google may use what you send to improve its products. `
-      + `Google AI Pro and Ultra may include Cloud credits that pay for a paid key.</p>`
+          : escapeHtml(l10n("Opens Google's sign-in page in your browser."))}</p>`
+      + `<p class="onb-or">${escapeHtml(l10n("or"))}</p>` : "")
+      + `<p class="onb-desc">${localizedMarkup(l10n("{0} — {1}."),
+        `<strong>${escapeHtml(keyLabel)}</strong>`,
+        `<a href="https://aistudio.google.com/api-keys" target="_blank" rel="noopener noreferrer">${escapeHtml(l10n("get one in AI Studio"))}</a>`)} `
+      + escapeHtml(l10n("It is kept in this app's secure storage on the workspace machine."))
+      + (provider.agyCli?.installed === false ? " " + escapeHtml(l10n("Using it installs the Antigravity CLI first.")) : "") + `</p>`
+      + `<p class="onb-desc">${escapeHtml(l10n("A free key works, but Google may use what you send to improve its products."))} `
+      + `${escapeHtml(l10n("Google AI Pro and Ultra may include Cloud credits that pay for a paid key."))}</p>`
       + (saved.includes("api-key")
-        ? `<button class="onb-action onb-secondary" type="button" data-act="agySignInSavedKey">Use the saved key</button>`
-          + `<p class="onb-desc">Or replace it:</p>`
+        ? `<button class="onb-action onb-secondary" type="button" data-act="agySignInSavedKey">${escapeHtml(l10n("Use the saved key"))}</button>`
+          + `<p class="onb-desc">${escapeHtml(l10n("Or replace it:"))}</p>`
         : "")
       + `<div class="onb-cmd onb-code-entry">`
-      + `<input class="onb-code-input onb-agy-key" type="password" maxlength="512" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Paste API key" aria-label="Gemini API key">`
-      + `<button class="onb-action" type="button" data-act="agySignInKey">Use key</button></div></div>`;
+      + `<input class="onb-code-input onb-agy-key" type="password" maxlength="512" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="${escapeAttr(l10n("Paste API key"))}" aria-label="${escapeAttr(l10n("Gemini API key"))}">`
+      + `<button class="onb-action" type="button" data-act="agySignInKey">${escapeHtml(l10n("Use key"))}</button></div></div>`;
   }
 
   /** A host that did not name Muse or Antigravity gets no card for it. */
@@ -12035,9 +12059,9 @@
       }
       onb.innerHTML =
         `<div class="onb">` +
-          `<p class="onb-heading">No project folder</p>` +
-          `<p class="onb-desc">A conversation needs a project folder before it can start. Add one to continue.</p>` +
-          `<button class="onb-action" type="button" data-act="addProjectFolder">Add project folder</button>` +
+          `<p class="onb-heading">${escapeHtml(l10n("No project folder"))}</p>` +
+          `<p class="onb-desc">${escapeHtml(l10n("A conversation needs a project folder before it can start.") + " " + l10n("Add one to continue."))}</p>` +
+          `<button class="onb-action" type="button" data-act="addProjectFolder">${escapeHtml(l10n("Add project folder"))}</button>` +
         `</div>`;
       updateSendButton();
       return;
@@ -12049,15 +12073,15 @@
       // (addMessage calls clearWelcome), so it never survives into a real
       // conversation and does not need dismissing.
       const id = info.provider || "grok";
-      const done = id === "codex"
+      const done = l10n(id === "codex"
         ? "You can start working with OpenAI!"
         : id === "claude" ? "You can start clauding!" : id === "muse" ? "Muse Code is connected."
-        : id === "agy" ? "Antigravity is connected." : id === "deepseek" ? "DeepSeek is connected." : "You can start grokking!";
+        : id === "agy" ? "Antigravity is connected." : id === "deepseek" ? "DeepSeek is connected." : "You can start grokking!");
       if (ver) setWelcomeStatus("Connected", false);
       onb.innerHTML =
         `<div class="onb onb-connected">` +
-          `<p class="onb-heading"><span class="onb-ok">${ICON.check}</span>Connected</p>` +
-          `<p class="onb-desc">${done}</p>` +
+          `<p class="onb-heading"><span class="onb-ok">${ICON.check}</span>${escapeHtml(l10n("Connected"))}</p>` +
+          `<p class="onb-desc">${escapeHtml(done)}</p>` +
         `</div>`;
       return;
     }
@@ -12065,8 +12089,8 @@
       if (ver) setWelcomeStatus("Connect an agent", false);
       onb.innerHTML =
         `<div class="onb onb-connect">` +
-          `<p class="onb-heading">Connect an agent</p>` +
-          `<p class="onb-desc">Choose the command-line agent that will own this conversation.</p>` +
+          `<p class="onb-heading">${escapeHtml(l10n("Connect an agent"))}</p>` +
+          `<p class="onb-desc">${escapeHtml(l10n("Choose the command-line agent that will own this conversation."))}</p>` +
           `<div class="onb-agent-grid">` +
             // One row each, not a grid: three side-by-side tiles squeezed the
             // name and the CLI into a column too narrow to read either, and the
@@ -12076,7 +12100,7 @@
             // thing IS, so the row a newcomer reads first was the only one not
             // saying what it would put on their machine.
             `<button class="onb-agent-tile primary onb-action" type="button" data-act="connectProvider" data-provider="grok">` +
-              `<span class="onb-agent-mark">${providerLogoMarkup("grok")}</span><span><strong>Grok Build (Recommended)</strong><small>Grok Build CLI</small></span>` +
+              `<span class="onb-agent-mark">${providerLogoMarkup("grok")}</span><span><strong>${escapeHtml(l10n("{0} (Recommended)", "Grok Build"))}</strong><small>Grok Build CLI</small></span>` +
             `</button>` +
             `<button class="onb-agent-tile onb-action" type="button" data-act="connectProvider" data-provider="codex">` +
               `<span class="onb-agent-mark">${providerLogoMarkup("codex")}</span><span><strong>Codex</strong><small>OpenAI Codex CLI</small></span>` +
@@ -12089,7 +12113,7 @@
             `</button>` : "") +
             // DeepSeek's tile on a remote needs the host's remoteSetup: an older
             // host drops a remote's DeepSeek connect without any reply.
-            (deepseekAdvertised && providerSetupAvailable("deepseek") ? `<button class="onb-agent-tile onb-action" type="button" data-act="connectProvider" data-provider="deepseek"><span class="onb-agent-mark">${providerLogoMarkup("deepseek")}</span><span><strong>DeepSeek</strong><small>Official dsh</small></span></button>` : "") +
+            (deepseekAdvertised && providerSetupAvailable("deepseek") ? `<button class="onb-agent-tile onb-action" type="button" data-act="connectProvider" data-provider="deepseek"><span class="onb-agent-mark">${providerLogoMarkup("deepseek")}</span><span><strong>DeepSeek</strong><small>${escapeHtml(l10n("Official {0}", "dsh"))}</small></span></button>` : "") +
             (agyAdvertised ? `<button class="onb-agent-tile onb-action" type="button" data-act="connectProvider" data-provider="agy">` +
               `<span class="onb-agent-mark">${providerLogoMarkup("agy")}</span><span><strong>Antigravity</strong><small>Google Antigravity</small></span>` +
             `</button>` : "") +
@@ -12107,13 +12131,13 @@
         : "curl -fsSL https://x.ai/cli/install.sh | bash";
       onb.innerHTML =
         `<div class="onb">` +
-          `<p class="onb-heading">Install the Grok CLI</p>` +
+          `<p class="onb-heading">${escapeHtml(l10n("Install the Grok CLI"))}</p>` +
           `<div class="onb-cmd">` +
             `<code>${installCmd}</code>` +
-            `<button class="onb-copy" type="button" title="Copy" data-cmd="${installCmd}">${ICON.copy}</button>` +
+            `<button class="onb-copy" type="button" title="${escapeAttr(l10n("Copy"))}" data-cmd="${installCmd}">${ICON.copy}</button>` +
           `</div>` +
-          `<button class="onb-action" type="button" data-act="runInstall">Open terminal &amp; run</button>` +
-          `<button class="onb-action onb-secondary" type="button" data-act="recheckProvider" data-provider="${info.provider || "grok"}">Re-check connection</button>` +
+          `<button class="onb-action" type="button" data-act="runInstall">${escapeHtml(l10n("Open terminal & run"))}</button>` +
+          `<button class="onb-action onb-secondary" type="button" data-act="recheckProvider" data-provider="${info.provider || "grok"}">${escapeHtml(l10n("Re-check connection"))}</button>` +
         `</div>`;
     } else if (mode === "missing-codex") {
       if (ver) setWelcomeStatus("Codex CLI not found", false);
@@ -12129,32 +12153,32 @@
         ? Math.min(100, Math.round((install.receivedBytes / install.totalBytes) * 100))
         : null;
       const progressLabel = install.phase === "downloading"
-        ? `Downloading Codex${percent == null ? "" : ` (${percent}%)`}...`
-        : install.phase === "verifying" ? "Verifying downloaded package..."
-        : install.phase === "installing" ? "Installing Codex..." : "";
+        ? l10n(percent == null ? "Downloading Codex..." : "Downloading Codex ({0}%)...", percent)
+        : install.phase === "verifying" ? l10n("Verifying downloaded package...")
+        : install.phase === "installing" ? l10n("Installing Codex...") : "";
       const reason = info.reason || install.reason;
       onb.innerHTML =
         `<div class="onb">` +
-          `<p class="onb-heading">Install the Codex CLI</p>` +
-          `<p class="onb-desc">Install the pinned official Codex release into this app's storage, or use your own installation.</p>` +
+          `<p class="onb-heading">${escapeHtml(l10n("Install the Codex CLI"))}</p>` +
+          `<p class="onb-desc">${escapeHtml(l10n("Install the pinned official Codex release into this app's storage, or use your own installation."))}</p>` +
           (reason ? `<p class="onb-install-error" role="alert">${escapeHtml(reason)}</p>` : "") +
           (installing
             ? `<div class="onb-install-progress" role="status"><span>${escapeHtml(progressLabel)}</span>` +
                 (percent == null ? "" : `<progress max="100" value="${percent}">${percent}%</progress>`) +
-                `<button class="onb-action onb-secondary" type="button" data-act="cancelCodexInstall">Cancel</button></div>`
-            : `<button class="onb-action" type="button" data-act="installCodex">Install Codex</button>`) +
-          `<p class="onb-desc onb-manual-label">Or install it yourself, or install the OpenAI ChatGPT extension for VS Code:</p>` +
-          `<div class="onb-cmd"><code>${installCmd}</code><button class="onb-copy" type="button" title="Copy" data-cmd="${installCmd}">${ICON.copy}</button></div>` +
-          `<button class="onb-action onb-secondary" type="button" data-act="recheckProvider" data-provider="codex">Re-check</button>` +
+                `<button class="onb-action onb-secondary" type="button" data-act="cancelCodexInstall">${escapeHtml(l10n("Cancel"))}</button></div>`
+            : `<button class="onb-action" type="button" data-act="installCodex">${escapeHtml(l10n("Install Codex"))}</button>`) +
+          `<p class="onb-desc onb-manual-label">${escapeHtml(l10n("Or install it yourself, or install the OpenAI ChatGPT extension for VS Code:"))}</p>` +
+          `<div class="onb-cmd"><code>${installCmd}</code><button class="onb-copy" type="button" title="${escapeAttr(l10n("Copy"))}" data-cmd="${installCmd}">${ICON.copy}</button></div>` +
+          `<button class="onb-action onb-secondary" type="button" data-act="recheckProvider" data-provider="codex">${escapeHtml(l10n("Re-check"))}</button>` +
         `</div>`;
     } else if (mode === "codex-login") {
       if (ver) setWelcomeStatus("Finish signing in", false);
       onb.innerHTML =
         `<div class="onb">` +
-          `<p class="onb-heading">Complete <code>codex login</code></p>` +
-          `<p class="onb-desc">Open a terminal to sign in with the Codex CLI, then continue here.</p>` +
-          `<button class="onb-action onb-secondary" type="button" data-act="connectProvider" data-provider="codex">Open terminal &amp; run <code>codex login</code></button>` +
-          `<button class="onb-action" type="button" data-act="recheckProvider" data-provider="codex">Done - connect Codex</button>` +
+          `<p class="onb-heading">${localizedMarkup(l10n("Complete {0}"), "<code>codex login</code>")}</p>` +
+          `<p class="onb-desc">${escapeHtml(l10n("Open a terminal to sign in with the Codex CLI, then continue here."))}</p>` +
+          `<button class="onb-action onb-secondary" type="button" data-act="connectProvider" data-provider="codex">${localizedMarkup(l10n("Open terminal & run {0}"), "<code>codex login</code>")}</button>` +
+          `<button class="onb-action" type="button" data-act="recheckProvider" data-provider="codex">${escapeHtml(l10n("Done - connect Codex"))}</button>` +
         `</div>`;
     } else if (mode === "missing-claude") {
       if (ver) setWelcomeStatus("Claude Code not found", false);
@@ -12165,35 +12189,39 @@
       }
       onb.innerHTML =
         `<div class="onb">` +
-          `<p class="onb-heading">Install Claude Code</p>` +
-          `<p class="onb-desc">This app does not install or sign in to Claude for you. Install Anthropic's own Claude Code CLI, sign in with <code>claude auth login</code>, then re-check.</p>` +
-          `<div class="onb-cmd"><code>claude --version</code><button class="onb-copy" type="button" title="Copy" data-cmd="claude --version">${ICON.copy}</button></div>` +
-          `<button class="onb-action" type="button" data-act="recheckProvider" data-provider="claude">Re-check</button>` +
+          `<p class="onb-heading">${escapeHtml(l10n("Install Claude Code"))}</p>` +
+          `<p class="onb-desc">${escapeHtml(l10n("This app does not install or sign in to Claude for you."))} ${localizedMarkup(l10n("Install Anthropic's own Claude Code CLI, sign in with {0}, then re-check."), "<code>claude auth login</code>")}</p>` +
+          `<div class="onb-cmd"><code>claude --version</code><button class="onb-copy" type="button" title="${escapeAttr(l10n("Copy"))}" data-cmd="claude --version">${ICON.copy}</button></div>` +
+          `<button class="onb-action" type="button" data-act="recheckProvider" data-provider="claude">${escapeHtml(l10n("Re-check"))}</button>` +
         `</div>`;
     } else if (mode === "claude-login") {
       if (ver) setWelcomeStatus("Finish signing in", false);
       onb.innerHTML =
         `<div class="onb">` +
-          `<p class="onb-heading">Sign in with Claude Code</p>` +
-          `<p class="onb-desc">This app never implements, proxies, holds, or forwards Claude credentials. Sign-in happens entirely inside Anthropic's own CLI, which may use your Claude subscription or an Anthropic Console account depending on how you sign in.</p>` +
-          `<button class="onb-action onb-secondary" type="button" data-act="connectProvider" data-provider="claude">Open terminal &amp; run <code>claude auth login</code></button>` +
-          `<button class="onb-action" type="button" data-act="recheckProvider" data-provider="claude">Done - connect Claude</button>` +
+          `<p class="onb-heading">${escapeHtml(l10n("Sign in with Claude Code"))}</p>` +
+          `<p class="onb-desc">${escapeHtml(l10n("This app never implements, proxies, holds, or forwards Claude credentials.") + " " +
+            l10n("Sign-in happens entirely inside Anthropic's own CLI, which may use your Claude subscription or an Anthropic Console account depending on how you sign in."))}</p>` +
+          `<button class="onb-action onb-secondary" type="button" data-act="connectProvider" data-provider="claude">${localizedMarkup(l10n("Open terminal & run {0}"), "<code>claude auth login</code>")}</button>` +
+          `<button class="onb-action" type="button" data-act="recheckProvider" data-provider="claude">${escapeHtml(l10n("Done - connect Claude"))}</button>` +
         `</div>`;
     } else if (mode === "auth-required") {
       if (ver) setWelcomeStatus("Authentication required", false);
       onb.innerHTML =
         `<div class="onb">` +
-          `<p class="onb-heading">Sign in to continue</p>` +
-          `<p class="onb-desc"><strong>SuperGrok or X Premium+ subscription</strong> &mdash; either unlocks the <em>Grok Build</em> entitlement.</p>` +
-          `<button class="onb-action" type="button" data-act="runLogin">Open terminal &amp; run <code>grok login</code></button>` +
-          `<p class="onb-or">or</p>` +
-          `<p class="onb-desc"><strong>API key</strong> &mdash; pay per token. Get a key at <a href="https://console.x.ai" class="onb-link">console.x.ai</a>, then add to your shell or a workspace <code>.env</code>:</p>` +
+          `<p class="onb-heading">${escapeHtml(l10n("Sign in to continue"))}</p>` +
+          `<p class="onb-desc">${localizedMarkup(l10n("{0} — either unlocks the {1} entitlement."),
+            `<strong>${escapeHtml(l10n("SuperGrok or X Premium+ subscription"))}</strong>`, "<em>Grok Build</em>")}</p>` +
+          `<button class="onb-action" type="button" data-act="runLogin">${localizedMarkup(l10n("Open terminal & run {0}"), "<code>grok login</code>")}</button>` +
+          `<p class="onb-or">${escapeHtml(l10n("or"))}</p>` +
+          `<p class="onb-desc">${localizedMarkup(l10n("{0} — pay per token."), `<strong>${escapeHtml(l10n("API key"))}</strong>`)} ${localizedMarkup(
+            l10n("Get a key at {0}, then add to your shell or a workspace {1}:"),
+            '<a href="https://console.x.ai" class="onb-link">console.x.ai</a>', "<code>.env</code>")}</p>` +
           `<div class="onb-cmd">` +
             `<code>XAI_API_KEY=your-key-here</code>` +
-            `<button class="onb-copy" type="button" title="Copy" data-cmd="XAI_API_KEY=">${ICON.copy}</button>` +
+            `<button class="onb-copy" type="button" title="${escapeAttr(l10n("Copy"))}" data-cmd="XAI_API_KEY=">${ICON.copy}</button>` +
           `</div>` +
-          `<p class="onb-desc">A cached sign-in takes precedence over the API key &mdash; run <code>grok logout</code> first to use the key. If signing in succeeds but prompts still fail, check the error in the chat: your account may lack the Grok Build entitlement.</p>` +
-          `<button class="onb-action onb-secondary" type="button" data-act="recheckProvider" data-provider="grok">Re-check connection</button>` +
+          `<p class="onb-desc">${localizedMarkup(l10n("A cached sign-in takes precedence over the API key — run {0} first to use the key."), "<code>grok logout</code>")} ${escapeHtml(l10n("If signing in succeeds but prompts still fail, check the error in the chat: your account may lack the Grok Build entitlement."))}</p>` +
+          `<button class="onb-action onb-secondary" type="button" data-act="recheckProvider" data-provider="grok">${escapeHtml(l10n("Re-check connection"))}</button>` +
         `</div>`;
     } else {
       onb.innerHTML = "";
@@ -17808,14 +17836,14 @@ ${fullText}`
 
     const title = document.createElement("div");
     title.className = "card-title";
-    title.textContent = "Plan ready for review";
+    title.textContent = l10n("Plan ready for review");
     el.appendChild(title);
 
     const sub = document.createElement("div");
     sub.className = "card-subtitle";
     sub.textContent = hasPlan
-      ? "Nothing has been written yet. Choose how to continue."
-      : "The agent asked to leave plan mode, but did not include the plan text.";
+      ? l10n("Nothing has been written yet.") + " " + l10n("Choose how to continue.")
+      : l10n("The agent asked to leave plan mode, but did not include the plan text.");
     el.appendChild(sub);
 
     const body = document.createElement("div");
@@ -17825,7 +17853,7 @@ ${fullText}`
       applyAutoDir(body);
       renderMermaidIn(body);
     } else {
-      body.textContent = "No plan was provided with this request.";
+      body.textContent = l10n("No plan was provided with this request.");
     }
     el.appendChild(body);
 
@@ -18025,7 +18053,7 @@ ${fullText}`
   function answerLineEl(labels) {
     const ans = document.createElement("div");
     ans.className = "question-answer";
-    ans.textContent = labels ? "✓ " + labels : "(skipped)";
+    ans.textContent = labels ? l10n("✓ {0}", labels) : l10n("(skipped)");
     return ans;
   }
 
@@ -18037,6 +18065,7 @@ ${fullText}`
   function addQuestionCard(req) {
     clearWelcome();
     hideGrokking();
+    const addedOther = { label: "Other" };
     const questions = (Array.isArray(req.questions) ? req.questions : []).map((q) => {
       const options = Array.isArray(q?.options) ? q.options : [];
       if (options.some((opt) => isFreeTextOptionLabel(opt?.label))) return q;
@@ -18047,13 +18076,13 @@ ${fullText}`
       // string→string map on the CLI side, so the typed value simply takes the
       // label's place. If grok ever starts sending its own — under whatever
       // wording — isFreeTextOptionLabel is what keeps us from adding a second.
-      return { ...q, options: [...options, { label: "Other" }] };
+      return { ...q, options: [...options, addedOther] };
     });
     const el = document.createElement("div");
     el.className = "card question";
     el.dataset.questionReqId = String(req.id);
 
-    const title = buildQuestionHead(el, `${agentName(true)} is asking`);
+    const title = buildQuestionHead(el, l10n("{0} is asking", agentName(true)));
 
     // selections[i] = array of chosen labels for question i.
     const selections = questions.map(() => []);
@@ -18088,7 +18117,7 @@ ${fullText}`
       recoveryAnswers = selections.map((picked, qi) =>
         [...picked, ...(otherText[qi] ? [otherText[qi]] : [])].join(", "));
       el.classList.add("resolved");
-      title.textContent = skipped ? "Skipped" : "Submitted";
+      title.textContent = l10n(skipped ? "Skipped" : "Submitted");
       const actions = el.querySelector(".card-actions");
       if (actions) actions.remove();
       if (skip) skip.remove();
@@ -18097,12 +18126,12 @@ ${fullText}`
         if (opts) opts.remove();
         const labels = submitted ? effectiveSelections()[qi].join(", ") : recoveryAnswers[qi];
         const answer = answerLineEl(labels);
-        if (!labels && !skipped) answer.textContent = "No answer entered";
-        if (skipped && labels) answer.textContent = "Draft: " + labels;
+        if (!labels && !skipped) answer.textContent = l10n("No answer entered");
+        if (skipped && labels) answer.textContent = l10n("Draft: {0}", labels);
         block.appendChild(answer);
         if (submitted && otherText[qi] && !otherSelected[qi]) {
           const draft = answerLineEl(otherText[qi]);
-          draft.textContent = "Draft: " + otherText[qi];
+          draft.textContent = l10n("Draft: {0}", otherText[qi]);
           block.appendChild(draft);
         }
       });
@@ -18111,7 +18140,7 @@ ${fullText}`
       if (el.querySelector(".question-recover")) return;
       const recover = document.createElement("button");
       recover.className = "question-recover";
-      recover.textContent = "Add answers to composer";
+      recover.textContent = l10n("Add answers to composer");
       recover.disabled = !recoveryAnswers.some((answer) => answer.length > 0);
       recover.onclick = () => {
         const block = questions.map((q, qi) => recoveryAnswers[qi]
@@ -18134,7 +18163,7 @@ ${fullText}`
         title.textContent = "Question is no longer open";
         offerRecovery();
       } else if (outcome === "accepted") {
-        title.textContent = skipped ? "Skipped" : "You answered";
+        title.textContent = l10n(skipped ? "Skipped" : "You answered");
       }
     };
     const submit = () => {
@@ -18162,7 +18191,7 @@ ${fullText}`
         btn.className = "question-option";
         const lbl = document.createElement("span");
         lbl.className = "question-option-label";
-        lbl.textContent = opt.label || "";
+        lbl.textContent = opt === addedOther ? l10n("Other") : opt.label || "";
         btn.appendChild(lbl);
         if (opt.description) {
           const desc = document.createElement("span");
@@ -18219,8 +18248,8 @@ ${fullText}`
           const custom = document.createElement("textarea");
           custom.rows = 1;
           custom.className = "question-other-input";
-          custom.placeholder = "Type your answer";
-          custom.setAttribute("aria-label", `${questionText(q)} — Other answer`);
+          custom.placeholder = l10n("Type your answer");
+          custom.setAttribute("aria-label", l10n("{0} — Other answer", questionText(q)));
           custom.hidden = true;
           const autosize = () => {
             const cs = window.getComputedStyle(custom);
@@ -18270,7 +18299,7 @@ ${fullText}`
       actions.className = "card-actions";
       submitBtn = document.createElement("button");
       submitBtn.className = "primary";
-      submitBtn.textContent = "Submit";
+      submitBtn.textContent = l10n("Submit");
       submitBtn.disabled = true;
       submitBtn.onclick = submit;
       actions.appendChild(submitBtn);
@@ -18279,7 +18308,7 @@ ${fullText}`
 
     skip = document.createElement("button");
     skip.className = "question-skip";
-    skip.textContent = "Skip";
+    skip.textContent = l10n("Skip");
     skip.onclick = () => {
       if (el.classList.contains("resolved")) return;
       skipped = true;
@@ -18383,7 +18412,7 @@ ${fullText}`
     const el = document.createElement("div");
     el.className = "card question resolved";
     el._questions = qs;
-    buildQuestionHead(el, "You answered");
+    buildQuestionHead(el, l10n("You answered"));
     qs.forEach((q) => {
       const block = document.createElement("div");
       block.className = "question-block";
@@ -18420,9 +18449,9 @@ ${fullText}`
   // ---------- plan card ----------
 
   const VERDICT_LABEL = {
-    approved: "Approved",
-    rejected: "Rejected",
-    abandoned: "Cancelled",
+    approved: l10n("Approved"),
+    rejected: l10n("Rejected"),
+    abandoned: l10n("Cancelled"),
   };
 
   function pathBaseName(p) {
@@ -18451,7 +18480,7 @@ ${fullText}`
     const toggle = document.createElement("button");
     toggle.type = "button";
     toggle.className = "plan-toggle";
-    const setToggle = () => { toggle.textContent = body.hidden ? "Show plan" : "Hide plan"; };
+    const setToggle = () => { toggle.textContent = l10n(body.hidden ? "Show plan" : "Hide plan"); };
     setToggle();
     toggle.onclick = () => { body.hidden = !body.hidden; setToggle(); };
     return toggle;
@@ -18483,7 +18512,7 @@ ${fullText}`
     }
     const status = document.createElement("div");
     status.className = "plan-verdict-label plan-verdict-" + verdict;
-    status.textContent = VERDICT_LABEL[verdict] ?? "Resolved";
+    status.textContent = VERDICT_LABEL[verdict] ?? l10n("Resolved");
     el.appendChild(status);
   }
 
@@ -18499,12 +18528,13 @@ ${fullText}`
     el.dataset.planReqId = String(req.id);
     const title = document.createElement("div");
     title.className = "card-title";
-    title.textContent = "Plan ready for review";
+    title.textContent = l10n("Plan ready for review");
     el.appendChild(title);
 
     const sub = document.createElement("div");
     sub.className = "card-subtitle";
-    sub.textContent = "Nothing has been written yet. Approve, reject with feedback, or cancel to leave plan mode.";
+    sub.textContent = l10n("Nothing has been written yet.") + " " +
+      l10n("Approve, reject with feedback, or cancel to leave plan mode.");
     el.appendChild(sub);
 
     const planText = req.plan || "";
@@ -18512,7 +18542,7 @@ ${fullText}`
 
     const body = document.createElement("div");
     body.className = "plan-body";
-    body.innerHTML = planText ? renderMarkdown(planText) : "(empty plan)";
+    body.innerHTML = planText ? renderMarkdown(planText) : escapeHtml(l10n("(empty plan)"));
     applyAutoDir(body);
     renderMermaidIn(body);
     el.appendChild(body);
@@ -18521,7 +18551,7 @@ ${fullText}`
     feedback.className = "plan-feedback";
     feedback.rows = 2;
     feedback.setAttribute("dir", "auto");
-    feedback.placeholder = `Optional comment — ${agentName(true)} decides what to do with it`;
+    feedback.placeholder = l10n("Optional comment — {0} decides what to do with it", agentName(true));
     el.appendChild(feedback);
 
     const actions = document.createElement("div");
@@ -18543,9 +18573,9 @@ ${fullText}`
       };
       return b;
     };
-    actions.appendChild(mk("Approve & implement", "primary", "approved", true));
-    actions.appendChild(mk("Reject", "", "rejected", true));
-    actions.appendChild(mk("Cancel", "secondary", "abandoned", true));
+    actions.appendChild(mk(l10n("Approve & implement"), "primary", "approved", true));
+    actions.appendChild(mk(l10n("Reject"), "", "rejected", true));
+    actions.appendChild(mk(l10n("Cancel"), "secondary", "abandoned", true));
     el.appendChild(actions);
     appendTranscriptChild(el);
     scrollToBottom();
@@ -18564,15 +18594,16 @@ ${fullText}`
     el.className = "card plan plan-history";
     const title = document.createElement("div");
     title.className = "card-title";
-    title.textContent = "Plan from this session";
+    title.textContent = l10n("Plan from this session");
     el.appendChild(title);
 
     const sub = document.createElement("div");
     sub.className = "card-subtitle";
     const verdictLabel = VERDICT_LABEL[verdict];
-    sub.textContent = verdictLabel
-      ? `Restored from the previous session — you ${verdictLabel.toLowerCase()} this plan.`
-      : "Restored from the previous session.";
+    sub.textContent = l10n(verdict === "approved" ? "Restored from the previous session — you approved this plan."
+      : verdict === "rejected" ? "Restored from the previous session — you rejected this plan."
+        : verdict === "abandoned" ? "Restored from the previous session — you cancelled this plan."
+          : "Restored from the previous session.");
     el.appendChild(sub);
 
     addPlanFileLink(el, planPath, planName);
@@ -18586,7 +18617,7 @@ ${fullText}`
       const body = document.createElement("div");
       body.className = "plan-body";
       body.hidden = true;
-      body.innerHTML = text ? renderMarkdown(text) : "(empty plan)";
+      body.innerHTML = text ? renderMarkdown(text) : escapeHtml(l10n("(empty plan)"));
       applyAutoDir(body);
       renderMermaidIn(body);
 
@@ -24314,7 +24345,7 @@ ${fullText}`
         state.onboardingChecking = onbAction.dataset.provider;
         onbAction.disabled = true;
         onbAction.setAttribute("aria-busy", "true");
-        (onbAction.querySelector("small") || onbAction).textContent = "Checking…";
+        (onbAction.querySelector("small") || onbAction).textContent = l10n("Checking…");
         if (connectWizard && connectWizard.provider === onbAction.dataset.provider) {
           connectWizard.museOnboarding = null;
           connectWizard.agyOnboarding = null;

@@ -2116,7 +2116,7 @@
   const WELCOME_TIPS = [
     {
       id: "providers",
-      copy: "Grok isn’t your only agent. {Connect Codex or Claude Code} and pick one per conversation.",
+      copy: l10n("Grok isn’t your only agent. {Connect Codex or Claude Code} and pick one per conversation."),
       target: "settings:providers",
       // Was requiresLocalSurface, on the rule that a remote may not sign an
       // agent in. It can since 3.19.x, and on a cloud machine this is the
@@ -2130,14 +2130,14 @@
     },
     {
       id: "routines",
-      copy: "Work that repeats can run itself. {Set up a routine} and it opens a session on schedule.",
+      copy: l10n("Work that repeats can run itself. {Set up a routine} and it opens a session on schedule."),
       target: "settings:routines",
       requiresLocalSurface: false,
       eligible: (f) => f.routineCount === 0,
     },
     {
       id: "connectors",
-      copy: "Give your agent your tools. {Connect Notion, Linear or GitHub} and it can read and write them.",
+      copy: l10n("Give your agent your tools. {Connect Notion, Linear or GitHub} and it can read and write them."),
       target: "settings:connectors",
       // Was requiresLocalSurface, on the rule that connecting an app needed
       // has not since 4.1.9 shipped connector sign-in from a phone, and on a
@@ -2154,7 +2154,7 @@
     },
     {
       id: "remote",
-      copy: "Leave the desk without leaving the work. {Continue on your phone.}",
+      copy: l10n("Leave the desk without leaving the work. {Continue on your phone.}"),
       target: "settings:account",
       requiresLocalSurface: true,
       // Three states, not two (see state.remoteLinked): null means the host has
@@ -2164,14 +2164,14 @@
     },
     {
       id: "readAloud",
-      copy: "AFK Pilot can read replies out loud — turn it on in {Voice settings}.",
+      copy: l10n("AFK Pilot can read replies out loud — turn it on in {Voice settings}."),
       target: "settings:voice",
       requiresLocalSurface: false,
       eligible: (f) => !f.readRepliesAloud,
     },
     {
       id: "voice",
-      copy: "Talk instead of typing — set up {voice control} and dictate into the composer.",
+      copy: l10n("Talk instead of typing — set up {voice control} and dictate into the composer."),
       target: "settings:voice",
       requiresLocalSurface: false,
       eligible: (f) => !f.voiceConfigured,
@@ -2181,7 +2181,7 @@
       // The actionable phrase, not the character: "@" alone is about six pixels
       // wide, and no amount of padding turns that into a finger-sized target
       // without visibly shoving the sentence around it.
-      copy: "{Mention a file with @}, or drop one onto the composer.",
+      copy: l10n("{Mention a file with @}, or drop one onto the composer."),
       // Dropping a file works in the host's own webview only: the browser's
       // drop handler reads file:// URIs and posts HOST paths, which a phone
       // does not have. Advising it there is advice that cannot be taken.
@@ -2197,7 +2197,7 @@
       // current project — so it works perfectly well from an empty screen. The
       // copy names what the click does rather than describing a menu path
       // nobody remembers ("… > Continue in a new chat > Use a new worktree").
-      copy: "Trying something risky? {Start it in a worktree} — your checkout stays untouched.",
+      copy: l10n("Trying something risky? {Start it in a worktree} — your checkout stays untouched."),
       target: "worktree",
       requiresLocalSurface: true,
       // Every condition the destination list itself applies, so the link can
@@ -2217,7 +2217,7 @@
       // Order matters and the first draft had it backwards: Shift+click in the
       // Explorer is a range-select, so the modifier cannot be held BEFORE the
       // drag starts — it goes down once the drag is already moving.
-      copy: "Dragging from the Explorer? {Start the drag, then hold Shift} — the editor blocks the drop otherwise.",
+      copy: l10n("Dragging from the Explorer? {Start the drag, then hold Shift} — the editor blocks the drop otherwise."),
       target: null,
       // `dropFile` is "host-local", so a remote's drop is refused outright and
       // the advice would be a dead end there.
@@ -2230,7 +2230,7 @@
       // Pointer, not surface. A laptop browser on the relay pastes screenshots
       // exactly like the desk does; a phone cannot get an image onto a textarea
       // at all, so there the advice is simply untrue.
-      copy: "Copied a screenshot? {Paste it straight into the message box.}",
+      copy: l10n("Copied a screenshot? {Paste it straight into the message box.}"),
       target: null,
       requiresLocalSurface: false,
       eligible: (f) => !f.coarsePointer,
