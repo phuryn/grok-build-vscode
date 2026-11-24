@@ -715,6 +715,9 @@
     },
     "electron-updater": {
       "builder-util-runtime": "9.7.0"
+    },
+    "extract-zip": {
+      "yauzl": "^3.4.0"
     }
   }
 }
