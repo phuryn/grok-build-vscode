@@ -4003,7 +4003,7 @@
         if (body) body.scrollTop = keptScroll;
       }
 
-      search.oninput = () => {
+      const applySearch = () => {
         query = search.value;
         dismissRestoreConfirm();
         paint();
@@ -4013,6 +4013,10 @@
           try { next.setSelectionRange(query.length, query.length); } catch { /* */ }
         }
       };
+      // paint() replaces this field, which would cut off an input method in
+      // the middle of a word.
+      search.oninput = (e) => { if (!e.isComposing) applySearch(); };
+      search.addEventListener("compositionend", applySearch);
       function selectCategory(next) {
         if (!next) return;
         if (next !== "about") aboutChecked = false;

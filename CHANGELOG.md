@@ -6,11 +6,15 @@
 
 ### Added
 
-- **The panel follows VS Code's display language.** When VS Code runs in Simplified Chinese, the model picker, effort levels, modes, message box, `+` menu, session menus, history, rename, find, rewind and edit dialogs, the projects rail and the whole Settings page show in Chinese. Any other language, Traditional Chinese included, keeps English. Agent replies, errors, approval and question cards, tool rows and diffs stay as they are, and so do the desktop app, the phone and the browser. Another language is one new file in `l10n/`.
+- **The panel follows VS Code's display language.** When VS Code runs in Simplified Chinese, the model picker, effort levels, modes, message box, `+` menu, session menus, history, rename, find, rewind and edit dialogs, the projects rail and the whole Settings page show in Chinese. Any other language, Traditional Chinese included, keeps English. Agent replies, errors, approval and question cards, tool rows, diffs and the names of providers, models and Muse Code's own modes stay as they are, and so do the desktop app, the phone and the browser. Another language is one new file in `l10n/`.
 
 ### Changed
 
 - **The Chinese setting descriptions name the translated controls**: 4.17.12 pointed at modes and settings by their English names.
+
+### Fixed
+
+- **Settings search takes Chinese, Japanese and Korean input.** Each keystroke restarted the input method, so the unfinished letters stayed in the field.
 
 ## 4.17.12 — 2026-11-24
 

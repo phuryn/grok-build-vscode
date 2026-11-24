@@ -80,6 +80,20 @@ describe("composer chip", () => {
     expect(h.doc.querySelectorAll("#gear-btn .effort-bars .filled")).toHaveLength(levels.length);
   });
 
+  it("leaves the name out of the tooltip for a provider's unnamed default model", () => {
+    const h = boot();
+    const title = (reasoningEfforts: string[]) => {
+      dispatch(h.window, { type: "session", provider: "grok", currentModelId: "",
+        models: [{ provider: "grok", modelId: "", name: "Grok default", supportsReasoningEffort: reasoningEfforts.length > 0,
+          reasoningEffort: reasoningEfforts[0], reasoningEfforts }] });
+      return h.doc.getElementById("gear-btn")!.title;
+    };
+    expect(title([])).toBe("Model and effort");
+    expect(title(["low"])).toBe("Low · Model and effort");
+    dispatch(h.window, { type: "setBusy", value: true, locked: true });
+    expect(title([])).toBe("Model and effort — selection available once the session is ready");
+  });
+
   it("moves the active model row and its check on preview", () => {
     const h = boot();
     open(h);

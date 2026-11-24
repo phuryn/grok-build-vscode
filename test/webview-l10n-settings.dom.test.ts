@@ -319,6 +319,24 @@ it("localizes the standalone Settings categories, controls, and forms", () => {
   expect([...new Set(missing)]).toEqual([]);
 });
 
+it("leaves the search field in place while an input method is composing", () => {
+  const h = boot();
+  const search = h.find<HTMLInputElement>("#settings-search");
+  const type = (value: string, isComposing: boolean) => {
+    search.value = value;
+    const event = new h.window.Event("input", { bubbles: true });
+    Object.defineProperty(event, "isComposing", { value: isComposing });
+    search.dispatchEvent(event as unknown as Event);
+  };
+  for (const partial of ["q", "qi", "qi'y"]) type(partial, true);
+  expect(h.find("#settings-search")).toBe(search);
+  expect(h.root.textContent).not.toContain("⟦No settings match that search.⟧");
+  search.value = "企业";
+  search.dispatchEvent(new h.window.Event("compositionend", { bubbles: true }) as unknown as Event);
+  expect(h.find<HTMLInputElement>("#settings-search").value).toBe("企业");
+  expect(h.root.textContent).toContain("⟦No settings match that search.⟧");
+});
+
 it("finds a Settings row by both its English and translated description", () => {
   const description = "Send straight into the running turn instead of queueing until it finishes. Steering does not cancel work in progress.";
   const h = boot({ ...pseudo, [description]: "⟦Localized steering description⟧" }, 480);

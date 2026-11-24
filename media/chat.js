@@ -5461,10 +5461,14 @@
     gearBtn.setAttribute("aria-disabled", String(loading));
     gearBtn.classList.toggle("model-chip-loading", loading);
     const locked = modelSelectionLocked();
+    // The provider's default model has no name to show.
+    const detail = [name, effort].filter(Boolean);
     gearBtn.title = loading ? l10n("Loading models…")
-      : effort
+      : detail.length > 1
         ? l10n(locked ? "{0} · {1} · Model and effort — selection available once the session is ready" : "{0} · {1} · Model and effort", name, effort)
-        : l10n(locked ? "{0} · Model and effort — selection available once the session is ready" : "{0} · Model and effort", name);
+        : detail.length
+          ? l10n(locked ? "{0} · Model and effort — selection available once the session is ready" : "{0} · Model and effort", detail[0])
+          : l10n(locked ? "Model and effort — selection available once the session is ready" : "Model and effort");
     gearBtn.setAttribute("aria-label", loading ? l10n("Model and effort: loading models") : gearBtn.title);
   }
 
