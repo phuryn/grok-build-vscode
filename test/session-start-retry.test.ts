@@ -1188,6 +1188,21 @@ describe("startSession bounded spawn retry", () => {
     expect(next.autoApprove).toBe(false);
   });
 
+  // The shared setting holds Claude's Auto too; it must not start Antigravity in its own.
+  it("starts an Antigravity never set in Agent mode after Auto was picked in Claude", async () => {
+    const sidebar = googleAgySidebar();
+    sidebar.installedAgyCli.mockReturnValue("fake agy");
+    sidebar.host.getConfiguration.mockReturnValue({
+      get: (key: string, fallback: unknown) => key === "defaultMode" ? "auto" : fallback,
+      inspect: () => undefined, update: vi.fn(async () => {}),
+    });
+    await sidebar.state.update("grok.defaultModeByProvider", { claude: "auto" });
+    expect(sidebar.displayMode(sidebar.focused)).toBe("agent");
+    const client = await sidebar.startSession();
+    expect(client.currentModeId).toBe("agent");
+    expect(sidebar.displayMode(sidebar.focused)).toBe("agent");
+  });
+
   it("answers only allow once in CLI Auto accept and leaves plan reviews for the person", async () => {
     const sidebar = googleAgySidebar();
     sidebar.installedAgyCli.mockReturnValue("fake agy");

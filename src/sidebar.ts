@@ -141,7 +141,7 @@ import { DEEPSEEK_API_KEY_SECRET, deepseekKey, validDeepSeekKey, isDeepSeekCrede
 import { locateDeepSeek, installManagedDeepSeek, DEEPSEEK_VERSION } from "./deepseek-managed-installer";
 import { MediaRef, adapterCompactSignal, adapterContextOccupancy, agentTimestampMsFromMeta, autoCompactStartedNote, childStreamFromRoute, commandOutputForToolCall, commandOutputFromLiveTerminal, contextUsedFromCompactNotification, enforceCompleteSessionCost, errorDetail, gateZeroTokenMeta, isAuthErrorText, isCredentialError, isIncompatibleAgentError, isResumeNotFound, isRateLimitError, isSubagentLifecycleUpdate, occupancyFromAdapterTurn, parseSessionInfoContext, permissionOutcomeFor, promptErrorText, rateLimitNoticeText, sessionInfoCacheFresh, sumUsage, summarizeBackgroundCommand, usageIsRealMeasurement, type UpdateRoute } from "./acp-dispatch";
 import { createMcpPrepareState, prepareMcpToolCall } from "./mcp-tool";
-import { CODEX_ASK_APPROVAL_PREF_KEY, CODEX_MODE_WAITS_FOR_PLAN, EFFORT_PREFS_KEY, MODEL_EFFORT_PREFS_KEY, MUSE_MODE_PREF_KEY, MODE_PREFS_KEY, MUSE_ON_REQUEST_UNAVAILABLE, museSandboxUnavailable, museOnRequestUnavailable, resolvedDefaultMode, configWriteTarget, isModeId, isMuseModeId, modeToRemember, rememberedMode, withRememberedMode, rememberedEffort, rememberedModelEffort, withModelEffort, sessionModes, startsInNativeAuto, startsInYolo, musePosture, museShellSandboxEnabled, usesClientAutoAccept, type ModeId, type MuseSettings, type EffortPrefs, type ModelEffortPrefs, type ModePrefs } from "./mode-prefs";
+import { CODEX_ASK_APPROVAL_PREF_KEY, CODEX_MODE_WAITS_FOR_PLAN, EFFORT_PREFS_KEY, MODEL_EFFORT_PREFS_KEY, MUSE_MODE_PREF_KEY, MODE_PREFS_KEY, MUSE_ON_REQUEST_UNAVAILABLE, museSandboxUnavailable, museOnRequestUnavailable, resolvedDefaultMode, configWriteTarget, hasNativeAutoMode, isModeId, isMuseModeId, modeToRemember, rememberedMode, withRememberedMode, rememberedEffort, rememberedModelEffort, withModelEffort, sessionModes, startsInNativeAuto, startsInYolo, musePosture, museShellSandboxEnabled, usesClientAutoAccept, type ModeId, type MuseSettings, type EffortPrefs, type ModelEffortPrefs, type ModePrefs } from "./mode-prefs";
 import { supportsApprovalModeSwitching } from "./acp-backend";
 import { beginAuthRecovery, oauthShadowsXaiApiKey } from "./auth-recovery";
 import {
@@ -4180,7 +4180,10 @@ See design doc for the full state machine diagram.`;
     const own = rememberedMode(this.state.get<ModePrefs>(MODE_PREFS_KEY), provider);
     if (own) return own;
     if (provider === "codex" && this.state.get<boolean>(CODEX_ASK_APPROVAL_PREF_KEY)) return "askApproval";
-    const shared = this.host.getConfiguration("grok").get<string>("defaultMode", "");
+    const setting = this.host.getConfiguration("grok").get<string>("defaultMode", "");
+    // The shared Auto is Claude Code's. Another agent's own Auto (Antigravity's)
+    // comes only from a pick in that agent, never from a pick in Claude.
+    const shared = setting === "auto" && !hasNativeAutoMode(provider) ? "agent" : setting;
     const remembered = provider === "muse" ? this.state.get<string>(MUSE_MODE_PREF_KEY) ?? shared : shared;
     return resolvedDefaultMode(provider, remembered, this.defaultModeCohort);
   }
