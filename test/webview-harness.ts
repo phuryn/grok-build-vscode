@@ -98,6 +98,7 @@ export function bootWebview(opts: {
   ready?: boolean;
   remote?: boolean;
   vscode?: boolean;
+  strings?: Readonly<Record<string, string>>;
   postMessage?: (message: Posted) => unknown;
   beforeScripts?: (window: Window) => void;
 } = {}): Harness {
@@ -123,6 +124,7 @@ export function bootWebview(opts: {
   // What the relay's chat.html sets before loading chat.js. Gates the remote-only
   // affordances (repo switcher) and suppresses the host-only ones.
   if (opts.remote) (window as any).grokRemoteClient = true;
+  if (opts.strings) (window as any).__grokL10n = opts.strings;
   if (opts.beforeScripts) opts.beforeScripts(window);
   (window as any).eval(helperSrc);
   (window as any).eval(marksSrc);

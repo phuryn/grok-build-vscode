@@ -59,7 +59,7 @@
   }
   function clearHistoryConfirmation(cwd) {
     const names = Object.values(PROVIDER_ACTIONS).filter(p => p.deleteHistory).map(p => p.label);
-    return `Deletes ${names.join(", ")} conversations for:\n${cwd}\n\nOpen conversations are kept. This cannot be undone.`;
+    return l10n("Deletes {0} conversations for:\n{1}\n\nOpen conversations are kept. This cannot be undone.", names.join(", "), cwd);
   }
   // Both the standalone VS Code Settings webview and the chat mount this
   // catalog extension. Rows stay hidden until the host supplies availability.
@@ -456,13 +456,13 @@
     const base = typeof now === "number" ? now : Date.now();
     const diff = base - ts;
     const sec = Math.round(diff / 1000);
-    if (sec < 60) return `${sec}s ago`;
+    if (sec < 60) return l10n("{0}s ago", sec);
     const min = Math.round(sec / 60);
-    if (min < 60) return `${min}m ago`;
+    if (min < 60) return l10n("{0}m ago", min);
     const hr = Math.round(min / 60);
-    if (hr < 24) return `${hr}h ago`;
+    if (hr < 24) return l10n("{0}h ago", hr);
     const day = Math.round(hr / 24);
-    if (day < 7) return `${day}d ago`;
+    if (day < 7) return l10n("{0}d ago", day);
     return new Date(ts).toLocaleDateString();
   }
 
@@ -2328,22 +2328,22 @@
     if (o.canClone) {
       items.push({
         id: "clone",
-        label: "Clone from GitHub",
-        description: "Pick a repository, or type a URL.",
+        label: l10n("Clone from {0}", "GitHub"),
+        description: l10n("Pick a repository, or type a URL."),
       });
     }
     if (o.canCreate) {
       items.push({
         id: "new",
-        label: "New project",
-        description: "Name it. We make the folder.",
+        label: l10n("New project"),
+        description: l10n("Name it. We make the folder."),
       });
     }
     if (o.canImport !== false) {
       items.push({
         id: "import",
-        label: "Import a folder",
-        description: "Choose one you already have.",
+        label: l10n("Import a folder"),
+        description: l10n("Choose one you already have."),
       });
     }
     return items;
@@ -2354,35 +2354,34 @@
   /** Token-step copy. The words "fine-grained token" are the link to mint one. */
   function fillFineGrainedTokenHint(el, doc, className) {
     el.textContent = "";
-    el.appendChild(doc.createTextNode("Paste a "));
+    const [before, after] = l10n("Paste a {0} (one repository, Contents: Read, an expiry) or a classic PAT. It is sent once and never shown again.").split("{0}");
+    el.appendChild(doc.createTextNode(before));
     const a = doc.createElement("a");
     a.href = GITHUB_FINE_GRAINED_TOKEN_URL;
     a.target = "_blank";
     a.rel = "noopener noreferrer";
     if (className) a.className = className;
-    a.textContent = "fine-grained token";
+    a.textContent = l10n("fine-grained token");
     el.appendChild(a);
-    el.appendChild(doc.createTextNode(
-      " (one repository, Contents: Read, an expiry) or a classic PAT. It is sent once and never shown again.",
-    ));
+    el.appendChild(doc.createTextNode(after));
   }
 
   /** Copy for each form, keyed the same way the menu items are. */
   const ADD_PROJECT_FORMS = {
     "new": {
-      title: "New project",
-      body: "We'll create the folder for you. You can move it later.",
-      label: "Project name",
-      placeholder: "Q3 Positioning",
-      confirm: "Create",
+      title: l10n("New project"),
+      body: l10n("We'll create the folder for you. You can move it later."),
+      label: l10n("Project name"),
+      placeholder: l10n("Q3 Positioning"),
+      confirm: l10n("Create"),
       busy: "Creating",
     },
     clone: {
-      title: "Clone from GitHub",
-      body: "Pick a repository, or type a URL or owner/repo.",
-      label: "Repository",
-      placeholder: "owner/repo or https://github.com/you/project",
-      confirm: "Clone",
+      title: l10n("Clone from {0}", "GitHub"),
+      body: l10n("Pick a repository, or type a URL or {0}.", "owner/repo"),
+      label: l10n("Repository"),
+      placeholder: l10n("{0} or {1}", "owner/repo", "https://github.com/you/project"),
+      confirm: l10n("Clone"),
       busy: "Cloning",
     },
   };
@@ -2418,11 +2417,11 @@
     const text = String(raw || "").trim();
     if (!text) return { filter: "", typed: null };
     if (/^https?:\/\//i.test(text) || /^git@/i.test(text) || /^ssh:\/\//i.test(text)) {
-      return { filter: text, typed: { kind: "url", value: text, label: "Clone " + text } };
+      return { filter: text, typed: { kind: "url", value: text, label: l10n("Clone {0}", text) } };
     }
     const nwo = text.replace(/\.git$/i, "");
     if (GITHUB_OWNER_REPO.test(nwo)) {
-      return { filter: text, typed: { kind: "ownerRepo", value: nwo, label: "Clone " + nwo } };
+      return { filter: text, typed: { kind: "ownerRepo", value: nwo, label: l10n("Clone {0}", nwo) } };
     }
     return { filter: text, typed: null };
   }
@@ -2512,7 +2511,7 @@
 
     const collisionLabel = doc.createElement("label");
     collisionLabel.className = "add-project-label";
-    collisionLabel.textContent = "Folder name";
+    collisionLabel.textContent = l10n("Folder name");
     collisionLabel.hidden = true;
     const collisionId = "add-project-collision-" + kind;
     collisionLabel.setAttribute("for", collisionId);
@@ -2556,18 +2555,18 @@
     githubChoice.className = "add-project-github-choice";
     const githubChoiceHeading = doc.createElement("div");
     githubChoiceHeading.className = "add-project-github-heading";
-    githubChoiceHeading.textContent = "Connect GitHub";
+    githubChoiceHeading.textContent = l10n("Connect {0}", "GitHub");
     const githubChoiceDesc = doc.createElement("p");
     githubChoiceDesc.className = "add-project-github-desc";
-    githubChoiceDesc.textContent = "Sign in with the GitHub CLI. You will open a link and confirm a short code.";
+    githubChoiceDesc.textContent = l10n("Sign in with the {0}. You will open a link and confirm a short code.", "GitHub CLI");
     const githubConnect = doc.createElement("button");
     githubConnect.type = "button";
     githubConnect.className = "onb-action add-project-github-connect";
-    githubConnect.textContent = "Connect with GitHub CLI";
+    githubConnect.textContent = l10n("Connect with {0}", "GitHub CLI");
     const githubAdvanced = doc.createElement("button");
     githubAdvanced.type = "button";
     githubAdvanced.className = "add-project-github-advanced";
-    githubAdvanced.textContent = "Use a token instead";
+    githubAdvanced.textContent = l10n("Use a token instead");
     githubChoice.appendChild(githubChoiceHeading);
     githubChoice.appendChild(githubChoiceDesc);
     githubChoice.appendChild(githubConnect);
@@ -2586,21 +2585,21 @@
     const githubCopy = doc.createElement("button");
     githubCopy.type = "button";
     githubCopy.className = "add-project-github-copy";
-    githubCopy.title = "Copy";
-    githubCopy.textContent = "Copy";
+    githubCopy.title = l10n("Copy");
+    githubCopy.textContent = l10n("Copy");
     githubCmd.appendChild(githubCode);
     githubCmd.appendChild(githubCopy);
     const githubOpen = doc.createElement("a");
     githubOpen.className = "onb-action add-project-github-open";
     githubOpen.target = "_blank";
     githubOpen.rel = "noopener noreferrer";
-    githubOpen.textContent = "Open the sign-in page";
+    githubOpen.textContent = l10n("Open the sign-in page");
     const githubNote = doc.createElement("p");
     githubNote.className = "add-project-github-note";
     const githubRecheck = doc.createElement("button");
     githubRecheck.type = "button";
     githubRecheck.className = "add-project-github-recheck";
-    githubRecheck.textContent = "Re-check connection";
+    githubRecheck.textContent = l10n("Re-check connection");
     githubRecheck.hidden = true;
     githubCard.appendChild(githubHeading);
     githubCard.appendChild(githubDesc);
@@ -2614,7 +2613,7 @@
     githubToken.hidden = true;
     const githubTokenHeading = doc.createElement("div");
     githubTokenHeading.className = "add-project-github-heading";
-    githubTokenHeading.textContent = "Connect with a token";
+    githubTokenHeading.textContent = l10n("Connect with a token");
     const githubTokenHint = doc.createElement("p");
     githubTokenHint.className = "add-project-github-desc";
     fillFineGrainedTokenHint(githubTokenHint, doc, "add-project-github-token-link");
@@ -2623,7 +2622,7 @@
     githubTokenInput.className = "add-project-github-token-input";
     githubTokenInput.autocomplete = "off";
     githubTokenInput.spellcheck = false;
-    githubTokenInput.setAttribute("aria-label", "GitHub token");
+    githubTokenInput.setAttribute("aria-label", l10n("{0} token", "GitHub"));
     const githubTokenError = doc.createElement("p");
     githubTokenError.className = "add-project-github-token-error";
     githubTokenError.setAttribute("role", "alert");
@@ -2631,11 +2630,11 @@
     const githubTokenSubmit = doc.createElement("button");
     githubTokenSubmit.type = "button";
     githubTokenSubmit.className = "onb-action add-project-github-token-submit";
-    githubTokenSubmit.textContent = "Connect with token";
+    githubTokenSubmit.textContent = l10n("Connect with token");
     const githubTokenBack = doc.createElement("button");
     githubTokenBack.type = "button";
     githubTokenBack.className = "add-project-github-advanced";
-    githubTokenBack.textContent = "Back";
+    githubTokenBack.textContent = l10n("Back");
     githubToken.appendChild(githubTokenHeading);
     githubToken.appendChild(githubTokenHint);
     githubToken.appendChild(githubTokenInput);
@@ -2658,7 +2657,7 @@
         githubCopy.textContent = "Copied";
         githubCopy.classList.add("copied");
         setTimeout(function () {
-          githubCopy.textContent = "Copy";
+          githubCopy.textContent = l10n("Copy");
           githubCopy.classList.remove("copied");
         }, 1500);
       }).catch(function () { /* clipboard blocked */ });
@@ -2669,7 +2668,7 @@
     const cancel = doc.createElement("button");
     cancel.type = "button";
     cancel.className = "add-project-btn";
-    cancel.textContent = "Cancel";
+    cancel.textContent = l10n("Cancel");
     const submit = doc.createElement("button");
     submit.type = "button";
     submit.className = "add-project-btn add-project-primary";
@@ -2731,7 +2730,7 @@
       const glyph = doc.createElement("span");
       glyph.className = "add-project-option-glyph" + (row.isPrivate ? " is-private" : " is-public");
       glyph.setAttribute("aria-hidden", "true");
-      glyph.title = row.isPrivate ? "Private" : "Public";
+      glyph.title = row.isPrivate ? l10n("Private") : l10n("Public");
       glyph.textContent = row.isPrivate ? "\u25CF" : "\u25CB";
       const copy = doc.createElement("span");
       copy.className = "add-project-option-copy";
@@ -2873,20 +2872,20 @@
       const code = g && typeof g.code === "string" ? g.code : "";
       githubOpen.removeAttribute("href");
       if (status === "waiting" && url) {
-        githubHeading.textContent = "Finish signing in to GitHub";
+        githubHeading.textContent = l10n("Finish signing in to {0}", "GitHub");
         githubDesc.textContent = code
-          ? "Open the link, then confirm this code:"
-          : "Open the link to finish signing in.";
+          ? l10n("Open the link, then confirm this code:")
+          : l10n("Open the link to finish signing in.");
         githubDesc.hidden = false;
         githubCmd.hidden = !code;
         githubCode.textContent = code;
         githubCopy.dataset.cmd = code;
-        githubCopy.textContent = "Copy";
+        githubCopy.textContent = l10n("Copy");
         githubCopy.classList.remove("copied");
         githubOpen.hidden = false;
         githubOpen.href = url;
         githubNote.hidden = false;
-        githubNote.textContent = "Keep this page open — it finishes on its own.";
+        githubNote.textContent = l10n("Keep this page open — it finishes on its own.");
         githubRecheck.hidden = true;
         return true;
       }
@@ -3055,9 +3054,11 @@
       const fix = busy || githubLive || githubStepped || !message ? "" : (s.fix || "");
       fixBtn.hidden = !fix;
       fixBtn.dataset.fix = fix || "";
-      if (fix === "auth-gh") fixBtn.textContent = "Sign in to GitHub";
+      if (fix === "auth-gh") fixBtn.textContent = l10n("Sign in to {0}", "GitHub");
       else if (fix === "install-gh") {
-        fixBtn.textContent = s.fixCommand ? "Install the GitHub CLI (" + s.fixCommand + ")" : "Install the GitHub CLI";
+        fixBtn.textContent = s.fixCommand
+          ? l10n("Install the {0} ({1})", "GitHub CLI", s.fixCommand)
+          : l10n("Install the {0}", "GitHub CLI");
       }
       const taken = typeof s.collision === "string" ? s.collision : "";
       collisionLabel.hidden = githubStepped || !taken;

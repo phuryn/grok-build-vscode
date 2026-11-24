@@ -16,8 +16,16 @@
 (function (root) {
   "use strict";
 
-  const { l10n } = root.GrokWebviewHelpers;
+  const { l10n, l10nSource } = root.GrokWebviewHelpers;
   const ALL = "all";
+  const GROUP_LABELS = {
+    shapes: l10n("Shapes"),
+    build: l10n("Build"),
+    work: l10n("Work"),
+    talk: l10n("Talk"),
+    people: l10n("People"),
+    play: l10n("Play"),
+  };
 
   /**
    * Build a picker.
@@ -39,13 +47,13 @@
     const el = doc.createElement("div");
     el.className = "repo-icon-picker";
     el.setAttribute("role", "dialog");
-    el.setAttribute("aria-label", "Project icon");
+    el.setAttribute("aria-label", l10n("Project icon"));
 
     const search = doc.createElement("input");
     search.type = "search";
     search.className = "repo-icon-search";
-    search.placeholder = "Search icons";
-    search.setAttribute("aria-label", "Search icons");
+    search.placeholder = l10n("Search icons");
+    search.setAttribute("aria-label", l10n("Search icons"));
     // The webview's own find-on-type and the rail's shortcuts both listen at the
     // document; a keystroke meant for this box is not meant for either.
     search.addEventListener("keydown", (e) => {
@@ -66,18 +74,18 @@
     const tabs = doc.createElement("div");
     tabs.className = "repo-icon-tabs";
     tabs.setAttribute("role", "tablist");
-    tabs.setAttribute("aria-label", "Icon groups");
+    tabs.setAttribute("aria-label", l10n("Icon groups"));
     el.appendChild(tabs);
 
     const grid = doc.createElement("div");
     grid.className = "repo-icon-grid";
     grid.setAttribute("role", "listbox");
-    grid.setAttribute("aria-label", "Project icon");
+    grid.setAttribute("aria-label", l10n("Project icon"));
     el.appendChild(grid);
 
     const empty = doc.createElement("div");
     empty.className = "repo-icon-empty";
-    empty.textContent = "No icons match.";
+    empty.textContent = l10n("No icons match.");
     empty.hidden = true;
     el.appendChild(empty);
 
@@ -98,10 +106,10 @@
       tabs.appendChild(btn);
       tabButtons.push(btn);
     }
-    addTab(ALL, "All");
-    for (const g of marks.GROUPS) addTab(g.id, g.label);
+    addTab(ALL, l10n("All"));
+    for (const g of marks.GROUPS) addTab(g.id, Object.hasOwn(GROUP_LABELS, g.id) ? GROUP_LABELS[g.id] : g.label);
 
-    /** @type {{ btn: HTMLElement, group: string, terms: string }[]} */
+    /** @type {{ btn: HTMLElement, group: string, terms: string[] }[]} */
     const cells = [];
 
     function addCell(id, label, groupId, extraClass) {
@@ -125,12 +133,14 @@
       };
       grid.appendChild(btn);
       // Underscores are how the vendor spells its ids; people type spaces.
-      cells.push({ btn, group: groupId, terms: (label + " " + id.replace(/_/g, " ")).toLowerCase() });
+      const idWords = id.replace(/_/g, " ");
+      const terms = [label, l10nSource(label)].map((name) => (name + " " + idWords).toLowerCase());
+      cells.push({ btn, group: groupId, terms });
     }
 
     // The default sits first and belongs to no group, so it is reachable from
     // every tab: "put it back" should never be behind a tab you have to guess.
-    addCell("", "Default folder", ALL, "is-default");
+    addCell("", l10n("Default folder"), ALL, "is-default");
     for (const g of marks.GROUPS) {
       for (const [id, label] of g.icons) addCell(id, label, g.id, "");
     }
@@ -144,7 +154,7 @@
       let shown = 0;
       for (const c of cells) {
         const inGroup = group === ALL || c.group === group || c.group === ALL;
-        const matches = !q || c.terms.includes(q);
+        const matches = !q || c.terms.some((term) => term.includes(q));
         c.btn.hidden = !(inGroup && matches);
         if (!c.btn.hidden) shown++;
       }
