@@ -1,5 +1,13 @@
 # Changelog
 
+## 4.17.14 — 2026-11-24
+
+**Context usage, plan and question cards, tips and the connect panels in Simplified Chinese.**
+
+### Added
+
+- **More of the panel follows VS Code's display language.** In Simplified Chinese, the context and usage panel, the frames and buttons of plan and question cards, the welcome tips, the Codex update offer, and the panels that install, connect and sign in to an agent show in Chinese. The answers an agent offers, approval cards and what they record, errors and status lines stay as they are, and other languages keep English.
+
 ## 4.17.13 — 2026-11-24
 
 **The chat's controls, the projects rail and Settings in Simplified Chinese.**

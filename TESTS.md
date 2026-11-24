@@ -560,12 +560,12 @@ The operator runs `npm run smoke:acp -- --provider=<claude|muse> --scenario=<sto
 
 - Every `l10n("…")` key is a string literal; `l10n/bundle.l10n.json` is exactly the keys the sources use; every other language has every key and nothing else, with the same `{0}` placeholders and links; the rewind and edit dialogs the host writes are covered line by line
 - Without a bundle, or without the key, the page gets the English; a translation is escaped for the attribute it lands in and cannot close its script tag; `<html lang>` names the language only when the page is in it
-- A reworded English line is a new key, so the suite fails until every language has it. English that was never wrapped is invisible here; the two DOM suites below find it on the surfaces they draw
+- A reworded English line is a new key, so the suite fails until every language has it. English that was never wrapped is invisible here; the three DOM suites below find it on the surfaces they draw
 
-### `test/webview-l10n-chat.dom.test.ts`, `test/webview-l10n-settings.dom.test.ts` — drawn in a pseudo-language (12 tests)
+### `test/webview-l10n-chat.dom.test.ts`, `test/webview-l10n-cards.dom.test.ts`, `test/webview-l10n-settings.dom.test.ts` — drawn in a pseudo-language (23 tests)
 
-- The real chat, projects rail and Settings page are drawn with a bundle that wraps every key in `⟦ ⟧`, and any visible English outside the marks fails unless it is listed as a name, host text, user content or a status line left in English on purpose
-- Values that travel stay English: a deleted session's name, menu values, the rewind dialog's preview text. Settings search and the icon picker find a row by its translated words and by its English ones, except an English description with a value filled in. Settings search waits for an input method to finish the word
+- The real chat, its context popover, plan and question cards, tips and connect panels, the projects rail and the Settings page are drawn with a bundle that wraps every key in `⟦ ⟧`, and any visible English outside the marks fails unless it is listed as a name, host text, user content or a status line left in English on purpose
+- Values that travel stay English: a deleted session's name, menu values, the rewind dialog's preview text, a plan's verdict, a question's answer and "Other". An agent's own answers, install errors and progress the host words, and the approval result line are drawn as they arrive. Settings search and the icon picker find a row by its translated words and by its English ones, except an English description with a value filled in. Settings search waits for an input method to finish the word
 
 ---
 
