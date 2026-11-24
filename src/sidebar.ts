@@ -25082,7 +25082,7 @@ ${fileShellOpen}
       <div id="attachments" class="attachments"></div>
       <div class="composer-input-wrap">
         <div id="input-highlight" class="input-highlight" aria-hidden="true" dir="auto"></div>
-        <textarea id="input" placeholder="${l10n("Ask Grok...")}" rows="2" dir="auto"></textarea>
+        <textarea id="input" placeholder="${l10n("Ask {0}...").replace("{0}", "Grok")}" rows="2" dir="auto"></textarea>
       </div>
       <div class="composer-toolbar">
         <div class="toolbar-left">

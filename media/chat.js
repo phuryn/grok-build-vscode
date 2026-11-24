@@ -1,5 +1,5 @@
 (function () {
-  const { l10n, l10nKey, l10nSource, l10nHostDialog } = globalThis.GrokWebviewHelpers;
+  const { l10n, l10nHostDialog } = globalThis.GrokWebviewHelpers;
   const hostApi = acquireVsCodeApi();
   let museAdvertised = false;
   let museAvailable = false;
@@ -568,27 +568,31 @@
   const THINKING_ACTIVITY_VERB = "Thinking";
   const CLAUDE_ACTIVITY_VERB = "Clauding";
   const COMPOSER_PLACEHOLDER = {
-    grok: "Ask Grok\u2026",
-    codex: "Ask Codex\u2026",
-    claude: "Ask Claude\u2026",
-    muse: "Ask Muse…",
-    agy: "Ask Antigravity…",
-    deepseek: "Ask DeepSeek…",
+    grok: l10n("Ask {0}…", "Grok"),
+    codex: l10n("Ask {0}…", "Codex"),
+    claude: l10n("Ask {0}…", "Claude"),
+    muse: l10n("Ask {0}…", "Muse"),
+    agy: l10n("Ask {0}…", "Antigravity"),
+    deepseek: l10n("Ask {0}…", "DeepSeek"),
   };
-  // What each level MEANS. The name is prepended from `effortLabel` rather than
-  // spelled here, so one level cannot be called two things in one popover — the
-  // strip header read "Extra high" while its own tip said "XHigh".
-  const EFFORT_BLURBS = {
-    none: "no extra reasoning",
-    minimal: "least reasoning",
-    low: "fast, lightweight reasoning",
-    medium: "balanced",
-    high: "deeper reasoning",
-    xhigh: "deepest reasoning, slowest",
+  const EFFORT_LABELS = {
+    none: l10n("None"),
+    minimal: l10n("Minimal"),
+    low: l10n("Low"),
+    medium: l10n("Medium"),
+    high: l10n("High"),
+    xhigh: l10n("Extra high"),
+  };
+  const EFFORT_TOOLTIPS = {
+    none: l10n("{0} — no extra reasoning", EFFORT_LABELS.none),
+    minimal: l10n("{0} — least reasoning", EFFORT_LABELS.minimal),
+    low: l10n("{0} — fast, lightweight reasoning", EFFORT_LABELS.low),
+    medium: l10n("{0} — balanced", EFFORT_LABELS.medium),
+    high: l10n("{0} — deeper reasoning", EFFORT_LABELS.high),
+    xhigh: l10n("{0} — deepest reasoning, slowest", EFFORT_LABELS.xhigh),
   };
   function effortTooltip(level) {
-    const blurb = EFFORT_BLURBS[level];
-    return blurb ? `${effortLabel(level)} — ${blurb}` : effortLabel(level);
+    return Object.hasOwn(EFFORT_TOOLTIPS, level) ? EFFORT_TOOLTIPS[level] : effortLabel(level);
   }
 
   // The effort levels the model picker OFFERS: the ACTIVE model's advertised menu
@@ -1219,22 +1223,22 @@
   };
 
   const MODE_META = {
-    agent: { icon: ICON.bot, label: "Agent mode" },
-    acceptEdits: { icon: ICON.shield, label: "Accept edits" },
+    agent: { icon: ICON.bot, label: l10n("Agent mode") },
+    acceptEdits: { icon: ICON.shield, label: l10n("Accept edits") },
     // A provider's own Auto mode; only a host that advertises it offers it.
-    auto: { icon: ICON.shield, label: "Auto mode" },
-    askApproval: { icon: ICON.shieldQuestion, label: "Ask for approval" },
-    plan: { icon: ICON.listTree, label: "Plan mode" },
-    yolo: { icon: ICON.zap, label: "Auto accept" },
+    auto: { icon: ICON.shield, label: l10n("Auto mode") },
+    askApproval: { icon: ICON.shieldQuestion, label: l10n("Ask for approval") },
+    plan: { icon: ICON.listTree, label: l10n("Plan mode") },
+    yolo: { icon: ICON.zap, label: l10n("Auto accept") },
   };
   // Each provider's own name for what Auto accept runs it in. Antigravity's
   // is not named here: the host answers its requests itself.
   const AUTO_ACCEPT_NATIVE_NAMES = { grok: "YOLO", claude: "Bypass permissions" };
   const MUSE_MODE_META = {
-    yolo: { icon: ICON.zap, label: "Allow all", description: "No prompts; everything runs." },
-    agent: { icon: ICON.shieldQuestion, label: "Prompt unmatched", description: "Prompt for anything no rule matches (the interactive default)." },
-    onRequest: { icon: ICON.box, label: "On request", description: "Tools run sandboxed; prompt only on explicit permission requests." },
-    denyUnmatched: { icon: ICON.construction, label: "Deny unmatched", description: "Anything no rule matches is denied." },
+    yolo: { icon: ICON.zap, label: l10n("Allow all"), description: l10n("No prompts; everything runs.") },
+    agent: { icon: ICON.shieldQuestion, label: l10n("Prompt unmatched"), description: l10n("Prompt for anything no rule matches (the interactive default).") },
+    onRequest: { icon: ICON.box, label: l10n("On request"), description: l10n("Tools run sandboxed; prompt only on explicit permission requests.") },
+    denyUnmatched: { icon: ICON.construction, label: l10n("Deny unmatched"), description: l10n("Anything no rule matches is denied.") },
   };
 
   // Three blinking dots — the tool rows' in-progress animation, reused by every
@@ -1526,39 +1530,41 @@
 
   function modeMeta(id) {
     const dictionary = offersMuseModes() ? MUSE_MODE_META : MODE_META;
-    return Object.hasOwn(dictionary, id) ? dictionary[id] : { icon: ICON.bot, label: "Unknown mode" };
+    return Object.hasOwn(dictionary, id) ? dictionary[id] : { icon: ICON.bot, label: l10n("Unknown mode") };
   }
 
   function modeDescription(id) {
     if (offersMuseModes() && Object.hasOwn(MUSE_MODE_META, id)) return MUSE_MODE_META[id].description;
-    if (id === "acceptEdits") return "Automatically approves file edits. Other tools follow the agent’s approval rules.";
+    if (id === "acceptEdits") return l10n("Automatically approves file edits. Other tools follow the agent’s approval rules.");
     const name = providerDisplayName(state.activeProvider);
     if (state.activeProvider === "muse") {
       if (state.hostCaps && state.hostCaps.museNativeModes) {
-        if (id === "agent") return "Muse Code asks for approval. Sandbox and trust change on reopen or in a new conversation";
-        if (id === "yolo") return "Muse Code runs everything without asking (Allow all). Sandbox and trust change on reopen or in a new conversation";
+        if (id === "agent") return l10n("{0} asks for approval. Sandbox and trust change on reopen or in a new conversation", name);
+        if (id === "yolo") return l10n("{0} runs everything without asking ({1}). Sandbox and trust change on reopen or in a new conversation", name, "Allow all");
       }
-      if (id === "agent") return `Follows ${name}'s own approval rules`;
-      if (id === "yolo") return `Answers every approval ${name} raises. This may look the same as Agent, because ${name} asks rarely by default`;
+      if (id === "agent") return l10n("Follows {0}'s own approval rules", name);
+      if (id === "yolo") return l10n("Answers every approval {0} raises. This may look the same as Agent, because {0} asks rarely by default", name);
     }
-    if (id === "auto") return `${name} decides which actions are safe to run and asks you about the rest`;
+    if (id === "auto") return l10n("{0} decides which actions are safe to run and asks you about the rest", name);
     if (state.activeProvider === "codex") {
-      if (id === "agent") return "Codex reviews requests to act outside the sandbox and asks you about potentially unsafe actions";
-      if (id === "askApproval") return "You decide every request to act outside the sandbox, such as editing external files or using the internet";
-      if (id === "plan") return "Codex explores and proposes a plan for you to review before implementation";
-      if (id === "yolo") return "Codex has full access to files and the internet and runs without asking";
+      if (id === "agent") return l10n("{0} reviews requests to act outside the sandbox and asks you about potentially unsafe actions", name);
+      if (id === "askApproval") return l10n("You decide every request to act outside the sandbox, such as editing external files or using the internet");
+      if (id === "plan") return l10n("{0} explores and proposes a plan for you to review before implementation", name);
+      if (id === "yolo") return l10n("{0} has full access to files and the internet and runs without asking", name);
     }
-    if (id === "plan") return `${name} explores and proposes a plan; file writes and commands are blocked until you approve it`;
+    if (id === "plan") return l10n("{0} explores and proposes a plan; file writes and commands are blocked until you approve it", name);
     // "YOLO" is Grok Build's own word for it; elsewhere the provider's name
     // for the mode this runs in, or none.
     if (id === "yolo") {
       if (state.activeProvider === "agy" && state.offeredModes?.some(mode => mode === "auto" || mode === "plan")) {
-        return "AFK Pilot approves tool requests once and leaves plan reviews for you";
+        return l10n("{0} approves tool requests once and leaves plan reviews for you", "AFK Pilot");
       }
       const native = AUTO_ACCEPT_NATIVE_NAMES[state.activeProvider];
-      return `${name} automatically approves all permission requests${native ? ` (${native})` : ""}`;
+      return native
+        ? l10n("{0} automatically approves all permission requests ({1})", name, native)
+        : l10n("{0} automatically approves all permission requests", name);
     }
-    return `${name} acts directly, asking approval only for changes it judges sensitive`;
+    return l10n("{0} acts directly, asking approval only for changes it judges sensitive", name);
   }
 
   // The title carries the mode name because the label beside the glyph is the
@@ -1566,11 +1572,11 @@
   // the tooltip can never name a different mode than the icon is showing.
   function modeButtonTitle(modeId) {
     const meta = modeMeta(modeId);
-    if (state.busyLocked) return `${meta.label} — available once the session is ready`;
+    if (state.busyLocked) return l10n("{0} — available once the session is ready", meta.label);
     if (offeredModeIds().includes("plan") && !state.planModeAvailable) {
-      return `${meta.label} — Pick mode — ${state.planModeUnavailableReason}`;
+      return l10n("{0} — Pick mode — {1}", meta.label, state.planModeUnavailableReason);
     }
-    return `${meta.label} — Pick mode`;
+    return l10n("{0} — Pick mode", meta.label);
   }
 
   function updateModeBtn(modeId) {
@@ -1605,7 +1611,7 @@
   micBtn.classList.add("icon-btn", "mic-btn");
   addBtn.after(micBtn);
   addBtn.innerHTML = ICON.plus;
-  scrollBottomBtn.innerHTML = `${ICON.arrowDown}<span class="scroll-bottom-label">Scroll to bottom</span>`;
+  scrollBottomBtn.innerHTML = `${ICON.arrowDown}<span class="scroll-bottom-label">${escapeHtml(l10n("Scroll to bottom"))}</span>`;
   // Created here rather than in the page, because the template lives in
   // sidebar.ts and the relay serves its own older copy - an element built in JS
   // needs neither to change. A sibling of the scroll-to-bottom pill, not a
@@ -1617,8 +1623,8 @@
   promptPrevBtn.id = "prompt-prev-btn";
   promptPrevBtn.className = "prompt-prev-btn";
   promptPrevBtn.type = "button";
-  promptPrevBtn.title = "Previous prompt";
-  promptPrevBtn.setAttribute("aria-label", "Previous prompt");
+  promptPrevBtn.title = l10n("Previous prompt");
+  promptPrevBtn.setAttribute("aria-label", l10n("Previous prompt"));
   promptPrevBtn.disabled = true;
   promptPrevBtn.innerHTML = ICON.chevronUp;
   scrollBottomBtn.before(promptPrevBtn);
@@ -3183,7 +3189,7 @@
       const cancelBtn = document.createElement("button");
       cancelBtn.type = "button";
       cancelBtn.className = "confirm-btn";
-      cancelBtn.textContent = "Cancel";
+      cancelBtn.textContent = l10n("Cancel");
       let settled = false;
       const done = (v) => {
         if (settled) return;
@@ -3205,7 +3211,7 @@
       actions.appendChild(cancelBtn);
       const choices = Array.isArray(opts.actions) && opts.actions.length
         ? opts.actions
-        : [{ id: "confirm", label: opts.confirmLabel || "OK", danger: !!opts.danger }];
+        : [{ id: "confirm", label: opts.confirmLabel || l10n("OK"), danger: !!opts.danger }];
       let focusButton = cancelBtn;
       for (const choice of choices) {
         const button = document.createElement("button");
@@ -4112,11 +4118,11 @@
       const cancelBtn = document.createElement("button");
       cancelBtn.type = "button";
       cancelBtn.className = "confirm-btn";
-      cancelBtn.textContent = "Cancel";
+      cancelBtn.textContent = l10n("Cancel");
       const okBtn = document.createElement("button");
       okBtn.type = "button";
       okBtn.className = "confirm-btn confirm-primary";
-      okBtn.textContent = opts.confirmLabel || "OK";
+      okBtn.textContent = opts.confirmLabel || l10n("OK");
       const done = (v) => {
         document.removeEventListener("keydown", onKey, true);
         overlay.remove();
@@ -4260,8 +4266,8 @@
     // you're already in one, so the controls must stay reachable). Never from a
     // remote: the host acts on its own focused session, not the requester's.
     if (state.isWorktree && !IS_REMOTE) {
-      addSection("Session");
-      addGearItem(`<span class="gear-lead">${ICON.gitBranch}<span>Apply worktree</span></span>`, () => {
+      addSection(l10n("Session"));
+      addGearItem(`<span class="gear-lead">${ICON.gitBranch}<span>${escapeHtml(l10n("Apply worktree"))}</span></span>`, () => {
         closePopovers();
         // Bind the conversation at dialog-OPEN time. Confirmation overlays
         // outlive a session swap, so reading state.activeSessionId after the
@@ -4269,20 +4275,20 @@
         // the open-time id a stale dialog gets a host refusal instead.
         const sessionId = state.activeSessionId;
         uiConfirm({
-          title: "Apply worktree?",
-          body: "Merges this worktree's edits back into the main checkout.",
-          confirmLabel: "Apply",
+          title: l10n("Apply worktree?"),
+          body: l10n("Merges this worktree's edits back into the main checkout."),
+          confirmLabel: l10n("Apply"),
         }).then((ok) => { if (ok) vscode.postMessage({ type: "applyWorktree", sessionId }); });
       });
-      addGearItem(`<span class="gear-lead">${ICON.gitBranch}<span>Remove worktree</span></span>`, () => {
+      addGearItem(`<span class="gear-lead">${ICON.gitBranch}<span>${escapeHtml(l10n("Remove worktree"))}</span></span>`, () => {
         closePopovers();
         // Same open-time binding as Apply — this one discards edits on the
         // wrong target, which is exactly the class the refusal exists for.
         const sessionId = state.activeSessionId;
         uiConfirm({
-          title: "Remove worktree?",
-          body: "This deletes the isolated checkout. Unapplied edits are lost.",
-          confirmLabel: "Remove",
+          title: l10n("Remove worktree?"),
+          body: l10n("This deletes the isolated checkout. Unapplied edits are lost."),
+          confirmLabel: l10n("Remove"),
           danger: true,
         }).then((ok) => { if (ok) vscode.postMessage({ type: "removeWorktree", sessionId }); });
       });
@@ -4304,23 +4310,23 @@
     // Icons here only. The same choice in Settings is a <select>, where an
     // option cannot carry markup — so it stays text and the two surfaces
     // differ deliberately rather than by neglect.
-    section("Use this app for");
+    section(l10n("Use this app for"));
     item(
-      `<span class="gear-lead" title="Hides worktrees, thinking traces, and tool details. The default for knowledge work.">${ICON.brain}<span>Knowledge work</span></span>${state.appPurpose !== "coding" ? '<span class="popover-check">✓</span>' : ""}`,
+      `<span class="gear-lead" title="${escapeHtml(l10n("Hides worktrees, thinking traces, and tool details. The default for knowledge work."))}">${ICON.brain}<span>${escapeHtml(l10n("Knowledge work"))}</span></span>${state.appPurpose !== "coding" ? '<span class="popover-check">✓</span>' : ""}`,
       () => { setAppPurpose("knowledge"); refresh(); },
     );
     item(
-      `<span class="gear-lead" title="Adds worktrees, thinking traces, and tool details (still off by default).">${ICON.squareChevronRight}<span>Coding</span></span>${state.appPurpose === "coding" ? '<span class="popover-check">✓</span>' : ""}`,
+      `<span class="gear-lead" title="${escapeHtml(l10n("Adds worktrees, thinking traces, and tool details (still off by default)."))}">${ICON.squareChevronRight}<span>${escapeHtml(l10n("Coding"))}</span></span>${state.appPurpose === "coding" ? '<span class="popover-check">✓</span>' : ""}`,
       () => { setAppPurpose("coding"); refresh(); },
     );
 
-    section("Settings");
-    item(`<span class="gear-lead">${ICON.gear}<span>Settings</span></span>`, () => {
+    section(l10n("Settings"));
+    item(`<span class="gear-lead">${ICON.gear}<span>${escapeHtml(l10n("Settings"))}</span></span>`, () => {
       openSettingsCategory(undefined, target === addPopover ? addBtn : appSettingsButton());
     });
     // Older hosts have no provider account frame; retain their existing action.
     if (target === gearPopover && !IS_REMOTE && !state.providersKnown) {
-      item("<span>Log out</span>", () => {
+      item(`<span>${escapeHtml(l10n("Log out"))}</span>`, () => {
         vscode.postMessage({ type: "logout" });
         closePopovers();
       });
@@ -4394,8 +4400,8 @@
     const dests = [
       {
         id: "workspace",
-        label: "Use this workspace",
-        description: "Continue from here in the current checkout",
+        label: l10n("Use this workspace"),
+        description: l10n("Continue from here in the current checkout"),
       },
     ];
     // Desk-only: the host creates a worktree against its own workspace root
@@ -4405,8 +4411,8 @@
     if (legacyFork && isCodingPurpose() && state.worktreeSupported && !state.isWorktree && !IS_REMOTE) {
       dests.push({
         id: "worktree",
-        label: "Use a new worktree",
-        description: "Continue from here in an isolated checkout",
+        label: l10n("Use a new worktree"),
+        description: l10n("Continue from here in an isolated checkout"),
       });
     }
     return dests;
@@ -4453,7 +4459,7 @@
     // away or Escape.
     gearPopover.classList.add("popover-centered");
     gearPopover.hidden = false;
-    addSection("Continue in a new chat");
+    addSection(l10n("Continue in a new chat"));
     dests.forEach((d, i) => {
       const el = document.createElement("div");
       el.className = "toolbar-popover-item" + (i === 0 ? " active" : "");
@@ -4659,12 +4665,12 @@
     gearPopover.innerHTML = "";
     gearPopover.classList.add("model-picker");
     gearPopover.setAttribute("role", "dialog");
-    gearPopover.setAttribute("aria-label", "Model and effort");
+    gearPopover.setAttribute("aria-label", l10n("Model and effort"));
     renderEffortStrip();
     const list = document.createElement("div");
     list.className = "model-picker-list";
     list.setAttribute("role", "radiogroup");
-    list.setAttribute("aria-label", "Model");
+    list.setAttribute("aria-label", l10n("Model"));
     gearPopover.appendChild(list);
     let models = state.availableModels.length
       ? state.availableModels
@@ -4745,7 +4751,7 @@
       const el = document.createElement("button");
       el.type = "button";
       el.className = "toolbar-popover-item model-manage-providers";
-      el.innerHTML = `<span class="gear-lead">${ICON.settings2}<span>Manage providers</span></span>`;
+      el.innerHTML = `<span class="gear-lead">${ICON.settings2}<span>${escapeHtml(l10n("Manage providers"))}</span></span>`;
       el.onclick = (e) => {
         e.stopPropagation();
         openSettingsCategory("providers", gearBtn);
@@ -4753,7 +4759,7 @@
       footer.appendChild(el);
       // Pre-provider-state hosts still need their original account action.
       if (!IS_REMOTE && !state.providersKnown) {
-        addGearItem("<span>Log out</span>", () => {
+        addGearItem(`<span>${escapeHtml(l10n("Log out"))}</span>`, () => {
           vscode.postMessage({ type: "logout" });
           closePopovers();
         }, footer);
@@ -5397,7 +5403,9 @@
     return levels.includes(model?.reasoningEffort) ? model.reasoningEffort : "";
   }
 
-  function effortLabel(level) { return level === "xhigh" ? "Extra high" : capitalize(level); }
+  function effortLabel(level) {
+    return Object.hasOwn(EFFORT_LABELS, level) ? EFFORT_LABELS[level] : capitalize(level);
+  }
 
   function modelOffersEffort(model) {
     return model?.supportsReasoningEffort !== false || !!model.reasoningEfforts?.length;
@@ -5452,10 +5460,12 @@
     gearBtn.disabled = loading;
     gearBtn.setAttribute("aria-disabled", String(loading));
     gearBtn.classList.toggle("model-chip-loading", loading);
-    gearBtn.title = loading ? "Loading models…"
-      : [name, effort, "Model and effort"].filter(Boolean).join(" · ")
-        + (modelSelectionLocked() ? " — selection available once the session is ready" : "");
-    gearBtn.setAttribute("aria-label", loading ? "Model and effort: loading models" : gearBtn.title);
+    const locked = modelSelectionLocked();
+    gearBtn.title = loading ? l10n("Loading models…")
+      : effort
+        ? l10n(locked ? "{0} · {1} · Model and effort — selection available once the session is ready" : "{0} · {1} · Model and effort", name, effort)
+        : l10n(locked ? "{0} · Model and effort — selection available once the session is ready" : "{0} · Model and effort", name);
+    gearBtn.setAttribute("aria-label", loading ? l10n("Model and effort: loading models") : gearBtn.title);
   }
 
   function refreshModelControls() {
@@ -5475,7 +5485,9 @@
     }
     const name = modelDisplayName(state.currentModelId, state.availableModels);
     const level = effectiveEffort();
-    notice.textContent = `${name} uses ${level ? effortLabel(level) : "its default"} effort.`;
+    notice.textContent = level
+      ? l10n("{0} uses {1} effort.", name, effortLabel(level))
+      : l10n("{0} uses its default effort.", name);
     clearTimeout(effortNoticeTimer);
     effortNoticeTimer = setTimeout(() => { notice.textContent = ""; }, 4000);
   }
@@ -5546,7 +5558,7 @@
       state.activeProviderNamed = true;
       // Nothing can take a mode until the new provider's session exists, so
       // show its modes but hold them; the host's modeChanged releases them.
-      const waiting = `Available once ${providerDisplayName(provider)} has started`;
+      const waiting = l10n("Available once {0} has started", providerDisplayName(provider));
       state.disabledModes = original ? modelBaseline.disabledModes
         : Object.fromEntries(offeredModeIds().map((id) => [id, waiting]));
     }
@@ -5595,19 +5607,19 @@
     const header = document.createElement("div");
     header.className = "effort-strip-header";
     const label = document.createElement("span");
-    label.textContent = "Effort";
+    label.textContent = l10n("Effort");
     const reset = document.createElement("button");
     reset.type = "button";
     reset.className = "effort-reset";
-    reset.textContent = "Reset";
-    reset.title = "Reset to the provider default";
+    reset.textContent = l10n("Reset");
+    reset.title = l10n("Reset to the provider default");
     reset.disabled = locked;
     reset.onclick = (e) => { e.stopPropagation(); preview(""); };
     header.append(label, reset);
     const group = document.createElement("div");
     group.className = "effort-strip-segments";
     group.setAttribute("role", "radiogroup");
-    group.setAttribute("aria-label", "Reasoning effort");
+    group.setAttribute("aria-label", l10n("Reasoning effort"));
     const tip = document.createElement("div");
     tip.className = "effort-strip-tip";
     const segments = levels.map((level, index) => {
@@ -5620,7 +5632,7 @@
       stop.title = effortTooltip(level);
       stop.disabled = locked;
       const word = document.createElement("span");
-      word.textContent = level === "xhigh" && levels.length >= 5 ? "X-high" : effortLabel(level);
+      word.textContent = level === "xhigh" && levels.length >= 5 ? l10n("X-high") : effortLabel(level);
       stop.append(effortBars(index, levels.length), word);
       stop.onclick = (e) => { e.stopPropagation(); preview(level); };
       stop.onkeydown = (e) => {
@@ -5644,7 +5656,7 @@
         stop.setAttribute("aria-checked", String(i === index));
         stop.tabIndex = i === Math.max(0, index) ? 0 : -1;
       });
-      tip.textContent = level ? effortTooltip(level) : "Uses the provider default";
+      tip.textContent = level ? effortTooltip(level) : l10n("Uses the provider default");
     };
     update();
     box.append(header, group, tip);
@@ -5705,13 +5717,13 @@
   function renderAddPopover() {
     addPopover.innerHTML = "";
     const ownsApp = !railGearLive() && !IS_REMOTE;
-    if (ownsApp) addSection("Attach", addPopover);
+    if (ownsApp) addSection(l10n("Attach"), addPopover);
     const item = document.createElement("div");
     item.className = "toolbar-popover-item";
     // Relay upload adapters insert their document row immediately after this
     // marker, never after the first generic action in a mixed menu.
     item.dataset.uploadRow = "photo";
-    item.innerHTML = `<span class="add-item-icon">${ICON.upload}</span><span>Upload from computer</span>`;
+    item.innerHTML = `<span class="add-item-icon">${ICON.upload}</span><span>${escapeHtml(l10n("Upload from computer"))}</span>`;
     item.onclick = (e) => {
       e.stopPropagation();
       vscode.postMessage({ type: "pickFile" });
@@ -6228,7 +6240,7 @@
       const more = list.querySelector(".history-more");
       if (more) {
         more.disabled = true;
-        more.textContent = "Loading…";
+        more.textContent = l10n("Loading…");
       }
     }
   }
@@ -6241,7 +6253,7 @@
     const search = document.createElement("input");
     search.type = "text";
     search.className = "history-search";
-    search.placeholder = "Search sessions…";
+    search.placeholder = l10n("Search sessions…");
     search.value = state.sessionSearch;
     search.oninput = () => {
       state.sessionSearch = search.value;
@@ -6276,8 +6288,8 @@
     footer.hidden = true;
     const clearBtn = document.createElement("button");
     clearBtn.className = "history-clear-all";
-    clearBtn.innerHTML = ICON.trash + "<span>Clear all history</span>";
-    clearBtn.title = "Delete supported providers' conversations in this repository";
+    clearBtn.innerHTML = ICON.trash + `<span>${escapeHtml(l10n("Clear all history"))}</span>`;
+    clearBtn.title = l10n("Delete supported providers' conversations in this repository");
     clearBtn.onclick = (e) => {
       e.stopPropagation();
       closePopovers();
@@ -6285,9 +6297,9 @@
       const repoLabel = repo?.label || cwdLeaf(state.selectedRepoCwd);
       const repoPath = repo?.cwd || state.selectedRepoCwd;
       uiConfirm({
-        title: `Clear history for “${repoLabel}”?`,
+        title: l10n("Clear history for “{0}”?", repoLabel),
         body: globalThis.GrokWebviewHelpers.clearHistoryConfirmation(repoPath),
-        confirmLabel: "Delete All",
+        confirmLabel: l10n("Delete All"),
         danger: true,
       }).then((ok) => {
         if (ok) vscode.postMessage({ type: "clearAllSessions", cwd: repoPath });
@@ -6317,7 +6329,7 @@
     if (state.sessions.length === 0 && !state.sessionHasMore) {
       const empty = document.createElement("div");
       empty.className = "history-empty";
-      empty.textContent = state.sessionSearch.trim() ? "No matches." : "No sessions yet.";
+      empty.textContent = state.sessionSearch.trim() ? l10n("No matches.") : l10n("No sessions yet.");
       list.appendChild(empty);
     } else if (state.sessions.length > 0) {
       for (const s of state.sessions) list.appendChild(renderSessionRow(s));
@@ -6326,7 +6338,7 @@
       const more = document.createElement("button");
       more.type = "button";
       more.className = "history-more";
-      more.textContent = state.sessionLoading ? "Loading…" : "Load more";
+      more.textContent = state.sessionLoading ? l10n("Loading…") : l10n("Load more");
       more.disabled = state.sessionLoading;
       more.onclick = (event) => {
         event.stopPropagation();
@@ -6405,11 +6417,11 @@
         // "(Fork)" — it's an isolated checkout, not a renamed conversation.
         let displayName = sessionRowName(s);
         if (s.worktreeLabel) {
-          if (displayName.startsWith("(WT)")) displayName = displayName.slice(4).trim() || "Worktree";
+          if (displayName.startsWith("(WT)")) displayName = displayName.slice(4).trim() || l10n("Worktree");
           const branch = document.createElement("span");
           branch.className = "history-row-branch";
           branch.innerHTML = ICON.gitBranch;
-          branch.title = "Worktree: " + s.worktreeLabel;
+          branch.title = l10n("Worktree: {0}", s.worktreeLabel);
           name.appendChild(branch);
         }
         const txt = document.createElement("span");
@@ -6421,7 +6433,7 @@
         const meta = document.createElement("div");
         meta.className = "history-row-meta";
         const parts = [];
-        if (s.numMessages) parts.push(`${s.numMessages} msg`);
+        if (s.numMessages) parts.push(l10n("{0} msg", s.numMessages));
         parts.push(formatRelativeTime(s.updatedAt));
         meta.textContent = parts.join(" · ");
         main.appendChild(meta);
@@ -6451,9 +6463,9 @@
       if (s.worktreeLabel && !IS_REMOTE) {
         renameBtn.disabled = true;
         renameBtn.classList.add("disabled");
-        renameBtn.title = "Worktree name is fixed to the checkout";
+        renameBtn.title = l10n("Worktree name is fixed to the checkout");
       } else {
-        renameBtn.title = "Rename";
+        renameBtn.title = l10n("Rename");
         renameBtn.onclick = (e) => {
           e.stopPropagation();
           state.renamingSessionId = s.id;
@@ -6470,13 +6482,13 @@
       const delBtn = document.createElement("button");
       delBtn.className = "history-action-btn history-action-danger";
       delBtn.innerHTML = ICON.trash;
-      delBtn.title = "Delete";
+      delBtn.title = l10n("Delete");
       delBtn.onclick = (e) => {
         e.stopPropagation();
         uiConfirm({
-          title: s.displayName ? `Delete "${s.displayName}"?` : "Delete this session?",
+          title: s.displayName ? l10n("Delete \"{0}\"?", s.displayName) : l10n("Delete this session?"),
           body: deleteSessionWarning(active),
-          confirmLabel: "Delete",
+          confirmLabel: l10n("Delete"),
           danger: true,
         }).then((ok) => { if (ok) vscode.postMessage({ type: "deleteSession", id: s.id, name: s.displayName }); });
       };
@@ -6557,7 +6569,7 @@
   // sends still ends the transition at once.
   const RAIL_NEW_TRANSITION_TIMEOUT_MS = 60000;
   /** Projects are folders you chose, so an empty list says how they get there. */
-  const RAIL_NO_PROJECTS = "Your projects appear here. Open a folder, create one, or add one from Recent.";
+  const RAIL_NO_PROJECTS = l10n("Your projects appear here. Open a folder, create one, or add one from Recent.");
   // Once the host has said it is opening the click (`sessionOpening`), the
   // silence that timer guards against is ruled out: the host ends the open with
   // the conversation or with `failed`. A cold load can take a minute (and a
@@ -6695,13 +6707,13 @@
   /** Palette the host accepts — keep ids in lockstep with REPO_COLOR_IDS in
    *  sessions.ts. Labels are accessible names for each swatch. */
   const REPO_COLOR_SWATCHES = [
-    { id: "", label: "None" },
-    { id: "blue", label: "Blue" },
-    { id: "teal", label: "Teal" },
-    { id: "green", label: "Green" },
-    { id: "amber", label: "Amber" },
-    { id: "coral", label: "Coral" },
-    { id: "purple", label: "Purple" },
+    { id: "", label: l10n("None") },
+    { id: "blue", label: l10n("Blue") },
+    { id: "teal", label: l10n("Teal") },
+    { id: "green", label: l10n("Green") },
+    { id: "amber", label: l10n("Amber") },
+    { id: "coral", label: l10n("Coral") },
+    { id: "purple", label: l10n("Purple") },
   ];
 
   function closeRailColorPicker() {
@@ -6808,7 +6820,7 @@
     const picker = document.createElement("div");
     picker.className = "rail-color-picker";
     picker.setAttribute("role", "listbox");
-    picker.setAttribute("aria-label", "Project color");
+    picker.setAttribute("aria-label", l10n("Project color"));
     const swatches = [];
     for (const sw of REPO_COLOR_SWATCHES) {
       const btn = document.createElement("button");
@@ -7471,11 +7483,11 @@
     const strip = document.createElement("div");
     strip.className = "project-prompt";
     strip.setAttribute("role", "group");
-    strip.setAttribute("aria-label", "Add this folder to Projects");
+    strip.setAttribute("aria-label", l10n("Add this folder to Projects"));
     strip.title = msg.cwd;
     const text = document.createElement("span");
     text.className = "project-prompt-text";
-    text.textContent = `Add ${msg.label || cwdLeaf(msg.cwd)} to Projects?`;
+    text.textContent = l10n("Add {0} to Projects?", msg.label || cwdLeaf(msg.cwd));
     strip.appendChild(text);
     const answer = (label, primary, message) => {
       const btn = document.createElement("button");
@@ -7485,9 +7497,9 @@
       btn.onclick = () => { removeProjectPrompt(); vscode.postMessage(message); };
       strip.appendChild(btn);
     };
-    answer("Add", true, { type: "addToProjects", cwd: msg.cwd });
-    answer("Not now", false, { type: "answerProjectPrompt", cwd: msg.cwd, choice: "notNow" });
-    answer("Never for this folder", false, { type: "answerProjectPrompt", cwd: msg.cwd, choice: "never" });
+    answer(l10n("Add"), true, { type: "addToProjects", cwd: msg.cwd });
+    answer(l10n("Not now"), false, { type: "answerProjectPrompt", cwd: msg.cwd, choice: "notNow" });
+    answer(l10n("Never for this folder"), false, { type: "answerProjectPrompt", cwd: msg.cwd, choice: "never" });
     composer.insertBefore(strip, composer.querySelector(".composer-card"));
     projectPromptFor = { sessionId: msg.sessionId || "", cwd: msg.cwd };
   }
@@ -8188,7 +8200,7 @@
       (s) => railMatches(s.displayName) || railMatches(railRepoLabelFor(s.cwd)),
     );
     if (pinned.length) {
-      root.appendChild(railStaticGroupHead("Pinned"));
+      root.appendChild(railStaticGroupHead(l10n("Pinned")));
       const pinList = document.createElement("div");
       pinList.className = "rail-list rail-pinned";
       for (const s of pinned) {
@@ -8209,13 +8221,13 @@
       const forcedOpen = !!q;
       const open = forcedOpen || !railGroupIsCollapsed("recent");
       root.appendChild(railCollapsibleGroupHead({
-        title: "Recent",
+        title: l10n("Recent"),
         group: "recent",
         open,
         forcedOpenBySearch: forcedOpen,
-        openTitle: "Hide recent conversations",
-        closedTitle: "Show recent conversations",
-        searchTitle: "Open while your search matches a conversation",
+        openTitle: l10n("Hide recent conversations"),
+        closedTitle: l10n("Show recent conversations"),
+        searchTitle: l10n("Open while your search matches a conversation"),
       }));
       if (open) {
         const list = document.createElement("div");
@@ -8248,13 +8260,13 @@
       const forcedOpen = !!q;
       const open = forcedOpen || !railGroupIsCollapsed("projects");
       root.appendChild(railCollapsibleGroupHead({
-        title: "Projects",
+        title: l10n("Projects"),
         group: "projects",
         open,
         forcedOpenBySearch: forcedOpen,
-        openTitle: "Hide projects",
-        closedTitle: "Show projects",
-        searchTitle: "Open while your search matches a project",
+        openTitle: l10n("Hide projects"),
+        closedTitle: l10n("Show projects"),
+        searchTitle: l10n("Open while your search matches a project"),
         action: canAddProjectFolder() ? railAddProjectButton : undefined,
       }));
       if (open) {
@@ -8264,7 +8276,7 @@
         for (const repo of repos) list.appendChild(renderRailRepo(repo, false));
         railOpenKeysForRender = null;
         root.appendChild(list);
-        if (emptyProjects) root.appendChild(railNote("Every project is archived."));
+        if (emptyProjects) root.appendChild(railNote(l10n("Every project is archived.")));
         if (noProjects) root.appendChild(railNote(RAIL_NO_PROJECTS));
         // Full-width target under the list, not only the small "+" in the group
         // head. With one project or none the rail is mostly empty space and the
@@ -8281,13 +8293,13 @@
       const forcedOpen = !!q;
       const open = forcedOpen || !railGroupIsCollapsed("archived");
       root.appendChild(railCollapsibleGroupHead({
-        title: "Project Archive",
+        title: l10n("Project Archive"),
         group: "archived",
         open,
         forcedOpenBySearch: forcedOpen,
-        openTitle: "Hide archived projects",
-        closedTitle: "Show archived projects",
-        searchTitle: "Open while your search matches an archived project",
+        openTitle: l10n("Hide archived projects"),
+        closedTitle: l10n("Show archived projects"),
+        searchTitle: l10n("Open while your search matches an archived project"),
       }));
       if (open) {
         const list = document.createElement("div");
@@ -8310,7 +8322,7 @@
         empty.appendChild(railAddProjectWide());
         root.appendChild(empty);
       } else {
-        root.appendChild(railNote(q ? "No matches." : RAIL_NO_PROJECTS));
+        root.appendChild(railNote(q ? l10n("No matches.") : RAIL_NO_PROJECTS));
       }
     }
 
@@ -8399,7 +8411,7 @@
     btn.querySelector(".rail-head-title").textContent = opts.title;
     btn.disabled = !!opts.forcedOpenBySearch;
     btn.title = opts.forcedOpenBySearch
-      ? (opts.searchTitle || "Held open by search")
+      ? (opts.searchTitle || l10n("Held open by search"))
       : (opts.open ? opts.openTitle : opts.closedTitle);
     btn.onclick = (e) => {
       e.stopPropagation();
@@ -8447,7 +8459,7 @@
     plus.setAttribute("aria-hidden", "true");
     plus.textContent = "+";
     add.appendChild(plus);
-    add.appendChild(document.createTextNode("Add project"));
+    add.appendChild(document.createTextNode(l10n("Add project")));
     add.onclick = (e) => {
       e.stopPropagation();
       openAddProjectMenu(add);
@@ -8460,8 +8472,8 @@
     btn.type = "button";
     btn.className = "rail-action-btn rail-add-project";
     btn.innerHTML = ICON.plus;
-    btn.title = "Add project";
-    btn.setAttribute("aria-label", "Add project");
+    btn.title = l10n("Add project");
+    btn.setAttribute("aria-label", l10n("Add project"));
     btn.onclick = (e) => {
       e.stopPropagation();
       openAddProjectMenu(btn);
@@ -8774,7 +8786,7 @@
       const more = document.createElement("button");
       more.type = "button";
       more.className = "rail-more";
-      more.textContent = "Show more";
+      more.textContent = l10n("Show more");
       more.onclick = (e) => {
         e.stopPropagation();
         state.railExpanded[expandKey] = true;
@@ -8786,7 +8798,7 @@
       const less = document.createElement("button");
       less.type = "button";
       less.className = "rail-more";
-      less.textContent = "Show less";
+      less.textContent = l10n("Show less");
       less.onclick = (e) => {
         e.stopPropagation();
         delete state.railExpanded[expandKey];
@@ -8941,7 +8953,7 @@
     inputEl.className = "session-name-input";
     inputEl.id = labelEl.id;
     inputEl.value = displayedSessionName(activeSessionRecord());
-    inputEl.setAttribute("aria-label", "Conversation name");
+    inputEl.setAttribute("aria-label", l10n("Conversation name"));
     inputEl.onclick = (e) => e.stopPropagation();
     inputEl.onkeydown = (e) => {
       e.stopPropagation();
@@ -9011,8 +9023,8 @@
     btn.dataset.railWired = "1";
     btn.hidden = false;
     btn.type = "button";
-    btn.title = "New session";
-    btn.setAttribute("aria-label", "New session");
+    btn.title = l10n("New session");
+    btn.setAttribute("aria-label", l10n("New session"));
     btn.innerHTML = ICON.squarePen;
     btn.onclick = (e) => {
       e.stopPropagation();
@@ -9028,7 +9040,7 @@
   function ensureVisibleNewSession() {
     if (newBtn) {
       newBtn.hidden = false;
-      newBtn.title = "New session";
+      newBtn.title = l10n("New session");
     }
     const history = document.getElementById("session-history");
     let sessionNew = document.getElementById("session-new");
@@ -9054,20 +9066,20 @@
     // Built when the menu opens, so it follows the agent of the conversation
     // on screen rather than the one at the last repaint.
     menuSlot.appendChild(railMenuButton(
-      "Session actions",
+      l10n("Session actions"),
       () => [
         ...(continueChatDestinations().length ? [{
-          label: "Continue in a new chat",
+          label: l10n("Continue in a new chat"),
           icon: ICON.gitFork,
           onSelect: () => beginContinueInNewChat(state.activeSessionId),
         }] : []),
         {
-          label: "Export conversation as Markdown",
+          label: l10n("Export conversation as Markdown"),
           icon: ICON.download,
           onSelect: () => exportCurrentSession(),
         },
         {
-          label: "Find in conversation",
+          label: l10n("Find in conversation"),
           icon: ICON.search,
           onSelect: () => openFind(),
         },
@@ -9149,9 +9161,9 @@
     // (the host confirmation), same as an older host that never sent the frame.
     editBtn.hidden = !data;
     if (!data) return;
-    label.setAttribute("aria-label", `Conversation: ${name}. Activate to rename.`);
-    editBtn.title = "Rename conversation";
-    editBtn.setAttribute("aria-label", "Rename conversation");
+    label.setAttribute("aria-label", l10n("Conversation: {0}. Activate to rename.", name));
+    editBtn.title = l10n("Rename conversation");
+    editBtn.setAttribute("aria-label", l10n("Rename conversation"));
     editBtn.innerHTML = ICON.pencil;
     wireSessionNameLabel(label, editBtn, "local");
     editBtn.onclick = (e) => { e.stopPropagation(); beginSessionNameEdit("local", label, editBtn); };
@@ -9311,7 +9323,7 @@
     head.setAttribute("aria-expanded", String(expanded));
     head.setAttribute(
       "aria-label",
-      (expanded ? "Collapse " : "Expand ") + (repo.label || cwdLeaf(repo.cwd)),
+      l10n(expanded ? "Collapse {0}" : "Expand {0}", repo.label || cwdLeaf(repo.cwd)),
     );
 
     // Disclosure first, identity second. The folder used to be both — open when
@@ -9398,7 +9410,7 @@
     add.type = "button";
     add.className = "rail-action-btn";
     add.innerHTML = ICON.squarePen;
-    add.title = selected ? "New session here" : "Switch to this project and start a new session";
+    add.title = selected ? l10n("New session here") : l10n("Switch to this project and start a new session");
     // Deliberately NOT gated on repoSwitcherLocked(). Starting a conversation is
     // the one thing that should always be available, and a lock that disables it
     // in EVERY project at once is indistinguishable from the app being broken —
@@ -9457,11 +9469,11 @@
       // Hidden entirely against a host too old to record the choice: a control
       // that silently does nothing is worse than one that isn't there.
       ...(railArchiveSupported() ? [{
-        label: inArchive ? "Move to Projects" : "Archive project",
+        label: inArchive ? l10n("Move to Projects") : l10n("Archive project"),
         icon: inArchive ? ICON.archiveRestore : ICON.archive,
         title: inArchive
-          ? "Show this project under Projects again"
-          : "Move this project out of the way. Its conversations stay, and working here brings it back.",
+          ? l10n("Show this project under Projects again")
+          : l10n("Move this project out of the way. Its conversations stay, and working here brings it back."),
         onSelect: () => postPreference({
           type: "setRepoArchived",
           cwd: repo.cwd,
@@ -9472,27 +9484,26 @@
       // (`color` present on catalog rows). Opens a swatch picker rather than a
       // nested menu so six hues + none stay one glance away.
       ...(railColorSupported() ? [{
-        label: "Set color",
+        label: l10n("Set color"),
         icon: ICON.palette,
-        title: "Tint this project's icon so it is easy to find",
+        title: l10n("Tint this project's icon so it is easy to find"),
         onSelect: () => openRepoColorPicker(projectMenuBtn, repo),
       }] : []),
       // Under the colour, because they answer the same question in the same
       // place: how do I recognise this project at a glance.
       ...(railIconSupported() ? [{
-        label: "Set icon",
+        label: l10n("Set icon"),
         icon: ICON.shapes,
-        title: "Give this project its own icon instead of a folder",
+        title: l10n("Give this project its own icon instead of a folder"),
         onSelect: () => openRepoIconPicker(projectMenuBtn, repo),
       }] : []),
       ...(railColorSupported() || railIconSupported() ? [null] : []),
       // Hide closes a local folder; archiving only changes its rail group.
       ...(canRemoveProjectFolder() ? [{
-        label: "Hide project",
+        label: l10n("Hide project"),
         icon: ICON.archive,
         title:
-          "Take this project out of the list. Nothing is deleted — the folder " +
-          "stays on disk, and + adds it back.",
+          l10n("Take this project out of the list. Nothing is deleted — the folder stays on disk, and + adds it back."),
         // Confirmed, like every other rail act that reaches other surfaces. The
         // VS Code rail has always asked; this one posted bare, so one gesture was
         // guarded on one surface and not the other. It also takes the row off
@@ -9500,31 +9511,30 @@
         onSelect: () => {
           const repoLabel = repo.label || cwdLeaf(repo.cwd);
           uiConfirm({
-            title: `Hide “${repoLabel}”?`,
-            body: `Takes this project out of the list on every linked device:\n${repo.cwd}`
-              + "\n\nNothing is deleted — the folder stays on disk, and Add project brings it back.",
-            confirmLabel: "Hide",
+            title: l10n("Hide “{0}”?", repoLabel),
+            body: l10n("Takes this project out of the list on every linked device:\n{0}\n\nNothing is deleted — the folder stays on disk, and Add project brings it back.", repo.cwd),
+            confirmLabel: l10n("Hide"),
           }).then((ok) => {
             if (ok) vscode.postMessage({ type: "removeProjectFolder", cwd: repo.cwd });
           });
         },
       }, null] : []),
       {
-        label: "Clear all history",
+        label: l10n("Clear all history"),
         icon: ICON.trash,
         danger: true,
         disabled: !repo.available || knownEmpty || !reachable,
         title: !reachable
-          ? "Update AFK Pilot on your computer to clear another project's history from here"
+          ? l10n("Update {0} on your computer to clear another project's history from here", "AFK Pilot")
           : knownEmpty
-            ? "This project has no history"
-            : "Delete supported providers' conversations in this repository",
+            ? l10n("This project has no history")
+            : l10n("Delete supported providers' conversations in this repository"),
         onSelect: () => {
           const repoLabel = repo.label || cwdLeaf(repo.cwd);
           uiConfirm({
-            title: `Clear history for “${repoLabel}”?`,
+            title: l10n("Clear history for “{0}”?", repoLabel),
             body: globalThis.GrokWebviewHelpers.clearHistoryConfirmation(repo.cwd),
-            confirmLabel: "Delete All",
+            confirmLabel: l10n("Delete All"),
             danger: true,
           }).then((ok) => {
             // `clearAllSessions` is repo-addressed, so this works on a project
@@ -9535,7 +9545,7 @@
       },
     ];
     const projectMenuKey = "repo:" + cwdKey(repo.cwd);
-    const projectMenuBtn = railMenuButton("Project actions", projectMenuItems, projectMenuKey);
+    const projectMenuBtn = railMenuButton(l10n("Project actions"), projectMenuItems, projectMenuKey);
     actions.appendChild(projectMenuBtn);
 
     head.appendChild(actions);
@@ -9577,7 +9587,7 @@
         const retry = document.createElement("button");
         retry.type = "button";
         retry.className = "rail-note-retry";
-        retry.textContent = "Retry";
+        retry.textContent = l10n("Retry");
         retry.onclick = (e) => {
           e.stopPropagation();
           delete state.repoPreviewErrors[key];
@@ -9622,7 +9632,7 @@
     }
 
     if (!entries.length) {
-      body.appendChild(railNote("No sessions yet"));
+      body.appendChild(railNote(l10n("No sessions yet")));
       return body;
     }
 
@@ -9686,11 +9696,11 @@
       const branch = document.createElement("span");
       branch.className = "rail-session-branch";
       branch.innerHTML = ICON.gitBranch;
-      branch.title = "Worktree: " + s.worktreeLabel;
+      branch.title = l10n("Worktree: {0}", s.worktreeLabel);
       row.appendChild(branch);
     }
     let name = sessionRowName(s);
-    if (s.worktreeLabel && name.startsWith("(WT)")) name = name.slice(4).trim() || "Worktree";
+    if (s.worktreeLabel && name.startsWith("(WT)")) name = name.slice(4).trim() || l10n("Worktree");
     label.textContent = name;
     row.appendChild(label);
     // The click is waiting for a load another view started (sessionOpening).
@@ -9735,7 +9745,7 @@
         pinBtn.type = "button";
         pinBtn.className = "rail-action-btn rail-pin-btn" + (isPinned ? " active" : "");
         pinBtn.innerHTML = isPinned ? ICON.pinFilled : ICON.pin;
-        pinBtn.title = isPinned ? "Unpin conversation" : "Pin conversation";
+        pinBtn.title = isPinned ? l10n("Unpin conversation") : l10n("Pin conversation");
         pinBtn.setAttribute("aria-label", pinBtn.title);
         pinBtn.onclick = (e) => {
           e.stopPropagation();
@@ -9745,7 +9755,7 @@
       }
       const menuKey = "session:" + (s.id || cwdKey(s.cwd || repo.cwd));
       const menuBtn = railMenuButton(
-        "Session actions",
+        l10n("Session actions"),
         // `active` (the painted target) decides WHICH row owns the id-less
         // actions; railSessionMenuItems disables them while the host has not
         // confirmed it is on that conversation yet.
@@ -9773,7 +9783,7 @@
     const isPinned = sessionIsPinned(s);
     const items = opts?.inlineRename ? [] : [
       {
-        label: "Rename",
+        label: l10n("Rename"),
         icon: ICON.pencil,
         onSelect: () => railRenameSession(s, cwd),
       },
@@ -9801,27 +9811,27 @@
       // contents reshuffle mid-open is its own kind of wrong.
       const pending = !railIdlessActionsAllowed();
       const waiting = pending
-        ? { disabled: true, title: "Available once the conversation has finished opening" }
+        ? { disabled: true, title: l10n("Available once the conversation has finished opening") }
         : null;
       if (continueChatDestinations().length) items.push({
-        label: "Continue in a new chat",
+        label: l10n("Continue in a new chat"),
         icon: ICON.gitFork,
         ...waiting,
         onSelect: () => beginContinueInNewChat(s.id),
       });
       if (!IS_REMOTE) items.push({
-        label: "Continue on phone…", icon: ICON.smartphone,
+        label: l10n("Continue on phone…"), icon: ICON.smartphone,
         onSelect: () => opts?.followsFocus
           ? openRemoteHandoff("rail") : openRemoteHandoff("rail", s.id, repo.cwd),
       });
       // The live transcript this client is showing — same scope as Continue.
       items.push({
-        label: "Export as Markdown",
+        label: l10n("Export as Markdown"),
         icon: ICON.download,
         onSelect: () => exportCurrentSession(),
       });
       items.push({
-        label: "Find in conversation",
+        label: l10n("Find in conversation"),
         icon: ICON.search,
         onSelect: () => openFind(),
       });
@@ -9836,37 +9846,37 @@
       // worse than one that isn't there.
       if (state.isWorktree && !IS_REMOTE) {
         items.push({
-          label: "Apply worktree",
+          label: l10n("Apply worktree"),
           icon: ICON.gitBranch,
           ...waiting,
           onSelect: () => uiConfirm({
-            title: "Apply worktree?",
-            body: "Merges this worktree's edits back into the main checkout.",
-            confirmLabel: "Apply",
+            title: l10n("Apply worktree?"),
+            body: l10n("Merges this worktree's edits back into the main checkout."),
+            confirmLabel: l10n("Apply"),
           }).then((ok) => { if (ok) vscode.postMessage({ type: "applyWorktree", sessionId: s.id }); }),
         });
         items.push({
-          label: "Remove worktree",
+          label: l10n("Remove worktree"),
           icon: ICON.gitBranch,
           danger: true,
           ...waiting,
           onSelect: () => uiConfirm({
-            title: "Remove worktree?",
-            body: "This deletes the isolated checkout. Unapplied edits are lost.",
-            confirmLabel: "Remove",
+            title: l10n("Remove worktree?"),
+            body: l10n("This deletes the isolated checkout. Unapplied edits are lost."),
+            confirmLabel: l10n("Remove"),
             danger: true,
           }).then((ok) => { if (ok) vscode.postMessage({ type: "removeWorktree", sessionId: s.id }); }),
         });
       }
     }
     if (!active && !IS_REMOTE) items.push({
-      label: "Continue on phone…", icon: ICON.smartphone,
+      label: l10n("Continue on phone…"), icon: ICON.smartphone,
       onSelect: () => openRemoteHandoff("rail", s.id, repo.cwd),
     });
     // A Recent conversation in a folder that is not one of your projects. The
     // host names the folder (`addableCwd`) only where it can add it.
     if (s.addableCwd) items.push({
-      label: "Add to Projects",
+      label: l10n("Add to Projects"),
       icon: ICON.folder,
       onSelect: () => vscode.postMessage({ type: "addToProjects", cwd: s.addableCwd }),
     });
@@ -9876,7 +9886,7 @@
     // in every remote snapshot, empty included, so a capable host always says so.
     if (state.pinnedSessionsKnown) {
       items.push({
-        label: isPinned ? "Unpin conversation" : "Pin conversation",
+        label: isPinned ? l10n("Unpin conversation") : l10n("Pin conversation"),
         icon: ICON.pin,
         onSelect: () => togglePinnedRow(s, cwd),
       });
@@ -9889,18 +9899,18 @@
     // reason is the truth rather than "the open session can't be deleted".
     const activeUndeletable = !!active && !canDeleteActiveSession();
     if (globalThis.GrokWebviewHelpers.providerSupports(s.provider, "deleteHistory")) items.push(null, {
-      label: "Delete",
+      label: l10n("Delete"),
       icon: ICON.trash,
       danger: true,
       disabled: activeUndeletable,
       title: activeUndeletable
-        ? "Update AFK Pilot on your computer to delete the conversation you have open"
-        : "Delete",
+        ? l10n("Update {0} on your computer to delete the conversation you have open", "AFK Pilot")
+        : l10n("Delete"),
       onSelect: () => {
         uiConfirm({
-          title: s.displayName ? `Delete "${s.displayName}"?` : "Delete this session?",
+          title: s.displayName ? l10n("Delete \"{0}\"?", s.displayName) : l10n("Delete this session?"),
           body: deleteSessionWarning(active),
-          confirmLabel: "Delete",
+          confirmLabel: l10n("Delete"),
           danger: true,
         }).then((ok) => {
           // `cwd` names the project this row belongs to, so the host can act on a
@@ -9927,20 +9937,21 @@
    *  and something else takes its place — so the dialog says so before you agree
    *  to it, and says the extra part out loud when a turn is still running. */
   function deleteSessionWarning(active) {
-    if (!active) return "This cannot be undone.";
-    const stopping = state.busy ? ` ${agentName(true)} is still working; that stops.` : "";
-    return "This is the conversation you have open. It will close and a new one will start in the same project."
-      + stopping + " This cannot be undone.";
+    if (!active) return l10n("This cannot be undone.");
+    if (!state.busy) return l10n("This is the conversation you have open. It will close and a new one will start in the same project. This cannot be undone.");
+    return state.activeProviderNamed
+      ? l10n("This is the conversation you have open. It will close and a new one will start in the same project. {0} is still working; that stops. This cannot be undone.", agentName(true))
+      : l10n("This is the conversation you have open. It will close and a new one will start in the same project. The agent is still working; that stops. This cannot be undone.");
   }
 
   /** Rename from the rail. The history popover renames inline in its own row;
    *  out here there is no row to hand over to, so ask for the name directly. */
   function railRenameSession(s, cwd) {
     uiPrompt({
-      title: "Rename session",
+      title: l10n("Rename session"),
       value: s.displayName || "",
-      placeholder: "Session name",
-      confirmLabel: "Rename",
+      placeholder: l10n("Session name"),
+      confirmLabel: l10n("Rename"),
     }).then((name) => {
       const next = (name || "").trim();
       if (!next || next === s.displayName) return;
@@ -12309,8 +12320,8 @@
         const rewindBtn = document.createElement("button");
         rewindBtn.className = "msg-action-btn msg-rewind-btn";
         rewindBtn.type = "button";
-        rewindBtn.title = "Rewind to this message";
-        rewindBtn.setAttribute("aria-label", "Rewind to this message");
+        rewindBtn.title = l10n("Rewind to this message");
+        rewindBtn.setAttribute("aria-label", l10n("Rewind to this message"));
         rewindBtn.innerHTML = `<span class="msg-action-glyph">${ICON.undo}</span>`;
         actions.appendChild(rewindBtn);
         // Edit lives only on the LATEST user message (#56) — the one Rewind
@@ -12319,8 +12330,8 @@
         const editBtn = document.createElement("button");
         editBtn.className = "msg-action-btn msg-edit-btn";
         editBtn.type = "button";
-        editBtn.title = "Edit and send again";
-        editBtn.setAttribute("aria-label", "Edit and send again");
+        editBtn.title = l10n("Edit and send again");
+        editBtn.setAttribute("aria-label", l10n("Edit and send again"));
         editBtn.innerHTML = `<span class="msg-action-glyph">${ICON.pencil}</span>`;
         actions.appendChild(editBtn);
       }
@@ -12379,7 +12390,7 @@
       btn = document.createElement("button");
       btn.type = "button";
       btn.className = "msg-action-btn msg-fork-btn";
-      btn.title = edit ? "Edit in a new chat" : "Go back to here in a new chat";
+      btn.title = edit ? l10n("Edit in a new chat") : l10n("Go back to here in a new chat");
       btn.setAttribute("aria-label", btn.title);
       btn.innerHTML = `<span class="msg-action-glyph">${edit ? ICON.pencil : ICON.gitBranch}</span>`;
       actions.insertBefore(btn, actions.querySelector(".msg-timestamp"));
@@ -12890,8 +12901,8 @@
     if (actions.querySelector(".msg-thumbs")) return;
     const wrap = document.createElement("span");
     wrap.className = "msg-thumbs";
-    wrap.appendChild(makeThumbButton("up", 1, "Good response", ICON.thumbsUp));
-    wrap.appendChild(makeThumbButton("down", -1, "Bad response", ICON.thumbsDown));
+    wrap.appendChild(makeThumbButton("up", 1, l10n("Good response"), ICON.thumbsUp));
+    wrap.appendChild(makeThumbButton("down", -1, l10n("Bad response"), ICON.thumbsDown));
     const ts = actions.querySelector(".msg-timestamp");
     if (ts) actions.insertBefore(wrap, ts);
     else actions.appendChild(wrap);
@@ -15192,8 +15203,8 @@ ${fullText}`
     const button = document.createElement("button");
     button.className = "msg-action-btn msg-copy-btn";
     button.type = "button";
-    button.title = "Copy message";
-    button.setAttribute("aria-label", "Copy message");
+    button.title = l10n("Copy message");
+    button.setAttribute("aria-label", l10n("Copy message"));
     button.innerHTML = `<span class="msg-action-glyph">${ICON.copy}</span>`;
     return button;
   }
@@ -18871,7 +18882,7 @@ ${fullText}`
         const rm = document.createElement("button");
         rm.type = "button";
         rm.className = "attachment-remove";
-        rm.title = "Remove";
+        rm.title = l10n("Remove");
         rm.textContent = "×";
         rm.onclick = (e) => {
           e.stopPropagation();
@@ -19137,19 +19148,19 @@ ${fullText}`
     modeBtn.title = modeButtonTitle(state.currentModeId);
     if (state.sessionSuperseded) {
       sendBtn.innerHTML = ICON.arrowUp;
-      sendBtn.title = "This conversation is open in another tab";
+      sendBtn.title = l10n("This conversation is open in another tab");
       sendBtn.disabled = true;
       if (newBtn) {
         newBtn.disabled = false;
-        newBtn.title = "New session";
+        newBtn.title = l10n("New session");
       }
     } else if (state.onboardingMode === "no-project") {
       sendBtn.innerHTML = ICON.arrowUp;
-      sendBtn.title = "Add a project folder first";
+      sendBtn.title = l10n("Add a project folder first");
       sendBtn.disabled = true;
       if (newBtn) {
         newBtn.disabled = true;
-        newBtn.title = "Add a project folder first";
+        newBtn.title = l10n("Add a project folder first");
       }
     } else if (state.startupStatus) {
       sendBtn.innerHTML = ICON.spinner;
@@ -19164,11 +19175,11 @@ ${fullText}`
       sendBtn.disabled = true;
     } else if (!state.busy) {
       sendBtn.innerHTML = ICON.arrowUp;
-      sendBtn.title = "Send";
+      sendBtn.title = l10n("Send");
       sendBtn.disabled = false;
       if (newBtn) {
         newBtn.disabled = false;
-        newBtn.title = "New session";
+        newBtn.title = l10n("New session");
       }
     } else if (state.busyLocked) {
       sendBtn.innerHTML = ICON.spinner;
@@ -19177,11 +19188,13 @@ ${fullText}`
       sendBtn.disabled = true;
     } else if (composerHasSendIntent(input.value, state.chips)) {
       sendBtn.innerHTML = ICON.arrowUp;
-      sendBtn.title = `Queue — sends when ${agentName()} finishes`;
+      sendBtn.title = state.activeProviderNamed
+        ? l10n("Queue — sends when {0} finishes", agentName())
+        : l10n("Queue — sends when the agent finishes");
       sendBtn.disabled = false;
     } else {
       sendBtn.innerHTML = ICON.square;
-      sendBtn.title = "Stop";
+      sendBtn.title = l10n("Stop");
       sendBtn.classList.add("stop");
       sendBtn.disabled = false;
     }
@@ -19220,7 +19233,7 @@ ${fullText}`
     remoteBtn.hidden = IS_REMOTE;
     const connected = state.remoteLinked === true && state.remoteViewerCount > 0;
     remoteBtn.classList.toggle("phone-connected", connected);
-    remoteBtn.title = connected ? "Remote control · phone connected" : "Remote control";
+    remoteBtn.title = l10n(connected ? "Remote control · phone connected" : "Remote control");
     remoteBtn.setAttribute("aria-label", remoteBtn.title);
   }
 
@@ -19545,15 +19558,15 @@ ${fullText}`
       micBtn.disabled = true;
     } else if (state.mic === "listening") {
       micBtn.innerHTML = ICON.micWaves;
-      micBtn.title = IS_REMOTE ? "Listening — click to stop dictating" : "Listening — say 'grok send' to submit, or click to stop";
+      micBtn.title = IS_REMOTE ? "Listening — click to stop dictating" : l10n("Listening — say '{0}' to submit, or click to stop", "grok send");
       micBtn.disabled = false;
     } else if (state.mic === "connecting") {
       micBtn.innerHTML = ICON.spinner;
-      micBtn.title = "Starting mic… wait for the waves before speaking";
+      micBtn.title = l10n("Starting mic… wait for the waves before speaking");
       micBtn.disabled = false; // clickable to cancel
     } else if (state.mic === "transcribing") {
       micBtn.innerHTML = ICON.spinner;
-      micBtn.title = "Transcribing…";
+      micBtn.title = l10n("Transcribing…");
       micBtn.disabled = true;
     } else {
       // A remote with no host credential used to be DISABLED here, with the
@@ -19564,12 +19577,12 @@ ${fullText}`
       // and lets it — the same arrangement the desk has always had.
       micBtn.innerHTML = ICON.mic;
       micBtn.title = state.voiceConfigured
-        ? "Voice control"
+        ? l10n("Voice control")
         : voiceNeedsGrokAccount()
-          ? "Voice needs Grok connected"
+          ? l10n("Voice needs {0} connected", "Grok")
           : typeof state.voiceBackendState?.hasGoogle === "boolean"
-            ? "Voice control — click to set up (needs a Gemini, OpenAI, or xAI credential)"
-          : "Voice control — click to set up (needs an OpenAI or xAI credential)";
+            ? l10n("Voice control — click to set up (needs a {0}, {1}, or {2} credential)", "Gemini", "OpenAI", "xAI")
+          : l10n("Voice control — click to set up (needs an {0} or {1} credential)", "OpenAI", "xAI");
       micBtn.disabled = false;
     }
     // "needs setup" dot only when idle, clickable, and no key is configured.
@@ -20104,12 +20117,14 @@ ${fullText}`
     tag.innerHTML = `${ICON.clock}<span>${state.queuedSubmissionRejected || rejected ? "Not sent" : "Queued"}</span>`;
     tag.title = state.queuedSubmissionRejected || rejected
       ? "The relay rejected this prompt. Edit it to retry, or remove it."
-      : `Sends when ${agentName()} finishes`;
+      : state.activeProviderNamed
+        ? l10n("Sends when {0} finishes", agentName())
+        : l10n("Sends when the agent finishes");
     const actions = document.createElement("span");
     actions.className = "queued-actions";
     const editBtn = document.createElement("button");
     editBtn.className = "queued-action";
-    editBtn.title = "Edit — back to the composer";
+    editBtn.title = l10n("Edit — back to the composer");
     editBtn.innerHTML = ICON.pencil;
     // pointerdown for the same reason as Steer below — this whole block moves
     // under the cursor while the agent streams.
@@ -20128,7 +20143,7 @@ ${fullText}`
     };
     const rmBtn = document.createElement("button");
     rmBtn.className = "queued-action";
-    rmBtn.title = "Remove from queue";
+    rmBtn.title = l10n("Remove from queue");
     rmBtn.innerHTML = ICON.x;
     rmBtn.onpointerdown = (e) => {
       e.preventDefault();
@@ -20152,8 +20167,10 @@ ${fullText}`
     if (state.steerSupported && steerableProvider()) {
       const steerBtn = document.createElement("button");
       steerBtn.className = "queued-action queued-steer";
-      steerBtn.title = `Steer — submit now without interrupting ${agentName()}`;
-      steerBtn.innerHTML = `${ICON.cornerDownRight}<span>Steer</span>`;
+      steerBtn.title = state.activeProviderNamed
+        ? l10n("Steer — submit now without interrupting {0}", agentName())
+        : l10n("Steer — submit now without interrupting the agent");
+      steerBtn.innerHTML = `${ICON.cornerDownRight}<span>${escapeHtml(l10n("Steer"))}</span>`;
       // pointerdown, NOT click: the queued block is pinned to the end of the
       // chat and every streamed chunk runs scrollToBottom, so while the agent is
       // writing prose the button shifts under the cursor between mousedown and
@@ -20511,11 +20528,11 @@ ${fullText}`
         find.hiddenBtn.hidden = false;
         find.hiddenBtn.setAttribute("aria-pressed", find.includeHidden ? "true" : "false");
         find.hiddenBtn.textContent = find.includeHidden
-          ? "Including " + hidden + " in hidden thinking traces"
-          : hidden + " in hidden thinking traces";
+          ? l10n("Including {0} in hidden thinking traces", hidden)
+          : l10n("{0} in hidden thinking traces", hidden);
         find.hiddenBtn.title = find.includeHidden
-          ? "Stop navigating matches inside hidden thinking traces"
-          : "Include matches inside hidden thinking traces";
+          ? l10n("Stop navigating matches inside hidden thinking traces")
+          : l10n("Include matches inside hidden thinking traces");
       }
     }
     if (find.caseBtn) find.caseBtn.setAttribute("aria-pressed", find.caseSensitive ? "true" : "false");
@@ -20786,7 +20803,7 @@ ${fullText}`
     bar.className = "find-bar";
     bar.hidden = true;
     bar.setAttribute("role", "search");
-    bar.setAttribute("aria-label", "Find in this conversation");
+    bar.setAttribute("aria-label", l10n("Find in this conversation"));
 
     const row = document.createElement("div");
     row.className = "find-bar-row";
@@ -20797,7 +20814,7 @@ ${fullText}`
     const field = document.createElement("input");
     field.id = "find-input";
     field.type = "search";
-    field.placeholder = "Find in this conversation";
+    field.placeholder = l10n("Find in this conversation");
     field.autocomplete = "off";
     field.spellcheck = false;
     field.setAttribute("enterkeyhint", "search");
@@ -20807,20 +20824,20 @@ ${fullText}`
     const prev = document.createElement("button");
     prev.type = "button";
     prev.className = "icon-btn";
-    prev.title = "Previous match";
-    prev.setAttribute("aria-label", "Previous match");
+    prev.title = l10n("Previous match");
+    prev.setAttribute("aria-label", l10n("Previous match"));
     prev.innerHTML = ICON.chevronUp;
     const next = document.createElement("button");
     next.type = "button";
     next.className = "icon-btn";
-    next.title = "Next match";
-    next.setAttribute("aria-label", "Next match");
+    next.title = l10n("Next match");
+    next.setAttribute("aria-label", l10n("Next match"));
     next.innerHTML = ICON.chevronDown;
     const close = document.createElement("button");
     close.type = "button";
     close.className = "icon-btn";
-    close.title = "Close find";
-    close.setAttribute("aria-label", "Close find");
+    close.title = l10n("Close find");
+    close.setAttribute("aria-label", l10n("Close find"));
     close.innerHTML = ICON.x;
     row.appendChild(icon);
     row.appendChild(field);
@@ -20835,15 +20852,15 @@ ${fullText}`
     caseBtn.type = "button";
     caseBtn.className = "find-toggle";
     caseBtn.textContent = "Aa";
-    caseBtn.title = "Match case";
-    caseBtn.setAttribute("aria-label", "Match case");
+    caseBtn.title = l10n("Match case");
+    caseBtn.setAttribute("aria-label", l10n("Match case"));
     caseBtn.setAttribute("aria-pressed", "false");
     const regexBtn = document.createElement("button");
     regexBtn.type = "button";
     regexBtn.className = "find-toggle";
     regexBtn.textContent = ".*";
-    regexBtn.title = "Use regular expression";
-    regexBtn.setAttribute("aria-label", "Use regular expression");
+    regexBtn.title = l10n("Use regular expression");
+    regexBtn.setAttribute("aria-label", l10n("Use regular expression"));
     regexBtn.setAttribute("aria-pressed", "false");
     const hiddenBtn = document.createElement("button");
     hiddenBtn.type = "button";
@@ -21414,7 +21431,7 @@ ${fullText}`
         state.planModeAvailable = msg.available !== false;
         state.planModeUnavailableReason = state.planModeAvailable
           ? ""
-          : String(msg.reason || "Plan mode is unavailable.");
+          : String(msg.reason || l10n("Plan mode is unavailable."));
         // Only an unverified probe is recheckable; a verified-old CLI stays latched.
         state.planModeRecheckable = !state.planModeAvailable && msg.recheckable === true;
         updateSendButton();

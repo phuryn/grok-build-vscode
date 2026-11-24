@@ -6,7 +6,8 @@
 (function () {
   "use strict";
 
-  const { l10n } = window.GrokWebviewHelpers;
+  const l10n = window.GrokWebviewHelpers?.l10n || ((key, ...args) =>
+    key.replace(/\{(\d+)\}/g, (match, index) => index in args ? String(args[index]) : match));
   const vscode = acquireVsCodeApi();
 
   const ICON = {
@@ -38,7 +39,7 @@
   // Keep in lockstep with RAIL_RECENT_CAP in src/projects-rail.ts.
   const RECENT_CAP = 10;
   /** Projects are folders you chose, so an empty list says how they get there. */
-  const NO_PROJECTS = "Your projects appear here. Open a folder, create one, or add one from Recent.";
+  const NO_PROJECTS = l10n("Your projects appear here. Open a folder, create one, or add one from Recent.");
   const RAIL_RECENT_KEY = "__recent__";
   // The same age rule the desktop/browser rail applies (media/chat.js). Without
   // it VS Code showed every project Grok has ever run in, forever — which for
@@ -56,13 +57,13 @@
 
   /** Palette the host accepts — ids match REPO_COLOR_IDS in sessions.ts. */
   const REPO_COLOR_SWATCHES = [
-    { id: "", label: "None" },
-    { id: "blue", label: "Blue" },
-    { id: "teal", label: "Teal" },
-    { id: "green", label: "Green" },
-    { id: "amber", label: "Amber" },
-    { id: "coral", label: "Coral" },
-    { id: "purple", label: "Purple" },
+    { id: "", label: l10n("None") },
+    { id: "blue", label: l10n("Blue") },
+    { id: "teal", label: l10n("Teal") },
+    { id: "green", label: l10n("Green") },
+    { id: "amber", label: l10n("Amber") },
+    { id: "coral", label: l10n("Coral") },
+    { id: "purple", label: l10n("Purple") },
   ];
 
   const savedRailShape = loadRailShape();
@@ -640,11 +641,11 @@
       const cancel = document.createElement("button");
       cancel.type = "button";
       cancel.className = "rail-dialog-btn";
-      cancel.textContent = "Cancel";
+      cancel.textContent = l10n("Cancel");
       const ok = document.createElement("button");
       ok.type = "button";
       ok.className = "rail-dialog-btn rail-dialog-primary" + (opts.danger ? " rail-dialog-danger" : "");
-      ok.textContent = opts.confirmLabel || "OK";
+      ok.textContent = opts.confirmLabel || l10n("OK");
       actions.appendChild(cancel);
       actions.appendChild(ok);
       box.appendChild(actions);
@@ -766,7 +767,7 @@
     const picker = document.createElement("div");
     picker.className = "rail-color-picker";
     picker.setAttribute("role", "listbox");
-    picker.setAttribute("aria-label", "Project color");
+    picker.setAttribute("aria-label", l10n("Project color"));
     for (const sw of REPO_COLOR_SWATCHES) {
       const btn = document.createElement("button");
       btn.type = "button";
@@ -984,7 +985,7 @@
         (s) => matchesFilter(s.displayName) || matchesFilter(repoLabelFor(s.cwd)),
       );
       if (pinned.length) {
-        root.appendChild(staticGroupHead("Pinned"));
+        root.appendChild(staticGroupHead(l10n("Pinned")));
         const list = document.createElement("div");
         list.className = "rail-list rail-pinned";
         for (const s of pinned) {
@@ -1007,13 +1008,13 @@
       const forcedOpen = !!q;
       const open = forcedOpen || !state.groupCollapsed.recent;
       root.appendChild(collapsibleGroupHead({
-        title: "Recent",
+        title: l10n("Recent"),
         group: "recent",
         open,
         forcedOpenBySearch: forcedOpen,
-        openTitle: "Hide recent conversations",
-        closedTitle: "Show recent conversations",
-        searchTitle: "Open while your search matches a conversation",
+        openTitle: l10n("Hide recent conversations"),
+        closedTitle: l10n("Show recent conversations"),
+        searchTitle: l10n("Open while your search matches a conversation"),
       }));
       if (open) {
         const list = document.createElement("div");
@@ -1057,13 +1058,13 @@
       const forcedOpen = !!q;
       const open = forcedOpen || !state.groupCollapsed.projects;
       root.appendChild(collapsibleGroupHead({
-        title: "Projects",
+        title: l10n("Projects"),
         group: "projects",
         open,
         forcedOpenBySearch: forcedOpen,
-        openTitle: "Hide projects",
-        closedTitle: "Show projects",
-        searchTitle: "Open while your search matches a project",
+        openTitle: l10n("Hide projects"),
+        closedTitle: l10n("Show projects"),
+        searchTitle: l10n("Open while your search matches a project"),
         action: state.canAddProject ? addProjectButton : undefined,
       }));
       if (open) {
@@ -1085,7 +1086,7 @@
         if (emptyProjects) {
           const note = document.createElement("div");
           note.className = "rail-note";
-          note.textContent = "Every project is archived.";
+          note.textContent = l10n("Every project is archived.");
           root.appendChild(note);
         }
         if (noProjects) {
@@ -1109,13 +1110,13 @@
       const forcedOpen = !!q;
       const open = forcedOpen || !state.groupCollapsed.archived;
       root.appendChild(collapsibleGroupHead({
-        title: "Project Archive",
+        title: l10n("Project Archive"),
         group: "archived",
         open,
         forcedOpenBySearch: forcedOpen,
-        openTitle: "Hide archived projects",
-        closedTitle: "Show archived projects",
-        searchTitle: "Open while your search matches an archived project",
+        openTitle: l10n("Hide archived projects"),
+        closedTitle: l10n("Show archived projects"),
+        searchTitle: l10n("Open while your search matches an archived project"),
       }));
       if (open) {
         const list = document.createElement("div");
@@ -1131,7 +1132,7 @@
     if (!shown) {
       const note = document.createElement("div");
       note.className = "rail-note";
-      note.textContent = q ? "No matches." : NO_PROJECTS;
+      note.textContent = q ? l10n("No matches.") : NO_PROJECTS;
       // An empty rail that only says "No projects yet" is a dead end on the one
       // screen where the user has nothing else to click — and with no group
       // heads rendered, the "+" above has nowhere to be.
@@ -1161,7 +1162,7 @@
     plus.setAttribute("aria-hidden", "true");
     plus.textContent = "+";
     add.appendChild(plus);
-    add.appendChild(document.createTextNode("Add project"));
+    add.appendChild(document.createTextNode(l10n("Add project")));
     add.onclick = (e) => {
       e.stopPropagation();
       openAddProjectMenu(add);
@@ -1232,8 +1233,8 @@
     btn.type = "button";
     btn.className = "rail-action-btn rail-add-project";
     btn.innerHTML = ICON.plus;
-    btn.title = "Add project";
-    btn.setAttribute("aria-label", "Add project");
+    btn.title = l10n("Add project");
+    btn.setAttribute("aria-label", l10n("Add project"));
     btn.onclick = (e) => {
       e.stopPropagation();
       openAddProjectMenu(btn);
@@ -1383,7 +1384,7 @@
       const more = document.createElement("button");
       more.type = "button";
       more.className = "rail-more";
-      more.textContent = "Show more";
+      more.textContent = l10n("Show more");
       more.onclick = (e) => {
         e.stopPropagation();
         state.expanded[expandKey] = true;
@@ -1395,7 +1396,7 @@
       const less = document.createElement("button");
       less.type = "button";
       less.className = "rail-more";
-      less.textContent = "Show less";
+      less.textContent = l10n("Show less");
       less.onclick = (e) => {
         e.stopPropagation();
         delete state.expanded[expandKey];
@@ -1518,7 +1519,7 @@
     head.setAttribute("aria-expanded", String(expanded));
     head.setAttribute(
       "aria-label",
-      (expanded ? "Collapse " : "Expand ") + (repo.label || leaf(repo.cwd)),
+      l10n(expanded ? "Collapse {0}" : "Expand {0}", repo.label || leaf(repo.cwd)),
     );
 
     // Disclosure first, identity second. The folder used to be both — open when
@@ -1549,11 +1550,11 @@
     if (opts.isCurrent) {
       const currentTag = document.createElement("span");
       currentTag.className = "rail-current-tag";
-      currentTag.textContent = "Your IDE";
+      currentTag.textContent = l10n("Your IDE");
       // Named for what it IS. "Current" read as "the project you are working
       // in", which is a different thing now that history follows the rail — you
       // can be working in another project entirely while the window stays here.
-      currentTag.title = "The folder this VS Code window has open";
+      currentTag.title = l10n("The folder this {0} window has open", "VS Code");
       name.appendChild(currentTag);
     }
     head.appendChild(name);
@@ -1593,7 +1594,7 @@
       add.type = "button";
       add.className = "rail-action-btn";
       add.innerHTML = ICON.squarePen;
-      add.title = "New session";
+      add.title = l10n("New session");
       add.onclick = (e) => {
         e.stopPropagation();
         // Whatever resume was still in flight is no longer what the user wants.
@@ -1608,7 +1609,7 @@
     menuBtn.type = "button";
     menuBtn.className = "rail-action-btn";
     menuBtn.innerHTML = ICON.ellipsis;
-    menuBtn.title = "Project actions";
+    menuBtn.title = l10n("Project actions");
     menuBtn.setAttribute("aria-label", menuBtn.title);
     const getMenuItems = () => {
       const items = [];
@@ -1623,19 +1624,17 @@
       // run there, and archive is how those are put away.
       if (repo.added) {
         items.push({
-          label: "Hide project",
-          title: "Take this project out of the list. Nothing is deleted — the folder stays on disk, and + adds it back.",
+          label: l10n("Hide project"),
+          title: l10n("Take this project out of the list. Nothing is deleted — the folder stays on disk, and + adds it back."),
           onSelect: async () => {
             const ok = await railDialog({
-              title: `Hide “${repo.label || leaf(repo.cwd)}”?`,
+              title: l10n("Hide “{0}”?", repo.label || leaf(repo.cwd)),
               // The row vanishes from every linked device at once, and a phone
               // editing a file in it loses the route back to its unsaved text.
               // The desk cannot see whether that is happening, so say it first.
               body:
-                "Nothing is deleted — the folder stays on disk and Add project brings "
-                + "it back. Any conversation still working in it ends. If a linked "
-                + "device has this project open, unsaved file edits there are lost.",
-              confirmLabel: "Hide",
+                l10n("Nothing is deleted — the folder stays on disk and Add project brings it back. Any conversation still working in it ends. If a linked device has this project open, unsaved file edits there are lost."),
+              confirmLabel: l10n("Hide"),
               danger: true,
             });
             if (ok) vscode.postMessage({ type: "removeProjectFolder", cwd: repo.cwd });
@@ -1651,10 +1650,10 @@
         // the menu offered "Move to Projects" on a row already under Projects.
         const inArchive = !!opts.inArchive;
         items.push({
-          label: inArchive ? "Move to Projects" : "Archive project",
+          label: inArchive ? l10n("Move to Projects") : l10n("Archive project"),
           title: inArchive
-            ? "Show this project under Projects again"
-            : "Move this project out of the way. Its conversations stay, and working here brings it back.",
+            ? l10n("Show this project under Projects again")
+            : l10n("Move this project out of the way. Its conversations stay, and working here brings it back."),
           onSelect: () =>
             vscode.postMessage({
               type: "setRepoArchived",
@@ -1669,8 +1668,8 @@
       // hues + none stay one glance away.
       if (colorSupported()) {
         items.push({
-          label: "Set color",
-          title: "Tint this project's icon so it is easy to find",
+          label: l10n("Set color"),
+          title: l10n("Tint this project's icon so it is easy to find"),
           onSelect: () => openColorPicker(menuBtn, repo, lastMenuRect),
         });
       }
@@ -1678,24 +1677,24 @@
       // place: how do I recognise this project at a glance.
       if (iconSupported()) {
         items.push({
-          label: "Set icon",
-          title: "Give this project its own icon instead of a folder",
+          label: l10n("Set icon"),
+          title: l10n("Give this project its own icon instead of a folder"),
           onSelect: () => openIconPicker(menuBtn, repo, lastMenuRect),
         });
       }
       if (colorSupported() || iconSupported()) items.push(null);
       items.push({
-        label: "Clear all history",
+        label: l10n("Clear all history"),
         danger: true,
         disabled: repo.available === false,
         onSelect: async () => {
           const ok = await railDialog({
-            title: `Clear history for “${repo.label || leaf(repo.cwd)}”?`,
+            title: l10n("Clear history for “{0}”?", repo.label || leaf(repo.cwd)),
             // The rail runs standalone — every other helper use in this file
             // guards for the bundle being absent, and so must this one.
             body: railHelpers()?.clearHistoryConfirmation(repo.cwd)
-              || "Every conversation in this project is deleted. This cannot be undone.",
-            confirmLabel: "Clear all",
+              || l10n("Every conversation in this project is deleted. This cannot be undone."),
+            confirmLabel: l10n("Clear all"),
             danger: true,
           });
           if (ok) vscode.postMessage({ type: "clearAllSessions", cwd: repo.cwd });
@@ -1736,12 +1735,12 @@
         .filter((s) => matchesFilter(s.displayName))
         .slice(0, RAIL_EXPANDED);
       for (const s of hits) body.appendChild(renderSession(s, repo, {}));
-      if (!hits.length) body.appendChild(note("No matches."));
+      if (!hits.length) body.appendChild(note(l10n("No matches.")));
       return body;
     }
     const entries = uniqueSessionRows(rows.entries);
     if (!entries.length) {
-      body.appendChild(note("No sessions yet"));
+      body.appendChild(note(l10n("No sessions yet")));
       return body;
     }
     appendSessionSlice(body, entries, cwdKey(repo.cwd), (s) => renderSession(s, repo, {}));
@@ -1902,7 +1901,7 @@
       pinBtn.type = "button";
       pinBtn.className = "rail-action-btn rail-pin-btn" + (isPinned ? " active" : "");
       pinBtn.innerHTML = isPinned ? ICON.pinFilled : ICON.pin;
-      pinBtn.title = isPinned ? "Unpin conversation" : "Pin conversation";
+      pinBtn.title = isPinned ? l10n("Unpin conversation") : l10n("Pin conversation");
       pinBtn.setAttribute("aria-label", pinBtn.title);
       pinBtn.onclick = (e) => {
         e.stopPropagation();
@@ -1915,19 +1914,19 @@
     menuBtn.type = "button";
     menuBtn.className = "rail-action-btn";
     menuBtn.innerHTML = ICON.ellipsis;
-    menuBtn.title = "Session actions";
+    menuBtn.title = l10n("Session actions");
     menuBtn.setAttribute("aria-label", menuBtn.title);
     menuBtn.onclick = (e) => {
       e.stopPropagation();
       const cwd = s.cwd || repo.cwd;
       openMenu(menuBtn, [
         {
-          label: "Rename",
+          label: l10n("Rename"),
           onSelect: async () => {
             const next = await railDialog({
-              title: "Rename conversation",
+              title: l10n("Rename conversation"),
               input: s.displayName || "",
-              confirmLabel: "Rename",
+              confirmLabel: l10n("Rename"),
             });
             if (next == null) return;
             const name = next.trim();
@@ -1937,17 +1936,17 @@
           },
         },
         {
-          label: "Continue on phone…",
+          label: l10n("Continue on phone…"),
           onSelect: () => vscode.postMessage({ type: "showRemoteHandoff", source: "projects", sessionId: s.id, repoCwd: repo.cwd }),
         },
         // A Recent conversation in a folder that is not one of your projects;
         // the host names the folder only where it can add it.
         ...(s.addableCwd ? [{
-          label: "Add to Projects",
+          label: l10n("Add to Projects"),
           onSelect: () => vscode.postMessage({ type: "addToProjects", cwd: s.addableCwd }),
         }] : []),
         {
-          label: isPinned ? "Unpin conversation" : "Pin conversation",
+          label: isPinned ? l10n("Unpin conversation") : l10n("Pin conversation"),
           disabled: !state.pinnedKnown,
           onSelect: () =>
             togglePinnedRow(s, cwd),
@@ -1957,13 +1956,13 @@
         // the behaviour it had before there was one. Every surface that can
         // actually reach a Muse conversation loads the helpers and hides this.
         deleteHistorySupported(s.provider) ? {
-          label: "Delete",
+          label: l10n("Delete"),
           danger: true,
           onSelect: async () => {
             const ok = await railDialog({
-              title: `Delete “${s.displayName || "session"}”?`,
-              body: "The conversation and its history are removed. This cannot be undone.",
-              confirmLabel: "Delete",
+              title: s.displayName ? l10n("Delete “{0}”?", s.displayName) : l10n("Delete “session”?"),
+              body: l10n("The conversation and its history are removed. This cannot be undone."),
+              confirmLabel: l10n("Delete"),
               danger: true,
             });
             if (ok) vscode.postMessage({ type: "deleteSession", id: s.id, name: s.displayName, cwd });

@@ -56,10 +56,10 @@ describe("provider logo assets", () => {
   it("gives every provider a composer prompt, never a logo path", () => {
     const body = objectBody(read("media/chat.js"), "COMPOSER_PLACEHOLDER");
     for (const id of ["grok", "codex", "claude", "muse", "agy"]) {
-      const found = body.match(new RegExp(`${id}: "([^"]*)"`));
+      const found = body.match(new RegExp(`${id}: l10n\\("([^"]*)", "([^"]*)"\\)`));
       expect(found, `${id} needs a composer placeholder`).toBeTruthy();
-      expect(found![1].length, `${id}'s placeholder is too long to be a prompt`).toBeLessThan(40);
-      expect(found![1]).toMatch(/^Ask /);
+      expect(found![1]).toBe("Ask {0}…");
+      expect(found![2].length, `${id}'s placeholder is too long to be a prompt`).toBeLessThan(40);
     }
   });
 
