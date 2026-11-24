@@ -551,6 +551,11 @@ The operator runs `npm run smoke:acp -- --provider=<claude|muse> --scenario=<sto
 - Renders each question's options (single-question single-select resolves on one click; multi → pick-then-Submit; Skip → cancel), replies `{outcome:"accepted", answers, annotations}` (or cancelled), collapses to the question + a green `✓ <choice>`, and rebuilds a read-only "You answered" card from the resume replay
 - A free-text **Other** is added to every question the CLI didn't supply one for, is never duplicated when it did, and the typed text — not the label — is what reaches grok (#85)
 
+### `test/manifest-nls.test.ts` — manifest localization (4 tests)
+
+- Every command title, view and container name, the configuration title and every setting's `description` / `markdownDescription` / `enumDescriptions` in `package.json` is a `%key%` placeholder; every placeholder resolves from `package.nls.json`; `package.nls.zh-cn.json` holds the same keys with no empty value; no translated string drops a link the English one carries (#234)
+- It cannot see a changed English text whose Chinese still describes the old one: whoever rewrites a string in `package.nls.json` rewrites its `zh-cn` line in the same change. Tests that pin a manifest label resolve it through `test-support/manifest-nls.ts`
+
 ---
 
 ## Webview DOM tests
