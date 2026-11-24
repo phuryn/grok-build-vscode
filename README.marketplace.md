@@ -396,7 +396,7 @@ A ` ```mermaid ` block renders as a real diagram via [Mermaid](https://mermaid.j
 
 ## Configuration
 
-Command names and setting descriptions follow VS Code's display language: Simplified Chinese when VS Code runs in Simplified Chinese, English in every other language, Traditional Chinese included. The chat and its own Settings page are in English.
+AFK Pilot follows VS Code's display language: Simplified Chinese when VS Code runs in Simplified Chinese, English in every other language, Traditional Chinese included. In Chinese you get the command names, the setting descriptions, the projects rail, the Settings page and the chat's own controls: the model picker, modes, message box, menus, history, rewind and find. Agent replies, errors, approval and question cards, tool rows and diffs stay as they are. So does AFK Pilot anywhere else: this is for VS Code and the editors based on it.
 
 <details>
 <summary><strong>All <code>grok.*</code> settings</strong> (VS Code Settings → search "grok")</summary>

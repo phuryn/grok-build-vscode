@@ -1,5 +1,17 @@
 # Changelog
 
+## 4.17.13 — 2026-11-24
+
+**The chat's controls, the projects rail and Settings in Simplified Chinese.**
+
+### Added
+
+- **The panel follows VS Code's display language.** When VS Code runs in Simplified Chinese, the model picker, effort levels, modes, message box, `+` menu, session menus, history, rename, find, rewind and edit dialogs, the projects rail and the whole Settings page show in Chinese. Any other language, Traditional Chinese included, keeps English. Agent replies, errors, approval and question cards, tool rows and diffs stay as they are, and so do the desktop app, the phone and the browser. Another language is one new file in `l10n/`.
+
+### Changed
+
+- **The Chinese setting descriptions name the translated controls**: 4.17.12 pointed at modes and settings by their English names.
+
 ## 4.17.12 — 2026-11-24
 
 **AFK Pilot's commands and settings in Simplified Chinese.**
