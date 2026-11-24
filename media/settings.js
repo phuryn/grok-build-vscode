@@ -3494,6 +3494,7 @@
     let lastPaintedKey = "";
     let paintDeferred = false;
     let deferredPaintTimer = null;
+    let composing = false;
 
     const modal = !opts.standalone;
     container.classList.add("settings-surface");
@@ -3769,6 +3770,7 @@
         return;
       }
       lastPaintedKey = key;
+      composing = false;
       paintDeferred = false;
       if (deferredPaintTimer) { clearTimeout(deferredPaintTimer); deferredPaintTimer = null; }
       const focus = chrome.focus;
@@ -4014,9 +4016,15 @@
         }
       };
       // paint() replaces this field, which would cut off an input method in
-      // the middle of a word.
-      search.oninput = (e) => { if (!e.isComposing) applySearch(); };
-      search.addEventListener("compositionend", applySearch);
+      // the middle of a word, so the word's end paints.
+      search.oninput = (e) => {
+        composing = e.isComposing;
+        if (!composing) applySearch();
+      };
+      search.addEventListener("compositionend", () => {
+        composing = false;
+        applySearch();
+      });
       function selectCategory(next) {
         if (!next) return;
         if (next !== "about") aboutChecked = false;
@@ -4575,6 +4583,7 @@
         // the repaint that clears it look like a no-op.
         reconcileProviderPending(snapshot);
         if (container.firstChild && paintKey() === lastPaintedKey) return;
+        if (composing) return;
         if (describeChrome(container).navMenuOpen) {
           paintDeferred = true;
           // The backstop. An open dropdown is a short interaction; a focused

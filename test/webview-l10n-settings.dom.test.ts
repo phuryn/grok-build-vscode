@@ -321,20 +321,34 @@ it("localizes the standalone Settings categories, controls, and forms", () => {
 
 it("leaves the search field in place while an input method is composing", () => {
   const h = boot();
+  h.category("notifications");
   const search = h.find<HTMLInputElement>("#settings-search");
-  const type = (value: string, isComposing: boolean) => {
-    search.value = value;
+  const type = (field: HTMLInputElement, value: string, isComposing: boolean) => {
+    field.value = value;
     const event = new h.window.Event("input", { bubbles: true });
     Object.defineProperty(event, "isComposing", { value: isComposing });
-    search.dispatchEvent(event as unknown as Event);
+    field.dispatchEvent(event as unknown as Event);
   };
-  for (const partial of ["q", "qi", "qi'y"]) type(partial, true);
+  const alerts = () => h.find('[data-id="deskAlerts"] [role="switch"]').getAttribute("aria-checked");
+  expect(alerts()).toBe("false");
+  for (const partial of ["q", "qi", "qi'y"]) type(search, partial, true);
+  h.send({ type: "deskAlerts", value: true });
   expect(h.find("#settings-search")).toBe(search);
-  expect(h.root.textContent).not.toContain("⟦No settings match that search.⟧");
+  expect(search.value).toBe("qi'y");
   search.value = "企业";
   search.dispatchEvent(new h.window.Event("compositionend", { bubbles: true }) as unknown as Event);
-  expect(h.find<HTMLInputElement>("#settings-search").value).toBe("企业");
+  const committed = h.find<HTMLInputElement>("#settings-search");
+  expect(committed.value).toBe("企业");
   expect(h.root.textContent).toContain("⟦No settings match that search.⟧");
+  type(committed, "", false);
+  expect(alerts()).toBe("true");
+  // A cancelled word changes nothing, and later updates still paint.
+  const empty = h.find<HTMLInputElement>("#settings-search");
+  type(empty, "x", true);
+  empty.value = "";
+  empty.dispatchEvent(new h.window.Event("compositionend", { bubbles: true }) as unknown as Event);
+  h.send({ type: "deskAlerts", value: false });
+  expect(alerts()).toBe("false");
 });
 
 it("finds a Settings row by both its English and translated description", () => {
