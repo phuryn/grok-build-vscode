@@ -1942,7 +1942,13 @@ export class GrokSidebar {
     if (!binary) return;
     await this.prepareAgyCli(binary);
     try { this.agyCliVersion = { binary, version: await readAgyCliVersion(binary) }; }
-    catch (error) { this.host.appendLine(`[agy] Version check failed: ${errorDetail(error)}`); }
+    catch (error) {
+      this.host.appendLine(`[agy] Version check failed: ${errorDetail(error)}`);
+      return;
+    }
+    // Not awaited: Settings' Refresh does not wait for this read.
+    void this.refreshModelsIfCliChanged("agy", this.agyCliVersion.version)
+      .catch((error) => this.host.appendLine(`[agy] model read failed: ${errorDetail(error)}`));
   }
 
   private agyChatRequester(session: Session, clientId?: string): RemoteRequester | undefined {
@@ -2449,12 +2455,14 @@ export class GrokSidebar {
     // Probe in a scratch cwd so a failed cleanup cannot appear in the user's
     // project; still delete the dir after the process exits.
     const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "grok-cred-probe-"));
-    const envCwd = this.workspaceRoot() || scratch;
+    const env = this.buildEnv(this.workspaceRoot() || scratch);
+    // Where this process writes: a workspace `.env` can name another home.
+    const grokHome = resolveGrokHome(env);
     const client = new AcpClient({
       signal: this.providerRunSignal("grok"),
       cliPath,
       cwd: scratch,
-      env: this.buildEnv(envCwd),
+      env,
       log: (message) => this.host.appendLine(message),
       grokVersion: this.providerCliVersions.grok,
     });
@@ -2479,9 +2487,9 @@ export class GrokSidebar {
     } finally {
       const probeId = client.sessionId;
       await client.dispose();
-      if (probeId) this.removeSessionFromDisk(probeId, scratch);
+      if (probeId) this.removeSessionFromDisk(probeId, scratch, grokHome);
       // The scratch folder's own catalog, empty now; one that is not refuses.
-      for (const dir of sessionCatalogDirs({ fs: defaultFs, grokHome: resolveGrokHome(process.env), cwd: scratch })) {
+      for (const dir of sessionCatalogDirs({ fs: defaultFs, grokHome, cwd: scratch })) {
         try { fs.rmdirSync(dir); } catch { /* an empty folder is harmless */ }
       }
       try { fs.rmSync(scratch, { recursive: true, force: true }); } catch { /* leftover temp dir is harmless */ }
@@ -22029,7 +22037,9 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   /** Delete a session's on-disk dir + drop its meta override and read-cache entry.
    *  Used when an empty session is abandoned or a legacy primer-only session is swept. Best-effort —
    *  a locked/already-gone dir is logged, not thrown. */
-  private removeSessionFromDisk(id: string | undefined, sessionCwd?: string): boolean {
+  private removeSessionFromDisk(
+    id: string | undefined, sessionCwd?: string, grokHome = resolveGrokHome(process.env),
+  ): boolean {
     if (!id) return false;
     const overrides = this.state.get<SessionMetaOverrides>(SESSION_META_KEY, {});
     const cwd =
@@ -22037,7 +22047,6 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       overrides[id]?.worktreePath ||
       this.sessionCache.get(id)?.entry.cwd ||
       this.workspaceRoot();
-    const grokHome = resolveGrokHome(process.env);
     let removed = false;
     try {
       deleteSessionDir({ fs: defaultFs, grokHome, cwd, id });
@@ -24253,6 +24262,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       }
     }
     if (!this.remoteClients.isCurrent(clientId)) return;
+    // A phone can be the only page open: the panel may never be shown here.
+    this.startModelRefresh();
     // A ready client has rebuilt its page and therefore has no live capture to
     // feed an older host ingress. Drop it before buildRemoteSnapshot inspects
     // remoteVoice, so reconnect cannot resurrect a host-only listening state.

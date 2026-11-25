@@ -152,18 +152,22 @@ that check runs first. The Connect press records consent and reads
 `--version`; on the desk it is the watcher that opens the warm-up session. A warm-up failure is logged and does not clear consent.
 
 A vendor can add models without a CLI update, so age counts too
-(`model-refresh.ts`). Two minutes after the panel's first frame, then every
-hour while it stays open, `refreshStaleModelLists` takes each usable provider
-whose list is over 24 hours old, one at a time, and `rereadProviderModels` asks
-it again without a prompt: Grok, Codex, Claude and DeepSeek through the probes
-above, Muse through `initialize` alone, Antigravity through a blank
-conversation that `removeAgyConversation` deletes afterwards (it has no
-`session/delete`). Codex archives its thread on ACP's delete and lists archived
-threads, so `codex delete --force <id>` follows. The attempt is stored in `grok.modelRefreshAttempts` before
-the read, for every window, so an agent that cannot answer is asked once a day.
-Such a read never sets `needsLogin`, never replaces a list with an empty one,
-and repaints pickers only when the list changed. A changed CLI version and
-Settings' credential Refresh read Muse and Antigravity the same way.
+(`model-refresh.ts`). Two minutes after the panel's or a remote page's first
+frame, then every hour while the window is open, `refreshStaleModelLists` takes
+each usable provider whose list is over 24 hours old, one at a time, and
+`rereadProviderModels` asks it again without a prompt: Grok, Codex, Claude and
+DeepSeek through the probes above, Muse through `initialize` alone, Antigravity
+through a blank conversation that `removeAgyConversation` deletes afterwards
+(it has no `session/delete`). Codex archives its thread on ACP's delete and
+lists archived threads, so `codex delete --force <id>` follows. The attempt is
+stored in `grok.modelRefreshAttempts` before the read, beside the lists and for
+every window of the same app, so an agent that cannot answer is asked once a
+day. Such a read never sets `needsLogin`, never replaces a list with an empty
+one, and repaints pickers only when the list changed. A chat that is already
+open keeps the list its own session gave for its agent; the next new chat
+starts from the new one. A changed CLI version and Settings' credential Refresh
+read Muse and Antigravity the same way; Antigravity's version is read when
+Settings > Providers opens and by each of its chats.
 
 If no Codex binary is found, onboarding installs the latest stable Codex package
 into versioned global storage. `resolveCodexManagedRelease` allows four seconds

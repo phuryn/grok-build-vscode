@@ -102,4 +102,23 @@ describe("model pins at the host", () => {
     await toggle("codex", "codex-known", false);
     expect(sidebar.view.webview.postMessage).toHaveBeenLastCalledWith({ type: "modelPins", pins: [frame.pins[1]] });
   });
+
+  it("takes a pin from a phone whose project folder was closed on the desktop, and answers it", async () => {
+    const { sidebar, values } = host(["codex"]);
+    values.set("grok.providerModelCache", { codex: { models: [{ modelId: "codex-known", name: "Codex model" }] } });
+    const gone = new Session();
+    gone.cwd = "C:/closed";
+    sidebar.sessionCwd = (session: Session) => session.cwd;
+    sidebar.authorizedSessionCwds = () => [];
+    sidebar.remoteTargetableCwd = () => false;
+    sidebar.sendRemoteClient = vi.fn();
+    sidebar.remoteClients.ready("phone");
+    sidebar.remoteClients.setActive("phone", gone);
+
+    sidebar.handleRemoteMessage("phone", { type: "toggleModelPin", provider: "codex", modelId: "codex-known", pinned: true });
+
+    await vi.waitFor(() => expect(Object.keys(values.get(MODEL_PINS_KEY) ?? {})).toEqual(["codex:codex-known"]));
+    expect(sidebar.deliverRemote).toHaveBeenLastCalledWith(["phone"], expect.objectContaining({ type: "modelPins" }), undefined);
+    expect(sidebar.sendRemoteClient).not.toHaveBeenCalled();
+  });
 });
