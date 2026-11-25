@@ -186,9 +186,11 @@ selected binary while the package downloads. Later starts pick up the published
 version. Best-effort pruning retains the binary selected before the download and
 any newer versions.
 
-The new-session picker groups cached models from all connected providers, Grok
-first. Choosing a model chooses the backend and persists it in the session's
-`grok.sessionMeta` override; absent metadata means Grok for older installations.
+With several agents connected, the new-session picker puts pinned models in one
+Pinned group, then groups the remaining cached models by provider, Grok first.
+In an ungrouped picker, a separator divides pinned models from the remaining
+models when both are present. Choosing a model chooses the backend and persists
+it in the session's `grok.sessionMeta` override. Absent metadata means Grok for older installations.
 An empty conversation may switch providers through the same discard-and-restart
 path on the desk and remotely. After the first user turn the provider is immutable,
 and the picker is provider-local; the host also infers the owner of a cached model
@@ -200,6 +202,16 @@ Every remote snapshot also carries the relay-safe `providerState` frame
 when more than one provider is connected. In mixed-provider history and rail rows
 the status dot overlays the mark; single-provider and old-host rows retain the
 standalone dot structure.
+
+`grok.modelPins` is a device-wide record keyed by provider and model id in
+`~/.grok/client-state/model-pins.json`. The host sends the ordered `modelPins`
+frame in the local initial burst, in each remote join snapshot, and to all
+clients after a `toggleModelPin` request. Its arrival enables the buttons. The
+host accepts new pins for real models in usable providers' offered catalogs and
+accepts removal even when the model is gone. The composer snapshots pin order
+on open and updates icons in place from the optimistic toggle or authoritative
+host echo. Unavailable models stay pinned in storage and appear again when
+offered.
 
 The desk’s top-bar **Remote control** button always appears (Remote, History,
 New, More); remotes remove it. Unknown `remoteStatus` shows “Checking…” rather
@@ -669,6 +681,7 @@ The full pedagogical write-up lives in
 | [src/view-move.ts](../src/view-move.ts) | View placement (pure) — the view default-homes in the Secondary Side Bar, which Cursor refuses to create. Decides the one first-run correction into the activity-bar container, and which move mechanism applies: `vscode.moveViews` names a CONTAINER (a host may render ours anywhere), the host's own picker names a LOCATION and is the only route to a dock the host draws itself |
 | [src/sessions.ts](../src/sessions.ts) | Grok disk-driven session listing/delete plus provider-bearing name overrides (pure) — `indexSessions` (stat-only ordering), `readSessionEntries` (windowed read), `listSessions` (whole-list), `clearSessions`, `discoverRepos` (the repo catalog behind the remote switcher). Codex, Claude and Muse list/load stay behind `AcpClient` and are shaped/merged by `provider-ui.ts`; only Codex and Claude support adapter deletion |
 | [src/file-ref.ts](../src/file-ref.ts) | Open-file ref parsing + large-file inline-read guard (pure) |
+| [src/model-pins.ts](../src/model-pins.ts) | Validates model pin records and applies ordered, idempotent pin and unpin operations |
 | [src/file-upload.ts](../src/file-upload.ts) | Pure remote-document upload validation, owned staging-path checks, and session/fork lifetime accounting |
 | [src/plan-review.ts](../src/plan-review.ts) | Plan-snapshot Markdown filename generation (pure) |
 | [src/voice.ts](../src/voice.ts) | Voice-input pure helpers — STT request/response, ffmpeg args, device parsing, key resolution |

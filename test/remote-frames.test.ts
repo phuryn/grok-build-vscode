@@ -433,6 +433,15 @@ describe("parseRelayFrame", () => {
     }))).toBeNull();
   });
 
+  it("accepts model pin toggles without a cwd and validates the provider, model, and desired state", () => {
+    const wrap = (msg: unknown) => JSON.stringify({ t: "msg", clientId: "c1", msg });
+    const msg = { type: "toggleModelPin", provider: "deepseek", modelId: "catalog:latest", pinned: false };
+    expect(parseRelayFrame(wrap(msg))).toEqual({ t: "msg", clientId: "c1", msg });
+    for (const bad of [{ provider: "unknown" }, { modelId: "" }, { modelId: {} }, { pinned: "false" }]) {
+      expect(parseRelayFrame(wrap({ ...msg, ...bad }))).toBeNull();
+    }
+  });
+
   it("drops malformed filesystem selectors and accepts a valid ready token", () => {
     const wrap = (msg: unknown) => JSON.stringify({ t: "msg", clientId: "c1", msg });
     expect(parseRelayFrame(wrap({ type: "selectRepo", cwd: {} }))).toBeNull();

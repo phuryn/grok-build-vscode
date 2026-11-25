@@ -187,6 +187,174 @@ describe("model picker provider marks and manage-providers", () => {
   });
 });
 
+describe("model pins in the composer picker", () => {
+  const grok = { provider: "grok", modelId: "grok-build", name: "Grok Build" };
+  const fast = { provider: "grok", modelId: "grok-fast", name: "Grok Fast" };
+  const claude = { provider: "claude", modelId: "sonnet", name: "Sonnet" };
+  const providers = [{ id: "grok", connected: true }, { id: "claude", connected: true }];
+  const advertise = (h: ReturnType<typeof bootWebview>, ...models: typeof grok[]) => dispatch(h.window, {
+    type: "modelPins",
+    pins: models.map(({ provider, modelId }, pinnedAt) => ({ provider, modelId, pinnedAt })),
+  });
+  const items = (doc: Document) => [...doc.querySelectorAll(".model-picker-list > *")].map((el) => {
+    if (el.classList.contains("model-pin-separator")) return "|";
+    return el.querySelector(".model-picker-name")?.textContent ?? el.textContent;
+  });
+  const pinButton = (doc: Document, model: typeof grok) =>
+    doc.querySelector<HTMLButtonElement>(`.model-picker-pin[data-model-pin="${model.provider}:${model.modelId}"]`)!;
+
+  it("moves pinned rows across agents into one group in the host's order", async () => {
+    const h = bootWebview({ remote: true });
+    dispatch(h.window, { type: "providerState", providers });
+    advertise(h, claude, fast);
+    openModelPicker(h, [grok, fast, claude]);
+    expect(items(h.doc)).toEqual(["Pinned", "Sonnet", "Grok Fast", "Grok", "Grok Build"]);
+    for (const model of [claude, fast, grok]) {
+      const pin = pinButton(h.doc, model);
+      const radio = pin.previousElementSibling!;
+      expect(radio.querySelector(`.provider-glyph.provider-${model.provider}`)).toBeTruthy();
+      expect(radio.getAttribute("role")).toBe("radio");
+      expect(radio.closest('[role="radiogroup"]')).toBeTruthy();
+      expect(pin.parentElement?.tagName).toBe("DIV");
+    }
+    await h.window.happyDOM.close();
+  });
+
+  it.each([false, true])("puts pins before a separator in an ungrouped picker (has messages=%s)", async (continued) => {
+    const h = bootWebview();
+    dispatch(h.window, { type: "providerState", providers: continued ? providers : providers.slice(0, 1) });
+    if (continued) dispatch(h.window, { type: "userMessage", text: "Continue this chat", chips: [] });
+    advertise(h, claude, fast);
+    openModelPicker(h, continued ? [grok, fast, claude] : [grok, fast]);
+    expect(items(h.doc)).toEqual(["Grok Fast", "|", "Grok Build"]);
+    const chip = $(h.doc, "gear-btn");
+    click(h.window, chip);
+    advertise(h, fast, grok, claude);
+    click(h.window, chip);
+    expect(items(h.doc)).toEqual(["Grok Fast", "Grok Build"]);
+    click(h.window, chip);
+    advertise(h);
+    click(h.window, chip);
+    expect(items(h.doc)).toEqual(["Grok Build", "Grok Fast"]);
+    await h.window.happyDOM.close();
+  });
+
+  it("changes the icon in place, takes host corrections, and reorders on reopen", async () => {
+    const h = bootWebview({ remote: true });
+    dispatch(h.window, { type: "providerState", providers });
+    advertise(h, claude);
+    openModelPicker(h, [grok, fast, claude]);
+    const original = ["Pinned", "Sonnet", "Grok", "Grok Build", "Grok Fast"];
+    const picker = $(h.doc, "gear-popover");
+    const list = h.doc.querySelector<HTMLElement>(".model-picker-list")!;
+    const pin = pinButton(h.doc, fast);
+    const outline = pin.innerHTML;
+    pin.focus();
+    list.scrollTop = 41;
+    h.posted.length = 0;
+    click(h.window, pin);
+    expect(pin.getAttribute("aria-pressed")).toBe("true");
+    expect(pin.getAttribute("aria-label")).toBe("Unpin Grok Fast");
+    expect(pin.title).toBe("Unpin Grok Fast");
+    expect(pin.innerHTML).not.toBe(outline);
+    expect(h.doc.activeElement).toBe(pin);
+    expect(picker.hidden).toBe(false);
+    expect(list.scrollTop).toBe(41);
+    expect(picker.querySelector(".model-picker-row.active .model-picker-name")?.textContent).toBe("Grok Build");
+    expect(items(h.doc)).toEqual(original);
+    expect(h.posted).toEqual([{ type: "toggleModelPin", provider: "grok", modelId: "grok-fast", pinned: true }]);
+
+    advertise(h, claude); // The host refused the first request.
+    expect(pinButton(h.doc, fast)).toBe(pin);
+    expect(pin.innerHTML).toBe(outline);
+    expect(pin.getAttribute("aria-pressed")).toBe("false");
+    expect(pin.getAttribute("aria-label")).toBe("Pin Grok Fast");
+    expect(h.doc.activeElement).toBe(pin);
+    expect(list.scrollTop).toBe(41);
+    click(h.window, pin);
+    advertise(h, claude, fast);
+    expect(items(h.doc)).toEqual(original);
+    expect(pinButton(h.doc, fast)).toBe(pin);
+    expect(h.doc.activeElement).toBe(pin);
+    dispatch(h.window, { type: "providerState", providers });
+    expect(items(h.doc)).toEqual(original);
+    expect(h.doc.activeElement).toBe(pinButton(h.doc, fast));
+    click(h.window, pinButton(h.doc, fast).previousElementSibling!); // Preview a model.
+    expect(items(h.doc)).toEqual(original);
+    expect(pinButton(h.doc, fast).getAttribute("aria-pressed")).toBe("true");
+
+    const chip = $(h.doc, "gear-btn");
+    click(h.window, chip);
+    click(h.window, chip);
+    expect(items(h.doc)).toEqual(["Pinned", "Sonnet", "Grok Fast", "Grok", "Grok Build"]);
+    h.posted.length = 0;
+    click(h.window, pinButton(h.doc, fast));
+    expect(pinButton(h.doc, fast).getAttribute("aria-pressed")).toBe("false");
+    expect(items(h.doc)).toEqual(["Pinned", "Sonnet", "Grok Fast", "Grok", "Grok Build"]);
+    expect(h.posted).toEqual([{ type: "toggleModelPin", provider: "grok", modelId: "grok-fast", pinned: false }]);
+    await h.window.happyDOM.close();
+  });
+
+  it("shows no pin controls before the first modelPins frame, and enables them on an empty frame", async () => {
+    const h = bootWebview({ remote: true });
+    openModelPicker(h, [grok, fast]);
+    expect(items(h.doc)).toEqual(["Grok Build", "Grok Fast"]);
+    expect(h.doc.querySelector(".model-picker-pin")).toBeNull();
+    advertise(h);
+    expect(pinButton(h.doc, grok).getAttribute("aria-pressed")).toBe("false");
+    expect(items(h.doc)).toEqual(["Grok Build", "Grok Fast"]);
+    await h.window.happyDOM.close();
+  });
+
+  // The host drops a disconnected agent's models; a signed-out one keeps sending them.
+  it.each([
+    ["disconnected", { connected: false }, [grok, fast]],
+    ["signed-out", { connected: true, needsLogin: true }, [grok, fast, claude]],
+  ])("keeps a %s agent's pin for when its models come back", async (_state, claudeState, sent) => {
+    const h = bootWebview();
+    dispatch(h.window, { type: "providerState", providers: [providers[0], { id: "claude", ...claudeState }] });
+    advertise(h, claude);
+    openModelPicker(h, sent);
+    expect(h.doc.querySelector(".model-pinned-heading")).toBeNull();
+    expect(pinButton(h.doc, claude)).toBeNull();
+    expect(items(h.doc)).not.toContain("Sonnet");
+    click(h.window, $(h.doc, "gear-btn"));
+    dispatch(h.window, { type: "providerState", providers });
+    openModelPicker(h, [grok, fast, claude]);
+    expect(items(h.doc)).toEqual(["Pinned", "Sonnet", "Grok", "Grok Build", "Grok Fast"]);
+    expect(pinButton(h.doc, claude).getAttribute("aria-pressed")).toBe("true");
+    await h.window.happyDOM.close();
+  });
+
+  it("leaves the pin actionable when model selection is locked", async () => {
+    const h = bootWebview();
+    advertise(h);
+    openModelPicker(h, [grok, fast]);
+    dispatch(h.window, { type: "setBusy", value: true });
+    const pin = pinButton(h.doc, fast);
+    expect((pin.previousElementSibling as HTMLButtonElement).disabled).toBe(true);
+    expect(pin.disabled).toBe(false);
+    h.posted.length = 0;
+    click(h.window, pin);
+    expect(h.posted).toEqual([{ type: "toggleModelPin", provider: "grok", modelId: "grok-fast", pinned: true }]);
+    await h.window.happyDOM.close();
+  });
+
+  it("omits pins from the fallback and implied defaults while keeping real catalog rows", async () => {
+    const h = bootWebview();
+    advertise(h, grok);
+    openModelPicker(h, []);
+    expect(items(h.doc)).toEqual(["grok-build"]);
+    expect(h.doc.querySelector(".model-picker-pin")).toBeNull();
+    click(h.window, $(h.doc, "gear-btn"));
+    dispatch(h.window, { type: "providerState", providers });
+    openModelPicker(h, [grok, { provider: "claude", name: "Claude default", modelId: "", defaultImplied: true }]);
+    expect(items(h.doc)).toEqual(["Pinned", "Grok Build", "Claude", "Claude default"]);
+    expect(h.doc.querySelectorAll(".model-picker-pin")).toHaveLength(1);
+    await h.window.happyDOM.close();
+  });
+});
+
 function overflowLabels(window: Window, doc: Document, slotId: string): string[] {
   const overflow = $(doc, slotId).querySelector(".rail-menu-btn");
   expect(overflow, `${slotId} ⋯ menu`).toBeTruthy();

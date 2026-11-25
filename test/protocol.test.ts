@@ -13,6 +13,17 @@ import { CONFIG_DEFAULTS } from "../src/desktop/config-store";
 import { parseWebviewMsg } from "../src/desktop/webview-msg-validate";
 import { manifestLabel } from "../test-support/manifest-nls";
 
+describe("desktop model pin message validation", () => {
+  it("accepts explicit pin and unpin requests for internal provider ids only", () => {
+    const change = { type: "toggleModelPin", provider: "agy", modelId: "gemini", pinned: true };
+    expect(parseWebviewMsg(change)).toEqual(change);
+    expect(parseWebviewMsg({ ...change, pinned: false })).toEqual({ ...change, pinned: false });
+    for (const bad of [{ provider: "future" }, { modelId: " " }, { modelId: 1 }, { pinned: undefined }]) {
+      expect(parseWebviewMsg({ ...change, ...bad })).toBeNull();
+    }
+  });
+});
+
 // chat.js is loaded as a raw <script> in the webview, so there's nothing to import
 // — we assert against its source text instead.
 const chatSrc = readFileSync(new URL("../media/chat.js", import.meta.url), "utf8");

@@ -32,6 +32,7 @@ import { MAX_GITHUB_TOKEN_CHARS } from "../github-auth";
 import { MAX_AGY_API_KEY_CHARS } from "../agy-auth";
 import { ROUTINE_PROMPT_MAX } from "../routines";
 import { isInternalProvider } from "../acp-backend";
+import { isModelPinId } from "../model-pins";
 
 /** Generous next to {@link ROUTINE_PROMPT_MAX}: this gate rejects the absurd,
  *  and validateRoutine does the real trimming once past the boundary. */
@@ -368,6 +369,9 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
     case "toggleRepoPin":
       if (!isString(raw.cwd) || !isBoolean(raw.pinned)) return null;
       break;
+    case "toggleModelPin":
+      if (!isInternalProvider(raw.provider) || !isModelPinId(raw.modelId) || !isBoolean(raw.pinned)) return null;
+      return { type: "toggleModelPin", provider: raw.provider, modelId: raw.modelId, pinned: raw.pinned };
     case "setRepoArchived":
       if (!isString(raw.cwd) || !isBoolean(raw.archived)) return null;
       break;

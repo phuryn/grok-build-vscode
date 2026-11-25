@@ -34,7 +34,7 @@ describe("composer chip", () => {
     const blocks = [...css.matchAll(/@media \(forced-colors: active\)\s*\{((?:[^{}]|\{[^{}]*\})*)\}/g)];
     const picker = blocks.find(([, rules]) => rules.includes(".effort-strip-stop"))?.[1];
     expect(picker).toMatch(/\.effort-strip-stop\[aria-checked="true"\]\s*\{[^}]*outline:\s*2px solid Highlight/);
-    expect(picker).toMatch(/\.model-picker-row\.active\s*\{[^}]*outline:\s*1px solid CanvasText/);
+    expect(picker).toMatch(/\.model-picker-option\.active\s*\{[^}]*outline:\s*1px solid CanvasText/);
   });
 
   it.each(["vscode", "desktop", "remote", "phone"])("opens directly with pinned effort/models/recovery on %s", (surface) => {

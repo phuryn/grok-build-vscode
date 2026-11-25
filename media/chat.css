@@ -4516,6 +4516,29 @@ textarea#input {
 #gear-popover.model-picker .toolbar-popover-item {
   width: calc(100% - 8px); margin-inline: 4px; padding-inline: 6px; border-radius: 6px;
 }
+.model-picker-option {
+  display: flex; align-items: stretch;
+  margin-inline: 4px; border-radius: 6px;
+}
+#gear-popover.model-picker .model-picker-row {
+  flex: 1 1 0; min-width: 0; width: auto; margin: 0; background: transparent;
+}
+.model-picker-option:where(:has(> .model-picker-row:enabled)):hover { background: var(--vscode-list-hoverBackground); }
+.model-picker-pin {
+  flex: 0 0 33px; display: grid; place-items: center;
+  border: 0; padding: 0; border-radius: inherit;
+  background: transparent; color: var(--vscode-descriptionForeground); cursor: pointer;
+}
+.model-picker-pin svg { width: 14px; height: 14px; }
+.model-pin-separator { margin-inline: 4px; }
+@media (hover: hover) and (pointer: fine) {
+  .model-picker-pin[aria-pressed="false"] { opacity: 0; }
+  .model-picker-option:is(:hover, :focus-within) > .model-picker-pin { opacity: 1; }
+  .model-picker-pin:hover {
+    background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground));
+    color: var(--vscode-foreground);
+  }
+}
 .model-picker-list { padding-block: 4px; }
 /* Locked is not faded. `opacity` here made the whole picker look half-erased
    over the transcript for the length of a turn (owner, 2026-09-13: "this should
@@ -4531,13 +4554,13 @@ textarea#input {
 .model-picker button:focus-visible, .context-compact:focus-visible {
   outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px;
 }
-.model-picker button.model-picker-row.active {
+.model-picker-option.active {
   background: var(--vscode-list-inactiveSelectionBackground, var(--vscode-list-hoverBackground));
   outline: 1px solid var(--vscode-contrastActiveBorder, var(--vscode-contrastBorder, var(--vscode-textLink-foreground)));
   outline-offset: -1px;
 }
 .model-picker-row.active .popover-check {
-  width: 16px; height: 16px; border-radius: 50%; display: grid; place-items: center;
+  flex: none; width: 16px; height: 16px; border-radius: 50%; display: grid; place-items: center;
   background: var(--vscode-textLink-foreground); color: var(--vscode-editorWidget-background);
   font-size: 10px; line-height: 1;
 }
@@ -4577,7 +4600,7 @@ textarea#input {
   outline-offset: -1px;
 }
 .effort-strip-stop[aria-checked="true"]:enabled { color: var(--vscode-foreground); }
-.model-picker button:is(.model-picker-row, .effort-strip-stop):focus-visible {
+.model-picker button:is(.model-picker-row, .model-picker-pin, .effort-strip-stop):focus-visible {
   outline: 2px dashed var(--vscode-focusBorder); outline-offset: -2px;
 }
 .effort-bars {
@@ -4599,12 +4622,17 @@ textarea#input {
   .effort-bars .filled, .effort-strip-stop:where(:enabled):hover .effort-bars .filled, #gear-btn .effort-bars .filled { background: CanvasText; }
   .effort-strip-stop[aria-checked="true"] .effort-bars .filled { background: Highlight; }
   .model-picker button.effort-strip-stop[aria-checked="true"] { outline: 2px solid Highlight; outline-offset: -2px; }
-  .model-picker button.model-picker-row.active { outline: 1px solid CanvasText; }
-  .model-picker button:is(.model-picker-row, .effort-strip-stop):focus-visible { outline: 2px dashed Highlight; outline-offset: -2px; }
+  .model-picker-option.active { outline: 1px solid CanvasText; }
+  .model-picker button:is(.model-picker-row, .model-picker-pin, .effort-strip-stop):focus-visible { outline: 2px dashed Highlight; outline-offset: -2px; }
 }
 @media (hover: none), (pointer: coarse) {
   .model-picker-list { max-height: none; }
   .model-picker button.toolbar-popover-item { min-height: 40px; }
+  #gear-popover.model-picker .model-picker-row:has(+ .model-picker-pin) { padding-inline-end: 0; column-gap: 8px; }
+  .model-picker-pin { flex-basis: 44px; min-height: 40px; }
+  .model-picker-pin svg { width: 16px; height: 16px; }
+  /* 82% muted ink gives about 4.3:1 in dark and 3.4:1 in light on the default popovers. */
+  .model-picker-option:not(.active) > .model-picker-pin[aria-pressed="false"] svg { opacity: .82; }
 }
 #mode-btn.disabled { opacity: .45; cursor: not-allowed; pointer-events: none; }
 

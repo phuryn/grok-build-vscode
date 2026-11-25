@@ -4668,8 +4668,27 @@
     return wrap;
   }
 
+  let modelPins = null; // The first host frame (even empty) enables pinning.
+  let modelPinOrder = new Set();
+
+  function modelPinKey(provider, modelId) { return `${provider}:${modelId}`; }
+
+  function paintModelPin(button) {
+    const pinned = modelPins.has(button.dataset.modelPin);
+    const pressed = String(pinned);
+    if (button.getAttribute("aria-pressed") === pressed) return;
+    const label = pinned ? l10n("Unpin {0}", button.dataset.modelName) : l10n("Pin {0}", button.dataset.modelName);
+    button.setAttribute("aria-pressed", pressed);
+    button.setAttribute("aria-label", label);
+    button.title = label;
+    button.innerHTML = pinned ? ICON.pinFilled : ICON.pin;
+    button.firstElementChild.setAttribute("aria-hidden", "true");
+  }
+
   function renderModelPicker() {
-    const scroll = gearPopover.querySelector(".model-picker-list")?.scrollTop || 0;
+    const oldList = gearPopover.querySelector(".model-picker-list");
+    const scroll = gearPopover.hidden ? 0 : oldList?.scrollTop || 0;
+    const focusedPin = oldList?.contains(document.activeElement) && document.activeElement.dataset.modelPin;
     state.gearView = "model";
     gearPopover.innerHTML = "";
     gearPopover.classList.add("model-picker");
@@ -4683,7 +4702,7 @@
     gearPopover.appendChild(list);
     let models = state.availableModels.length
       ? state.availableModels
-      : [{ modelId: state.currentModelId || "grok-build", name: state.currentModelId || "grok-build" }];
+      : [{ modelId: state.currentModelId || "grok-build", name: state.currentModelId || "grok-build", defaultImplied: true }];
     const hasConversation = visibleUserBubbleCount() > 0;
     if (state.providersKnown && hasConversation) {
       models = models.filter((model) => !model.provider || model.provider === state.activeProvider);
@@ -4701,15 +4720,15 @@
       models = offeredProviders().flatMap((provider) => models.filter((model) =>
         (model.provider || state.activeProvider) === provider));
     }
-    let group = "";
-    const addProviderHeading = (provider) => {
-      if (!grouped || provider === group) return;
-      group = provider;
+    const addHeading = (label, className) => {
       const heading = document.createElement("div");
-      heading.className = "popover-section model-provider-heading";
-      heading.textContent = providerDisplayName(provider);
+      heading.className = `popover-section ${className}`;
+      heading.textContent = label;
       list.appendChild(heading);
     };
+    const pinnable = (m) => !!m.modelId && !m.defaultImplied;
+    const keyFor = (m) => modelPinKey(m.provider || state.activeProvider, m.modelId);
+    let pinToRefocus;
     // A provider that cannot answer is simply not in this list. It used to get
     // a heading and a "Sign in to load models" row, which put an agent you
     // cannot pick in the middle of the menu for picking one — and on a phone it
@@ -4718,7 +4737,6 @@
     // (owner, 2026-08-17: "Not connected => Not visible").
     const renderModelRow = (m) => {
       const modelProvider = m.provider || state.activeProvider;
-      addProviderHeading(modelProvider);
       const el = document.createElement("button");
       el.type = "button";
       const active = m.modelId === state.currentModelId && (!m.provider || m.provider === state.activeProvider);
@@ -4731,7 +4749,7 @@
           `<span class="provider-glyph provider-${glyphId}">${providerLogoMarkup(glyphId)}</span>` +
           `<span class="model-picker-name">${escapeHtml(truncate(label, 28))}</span>` +
         `</span>` +
-        (active ? '<span class="popover-check">✓</span>' : "");
+        (active ? '<span class="popover-check" aria-hidden="true">✓</span>' : "");
       el.title = m.description || m.modelId;
       if (modelProvider === "muse" && m.description && m.modelId) {
         const description = document.createElement("span");
@@ -4746,7 +4764,30 @@
         e.stopPropagation();
         previewModel(m);
       };
-      list.appendChild(el);
+      const row = document.createElement("div");
+      row.className = "model-picker-option";
+      row.classList.toggle("active", active);
+      row.appendChild(el);
+      if (modelPins && pinnable(m)) {
+        const key = keyFor(m);
+        const pin = document.createElement("button");
+        pin.type = "button";
+        pin.className = "model-picker-pin";
+        pin.dataset.modelPin = key;
+        pin.dataset.modelName = label;
+        paintModelPin(pin);
+        pin.onclick = (e) => {
+          e.stopPropagation();
+          const pinned = !modelPins.has(key);
+          if (pinned) modelPins.add(key);
+          else modelPins.delete(key);
+          paintModelPin(pin);
+          vscode.postMessage({ type: "toggleModelPin", provider: modelProvider, modelId: m.modelId, pinned });
+        };
+        row.appendChild(pin);
+        if (key === focusedPin) pinToRefocus = pin;
+      }
+      list.appendChild(row);
     };
     const addManageProvidersRow = () => {
       // Worktree actions keep their existing home, outside the model scroller.
@@ -4774,19 +4815,29 @@
         }, footer);
       }
     };
-    if (grouped) {
-      for (const provider of offeredProviders()) {
-        for (const m of models) {
-          if ((m.provider || state.activeProvider) === provider) renderModelRow(m);
-        }
-      }
-      addManageProvidersRow();
-      list.scrollTop = scroll;
-      return;
+    const byKey = new Map(models.filter(pinnable).map((m) => [keyFor(m), m]));
+    const pinned = [...modelPinOrder].map((key) => byKey.get(key)).filter(Boolean);
+    const remaining = models.filter((m) => !pinnable(m) || !modelPinOrder.has(keyFor(m)));
+    if (grouped && pinned.length) addHeading(l10n("Pinned"), "model-pinned-heading");
+    pinned.forEach(renderModelRow);
+    if (!grouped && pinned.length && remaining.length) {
+      const separator = document.createElement("div");
+      separator.className = "popover-sep model-pin-separator";
+      separator.setAttribute("aria-hidden", "true");
+      list.appendChild(separator);
     }
-    for (const m of models) renderModelRow(m);
+    let group = "";
+    for (const m of remaining) {
+      const provider = m.provider || state.activeProvider;
+      if (grouped && provider !== group) {
+        addHeading(providerDisplayName(provider), "model-provider-heading");
+        group = provider;
+      }
+      renderModelRow(m);
+    }
     addManageProvidersRow();
     list.scrollTop = scroll;
+    pinToRefocus?.focus({ preventScroll: true });
   }
 
   /** The trigger for the surface currently being rendered. */
@@ -4850,6 +4901,7 @@
     // under the gear because only their own openers dismissed the others.
     closePopovers();
     state.gearSurface = surface;
+    if (surface === "composer") modelPinOrder = new Set(modelPins);
     renderGearMain();
     positionGearPopover(fromBtn || activeGearButton());
     gearPopover.hidden = false;
@@ -21309,6 +21361,17 @@ ${fullText}`
         };
         renderWelcomeTip();
         break;
+      case "modelPins": {
+        if (!Array.isArray(msg.pins)) break;
+        const first = modelPins === null;
+        modelPins = new Set(msg.pins.filter((pin) => pin && typeof pin.provider === "string" && typeof pin.modelId === "string")
+          .map((pin) => modelPinKey(pin.provider, pin.modelId)));
+        if (!gearPopover.hidden && state.gearView === "model") {
+          if (first) renderModelPicker();
+          else gearPopover.querySelectorAll(".model-picker-pin").forEach(paintModelPin);
+        }
+        break;
+      }
       case "providerState":
         museAdvertised = Array.isArray(msg.providers) && msg.providers.some(p => p && p.id === "muse");
         museAvailable = museAdvertised && msg.providers.some(p => p && p.id === "muse" && !p.unavailableReason);

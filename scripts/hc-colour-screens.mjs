@@ -49,10 +49,14 @@ try {
           <div class="effort-strip-tip">High — deeper reasoning</div>
         </div>
         <div class="model-picker-list" role="radiogroup" aria-label="Model">
-          <button class="toolbar-popover-item model-picker-row active" role="radio" aria-checked="true">
-            <span class="model-picker-name">Gemini 4 Neon</span><span class="popover-check">✓</span>
-          </button>
-          <button class="toolbar-popover-item model-picker-row" role="radio" aria-checked="false">Gemini 4 Carbon</button>
+          <div class="model-picker-option active">
+            <button class="toolbar-popover-item model-picker-row active" role="radio" aria-checked="true">
+              <span class="model-picker-name">Gemini 4 Neon</span><span class="popover-check">✓</span>
+            </button>
+          </div>
+          <div class="model-picker-option">
+            <button class="toolbar-popover-item model-picker-row" role="radio" aria-checked="false">Gemini 4 Carbon</button>
+          </div>
         </div>
       </div>
       <div><button id="gear-btn" class="toolbar-btn model-chip">
@@ -62,7 +66,7 @@ try {
     const mark = await p.evaluate(() => {
       const stop = document.querySelector(".effort-strip-stop[aria-checked=true]");
       const other = document.querySelector(".effort-strip-stop[aria-checked=false]");
-      const row = document.querySelector(".model-picker-row.active");
+      const row = document.querySelector(".model-picker-option.active");
       const check = row.querySelector(".popover-check");
       const bg = (el) => getComputedStyle(el).backgroundColor;
       const outlines = [stop, row].map((el) => getComputedStyle(el).outlineStyle);

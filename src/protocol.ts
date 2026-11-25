@@ -37,6 +37,7 @@ import type { ConnectorView } from "./mcp-connectors";
 import type { RoutineDraft, RoutineModelOption, RoutineProjectOption, RoutineView } from "./routines";
 import type { GitStatusSnapshot } from "./git-status";
 import type { SubscriptionWindow } from "./subscription-usage";
+import type { ModelPin } from "./model-pins";
 
 /**
  * The Changes snapshot as it crosses the wire.
@@ -681,6 +682,7 @@ export type HostMsg =
   // `effort`: the level the session runs at after the switch ("" when the
   // agent reports none). Older hosts send no effort.
   | { type: "modelChanged"; modelId: string; effort?: string }
+  | { type: "modelPins"; pins: readonly ModelPin[] }
   // `modes` is the set this session offers. Absent on an older host: the page
   // keeps its previous rule (Muse's button hidden, Codex without Plan).
   // Muse's native-id advertisement (three on cloud, four on desk) gates its names and new setMode values;
@@ -1444,6 +1446,7 @@ export type WebviewMsg =
   | { type: "toggleSessionPin"; id: string; cwd?: string; pinned: boolean; requestId?: string }
   | { type: "selectRepo"; cwd: string }
   | { type: "toggleRepoPin"; cwd: string; pinned: boolean }
+  | { type: "toggleModelPin"; provider: AcpProvider; modelId: string; pinned: boolean }
   // Where a project sits in the remote client's rail. Both answers are sent:
   // `archived: false` means "hold this one in view", which is a different claim
   // from never having said anything (see RepoArchiveChoice). Purely a remote
@@ -1658,7 +1661,7 @@ export type WebviewMsg =
 // union without failing the build.
 const HOST_MESSAGE_TYPE_MAP: Record<HostMsg["type"], true> = {
   museSettings: true,
-  cloudHostUpdateState: true, initialState: true, moveViewHint: true, welcomeTips: true, projectSetup: true, githubState: true, githubRepos: true, providerState: true, mcpServers: true, mcpConnectors: true, mcpConnectorAuthorization: true, routines: true, codexInstallProgress: true, agyInstallProgress: true, planModeAvailability: true, showThinking: true, appPurpose: true, fontScale: true, grokUpdateStatus: true, updateAvailable: true, updateReady: true, telemetryEnabled: true, thumbsFeedback: true,
+  cloudHostUpdateState: true, initialState: true, moveViewHint: true, welcomeTips: true, modelPins: true, projectSetup: true, githubState: true, githubRepos: true, providerState: true, mcpServers: true, mcpConnectors: true, mcpConnectorAuthorization: true, routines: true, codexInstallProgress: true, agyInstallProgress: true, planModeAvailability: true, showThinking: true, appPurpose: true, fontScale: true, grokUpdateStatus: true, updateAvailable: true, updateReady: true, telemetryEnabled: true, thumbsFeedback: true,
   contextWindowSelection: true, initialized: true, cliUpdating: true, startupStatus: true, session: true, sessionName: true, sessionGoal: true, composerDraftSession: true, modelChanged: true,
   modeChanged: true, openModePopover: true, voiceState: true, voiceConfigured: true,
   voicePartial: true, voiceSubmit: true, voiceTranscript: true, voiceError: true,
@@ -1694,7 +1697,7 @@ const WEBVIEW_MESSAGE_TYPE_MAP: Record<WebviewMsg["type"], true> = {
   questionCancel: true, setModel: true, installCodex: true, cancelCodexInstall: true, installAgy: true, cancelAgyInstall: true, agySignIn: true, setExperimentalAntigravity: true, setExperimentalDeepSeek: true, installDeepSeek: true, cancelDeepSeekInstall: true, deepseekConnect: true, disconnectProvider: true, setDeepSeekHarness: true, runInstallCmd: true, runMuseInstallCmd: true, runGrokLogin: true,
   cancelDeviceLogin: true, submitDeviceLoginCode: true,
   logout: true, checkGrokUpdate: true, updateGrok: true, updateCodex: true, updateClaude: true, recheckConnection: true, refreshProviders: true, retryProviderSession: true,
-  listSessions: true, listRepoSessions: true, selectRepo: true, toggleRepoPin: true, toggleSessionPin: true,
+  listSessions: true, listRepoSessions: true, selectRepo: true, toggleRepoPin: true, toggleModelPin: true, toggleSessionPin: true,
   setRepoArchived: true, setRepoColor: true, setRepoIcon: true,
   resumeSession: true, renameSession: true, deleteSession: true,
   clearAllSessions: true, pickFile: true, mentionQuery: true, addMentionFile: true,

@@ -35,6 +35,7 @@
 // one load. `customName` is never touched.
 
 import { capSessionMetaAutoNames, capSessionMetaUsageLogs } from "./sessions";
+import { MODEL_PINS_KEY } from "./model-pins";
 
 /** The `fs` surface this needs, injected so tests never touch a real disk. */
 export interface StateFs {
@@ -88,6 +89,7 @@ export const DISK_KEYS: Readonly<Record<string, string>> = {
   "grok.defaultModeCohort": "default-mode-cohort.json",
   "grok.sessionMeta": "session-meta.json",
   "grok.repoPins": "repo-pins.json",
+  [MODEL_PINS_KEY]: "model-pins.json",
   "grok.repoArchives": "repo-archives.json",
   "grok.repoColors": "repo-colors.json",
   "grok.installId": "install-id.json",

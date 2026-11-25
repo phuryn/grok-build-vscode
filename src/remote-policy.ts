@@ -203,6 +203,7 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
   listRepoSessions: "view",
   selectRepo: "view",
   toggleRepoPin: "full",
+  toggleModelPin: "full",
   // Rearranges the remote's own sidebar and touches nothing on disk beyond a
   // globalState note. Nothing here can reach the workspace.
   setRepoArchived: "full",
@@ -600,6 +601,7 @@ export const REMOTE_REQUIRES_BOUND_SESSION: Record<WebviewMsg["type"], boolean> 
   listRepoSessions: false,
   selectRepo: false,
   toggleRepoPin: false,
+  toggleModelPin: false,
   setRepoArchived: false,
   setRepoColor: false,
   setRepoIcon: false,
@@ -1024,6 +1026,7 @@ export const OUTBOUND_DISPOSITION: Record<HostMsg["type"], OutboundDisposition> 
   // isRemote), and what is left here is two counts and a list of ids the user
   // has finished with. No project data, no payload — see the type.
   welcomeTips: "mirror",
+  modelPins: "mirror",
   // Where new projects go and how the last attempt went. `root` is the
   // display form (`~/Grok Build`) and nothing here carries a created path —
   // the repo catalog delivers that, already trimmed to what this client may
@@ -1203,6 +1206,7 @@ export const OUTBOUND_PROJECT_AUTH: Record<HostMsg["type"], OutboundProjectAuth>
   hostLink: "none",
   moveViewHint: "none",
   welcomeTips: "none",
+  modelPins: "none",
   projectSetup: "none",
   githubState: "none",
   githubRepos: "none",

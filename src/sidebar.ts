@@ -105,6 +105,7 @@ import {
 import { RoutineRunStore } from "./routine-store";
 import { routinesMessageForRemote } from "./remote-policy";
 import { PersistedState, mementoWithout } from "./persisted-state";
+import { MODEL_PINS_KEY, orderedModelPins, parseModelPins, toggleModelPin } from "./model-pins";
 import { DESK_ALERT_TITLES, deskApprovalCommand, type DeskAlert, type DeskAlertKind } from "./desk-alerts";
 import {
   Session,
@@ -1075,6 +1076,7 @@ export class GrokSidebar {
     // reading, so routing them through the focused session would leave a
     // second tab's welcome screen permanently without advice.
     "welcomeTips",
+    "modelPins",
     // Same reason: the Add project form is a property of the machine, and a
     // phone that opened it while the desk is focused elsewhere must still
     // get the answer to what it just asked for.
@@ -1834,6 +1836,34 @@ export class GrokSidebar {
 
   private postWelcomeTips(): void {
     this.post(this.welcomeTipsMessage());
+  }
+
+  private modelPinsMessage(): Extract<HostMsg, { type: "modelPins" }> {
+    return { type: "modelPins", pins: orderedModelPins(parseModelPins(this.state.get(MODEL_PINS_KEY))) };
+  }
+
+  private modelPinWrites: Promise<void> = Promise.resolve();
+  private updateModelPin(msg: Extract<WebviewMsg, { type: "toggleModelPin" }>, session?: Session): Promise<void> {
+    const write = this.modelPinWrites.then(async () => {
+      const { provider, modelId, pinned } = msg;
+      try {
+        if (pinned) {
+          if (!this.usableProviders().includes(provider)) return;
+          const cache = this.state.get<ProviderModelCache>(PROVIDER_MODEL_CACHE_KEY, {});
+          const offered = modelsForConnectedProviders([provider], cache, session && {
+            provider: session.provider, models: session.client?.availableModels ?? [],
+          });
+          if (!modelId || !offered.some((model) => !model.defaultImplied && model.modelId === modelId)) return;
+        }
+        const current = parseModelPins(this.state.get(MODEL_PINS_KEY));
+        const next = toggleModelPin(current, provider, modelId, pinned, Date.now());
+        if (next !== current) await this.state.update(MODEL_PINS_KEY, next);
+      } finally {
+        this.post(this.modelPinsMessage());
+      }
+    });
+    this.modelPinWrites = write.catch(() => {});
+    return write;
   }
 
   /**
@@ -13469,6 +13499,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   private async onMessage(msg: WebviewMsg, origin: MsgOrigin, clientId?: string): Promise<void> {
     if (this.cloudHostUpdate && !this.cloudHostUpdate.admitting) {
       const refusal: HostMsg = { type: "error", text: CLOUD_UPDATE_REFUSAL };
+      if (msg.type === "toggleModelPin") this.post(this.modelPinsMessage());
       if (origin === "remote" && clientId) this.sendRemoteClient(clientId, refusal);
       else this.post(refusal);
       return;
@@ -13494,6 +13525,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     const remoteBound = origin === "remote" && clientId
       ? this.remoteClients.active(clientId)
       : undefined;
+    if (msg.type === "toggleModelPin") {
+      await this.updateModelPin(msg, origin === "remote" ? remoteBound : this.focused);
+      return;
+    }
     if (
       origin === "remote" &&
       clientId &&
@@ -20512,6 +20547,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // gate + no-editor case live inside refreshImplicitChip).
     this.refreshImplicitChip(true);
     this.postVoiceConfigured();
+    this.post(this.modelPinsMessage());
     void this.postRemoteStatus();
     // Usable, not connected: with only a lapsed provider there is nothing that
     // can answer, and connect-agent lets the user pick any of the three rather
@@ -24131,7 +24167,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       // An explicit, authorized destination can leave a stale binding. Messages
       // acting on the existing conversation (send/cancel/etc.) still require it.
       const resumesAuthorizedCwd = m.type === "resumeSession" && !!m.cwd;
-      if (m.type !== "selectRepo" && m.type !== "listRepoSessions" && !resumesAuthorizedCwd) {
+      if (m.type !== "selectRepo" && m.type !== "listRepoSessions" && m.type !== "toggleModelPin" && !resumesAuthorizedCwd) {
         const active = this.remoteClients.active(clientId);
         const boundCwd = active
           ? this.sessionCwd(active)
@@ -24724,6 +24760,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // once-a-day rule never applied — the host was recording faithfully and
     // nobody was listening.
     snap.push(this.welcomeTipsMessage());
+    snap.push(this.modelPinsMessage());
     snap.push(this.projectSetupMessage(this.githubProjectSetupExtra(clientId)));
     // A demoted tab already has a frozen transcript. clearMessages here would
     // wipe it on a same-page reconnect (mobile thaw). A rebuilt page starts

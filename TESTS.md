@@ -328,7 +328,7 @@ Plan mode hides persistent-grant options on `execute` cards, and the host valida
 
 ### `test/persisted-state.test.ts` — durable client state
 
-`PersistedState` keeps session names, pins, archives and the install id in `~/.grok/client-state/*.json` instead of VS Code `globalState`, so another client on the same machine reads the same state. Covered: keys it does not own delegate straight to `globalState`; the first-run migration seeds each file from `globalState` **and preserves the existing install id** (a fresh one would read as a new machine at the relay and mint a second device row against the one-device cap); disk beats a stale shadow, and a disk value hydrates the shadow so downgrade still finds it; a synchronous read refreshes when another client changed the file; a write **rebases on the current disk snapshot** — another client's entries survive, and *the writer's own deletions still delete* rather than being resurrected; the install id is created atomically, so of two racing instances one wins and the other adopts it; write-then-rename; corrupt JSON and wrong-shaped JSON (`null`, arrays, unrelated objects) both fall back to the shadow rather than crashing activation on `Object.values`; an unwritable directory degrades to `globalState`; writes stay ordered.
+`PersistedState` keeps session names, project and model pins, archives and the install id in `~/.grok/client-state/*.json` instead of VS Code `globalState`, so another client on the same machine reads the same state. Covered: keys it does not own delegate straight to `globalState`; the first-run migration seeds each file from `globalState` **and preserves the existing install id** (a fresh one would read as a new machine at the relay and mint a second device row against the one-device cap); disk beats a stale shadow, and a disk value hydrates the shadow so downgrade still finds it; a synchronous read refreshes when another client changed the file; a write **rebases on the current disk snapshot** — another client's entries survive, and *the writer's own deletions still delete* rather than being resurrected; the install id is created atomically, so of two racing instances one wins and the other adopts it; write-then-rename; corrupt JSON and wrong-shaped JSON (`null`, arrays, unrelated objects) both fall back to the shadow rather than crashing activation on `Object.values`; an unwritable directory degrades to `globalState`; writes stay ordered.
 
 Load-time `autoName` sweep: a fat prompt is capped on the first read (never empty, never gated on the write), a short name stays byte-identical, `customName` is never touched, the file is written only when something changed, a second load is a no-op, and an entry another client added between load and that write survives the rebase.
 
@@ -337,6 +337,10 @@ Injected `StateFs` mirrors node's real `writeFileSync(file, data, options)` sign
 ### `test/auto-name-write.test.ts` — autoName write sites
 
 The two live `autoName` writers (`sessionTitle` and adapter history refresh) plus `updateSessionMeta` (the setter they share) all persist `capAutoName`'s result, so a later third path through the setter cannot store a raw prompt.
+
+### Composer model pins
+
+`test/model-pins.test.ts` covers record parsing, timestamp ties, clock rollback and re-pinning order. `test/model-pins-host.test.ts` exercises the initial burst, remote join snapshot, device-wide broadcast and catalog admission. `test/model-picker.dom.test.ts` drives grouped and continued pickers, optimistic toggles and host echoes, focus and scroll retention, reopening, older hosts, signed-out models and locked or placeholder rows. The protocol, remote-frame and remote-policy suites cover input validation and device-wide delivery.
 
 ### `test/webview-helpers.test.ts` — pure webview helpers (153 tests)
 

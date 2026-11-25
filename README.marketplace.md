@@ -354,6 +354,8 @@ Type `/imagine <prompt>` (or `/imagine-video <prompt>`) and the result renders *
 
 Click the model chip in the composer to open the model picker (it opens once the conversation's models have loaded). The list comes from your CLI; switching is live in most cases. (A few models belong to a different agent and need a quick restart — the extension detects that and carries your context forward.)
 
+Pin a favorite model from its row. The next time you open the picker, pinned models appear first, across connected agents in a new chat and within the current agent in a conversation.
+
 </details>
 
 <details>

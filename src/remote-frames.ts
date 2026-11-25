@@ -1,4 +1,5 @@
 import { isInternalProvider } from "./acp-backend";
+import { isModelPinId } from "./model-pins";
 import { isModeId } from "./mode-prefs";
 import { isPastedText, isPasteTextId } from "./chips";
 // Extension <-> relay wire contract (Phase 1, topology B — the extension dials
@@ -297,6 +298,10 @@ function parseRemoteWebviewMsg(msg: unknown): WebviewMsg | null {
     case "toggleRepoPin":
       return isRemoteCwd(value.cwd) && typeof value.pinned === "boolean"
         ? msg as WebviewMsg
+        : null;
+    case "toggleModelPin":
+      return isInternalProvider(value.provider) && isModelPinId(value.modelId) && typeof value.pinned === "boolean"
+        ? { type: "toggleModelPin", provider: value.provider, modelId: value.modelId, pinned: value.pinned }
         : null;
     case "setRepoArchived":
       return isRemoteCwd(value.cwd) && typeof value.archived === "boolean"

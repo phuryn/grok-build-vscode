@@ -80,6 +80,21 @@ const make = (seed?: (fs: FakeFs, m: FakeMemento) => void) => {
 };
 
 describe("PersistedState", () => {
+  it("persists model pins as a device-wide record and reloads it in another instance", async () => {
+    const { state, fs, memento } = make();
+    const key = "grok.modelPins";
+    const file = `${DIR}/model-pins.json`;
+    const pin = { provider: "grok", modelId: "grok-4.7", pinnedAt: 1 };
+    const pins = { "grok:grok-4.7": pin };
+    expect(DISK_KEYS[key]).toBe("model-pins.json");
+    await state.update(key, pins);
+    expect(memento.store.get(key)).toEqual(pins);
+    expect(JSON.parse(fs.readFileSync(file))).toEqual(pins);
+    expect(new PersistedState(new FakeMemento(), DIR, fs).get(key)).toEqual(pins);
+    fs.setFile(file, JSON.stringify([pin]));
+    expect(new PersistedState(new FakeMemento(), DIR, fs).get(key)).toBeUndefined();
+  });
+
   it("delegates keys it does not own straight to globalState", async () => {
     const { state, memento, fs } = make((_f, m) => m.store.set("grok.cliUpdateExtVersion", "3.1.0"));
     expect(state.get<string>("grok.cliUpdateExtVersion")).toBe("3.1.0");

@@ -33,6 +33,20 @@ import { pathsEqual } from "../src/worktree";
 const sorted = (a: readonly string[]) => [...a].sort();
 
 describe("remote-policy classification tables", () => {
+  it("lets full remotes toggle device-global model pins without a bound project or session", () => {
+    const change = { type: "toggleModelPin", provider: "codex", modelId: "m", pinned: true } as const;
+    const frame: HostMsg = { type: "modelPins", pins: [{ provider: "codex", modelId: "m", pinnedAt: 1 }] };
+    expect(INBOUND_DISPOSITION.toggleModelPin).toBe(INBOUND_DISPOSITION.toggleRepoPin);
+    expect(allowFromRemote(change.type, "full")).toBe(true);
+    expect(allowFromRemote(change.type, "propose")).toBe(false);
+    expect(remoteRequiresBoundSession(change.type)).toBe(false);
+    expect(allowRemoteRepoTarget(change, () => false)).toBe(true);
+    expect(OUTBOUND_DISPOSITION.modelPins).toBe("mirror");
+    expect(OUTBOUND_PROJECT_AUTH.modelPins).toBe("none");
+    expect(mayDeliverRemoteHostMsg(frame, [], undefined, pathsEqual)).toBe(true);
+    expect(transformHostMsgForRemote(frame, {} as MediaInlineDeps)).toEqual(frame);
+  });
+
   it("shares machine compaction settings and scopes the live threshold to its conversation", () => {
     expect(allowFromRemote("setAutoCompact", "full")).toBe(true);
     expect(allowFromRemote("setAutoCompact", "propose")).toBe(false);
