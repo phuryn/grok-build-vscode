@@ -80,6 +80,7 @@ describe("claude warm-up and the needs-login flag (#146)", () => {
       "claude",
       [{ modelId: "claude-opus-5", name: "Opus" }],
       "claude-opus-5",
+      false,
     );
     expect(sidebar.providerNeedsLogin.claude).toBe(false);
   });

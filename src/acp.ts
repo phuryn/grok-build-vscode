@@ -169,6 +169,20 @@ export function offeredEffortValues(list: unknown): string[] | undefined {
   return list.map((e: any) => e?.value).filter((v: unknown): v is string => typeof v === "string" && !HIDDEN_EFFORTS.has(v));
 }
 
+/** An agent's advertised list as the picker keeps it. */
+export function advertisedModels(list: readonly any[] | undefined, provider: AcpProvider): ModelInfo[] {
+  return (list ?? []).map((m: any) => ({
+    modelId: m.modelId,
+    name: m.name,
+    description: m.description,
+    totalContextTokens: m._meta?.totalContextTokens,
+    contextWindowSizes: provider === "grok" ? contextWindowSizes(m._meta?.contextWindows, m._meta?.totalContextTokens) : undefined,
+    supportsReasoningEffort: m._meta?.supportsReasoningEffort === true,
+    reasoningEffort: typeof m._meta?.reasoningEffort === "string" ? m._meta.reasoningEffort : undefined,
+    reasoningEfforts: offeredEffortValues(m._meta?.reasoningEfforts),
+  }));
+}
+
 export interface SlashCommand {
   name: string;
   description?: string;
@@ -666,16 +680,7 @@ export class AcpClient extends EventEmitter {
     if (this.backend.backgroundCommands) void this.refreshCommands();
     else await this.refreshCommands();
     this.resetContextSelection();
-    this.availableModels = (res.models?.availableModels ?? []).map((m: any) => ({
-      modelId: m.modelId,
-      name: m.name,
-      description: m.description,
-      totalContextTokens: m._meta?.totalContextTokens,
-      contextWindowSizes: this.provider === "grok" ? contextWindowSizes(m._meta?.contextWindows, m._meta?.totalContextTokens) : undefined,
-      supportsReasoningEffort: m._meta?.supportsReasoningEffort === true,
-      reasoningEffort: typeof m._meta?.reasoningEffort === "string" ? m._meta.reasoningEffort : undefined,
-      reasoningEfforts: offeredEffortValues(m._meta?.reasoningEfforts),
-    }));
+    this.availableModels = advertisedModels(res.models?.availableModels, this.provider);
     this.currentModelId = resolveModelId(res.models?.currentModelId, this.availableModels);
     // The active session effort is authoritative from the advertised current
     // model (grok stamps SessionHandle.reasoning_effort onto it); fall back to
@@ -779,16 +784,7 @@ export class AcpClient extends EventEmitter {
     else await this.refreshCommands();
     this.resetContextSelection();
     if (res?.models?.availableModels) {
-      this.availableModels = res.models.availableModels.map((m: any) => ({
-        modelId: m.modelId,
-        name: m.name,
-        description: m.description,
-        totalContextTokens: m._meta?.totalContextTokens,
-      contextWindowSizes: this.provider === "grok" ? contextWindowSizes(m._meta?.contextWindows, m._meta?.totalContextTokens) : undefined,
-        supportsReasoningEffort: m._meta?.supportsReasoningEffort === true,
-        reasoningEffort: typeof m._meta?.reasoningEffort === "string" ? m._meta.reasoningEffort : undefined,
-      reasoningEfforts: offeredEffortValues(m._meta?.reasoningEfforts),
-      }));
+      this.availableModels = advertisedModels(res.models.availableModels, this.provider);
     }
     this.currentModelId =
       resolveModelId(res?.models?.currentModelId, this.availableModels) ?? this.currentModelId;

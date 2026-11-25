@@ -9,7 +9,7 @@ import { CloudHostUpdate, cloudHostIsIdle, cloudHostBootSupportsUpdate, cloudLiv
 import { MuseBackend, withMuseCredentialBackend } from "./muse-backend";
 import { locateMuseCli, parseMuseVersionOutput } from "./muse-cli-locator";
 import { museInstallCommand } from "./muse-install";
-import { AgyBackend, agyProfile, agyProfileDir, agySessionsFor, listAgyCatalog, locateAgyCli, type AgyProfile } from "./agy-backend";
+import { AgyBackend, agyProfile, agyProfileDir, agySessionsFor, listAgyCatalog, locateAgyCli, removeAgyConversation, type AgyProfile } from "./agy-backend";
 import { FIRST_PROMPT_EDIT } from "./fork-points";
 import { buildAgyForkHandoff } from "./agy-fork";
 import { AGY_HANDOFF_MARKER } from "./agy-handoff";
@@ -35,7 +35,7 @@ import * as os from "node:os";
 import { MISSING_PROVIDER_CONFIG_STAMP, resolveProviderConfigFile, writeProviderConfigFile } from "./provider-config";
 import * as path from "node:path";
 import { spawn } from "node:child_process";
-import { AcpClient, EffortLevel, ExitPlanRequest, PermissionRequest, QuestionRequest } from "./acp";
+import { AcpClient, advertisedModels, EffortLevel, ExitPlanRequest, PermissionRequest, QuestionRequest } from "./acp";
 import type { AcpProvider, BackendSessionListEntry } from "./acp-backend";
 import { usesAdapterHistory, isInternalProvider, INTERNAL_PROVIDERS, supportsSessionDeletion, supportsHistoryDeletion, supportsModeSwitching, supportsAutoAccept, supportsClientMcpServers, usesPerCallContextOccupancy, supportsFork } from "./acp-backend";
 import { CODEX_ACP_ADAPTER_VERSION, CodexBackend, isCodexCredentialError } from "./codex-backend";
@@ -80,6 +80,14 @@ import {
   type ProviderModelInfo,
   type ProviderHistoryCursor,
 } from "./provider-ui";
+import {
+  MODEL_REFRESH_ATTEMPTS_KEY,
+  MODEL_REFRESH_CHECK_MS,
+  MODEL_REFRESH_FIRST_DELAY_MS,
+  modelListIsStale,
+  modelRefreshAttempts,
+  sameModelList,
+} from "./model-refresh";
 import {
   nextWakeAt,
   ROUTINES_KEY,
@@ -1282,6 +1290,8 @@ export class GrokSidebar {
   private providerCliUpdates: Partial<Record<AcpProvider, { status: "running" | "succeeded" | "failed"; message: string }>> = {};
   private providerCliUpdate?: { provider: AcpProvider; done: Promise<void> };
   private providerModelProbes = new Map<AcpProvider, Set<Promise<boolean>>>();
+  private modelRereads?: Map<AcpProvider, Promise<void>>;
+  private modelRefreshTimer?: ReturnType<typeof setTimeout>;
   /** History browsing scope. Deliberately independent of the live session cwd. */
   private selectedRepoCwd?: string;
   /**
@@ -2253,7 +2263,7 @@ export class GrokSidebar {
   }
 
   /** session/new discovers models without sending a prompt or proving the key. */
-  private warmConnectedDeepSeekModels(): Promise<void> {
+  private warmConnectedDeepSeekModels(background = false): Promise<void> {
     if (!this.hasProviderConsent("deepseek")) return Promise.resolve();
     if (this.deepseekModelProbe) return this.deepseekModelProbe;
     const signal = this.providerRunSignal("deepseek");
@@ -2270,7 +2280,7 @@ export class GrokSidebar {
         signal.throwIfAborted();
         await client.newSession();
         signal.throwIfAborted();
-        await this.cacheProviderModels("deepseek", client.availableModels, client.currentModelId);
+        await this.cacheProviderModels("deepseek", client.availableModels, client.currentModelId, background);
       } finally { await client.dispose(); }
     })().catch(() => {
       if (!signal.aborted) this.host.appendLine("[deepseek] Could not read the model catalog. Reconnect DeepSeek to retry.");
@@ -2281,7 +2291,7 @@ export class GrokSidebar {
     return probe;
   }
 
-  private async warmConnectedCodexModels(requireProof = false): Promise<boolean> {
+  private async warmConnectedCodexModels(requireProof = false, background = false): Promise<boolean> {
     if (!this.hasProviderConsent("codex")) return false;
     const signal = this.providerRunSignal("codex");
     const cliPath = this.locateProvider("codex");
@@ -2291,7 +2301,7 @@ export class GrokSidebar {
         cliPath,
         signal,
         onModels: (models, currentModelId) => {
-          if (!signal.aborted) return this.cacheProviderModels("codex", models, currentModelId);
+          if (!signal.aborted) return this.cacheProviderModels("codex", models, currentModelId, background);
         },
         log: (message) => this.host.appendLine(message),
         // Codex answered "Internal error" for a session in a bare temp dir on
@@ -2306,6 +2316,7 @@ export class GrokSidebar {
     } catch (error) {
       if (signal.aborted) return false;
       this.host.appendLine(`[codex] model-cache warm-up failed: ${(error as Error).message}`);
+      if (background) return false;
       // The warm-up is the first thing that talks to the agent after a connect,
       // so its failure is the earliest honest answer about the credentials —
       // but only when the failure IS about credentials.
@@ -2324,7 +2335,7 @@ export class GrokSidebar {
     }
   }
 
-  private async warmConnectedClaudeModels(requireProof = false): Promise<boolean> {
+  private async warmConnectedClaudeModels(requireProof = false, background = false): Promise<boolean> {
     if (!this.hasProviderConsent("claude")) return false;
     const signal = this.providerRunSignal("claude");
     const cliPath = this.locateProvider("claude");
@@ -2334,7 +2345,7 @@ export class GrokSidebar {
         cliPath,
         signal,
         onModels: (models, currentModelId) => {
-          if (!signal.aborted) return this.cacheProviderModels("claude", models, currentModelId);
+          if (!signal.aborted) return this.cacheProviderModels("claude", models, currentModelId, background);
         },
         log: (message) => this.host.appendLine(message),
         // Same refusal Codex saw: `session/new` answering "Internal error" for
@@ -2349,6 +2360,7 @@ export class GrokSidebar {
     } catch (error) {
       if (signal.aborted) return false;
       this.host.appendLine(`[claude] model-cache warm-up failed: ${(error as Error).message}`);
+      if (background) return false;
       if (isClaudeCredentialError(error)) {
         this.setProviderNeedsLogin("claude", true);
       } else if (!requireProof) {
@@ -2366,8 +2378,10 @@ export class GrokSidebar {
   /** Explicit credential observation. Unlike history refresh this never obeys
    * the listing freshness clock, so a completed sign-in is visible at once.
    * First Connect requires proof: unrelated probe failures must not publish
-   * a healthy account before the user has ever signed in here. */
-  private async reprobeProviderCredentials(provider: AcpProvider, requireProof = false): Promise<boolean> {
+   * a healthy account before the user has ever signed in here.
+   * In the background (rereadProviderModels) a failure changes nothing: nobody
+   * asked, and a laptop that woke offline must not lose an agent over it. */
+  private async reprobeProviderCredentials(provider: AcpProvider, requireProof = false, background = false): Promise<boolean> {
     if (!this.hasProviderConsent(provider)) return false;
     const signal = this.providerRunSignal(provider);
     if (provider === "deepseek") {
@@ -2391,7 +2405,8 @@ export class GrokSidebar {
       const probes = (this.providerModelProbes ??= new Map());
       const pending = probes.get(provider) ?? new Set<Promise<boolean>>();
       probes.set(provider, pending);
-      const probe = provider === "codex" ? this.warmConnectedCodexModels(requireProof) : this.warmConnectedClaudeModels(requireProof);
+      const probe = provider === "codex" ? this.warmConnectedCodexModels(requireProof, background)
+        : this.warmConnectedClaudeModels(requireProof, background);
       pending.add(probe);
       try { return await probe; } finally { pending.delete(probe); }
     }
@@ -2419,10 +2434,14 @@ export class GrokSidebar {
       await client.newSession();
       if (signal.aborted) return false;
       this.setProviderNeedsLogin("grok", false);
+      if (client.availableModels?.length) {
+        await this.cacheProviderModels("grok", client.availableModels, client.currentModelId, true);
+      }
       return true;
     } catch (error) {
       if (signal.aborted) return false;
       this.host.appendLine(`[grok] credential re-probe failed: ${errorDetail(error)}`);
+      if (background) return false;
       if (client.isCredentialError(error) || isCredentialError(error)) {
         this.setProviderNeedsLogin("grok", true);
       }
@@ -2433,6 +2452,122 @@ export class GrokSidebar {
       if (probeId) this.removeSessionFromDisk(probeId, scratch);
       try { fs.rmSync(scratch, { recursive: true, force: true }); } catch { /* leftover temp dir is harmless */ }
     }
+  }
+
+  /** Muse names its models in `initialize`; no session is opened for them. */
+  private cacheMuseCatalog(init: any, signal: AbortSignal): PromiseLike<void> | undefined {
+    const catalog = init?._meta?.models;
+    if (signal.aborted || !Array.isArray(catalog?.availableModels)) return undefined;
+    return this.cacheProviderModels("muse", advertisedModels(catalog.availableModels, "muse"), catalog.currentModelId, true);
+  }
+
+  private async readMuseModels(): Promise<void> {
+    await this.museCliChange;
+    const cliPath = this.locateProvider("muse");
+    if (!cliPath) return;
+    const signal = this.providerRunSignal("muse");
+    const client = new AcpClient({ signal, cliPath, cwd: this.projectHomeDir(), env: { ...process.env },
+      backend: this.createProviderBackend("muse"), refuseServerRequests: true, log: () => {} });
+    let stored: PromiseLike<void> | undefined;
+    client.on("initialized", (init) => { stored = this.cacheMuseCatalog(init, signal); });
+    try {
+      await client.start();
+      await stored;
+    } finally { await client.dispose(); }
+  }
+
+  /** Antigravity names its models only in `session/new`, and has no
+   *  session/delete: the conversation this opens is removed afterwards. */
+  private async readAgyModels(): Promise<void> {
+    if (this.agyCliInstall) return;
+    await this.agyCliUpdate;
+    const cliPath = this.installedAgyCli();
+    if (!cliPath) return;
+    const method = this.agyMethod();
+    const profile = this.agyProfileForChat(undefined, method);
+    const key = method === "api-key" ? await this.agySavedKey() : undefined;
+    if (method === "api-key" ? !key : !await this.agyGoogleAvailable(profile)) return;
+    const signal = this.providerRunSignal("agy");
+    const env = agyCredentialEnv(process.env, key);
+    const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "agy-models-"));
+    const client = new AcpClient({
+      signal, cliPath, cwd: scratch, env: key ? env : { ...env, BROWSER: "none" },
+      backend: new AgyBackend({ profile }),
+      ...(key ? { startupAuth: { methodId: AGY_KEY_METHOD } } : {}),
+      initializeTimeoutMs: 4_000,
+      refuseServerRequests: true,
+      // Credential details can appear on stderr.
+      log: () => {},
+    });
+    try {
+      if (key) await client.start();
+      else await startAgyGoogleChat(client);
+      await client.newSession();
+      if (!signal.aborted) await this.cacheProviderModels("agy", client.availableModels, client.currentModelId, true);
+    } finally {
+      const id = client.sessionId;
+      await client.dispose();
+      removeAgyConversation(profile, id);
+      try { fs.rmSync(scratch, { recursive: true, force: true }); } catch { /* leftover temp dir is harmless */ }
+    }
+  }
+
+  /** Ask one agent for its models again, without a prompt and without touching
+   *  its sign-in state. Never rejects: a failure keeps the list it has. */
+  private rereadProviderModels(provider: AcpProvider): Promise<void> {
+    const rereads = (this.modelRereads ??= new Map<AcpProvider, Promise<void>>());
+    const running = rereads.get(provider);
+    if (running) return running;
+    // The read would hold the binary an update is replacing.
+    if (!this.hasProviderConsent(provider) || this.providerCliUpdate?.provider === provider) return Promise.resolve();
+    const read = (async () => {
+      try {
+        if (provider === "muse") await this.readMuseModels();
+        else if (provider === "agy") await this.readAgyModels();
+        else if (provider === "deepseek") await this.warmConnectedDeepSeekModels(true);
+        else await this.reprobeProviderCredentials(provider, false, true);
+      } catch (error) {
+        this.host.appendLine(`[${provider}] could not re-read the model list${provider === "agy" ? "" : `: ${errorDetail(error)}`}`);
+      }
+    })().finally(() => { rereads.delete(provider); });
+    rereads.set(provider, read);
+    return read;
+  }
+
+  /**
+   * Re-read every connected agent's list that is over a day old, one agent at a
+   * time. A CLI version change is not enough to go by: OpenAI added models
+   * behind an unchanged Codex, and the list here stayed three weeks old.
+   *
+   * The attempt is recorded before the read and shared by every window, so an
+   * agent that cannot answer is asked once a day, not once an hour per window.
+   */
+  private async refreshStaleModelLists(stopped: () => boolean = () => false): Promise<void> {
+    for (const provider of this.usableProviders()) {
+      if (stopped()) return;
+      const now = Date.now();
+      const seenAt = this.state.get<ProviderModelCache>(PROVIDER_MODEL_CACHE_KEY, {})[provider]?.seenAt;
+      const attempts = modelRefreshAttempts(this.state.get(MODEL_REFRESH_ATTEMPTS_KEY, {}));
+      if (!modelListIsStale(seenAt, attempts[provider], now)) continue;
+      await this.state.update(MODEL_REFRESH_ATTEMPTS_KEY, { ...attempts, [provider]: now });
+      await this.rereadProviderModels(provider);
+    }
+  }
+
+  private startModelRefresh(): void {
+    if (this.modelRefreshTimer) return;
+    const schedule = (delay: number): void => {
+      const timer = setTimeout(() => {
+        const stopped = () => this.modelRefreshTimer !== timer;
+        void this.refreshStaleModelLists(stopped)
+          .catch((error) => this.host.appendLine(`[models] refresh failed: ${errorDetail(error)}`))
+          .finally(() => { if (!stopped()) schedule(MODEL_REFRESH_CHECK_MS); });
+      }, delay);
+      // A window closing is never held open for this.
+      timer.unref?.();
+      this.modelRefreshTimer = timer;
+    };
+    schedule(MODEL_REFRESH_FIRST_DELAY_MS);
   }
 
   /**
@@ -3303,7 +3438,11 @@ export class GrokSidebar {
       const agyVersion = this.refreshAgyCliVersion();
       await Promise.all(INTERNAL_PROVIDERS.map(async provider => {
         if (!located[provider] || !this.hasProviderConsent(provider)) return;
-        if (opts.credentials === true) await this.reprobeProviderCredentials(provider).catch(() => false);
+        if (opts.credentials === true) {
+          await this.reprobeProviderCredentials(provider).catch(() => false);
+          // The others' credential probe reads their list on the way.
+          if (provider === "muse" || provider === "agy") await this.rereadProviderModels(provider);
+        }
         if (provider !== "grok" && provider !== "agy" && provider !== "deepseek") await this.reprobeProviderVersion(provider);
       }));
       await agyVersion;
@@ -3393,13 +3532,17 @@ export class GrokSidebar {
     });
   }
 
+  /** `quiet`: a read nobody is waiting on. It keeps the list it has when the
+   *  agent answers with none, and repaints pickers only when the list changed. */
   private cacheProviderModels(
     provider: AcpProvider,
     models: readonly ProviderModelInfo[] | readonly any[],
     currentModelId?: string,
+    quiet = false,
   ): PromiseLike<void> {
     const current = this.state.get<ProviderModelCache>(PROVIDER_MODEL_CACHE_KEY, {});
     const clean = models.map(({ provider: _provider, defaultImplied: _default, ...model }: any) => model);
+    if (quiet && !clean.length) return Promise.resolve();
     const stored = this.state.update(PROVIDER_MODEL_CACHE_KEY, {
       ...current,
       [provider]: {
@@ -3409,7 +3552,11 @@ export class GrokSidebar {
         // Stamp the CLI this catalog came from, so a later version change can
         // be seen. Undefined when the probe has not answered yet, which reads
         // as "unknown" and costs one re-read later — never a stale catalog.
-        cliVersion: this.providerCliVersions[provider],
+        // Antigravity's version is not in that map, and a stamp already there
+        // is kept rather than lost to a probe that is still out.
+        cliVersion: this.providerCliVersions[provider]
+          ?? (provider === "agy" ? this.agyCliVersion?.version : undefined)
+          ?? current[provider]?.cliVersion,
       },
     } satisfies ProviderModelCache);
     // The picker reads this cache, and an adapter's models arrive
@@ -3425,6 +3572,7 @@ export class GrokSidebar {
     // options cannot disturb a live thread: the current model is re-sent
     // unchanged, so nothing about the running conversation moves.
     const providerIsNew = !current[provider] || (current[provider].models ?? []).length === 0;
+    if (quiet && sameModelList(current[provider]?.models, clean)) return stored;
     void Promise.resolve(stored).then(() => {
       const sessions = providerIsNew
         ? this.sessionsForModelRefresh()
@@ -10743,6 +10891,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     if (this.reaper) { clearInterval(this.reaper); this.reaper = undefined; }
     if (this.routineTimer) { clearInterval(this.routineTimer); this.routineTimer = undefined; }
     if (this.workflowTimer) { clearInterval(this.workflowTimer); this.workflowTimer = undefined; }
+    if (this.modelRefreshTimer) { clearTimeout(this.modelRefreshTimer); this.modelRefreshTimer = undefined; }
     for (const timer of this.loginReprobeTimers?.values() ?? []) clearTimeout(timer);
     this.cancelAllDeviceLogins();
     this.loginReprobeTimers?.clear();
@@ -10890,7 +11039,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     this.host.appendLine(
       `[${provider}] CLI ${cached.cliVersion ?? "unknown"} -> ${version}; re-reading the model catalog`,
     );
-    if (!signal.aborted) await this.reprobeProviderCredentials(provider);
+    if (signal.aborted) return;
+    // These two have no credential probe that opens a session.
+    if (provider === "muse" || provider === "agy") await this.rereadProviderModels(provider);
+    else await this.reprobeProviderCredentials(provider);
   }
 
   /**
@@ -16286,15 +16438,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         backend,
         log: (message) => this.host.appendLine(message),
       });
-      if (provider === "muse") client.on("initialized", (init) => {
-        if (signal.aborted) return;
-        const catalog = init?._meta?.models;
-        if (!Array.isArray(catalog?.availableModels)) return;
-        const models = catalog.availableModels.map((m: any) => ({ modelId: m.modelId, name: m.name,
-          description: m.description, totalContextTokens: m._meta?.totalContextTokens }));
-        const cache = this.state.get<ProviderModelCache>(PROVIDER_MODEL_CACHE_KEY, {});
-        void this.state.update(PROVIDER_MODEL_CACHE_KEY, { ...cache, muse: { models, currentModelId: catalog.currentModelId, seenAt: Date.now() } });
-      });
+      if (provider === "muse") client.on("initialized", (init) => { void this.cacheMuseCatalog(init, signal); });
       let exited = false;
       client.on("exit", () => {
         exited = true;
@@ -20355,6 +20499,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         if (!signal.aborted) return this.refreshModelsIfCliChanged(provider, version);
       }).catch(() => { /* advisory: a version read must not reject into the void */ });
     }
+    this.startModelRefresh();
     this.post({
       type: "summarizeRepliesAloud",
       value: this.host.getConfiguration("grok").get<boolean>("summarizeRepliesAloud", true),

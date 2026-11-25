@@ -52,7 +52,7 @@ describe("DeepSeek catalog before a first message", () => {
     s.focused.provider = "grok";
     await s.onMessage({ type: "deepseekConnect", key: "fake-key" }, "local");
     expect(create).toHaveBeenCalledOnce(); expect(dispose).toHaveBeenCalledOnce();
-    expect(s.cacheProviderModels).toHaveBeenCalledWith("deepseek", [{ modelId: '["deepseek-official","deepseek-v4-flash"]', name: "DeepSeek V4 Flash" }], '["deepseek-official","deepseek-v4-flash"]');
+    expect(s.cacheProviderModels).toHaveBeenCalledWith("deepseek", [{ modelId: '["deepseek-official","deepseek-v4-flash"]', name: "DeepSeek V4 Flash" }], '["deepseek-official","deepseek-v4-flash"]', false);
     expect(prompt).not.toHaveBeenCalled();
     expect(s.focused.provider).toBe("grok");
   });

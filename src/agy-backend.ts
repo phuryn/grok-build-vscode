@@ -61,6 +61,24 @@ export function agyProfileDir(profile: AgyProfile, env: NodeJS.ProcessEnv = proc
   return path.join(agyGeminiHome(env, home), profile === "server" ? "antigravity-acp" : "antigravity-cli");
 }
 
+/** Antigravity has no session/delete. Remove the one conversation this host
+ *  opened only to read the model list; best effort, and that id alone. */
+export function removeAgyConversation(
+  profile: AgyProfile,
+  id: string | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+  home = os.homedir(),
+): void {
+  if (!id || !/^[a-zA-Z0-9_-]{1,128}$/.test(id)) return;
+  const dir = agyProfileDir(profile, env, home);
+  const conversations = path.join(dir, "conversations");
+  const targets = [".db", ".db-wal", ".db-shm", ".meta"].map((suffix) => path.join(conversations, id + suffix));
+  for (const target of [...targets, path.join(dir, "brain", id)]) {
+    try { fs.rmSync(target, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 }); }
+    catch { /* still held by the process that just exited */ }
+  }
+}
+
 export function agyWorkingFolderPrompt(cwd: string): string {
   return `The project folder for this session is ${cwd}. It is your working directory: run every command with its working directory set to this folder, and create or edit files inside it unless the user names another location. The other workspace folders listed in your context hold skills only.`;
 }
