@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 4.17.15 — 2026-11-25
 
 **Pinned models, and model lists that refresh themselves.**
 
