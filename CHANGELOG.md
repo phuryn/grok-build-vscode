@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+**Pinned models, and model lists that refresh themselves.**
+
+### Added
+
+- **Pin the models you use.** Each row of the model picker has a pin. Pinned models come first the next time the picker opens: in a *Pinned* group across connected agents in a new chat, and above the rest of the agent's models in a conversation. Pins belong to the machine, so every window, the phone and the browser show the same ones.
+
+### Changed
+
+- **Model lists are re-read once a day.** When the panel is open, each connected agent whose list is over a day old is asked for it again, one at a time; an agent that does not answer keeps its list and is left alone for a day. A new agent version re-reads its list too, which for Grok, Muse and Antigravity saved nothing before. A new model now shows up without opening a chat with its agent.
+
 ## 4.17.14 — 2026-11-24
 
 **Context usage, plan and question cards, tips and the connect panels in Simplified Chinese.**
