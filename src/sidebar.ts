@@ -2450,6 +2450,10 @@ export class GrokSidebar {
       const probeId = client.sessionId;
       await client.dispose();
       if (probeId) this.removeSessionFromDisk(probeId, scratch);
+      // The scratch folder's own catalog, empty now; one that is not refuses.
+      for (const dir of sessionCatalogDirs({ fs: defaultFs, grokHome: resolveGrokHome(process.env), cwd: scratch })) {
+        try { fs.rmdirSync(dir); } catch { /* an empty folder is harmless */ }
+      }
       try { fs.rmSync(scratch, { recursive: true, force: true }); } catch { /* leftover temp dir is harmless */ }
     }
   }

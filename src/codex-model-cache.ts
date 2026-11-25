@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { AcpClient, type ModelInfo } from "./acp";
+import { execGrokCli } from "./cli-process";
 import { CodexBackend, type CodexBackendOptions } from "./codex-backend";
 
 export interface WarmCodexModelCacheOptions {
@@ -17,6 +18,27 @@ export interface WarmCodexModelCacheOptions {
   fallbackCwd?: string;
 }
 
+/**
+ * ACP's session/delete archives the thread, and Codex lists archived threads:
+ * a daily read would leave one "Untitled" there every day. `codex delete` takes
+ * exactly the id it is given. A Codex without it refuses the flag, and the
+ * thread stays archived.
+ */
+async function deleteArchivedThread(id: string, options: WarmCodexModelCacheOptions): Promise<void> {
+  if (!/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id)) return;
+  try {
+    await execGrokCli(options.cliPath, ["delete", "--force", id], {
+      env: options.env ?? { ...process.env },
+      timeout: 15_000,
+      windowsHide: true,
+      signal: options.signal,
+      closeStdin: true,
+    });
+  } catch {
+    options.log?.("[codex] could not delete the throwaway session; it stays archived");
+  }
+}
+
 async function readModelsIn(cwd: string, options: WarmCodexModelCacheOptions): Promise<void> {
   options.signal?.throwIfAborted();
   const client = new AcpClient({
@@ -27,6 +49,7 @@ async function readModelsIn(cwd: string, options: WarmCodexModelCacheOptions): P
     backend: new CodexBackend(options.backend),
     log: options.log ?? (() => {}),
   });
+  let archived: string | undefined;
   try {
     await client.start();
     options.signal?.throwIfAborted();
@@ -36,6 +59,7 @@ async function readModelsIn(cwd: string, options: WarmCodexModelCacheOptions): P
     try {
       options.signal?.throwIfAborted();
       await client.deleteSession(created.sessionId);
+      archived = created.sessionId;
     } catch (error) {
       // codex 0.147 answers session/delete with "Internal error: no rollout
       // found for thread id …" for a throwaway that never wrote one. The
@@ -48,6 +72,7 @@ async function readModelsIn(cwd: string, options: WarmCodexModelCacheOptions): P
     }
   } finally {
     await client.dispose();
+    if (archived) await deleteArchivedThread(archived, options);
   }
 }
 
@@ -63,8 +88,8 @@ async function readModelsIn(cwd: string, options: WarmCodexModelCacheOptions): P
  * the workspace worked fine.
  *
  * So: fall back to the workspace, which is the same cwd a real session uses and
- * is therefore known to be acceptable. The throwaway session is still deleted
- * through ACP either way.
+ * is therefore known to be acceptable. The throwaway session is archived
+ * through ACP and then deleted either way.
  */
 export async function warmCodexModelCache(options: WarmCodexModelCacheOptions): Promise<void> {
   const scratch = fs.mkdtempSync(path.join(options.tempRoot ?? os.tmpdir(), "grok-codex-models-"));

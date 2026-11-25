@@ -158,7 +158,8 @@ whose list is over 24 hours old, one at a time, and `rereadProviderModels` asks
 it again without a prompt: Grok, Codex, Claude and DeepSeek through the probes
 above, Muse through `initialize` alone, Antigravity through a blank
 conversation that `removeAgyConversation` deletes afterwards (it has no
-`session/delete`). The attempt is stored in `grok.modelRefreshAttempts` before
+`session/delete`). Codex archives its thread on ACP's delete and lists archived
+threads, so `codex delete --force <id>` follows. The attempt is stored in `grok.modelRefreshAttempts` before
 the read, for every window, so an agent that cannot answer is asked once a day.
 Such a read never sets `needsLogin`, never replaces a list with an empty one,
 and repaints pickers only when the list changed. A changed CLI version and

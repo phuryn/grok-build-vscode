@@ -15,7 +15,13 @@ const agent = vi.hoisted(() => ({
   options: [] as any[],
   models: [] as any[],
   newSession: undefined as undefined | ((provider: string) => Promise<void>),
+  deleteSession: undefined as undefined | (() => Promise<void>),
+  sessionId: "blank-1",
   credentialError: false,
+}));
+const cli = vi.hoisted(() => ({ run: vi.fn(async (_path: string, _args: readonly string[], _options?: any) => ({ stdout: "", stderr: "" })) }));
+vi.mock("../src/cli-process", async original => ({
+  ...await original<typeof import("../src/cli-process")>(), execGrokCli: cli.run,
 }));
 vi.mock("../src/acp", async original => {
   const actual = await original<typeof import("../src/acp")>();
@@ -40,13 +46,13 @@ vi.mock("../src/acp", async original => {
     async authenticate() { agent.calls.push(`${this.provider} authenticate`); }
     async newSession() {
       agent.calls.push(`${this.provider} newSession`);
-      this.sessionId = "blank-1";
+      this.sessionId = agent.sessionId;
       await agent.newSession?.(this.provider);
       this.availableModels = agent.models;
       this.currentModelId = agent.models[0]?.modelId;
       return { sessionId: this.sessionId };
     }
-    async deleteSession() { agent.calls.push(`${this.provider} delete`); }
+    async deleteSession() { agent.calls.push(`${this.provider} delete`); await agent.deleteSession?.(); }
     async dispose() { agent.calls.push(`${this.provider} dispose`); }
     isCredentialError() { return agent.credentialError; }
   } };
@@ -63,6 +69,7 @@ const hosts: any[] = [];
 
 beforeEach(() => {
   agent.calls = []; agent.options = []; agent.models = [NEW]; agent.newSession = undefined; agent.credentialError = false;
+  agent.deleteSession = undefined; agent.sessionId = "blank-1"; cli.run.mockReset().mockResolvedValue({ stdout: "", stderr: "" });
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "model-refresh-"));
   vi.stubEnv("GROK_HOME", dir);
   vi.stubEnv("GEMINI_HOME", path.join(dir, "gemini"));
@@ -144,11 +151,13 @@ describe("the daily read of every agent's models", () => {
 
   it("records the attempt before the read, so a failure waits a day and keeps the list", async () => {
     const { s, values, updates, models } = makeHost(["codex"], { codex: stale() });
+    let recorded: string[] = [];
     agent.newSession = async () => {
-      expect(updates).toContain("grok.modelRefreshAttempts");
+      recorded = [...updates];
       throw new Error("Internal error");
     };
     await s.refreshStaleModelLists();
+    expect(recorded).toContain("grok.modelRefreshAttempts");
     expect(models("codex")).toEqual([OLD]);
     expect(values["grok.modelRefreshAttempts"].codex).toBeGreaterThan(Date.now() - 60_000);
     agent.calls = []; agent.newSession = undefined;
@@ -180,12 +189,18 @@ describe("the daily read of every agent's models", () => {
     expect(s.providerNeedsLogin[provider]).toBe(true);
   });
 
-  it("an agent being updated is left alone, and one read serves callers that overlap", async () => {
-    const { s } = makeHost(["codex"], { codex: stale() });
-    s.providerCliUpdate = { provider: "codex", done: Promise.resolve() };
-    await s.rereadProviderModels("codex");
+  it.each(INTERNAL_PROVIDERS)("%s is left alone while it is being updated, and when it is not connected", async provider => {
+    const { s } = makeHost([provider], { [provider]: stale() });
+    s.providerCliUpdate = { provider, done: Promise.resolve() };
+    await s.rereadProviderModels(provider);
     expect(agent.calls).toEqual([]);
-    s.providerCliUpdate = undefined;
+    const other = makeHost([], { [provider]: stale() });
+    await other.s.rereadProviderModels(provider);
+    expect(agent.calls).toEqual([]);
+  });
+
+  it("one read serves callers that overlap", async () => {
+    const { s } = makeHost(["codex"], { codex: stale() });
     const first = s.rereadProviderModels("codex");
     expect(s.rereadProviderModels("codex")).toBe(first);
     await first;
@@ -198,6 +213,48 @@ describe("what a read leaves behind", () => {
     const { s } = makeHost(["grok"], { grok: stale() });
     await s.rereadProviderModels("grok");
     expect(s.removeSessionFromDisk).toHaveBeenCalledWith("blank-1", expect.stringContaining("grok-cred-probe-"));
+  });
+
+  it("removes the empty catalog folder of Grok's scratch directory, and only an empty one", async () => {
+    const { s } = makeHost(["grok"], { grok: stale() });
+    const catalogs: string[] = [];
+    agent.newSession = async () => {
+      const at = path.join(dir, "sessions", encodeURIComponent(agent.options.at(-1).cwd));
+      fs.mkdirSync(at, { recursive: true });
+      catalogs.push(at);
+      if (catalogs.length === 2) fs.writeFileSync(path.join(at, "kept"), "");
+    };
+    await s.rereadProviderModels("grok");
+    await s.rereadProviderModels("grok");
+    expect(catalogs.map(at => fs.existsSync(at))).toEqual([false, true]);
+  });
+
+  it("deletes the Codex thread it archived, by its exact id, after the agent has let go of it", async () => {
+    const { s } = makeHost(["codex"], { codex: stale() });
+    agent.sessionId = "01a21055-d2cc-7a93-98d9-30e6c7ea9c3e";
+    let callsBefore: string[] = [];
+    cli.run.mockImplementation(async () => { callsBefore = [...agent.calls]; return { stdout: "", stderr: "" }; });
+    await s.rereadProviderModels("codex");
+    const deletes = cli.run.mock.calls.filter(([, args]) => args[0] === "delete");
+    expect(deletes.map(([, args]) => args)).toEqual([["delete", "--force", agent.sessionId]]);
+    expect(callsBefore.slice(-2)).toEqual(["codex delete", "codex dispose"]);
+  });
+
+  it.each([["an id that is not a thread id", "x; rm -rf"], ["a thread that was never archived", "01a21055-d2cc-7a93-98d9-30e6c7ea9c3e"]])("never runs the Codex delete for %s", async (_why, id) => {
+    const { s, models } = makeHost(["codex"], { codex: stale() });
+    agent.sessionId = id;
+    if (id.startsWith("01a")) agent.deleteSession = async () => { throw new Error("no rollout found"); };
+    await s.rereadProviderModels("codex");
+    expect(cli.run.mock.calls.filter(([, args]) => args[0] === "delete")).toEqual([]);
+    expect(models("codex")).toEqual([NEW]);
+  });
+
+  it("a Codex without the delete command still gives its models", async () => {
+    const { s, models } = makeHost(["codex"], { codex: stale() });
+    agent.sessionId = "01a21055-d2cc-7a93-98d9-30e6c7ea9c3e";
+    cli.run.mockRejectedValue(new Error("unexpected argument '--force'"));
+    await s.rereadProviderModels("codex");
+    expect(models("codex")).toEqual([NEW]);
   });
 
   it("opens no Muse session, and keeps the effort ladder and the CLI stamp", async () => {
