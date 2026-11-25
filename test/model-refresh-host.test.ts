@@ -6,7 +6,6 @@ import { GrokSidebar } from "../src/sidebar";
 import { Uri } from "../src/host";
 import { INTERNAL_PROVIDERS, type AcpProvider } from "../src/acp-backend";
 import { removeAgyConversation } from "../src/agy-backend";
-import { readAgyCliVersion } from "../src/agy-cli-lifecycle";
 import { MODEL_LIST_MAX_AGE_MS, MODEL_REFRESH_CHECK_MS, MODEL_REFRESH_FIRST_DELAY_MS } from "../src/model-refresh";
 
 // One fake agent per process start: it records what the host asked of it, and
@@ -21,11 +20,6 @@ const agent = vi.hoisted(() => ({
   credentialError: false,
 }));
 const cli = vi.hoisted(() => ({ run: vi.fn(async (_path: string, _args: readonly string[], _options?: any) => ({ stdout: "", stderr: "" })) }));
-const agyCli = vi.hoisted(() => ({ version: "1.0.0" }));
-vi.mock("../src/agy-cli-lifecycle", async original => ({
-  ...await original<typeof import("../src/agy-cli-lifecycle")>(),
-  updateAgyCliOnUpgrade: vi.fn(async () => {}), readAgyCliVersion: vi.fn(async () => agyCli.version),
-}));
 vi.mock("../src/cli-process", async original => ({
   ...await original<typeof import("../src/cli-process")>(), execGrokCli: cli.run,
 }));
@@ -355,29 +349,6 @@ describe("a CLI whose version changed", () => {
     expect(values["grok.providerModelCache"][provider].cliVersion).toBe("1.1.0");
     agent.calls = [];
     await s.refreshModelsIfCliChanged(provider, "1.1.0");
-    expect(agent.calls).toEqual([]);
-  });
-
-  it("Antigravity, which updates itself, is noticed when its version is read", async () => {
-    const { s, models, values } = makeHost(["agy"], { agy: { ...fresh(), cliVersion: "1.0.0" } });
-    s.reprobeProviderVersion = vi.fn(async () => {});
-    s.refreshGithubState = vi.fn(async () => {});
-    agyCli.version = "1.0.0";
-    await s.refreshProviderStates();
-    await new Promise(resolve => setImmediate(resolve));
-    expect(agent.calls).toEqual([]);
-    agyCli.version = "1.1.0";
-    await s.refreshProviderStates();
-    await vi.waitFor(() => expect(models("agy")).toEqual([NEW]));
-    expect(values["grok.providerModelCache"].agy.cliVersion).toBe("1.1.0");
-  });
-
-  it("a version that cannot be read starts nothing", async () => {
-    const { s } = makeHost(["agy"], { agy: { ...fresh(), cliVersion: "1.0.0" } });
-    s.agyCliVersion = { binary: process.execPath, version: "0.9.0" };
-    vi.mocked(readAgyCliVersion).mockRejectedValueOnce(new Error("no answer"));
-    await s.refreshAgyCliVersion();
-    await new Promise(resolve => setImmediate(resolve));
     expect(agent.calls).toEqual([]);
   });
 });

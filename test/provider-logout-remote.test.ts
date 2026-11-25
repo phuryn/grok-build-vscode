@@ -227,6 +227,8 @@ describe("provider logout real-entry wiring", () => {
     vi.useFakeTimers();
     try {
       const sidebar = makeSidebar();
+      // An hourly timer, which runAllTimers would follow forever.
+      sidebar.startModelRefresh = vi.fn();
       const detached = new Session();
       detached.provider = "grok";
       detached.cwd = "/repo";

@@ -10,7 +10,7 @@
 
 ### Changed
 
-- **Model lists are re-read once a day.** When the panel is open, each connected agent whose list is over a day old is asked for it again, one at a time; an agent that does not answer keeps its list and is left alone for a day. A new agent version re-reads its list too, which for Grok, Muse and Antigravity saved nothing before. A new model now shows up without opening a chat with its agent.
+- **Model lists are re-read once a day.** While AFK Pilot is open in a window or on a phone, each connected agent whose list is over a day old is asked for it again, one at a time; an agent that does not answer keeps its list and is left alone for a day. A new version of Grok, Codex, Claude or Muse re-reads its list too, which for Grok and Muse saved nothing before. A new model now shows up without opening a chat with its agent.
 
 ## 4.17.14 — 2026-11-24
 

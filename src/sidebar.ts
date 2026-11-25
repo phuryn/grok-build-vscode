@@ -1942,13 +1942,7 @@ export class GrokSidebar {
     if (!binary) return;
     await this.prepareAgyCli(binary);
     try { this.agyCliVersion = { binary, version: await readAgyCliVersion(binary) }; }
-    catch (error) {
-      this.host.appendLine(`[agy] Version check failed: ${errorDetail(error)}`);
-      return;
-    }
-    // Not awaited: Settings' Refresh does not wait for this read.
-    void this.refreshModelsIfCliChanged("agy", this.agyCliVersion.version)
-      .catch((error) => this.host.appendLine(`[agy] model read failed: ${errorDetail(error)}`));
+    catch (error) { this.host.appendLine(`[agy] Version check failed: ${errorDetail(error)}`); }
   }
 
   private agyChatRequester(session: Session, clientId?: string): RemoteRequester | undefined {

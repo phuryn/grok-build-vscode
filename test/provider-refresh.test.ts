@@ -337,7 +337,7 @@ describe("Grok credential probe does not leave a project-catalog shell", () => {
 
   it("deletes the session directory after the process exits", () => {
     const dispose = reprobe.indexOf("await client.dispose()");
-    const remove = reprobe.indexOf("this.removeSessionFromDisk(probeId, scratch)");
+    const remove = reprobe.indexOf("this.removeSessionFromDisk(probeId, scratch, grokHome)");
     expect(dispose).toBeGreaterThan(-1);
     expect(remove).toBeGreaterThan(dispose);
   });

@@ -166,8 +166,9 @@ day. Such a read never sets `needsLogin`, never replaces a list with an empty
 one, and repaints pickers only when the list changed. A chat that is already
 open keeps the list its own session gave for its agent; the next new chat
 starts from the new one. A changed CLI version and Settings' credential Refresh
-read Muse and Antigravity the same way; Antigravity's version is read when
-Settings > Providers opens and by each of its chats.
+read Muse the same way. The credential Refresh reads Antigravity too; its
+version is not checked at start, so a list that came with an Antigravity update
+waits for the daily read or its next chat.
 
 If no Codex binary is found, onboarding installs the latest stable Codex package
 into versioned global storage. `resolveCodexManagedRelease` allows four seconds
