@@ -222,6 +222,7 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
   // a phone is shown a filtered subset of the same tips, and a reader who can
   // see a tip must be able to be done with it.
   dismissWelcomeTip: "full",
+  starPromptAction: "host-local",
   // Same class, and deliberately NOT host-local: a phone showing a tip is the
   // same person seeing that advice, so it should not come round on the desk an
   // hour later either.
@@ -530,6 +531,7 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
   setMuseSetting: "host-local",
   setPinLiveWorkflows: "host-local",
   setExpandDiffCard: "host-local",
+  setShowTurnDuration: "host-local",
   setSoundNotifications: "host-local",
   setProcessingSound: "host-local",
   setInputNeededSound: "host-local",
@@ -607,6 +609,7 @@ export const REMOTE_REQUIRES_BOUND_SESSION: Record<WebviewMsg["type"], boolean> 
   setRepoIcon: false,
   toggleSessionPin: false,
   dismissWelcomeTip: false,
+  starPromptAction: false,
   welcomeTipShown: false,
   createProject: false,
   cloneProject: false,
@@ -735,6 +738,7 @@ export const REMOTE_REQUIRES_BOUND_SESSION: Record<WebviewMsg["type"], boolean> 
   setMuseSetting: false,
   setPinLiveWorkflows: false,
   setExpandDiffCard: false,
+  setShowTurnDuration: false,
   setSoundNotifications: false,
   setProcessingSound: false,
   setInputNeededSound: false,
@@ -1026,6 +1030,7 @@ export const OUTBOUND_DISPOSITION: Record<HostMsg["type"], OutboundDisposition> 
   // isRemote), and what is left here is two counts and a list of ids the user
   // has finished with. No project data, no payload — see the type.
   welcomeTips: "mirror",
+  starPrompt: "host-local",
   modelPins: "mirror",
   // Where new projects go and how the last attempt went. `root` is the
   // display form (`~/Grok Build`) and nothing here carries a created path —
@@ -1128,6 +1133,7 @@ export const OUTBOUND_DISPOSITION: Record<HostMsg["type"], OutboundDisposition> 
   pinLiveWorkflows: "host-local",
   // The phone owns its diff-card default too; never overwrite it from desk.
   expandDiffCard: "host-local",
+  showTurnDuration: "host-local",
   soundNotifications: "mirror",
   processingSound: "host-local",
   inputNeededSound: "host-local",
@@ -1206,6 +1212,7 @@ export const OUTBOUND_PROJECT_AUTH: Record<HostMsg["type"], OutboundProjectAuth>
   hostLink: "none",
   moveViewHint: "none",
   welcomeTips: "none",
+  starPrompt: "none",
   modelPins: "none",
   projectSetup: "none",
   githubState: "none",
@@ -1235,6 +1242,7 @@ export const OUTBOUND_PROJECT_AUTH: Record<HostMsg["type"], OutboundProjectAuth>
   museSettings: "none",
   pinLiveWorkflows: "none",
   expandDiffCard: "none",
+  showTurnDuration: "none",
   soundNotifications: "none",
   processingSound: "none",
   inputNeededSound: "none",
@@ -1395,6 +1403,7 @@ export function mayDeliverRemoteHostMsg(
   scopeCwd: string | undefined,
   sameCwd: (a: string, b: string) => boolean,
 ): boolean {
+  if (msg.type === "starPrompt") return false;
   if (msg.type === "historyBatch") {
     return msg.messages.every((nested) =>
       mayDeliverRemoteHostMsg(nested, authorizedCwds, scopeCwd, sameCwd),

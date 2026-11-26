@@ -419,7 +419,8 @@ async function runScenario(promptId, text, params) {
         }],
       });
       process.stderr.write(`ASK_RESPONSE: ${JSON.stringify(askResp)}\n`);
-      respondOk(promptId, { stopReason: "end_turn", _meta: { totalTokens: 50 } });
+      const stopReason = text.includes("SCENARIO_ASK_QUESTION_CANCELLED") ? "cancelled" : "end_turn";
+      respondOk(promptId, { stopReason, _meta: { totalTokens: 50 } });
       return;
     }
 

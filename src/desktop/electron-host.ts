@@ -702,12 +702,17 @@ export function createElectronHost(opts: ElectronHostOptions): Host {
     }
   }
 
+  const windowIsAway = (win: BrowserWindow) => !win.isVisible() || win.isMinimized() || !win.isFocused();
   return {
+    isChatWindowAway: () => {
+      const win = getWindow();
+      return !win || win.isDestroyed() || windowIsAway(win);
+    },
     deskAlerts: opts.showWindow && (process.platform === "win32" || process.platform === "darwin") ? {
       canApproveOnce: false,
       isAway: () => {
         const win = getWindow();
-        return !!win && !win.isDestroyed() && (!win.isVisible() || win.isMinimized() || !win.isFocused());
+        return !!win && !win.isDestroyed() && windowIsAway(win);
       },
       show({ title, body, open }) {
         if (!Notification.isSupported()) return;

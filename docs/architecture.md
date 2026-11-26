@@ -363,6 +363,21 @@ session provider (**Ask Grok…** / **Ask Codex…** / **Ask Claude…** / **Ask
 While a user turn is waiting, the shared activity row uses provider-specific copy,
 then is replaced in place by the first thought / message / tool card.
 
+Settings → General → **Show turn duration** is off by default. Desk surfaces
+share `grok.showTurnDuration`. Each phone or browser keeps its own
+`grok.remote.showTurnDuration` preference and shows the row once
+`initialState.showTurnDuration` arrives. The preference shows or hides the
+duration beside the timestamp on replies already on screen.
+
+Each live `SessionTurnToken` measures elapsed work with a monotonic clock.
+`syncHumanWait` pauses it while any permission, question, or plan review is
+open, including overlapping cards, and `endTurn` freezes the duration when the
+prompt settles. `agentEnd` carries the duration and whether the turn was stopped
+(`turnWasStopped`). The footer uses `formatWaitElapsed`, omits failed turns and
+durations under a second, and requires a rendered agent reply. The session
+buffer keeps both fields, so a reply that ended out of view shows its duration
+when its conversation is next shown; a conversation loaded from history has none.
+
 ### One stdout chunk is dispatched synchronously — state raised after an `await` is too late
 
 `readline` emits a `line` event for **every** line in a chunk before the write
@@ -687,6 +702,7 @@ The full pedagogical write-up lives in
 | [src/sessions.ts](../src/sessions.ts) | Grok disk-driven session listing/delete plus provider-bearing name overrides (pure) — `indexSessions` (stat-only ordering), `readSessionEntries` (windowed read), `listSessions` (whole-list), `clearSessions`, `discoverRepos` (the repo catalog behind the remote switcher). Codex, Claude and Muse list/load stay behind `AcpClient` and are shaped/merged by `provider-ui.ts`; only Codex and Claude support adapter deletion |
 | [src/file-ref.ts](../src/file-ref.ts) | Open-file ref parsing + large-file inline-read guard (pure) |
 | [src/model-pins.ts](../src/model-pins.ts) | Validates model pin records and applies ordered, idempotent pin and unpin operations |
+| [src/star-prompt.ts](../src/star-prompt.ts) | Who may be asked for a GitHub star (the count of conversations with `sentAt`) and the record of when they were last asked |
 | [src/file-upload.ts](../src/file-upload.ts) | Pure remote-document upload validation, owned staging-path checks, and session/fork lifetime accounting |
 | [src/plan-review.ts](../src/plan-review.ts) | Plan-snapshot Markdown filename generation (pure) |
 | [src/voice.ts](../src/voice.ts) | Voice-input pure helpers — STT request/response, ffmpeg args, device parsing, key resolution |
@@ -1099,6 +1115,7 @@ every turn.
 
 | Subject | What is easy to get wrong |
 |---|---|
+| GitHub star prompt (`src/star-prompt.ts`, `scheduleStarPrompt` in `src/sidebar.ts`, `renderStarPrompt` in `media/chat.js`) | Asked again 30 days after each ask until the person chooses Star or Open GitHub (`STAR_PROMPT_REPEAT_MS`); Not now, or no answer, waits for the next one. The host needs messages sent in five conversations (counted from `sentAt`, routines excluded) and waits 30 seconds after a successful reply in the conversation on screen, with that window focused and nothing waiting on the person; the renderer also needs an empty draft and no update notice, dialog or open approval, and draws the card at the top of the composer. A new turn or a request in that conversation calls off an offer not made yet. Once the card is up, only its own buttons take it down, so it survives other replies and a change of conversation, and CSS hides it while an approval, question or plan waits. `StarPromptRecord` writes `askedAt` to `~/.grok/client-state/star-prompt.json` right before the card is shown, creating the file exclusively on the first ask, in the person's own home rather than a workspace's; Star or Open GitHub adds `done`, and an unusable file means no card. Both message types are local-only. `starAfkPilotRepo` runs `gh` only for the button that names the account, once `gh` still answers with that account; another account, no sign-in, a token from the environment or a failed call opens the repository in the browser instead |
 | Remote repo/session switching (`src/sidebar.ts`, `media/chat.js`) | `selectRemoteRepo` selects the newest session in the chosen repo or starts a new one; `remoteSessionFor` reserves desk adoption for session-less arrivals in the same repo. Host-wide fan-out (voice-config refresh, session list, dots, repo catalog) reads `cwdIfPresent` and skips a tab with no project; `cwd()` stays the request-path accessor. `historyReplay` renders `Loading conversation` and locks the browser repo switcher until replay settles |
 | `src/host.ts` | Portable effectful host surface (`Host`) + value types (`Uri`, `HostWebview`, `HostContext`, disposables, editor/workspace watchers). **Does not import `vscode`**; a non-VS-Code host implements this. Paths are absolute strings; `Uri` is only for non-file schemes (diff preview) and command-arg round-trips |
 | `src/vscode-host.ts` | VS Code implementation of `Host` (`createVsCodeHost`) plus `createVsCodeHostContext` / `wrapWebviewView` — the only module that maps Host methods onto `vscode.window` / `workspace` / `commands` / `env` / `workspace.fs` |

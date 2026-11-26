@@ -416,7 +416,7 @@ export type HostMsg =
       & import("./remote-files").RemoteProjectFileWire)
   | ({ type: "providerConfigWriteResult"; requestId?: string; provider: "grok" | "codex" | "claude"; relPath: string }
       & ({ ok: true; stamp: { mtimeMs: number; size: number } } | { ok: false; reason: string }))
-  | { type: "initialState"; effort: string; cwd: string; useCtrlEnter: boolean; extVersion: string; showThinking: boolean; expandCommandOutputs: boolean; steerByDefault: boolean; promptNav: boolean; /** Absent on older hosts means pinned. */ pinLiveWorkflows?: boolean; /** Absent on older hosts means collapsed. */ expandDiffCard?: boolean; soundNotifications: boolean; processingSound: boolean; inputNeededSound: boolean; readRepliesAloud: boolean; /** Global "Use this app for" — absent on older hosts means Knowledge work. */ appPurpose?: "knowledge" | "coding";
+  | { type: "initialState"; effort: string; cwd: string; useCtrlEnter: boolean; extVersion: string; showThinking: boolean; expandCommandOutputs: boolean; steerByDefault: boolean; promptNav: boolean; /** Absent on older hosts means pinned. */ pinLiveWorkflows?: boolean; /** Absent on older hosts means collapsed. */ expandDiffCard?: boolean; /** Present when this host sends turn durations. */ showTurnDuration?: boolean; soundNotifications: boolean; processingSound: boolean; inputNeededSound: boolean; readRepliesAloud: boolean; /** Global "Use this app for" — absent on older hosts means Knowledge work. */ appPurpose?: "knowledge" | "coding";
       /** VS Code language id for command View all, from the host shell dialect.
        *  Absent on older hosts — View all then omits language. */
       commandLanguage?: string;
@@ -489,6 +489,9 @@ export type HostMsg =
        */
       shownToday?: string[];
     }
+  | { type: "starPrompt"; id: string; phase: "check" | "close" }
+  | { type: "starPrompt"; id: string; phase: "offer"; login?: string }
+  | { type: "starPrompt"; id: string; phase: "thanks"; login: string }
   /**
    * State of the Add project form: where new projects go, and how the last
    * attempt went.
@@ -916,7 +919,7 @@ export type HostMsg =
     }
   | { type: "agentReset" }
   | { type: "agentError"; text: string }
-  | { type: "agentEnd"; meta?: PromptResultMeta; forkPoint?: string }
+  | { type: "agentEnd"; meta?: PromptResultMeta; forkPoint?: string; durationMs?: number; stopped?: boolean }
   | { type: "exit"; code: number | null }
   | { type: "setBusy"; value: boolean; locked?: boolean }
   | { type: "summarizing" }
@@ -1038,6 +1041,7 @@ export type HostMsg =
   | { type: "pinLiveWorkflows"; value: boolean }
   // Host-backed on desk; a remote keeps its own default (host-local outbound).
   | { type: "expandDiffCard"; value: boolean }
+  | { type: "showTurnDuration"; value: boolean }
   // On-demand audit: expand (open:true) / collapse (open:false) EVERY tool group
   // and command IN/OUT box in the focused session at once. Ephemeral (not
   // persisted) — the Command Palette "Grok: Expand/Collapse All Tool Details".
@@ -1257,6 +1261,7 @@ export type WebviewMsg =
    * twice that they are not interested.
    */
   | { type: "dismissWelcomeTip"; id: string }
+  | { type: "starPromptAction"; id: string; action: "ready" | "shown" | "star" | "open" | "dismiss" }
   /**
    * One tip appeared. Recorded against the local day so it does not come round
    * again before tomorrow — the pool is small, and a line seen three times in
@@ -1347,6 +1352,7 @@ export type WebviewMsg =
   | { type: "setMuseSetting"; key: "museSandboxNetwork"; value: MuseSettings["sandboxNetwork"] }
   | { type: "setPinLiveWorkflows"; value: boolean }
   | { type: "setExpandDiffCard"; value: boolean }
+  | { type: "setShowTurnDuration"; value: boolean }
   /** Persist `grok.voiceSendPhrase`. Empty disables hands-free send. */
   | { type: "setVoiceSendPhrase"; value: string }
   /** Persist `grok.voiceKeyterms` (user dictionary terms only). */
@@ -1661,6 +1667,7 @@ export type WebviewMsg =
 // union without failing the build.
 const HOST_MESSAGE_TYPE_MAP: Record<HostMsg["type"], true> = {
   museSettings: true,
+  starPrompt: true,
   cloudHostUpdateState: true, initialState: true, moveViewHint: true, welcomeTips: true, modelPins: true, projectSetup: true, githubState: true, githubRepos: true, providerState: true, mcpServers: true, mcpConnectors: true, mcpConnectorAuthorization: true, routines: true, codexInstallProgress: true, agyInstallProgress: true, planModeAvailability: true, showThinking: true, appPurpose: true, fontScale: true, grokUpdateStatus: true, updateAvailable: true, updateReady: true, telemetryEnabled: true, thumbsFeedback: true,
   contextWindowSelection: true, initialized: true, cliUpdating: true, startupStatus: true, session: true, sessionName: true, sessionGoal: true, composerDraftSession: true, modelChanged: true,
   modeChanged: true, openModePopover: true, voiceState: true, voiceConfigured: true,
@@ -1675,7 +1682,7 @@ const HOST_MESSAGE_TYPE_MAP: Record<HostMsg["type"], true> = {
   planNotice: true, autoCompactNotice: true, planBlocked: true, promptComplete: true, contextUsage: true, agentReset: true,
   agentError: true, agentEnd: true, exit: true, setBusy: true, summarizing: true,
   sessionContext: true, clearMessages: true, onboarding: true, error: true, hostNotice: true,
-  xaiNotification: true, subagentUpdate: true, childStream: true, runProgress: true, commandOutput: true, expandCommandOutputs: true, steerByDefault: true, promptNav: true, autoCompactSettings: true, pinLiveWorkflows: true, expandDiffCard: true,
+  xaiNotification: true, subagentUpdate: true, childStream: true, runProgress: true, commandOutput: true, expandCommandOutputs: true, steerByDefault: true, promptNav: true, autoCompactSettings: true, pinLiveWorkflows: true, expandDiffCard: true, showTurnDuration: true,
   soundNotifications: true, processingSound: true, inputNeededSound: true, deskAlerts: true, readRepliesAloud: true, summarizeRepliesAloud: true, speechSummary: true, imageFull: true, imageOriginal: true, moveComposerCaret: true, remoteStatus: true, showRemoteHandoff: true, remoteHandoff: true, hostReachable: true, hostLink: true,
   setAllToolDetails: true, focusInput: true, findInSession: true, restoreComposer: true, truncateMessages: true, uiConfirmRequest: true, uiConfirmResolved: true,
   sessions: true, sessionRemoved: true, sessionOpening: true, projectPrompt: true, repoSessions: true, pinnedSessions: true, recentSessions: true, repos: true, sessionDot: true, queuedSends: true, submitQueuedSend: true,
@@ -1690,8 +1697,9 @@ const WEBVIEW_MESSAGE_TYPE_MAP: Record<WebviewMsg["type"], true> = {
   openText: true, openDiff: true, exportExpr: true, setEffort: true, openGlobalConfig: true, openProviderConfig: true,
   addProjectFolder: true, addToProjects: true, answerProjectPrompt: true, removeProjectFolder: true, createProject: true, cloneProject: true, setupGithubCli: true, listGithubRepos: true, githubSignOut: true, githubLoginWithToken: true,
   openProjectConfig: true, listMcpServers: true, connectMcpConnector: true, disconnectMcpConnector: true,
+  starPromptAction: true,
   listRoutines: true, saveRoutine: true, deleteRoutine: true, setRoutinePaused: true, runRoutineNow: true, showLogs: true, toggleDevTools: true, openSettings: true, openSettingsSurface: true, closeSettingsSurface: true, dismissWelcomeTip: true, welcomeTipShown: true, moveView: true,
-  setShowThinking: true, setAppPurpose: true, setExpandCommandOutputs: true, setSteerByDefault: true, setPromptNav: true, setPinLiveWorkflows: true, setExpandDiffCard: true,
+  setShowThinking: true, setAppPurpose: true, setExpandCommandOutputs: true, setSteerByDefault: true, setPromptNav: true, setPinLiveWorkflows: true, setExpandDiffCard: true, setShowTurnDuration: true,
   setSoundNotifications: true, setProcessingSound: true, setInputNeededSound: true, setDeskAlerts: true, setReadRepliesAloud: true, setSummarizeRepliesAloud: true, setVoiceSendPhrase: true, setVoiceKeyterms: true, setTelemetryEnabled: true, setThumbsFeedback: true, setDesktopTray: true, summarizeSpeech: true, requestImageFull: true, requestImageOriginal: true, composerFocus: true,
   dropFile: true, permissionAnswer: true, exitPlanAnswer: true, questionAnswer: true,
   questionCancel: true, setModel: true, installCodex: true, cancelCodexInstall: true, installAgy: true, cancelAgyInstall: true, agySignIn: true, setExperimentalAntigravity: true, setExperimentalDeepSeek: true, installDeepSeek: true, cancelDeepSeekInstall: true, deepseekConnect: true, disconnectProvider: true, setDeepSeekHarness: true, runInstallCmd: true, runMuseInstallCmd: true, runGrokLogin: true,

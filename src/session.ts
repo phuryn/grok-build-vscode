@@ -116,6 +116,10 @@ export function preferredPermissionAllowOption(
 }
 
 export interface SessionTurnToken {
+  startedAt: number;
+  waitingSince?: number;
+  waitingMs: number;
+  durationMs?: number;
   stopRequested?: boolean;
 }
 
@@ -501,20 +505,39 @@ export class Session {
 
 /** Mark a prompt as in flight. The returned token is the only thing that can
  *  later end THIS turn. */
-export function beginTurn(session: Session): SessionTurnToken {
-  const token: SessionTurnToken = {};
+export function beginTurn(session: Session, now = performance.now()): SessionTurnToken {
+  const token: SessionTurnToken = { startedAt: now, waitingMs: 0 };
   session.turnToken = token;
   session.staleSendReported = false;
   return token;
 }
 
+export function setTurnWaiting(session: Session, waiting: boolean, now = performance.now()): void {
+  const turn = session.turnToken;
+  if (!turn) return;
+  if (waiting) {
+    turn.waitingSince ??= now;
+  } else if (turn.waitingSince !== undefined) {
+    turn.waitingMs += now - turn.waitingSince;
+    turn.waitingSince = undefined;
+  }
+}
+
 /** End the turn `token` started, if it is still the one in flight. False means
  *  something already settled it — a cancel recovery, or a newer turn — and the
  *  caller must not emit a second end for it. */
-export function endTurn(session: Session, token: object): boolean {
+export function endTurn(session: Session, token: SessionTurnToken, now = performance.now()): boolean {
   if (session.turnToken !== token) return false;
+  const workedUntil = token.waitingSince ?? now;
+  token.durationMs = Math.max(0, Math.floor(workedUntil - token.startedAt - token.waitingMs));
   session.turnToken = undefined;
   return true;
+}
+
+/** The person pressed Stop, or the agent said the turn was cancelled. Not every
+ *  agent reports a cancelled stop reason after a Stop. */
+export function turnWasStopped(turn: SessionTurnToken, client: { lastPromptStopReason?: string }): boolean {
+  return turn.stopRequested === true || client.lastPromptStopReason === "cancelled";
 }
 
 /** Whether a prompt is genuinely running. Asked instead of reading `status`,

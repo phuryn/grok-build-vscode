@@ -133,7 +133,9 @@ import {
   museCommandSnapshot,
   startupStatusMessage,
   sessionModeMessage,
+  setTurnWaiting,
   turnIsInFlight,
+  turnWasStopped,
 } from "./session";
 import { grokSetupDetail } from "./grok-backend";
 import { buildReapCandidates, selectReapable, computeDot, Dot } from "./session-pool";
@@ -172,8 +174,11 @@ import {
   loginGithubWithToken,
   logoutGithub,
   readGithubAuthState,
+  starAfkPilotRepo,
+  STAR_REPO_URL,
   type GithubAuthState,
 } from "./github-auth";
+import { mayAskForStar, STAR_PROMPT_DELAY_MS, StarPromptRecord } from "./star-prompt";
 import {
   deviceLoginFailureText,
   deviceLoginPlan,
@@ -1162,6 +1167,7 @@ export class GrokSidebar {
     "setMuseSetting",
     "setPinLiveWorkflows",
     "setExpandDiffCard",
+    "setShowTurnDuration",
     "setSoundNotifications",
     "setProcessingSound",
     "setInputNeededSound",
@@ -1357,6 +1363,16 @@ export class GrokSidebar {
   private routineError?: { id?: string; message: string };
 
   private readonly defaultModeCohort: import("./default-mode-cohort").DefaultModeCohort;
+  private readonly starPromptRecord: StarPromptRecord;
+  private starPromptTimer?: ReturnType<typeof setTimeout>;
+  private starPrompt?: {
+    id: string;
+    session: Session;
+    gen: number;
+    phase: "delay" | "check" | "auth" | "offer" | "shown" | "starring" | "thanks";
+    login?: string;
+    askedAt?: number;
+  };
 
   constructor(
     private context: HostContext,
@@ -1377,6 +1393,8 @@ export class GrokSidebar {
       fs,
       (line) => this.host.appendLine(line),
     );
+    // Once per person, so not under a workspace's own Grok home.
+    this.starPromptRecord = new StarPromptRecord(path.join(os.homedir(), ".grok", "client-state"), fs);
     this.providerConnectionState = this.migrateProviderConnections();
     if (context.globalStorageUri?.fsPath) {
       const config = this.host.getConfiguration("grok");
@@ -3736,6 +3754,7 @@ export class GrokSidebar {
   }
 
   resolveWebviewView(view: HostWebviewView): void {
+    this.cancelStarPrompt();
     this.view = view;
     // Assigning html boots a new renderer. The `local` cache entry belonged
     // to the previous JS state and must not suppress the next identical frame.
@@ -3753,6 +3772,7 @@ export class GrokSidebar {
     // user's action just... does nothing.
     view.webview.onDidReceiveMessage((raw) => {
       const m = raw as WebviewMsg;
+      if (m.type === "starPromptAction" && this.view !== view) return;
       void this.onMessage(m, "local").catch((e) => {
         const msg = (e as Error)?.message ?? String(e);
         this.host.appendLine(`[webview] ${m.type} failed: ${msg}`);
@@ -3840,6 +3860,14 @@ export class GrokSidebar {
           type: "expandDiffCard",
           value: this.host.getConfiguration("grok").get<boolean>("expandDiffCard", false),
         });
+      }
+      if (e.affectsConfiguration("grok.showTurnDuration")) {
+        const message: HostMsg = {
+          type: "showTurnDuration",
+          value: this.host.getConfiguration("grok").get<boolean>("showTurnDuration", false),
+        };
+        this.postLocal(message);
+        void this.settingsEditor?.webview.postMessage(message);
       }
       if (["museShellSandbox", "museSandboxNetwork", "museTrustWorkspaces"].some(key => e.affectsConfiguration(`grok.${key}`))) {
         const message: HostMsg = { type: "museSettings", value: this.museSettings() };
@@ -5528,6 +5556,109 @@ Only continue if you trust this code.`,
     if (!turn.stopRequested) this.showDeskAlert(session, kind);
   }
 
+  private scheduleStarPrompt(session: Session, turn: SessionTurnToken, client: AcpClient): void {
+    if (!this.view || (!this.host.deskAlerts && !this.host.isChatWindowAway)
+      || isCloudEnvironment() || session !== this.focused || session.fromRoutine || session.replaying
+      || session.suppressContent || turnIsInFlight(session) || turnWasStopped(turn, client)
+      || ["refusal", "max_tokens", "max_turn_requests"].includes(client.lastPromptStopReason ?? "")
+      || this.starPromptRecord.state() !== "due") return;
+    this.cancelStarPrompt();
+    const attempt: NonNullable<GrokSidebar["starPrompt"]> = {
+      id: randomUUID(), session, gen: session.gen, phase: "delay",
+    };
+    this.starPrompt = attempt;
+    this.starPromptTimer = setTimeout(() => {
+      if (this.starPrompt !== attempt) return;
+      this.starPromptTimer = undefined;
+      if (!this.starPromptWindowReady(attempt)
+        || !mayAskForStar(this.starPromptRecord.state(), () => this.state.get<SessionMetaOverrides>(SESSION_META_KEY, {}))) {
+        this.cancelStarPrompt();
+        return;
+      }
+      attempt.phase = "check";
+      this.postLocal({ type: "starPrompt", id: attempt.id, phase: "check" });
+    }, STAR_PROMPT_DELAY_MS);
+    this.starPromptTimer.unref?.();
+  }
+
+  private starPromptWindowReady(attempt: NonNullable<GrokSidebar["starPrompt"]>): boolean {
+    const { session, gen } = attempt;
+    return !isCloudEnvironment() && this.view?.visible === true && session === this.focused
+      && session.gen === gen && !session.replaying && !session.suppressContent && !turnIsInFlight(session)
+      && session.pendingPermissions.size === 0 && session.pendingQuestions.size === 0 && session.pendingExitPlans.size === 0
+      && (this.host.deskAlerts?.isAway(true) ?? this.host.isChatWindowAway?.()) === false;
+  }
+
+  /** Once the card is up, only its own buttons take it down. */
+  private cancelPendingStarPrompt(session: Session): void {
+    const attempt = this.starPrompt;
+    if (attempt?.session === session && ["delay", "check", "auth"].includes(attempt.phase)) this.cancelStarPrompt();
+  }
+
+  private cancelStarPrompt(): void {
+    clearTimeout(this.starPromptTimer);
+    this.starPromptTimer = undefined;
+    const attempt = this.starPrompt;
+    this.starPrompt = undefined;
+    if (attempt && attempt.phase !== "delay") {
+      this.postLocal({ type: "starPrompt", id: attempt.id, phase: "close" });
+    }
+  }
+
+  private async starPromptLogin(): Promise<string | undefined> {
+    const env = { ...process.env, GH_HOST: "github.com" };
+    if (githubEnvTokenName(env)) return undefined;
+    const auth = await readGithubAuthState(undefined, env).catch(() => undefined);
+    return auth?.cliPresent && auth.connected && !auth.error && !auth.envTokenInForce && auth.login || undefined;
+  }
+
+  private async handleStarPromptAction(msg: Extract<WebviewMsg, { type: "starPromptAction" }>, origin: MsgOrigin): Promise<void> {
+    const attempt = this.starPrompt;
+    if (origin !== "local" || isCloudEnvironment() || !attempt || msg.id !== attempt.id) return;
+    if (msg.action === "dismiss") {
+      this.cancelStarPrompt();
+      return;
+    }
+    if (msg.action === "ready" && attempt.phase === "check") {
+      if (!this.starPromptWindowReady(attempt) || this.starPromptRecord.state() !== "due") {
+        this.cancelStarPrompt();
+        return;
+      }
+      attempt.phase = "auth";
+      attempt.login = await this.starPromptLogin();
+      if (this.starPrompt !== attempt) return;
+      const askedAt = Date.now();
+      if (!this.starPromptWindowReady(attempt) || !this.starPromptRecord.claim(askedAt)) {
+        this.cancelStarPrompt();
+        return;
+      }
+      attempt.askedAt = askedAt;
+      attempt.phase = "offer";
+      this.postLocal({ type: "starPrompt", id: attempt.id, phase: "offer", login: attempt.login });
+      return;
+    }
+    if (msg.action === "shown" && attempt.phase === "offer") {
+      attempt.phase = "shown";
+      return;
+    }
+    if (attempt.phase !== "shown" || attempt.askedAt === undefined) return;
+    if (msg.action === "open" || (msg.action === "star" && attempt.login)) this.starPromptRecord.finish(attempt.askedAt);
+    if (msg.action === "open") {
+      this.cancelStarPrompt();
+      await this.host.openExternal(STAR_REPO_URL);
+    } else if (msg.action === "star" && attempt.login) {
+      attempt.phase = "starring";
+      // The person may have switched gh accounts since the button named one.
+      if (await this.starPromptLogin() !== attempt.login || !await starAfkPilotRepo()) {
+        if (this.starPrompt === attempt) this.cancelStarPrompt();
+        await this.host.openExternal(STAR_REPO_URL);
+      } else if (this.starPrompt === attempt) {
+        attempt.phase = "thanks";
+        this.postLocal({ type: "starPrompt", id: attempt.id, phase: "thanks", login: attempt.login });
+      }
+    }
+  }
+
   private postQuestionRequest(session: Session, req: QuestionRequest): void {
     session.pendingQuestions.set(req.id, req.toolCallId);
     this.syncHumanWait(session);
@@ -6285,10 +6416,10 @@ Only continue if you trust this code.`,
   }
 
   private emitForkableTurnEnd(
-    session: Session, client: AcpClient, meta: PromptResultMeta, completed: boolean,
+    session: Session, client: AcpClient, turn: SessionTurnToken, message: Extract<HostMsg, { type: "agentEnd" }>,
   ): void {
     const forkPoint = client.supportsTurnFork?.()
-      ? session.forkPoints.settle(completed && (session.provider === "agy" || client.lastPromptStopReason === "end_turn"))
+      ? session.forkPoints.settle(!turn.stopRequested && (session.provider === "agy" || client.lastPromptStopReason === "end_turn"))
       : undefined;
     if (session.provider !== "agy" && forkPoint && session.activeSessionId) {
       const id = session.activeSessionId;
@@ -6297,7 +6428,7 @@ Only continue if you trust this code.`,
         [id]: { ...current[id], forkReplyIds: [...new Set([...(current[id]?.forkReplyIds ?? []), forkPoint])] },
       })).catch(() => this.host.appendLine("[fork] could not record the turn end"));
     }
-    this.emit(session, { type: "agentEnd", meta, ...(forkPoint ? { forkPoint } : {}) });
+    this.emit(session, forkPoint ? { ...message, forkPoint } : message);
   }
 
   /**
@@ -10922,6 +11053,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   }
 
   dispose(): void {
+    this.cancelStarPrompt();
     this.cloudHostUpdate?.dispose();
     void this.host.setContext("grok.composerFocus", false);
     if (this.reaper) { clearInterval(this.reaper); this.reaper = undefined; }
@@ -13520,6 +13652,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   }
 
   private async onAdmittedMessage(msg: WebviewMsg, origin: MsgOrigin, clientId?: string): Promise<void> {
+    if (msg.type === "starPromptAction") {
+      await this.handleStarPromptAction(msg, origin);
+      return;
+    }
     if (msg.type === "cloudHostUpdate") {
       if (isCloudEnvironment() && Object.keys(msg).length === 1) this.cloudHostUpdate?.request();
       return;
@@ -13550,6 +13686,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       : this.workspaceRoot();
     switch (msg.type) {
       case "ready": {
+        if (origin === "local") this.cancelStarPrompt();
         // Decide BEFORE postInitialState runs: its cold-start branch calls
         // startSession(), which can create this.focused.client before this
         // handler resumes (synchronously for Codex; Grok assigns behind
@@ -14376,6 +14513,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       case "setExpandDiffCard":
         await this.host.getConfiguration("grok")
           .update("expandDiffCard", !!msg.value, "global");
+        break;
+      case "setShowTurnDuration":
+        await this.host.getConfiguration("grok")
+          .update("showTurnDuration", !!msg.value, "global");
         break;
       case "setMuseSetting": {
         if (origin === "remote") break;
@@ -19686,7 +19827,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
    *
    *  A CLI that has ignored a stop request for ten seconds is wedged; replacing
    *  the process is the honest reading of what the user asked for. */
-  private armCancelRecovery(session: Session, token: object): void {
+  private armCancelRecovery(session: Session, token: SessionTurnToken): void {
     const gen = session.gen;
     setTimeout(() => {
       if (gen !== session.gen) return; // already restarted or replaced
@@ -19695,7 +19836,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     }, CANCEL_SETTLE_GRACE_MS);
   }
 
-  private async recoverUnansweredCancel(session: Session, token: object): Promise<void> {
+  private async recoverUnansweredCancel(session: Session, token: SessionTurnToken): Promise<void> {
     // Nothing to recover if the client is already gone — something else tore it
     // down (a crash, a removed worktree), and respawning here would resurrect a
     // session that was deliberately ended, possibly against a cwd that no longer
@@ -20054,6 +20195,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     this.emit(session, { type: "agentStart" });
     // The token, not the status, is what says a turn is running from here on —
     // and only whoever holds it may end this one.
+    this.cancelPendingStarPrompt(session);
     const turn = beginTurn(session);
     onStarted?.();
     this.startTurnDiffBaseline(session, turn);
@@ -20091,6 +20233,13 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       // A cancel recovery may have settled this turn already; a second agentEnd
       // would end a turn that is no longer ours.
       if (!endTurn(session, turn)) return;
+      const compacted = slashCommand === "compact";
+      if (!compacted) this.scheduleStarPrompt(session, turn, client);
+      const end: Extract<HostMsg, { type: "agentEnd" }> = {
+        type: "agentEnd",
+        meta,
+        ...(!compacted ? { durationMs: turn.durationMs, stopped: turnWasStopped(turn, client) } : {}),
+      };
       if (slashCommand === "compact") {
         // A native /compact streams no agent content (research/compact.md), so
         // the turn would end with a blank bubble and no sign it worked. Paint a
@@ -20118,7 +20267,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       // turn emits its own end when it really ends. (The other agentEnd site
       // needs no guard: nothing awaits between its endTurn check and its
       // emit.)
-      if (!turnIsInFlight(session)) this.emitForkableTurnEnd(session, client, meta, !turn.stopRequested);
+      if (!turnIsInFlight(session)) this.emitForkableTurnEnd(session, client, turn, end);
       this.noteLiveTurnEnded(session, turn, "done");
       // "done" only if this is still the LAST word. /compact releases its turn
       // token before awaiting the context refresh, so a send from another tab
@@ -20278,6 +20427,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     this.emit(session, { type: "agentStart" });
     // The resend is a turn in its own right — it gets its own token, and the
     // outer turn's `finally` can no longer end it (the tokens differ).
+    this.cancelPendingStarPrompt(session);
     const turn = beginTurn(session);
     this.startTurnDiffBaseline(session, turn);
     this.setStatus(session, "working");
@@ -20291,9 +20441,12 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         return true;
       }
       if (!endTurn(session, turn)) return true;
-      this.emitForkableTurnEnd(session, client, meta, !turn.stopRequested);
+      this.emitForkableTurnEnd(session, client, turn, {
+        type: "agentEnd", meta, durationMs: turn.durationMs, stopped: turnWasStopped(turn, client),
+      });
       this.noteLiveTurnEnded(session, turn, "done");
       this.setStatus(session, "done");
+      this.scheduleStarPrompt(session, turn, client);
       session.authRecoveryTried = false; // recovered — re-arm for a future expiry
       this.setProviderNeedsLogin(session.provider, false); // and the token really is good
       this.maybeGenerateTitle(session);
@@ -20430,6 +20583,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       expandCommandOutputs: cfg.get("expandCommandOutputs", false),
       steerByDefault: cfg.get("steerByDefault", false),
       expandDiffCard: cfg.get("expandDiffCard", false),
+      showTurnDuration: cfg.get("showTurnDuration", false),
       promptNav: cfg.get("promptNav", true),
       autoCompactSettings: this.autoCompactSettings(),
       museSettings: this.museSettings(),
@@ -22392,11 +22546,12 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   private turnOrderTimers = new Set<ReturnType<typeof setTimeout>>();
 
   private syncHumanWait(session: Session): void {
-    session.client?.setHumanWaitActive(
-      session.pendingQuestions.size > 0
+    const waiting = session.pendingQuestions.size > 0
       || session.pendingPermissions.size > 0
-      || session.pendingExitPlans.size > 0,
-    );
+      || session.pendingExitPlans.size > 0;
+    if (waiting) this.cancelPendingStarPrompt(session);
+    setTurnWaiting(session, waiting);
+    session.client?.setHumanWaitActive(waiting);
   }
 
   private closeQuestionsForToolCall(
@@ -24968,6 +25123,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         expandCommandOutputs: cfg.get("expandCommandOutputs", false),
         steerByDefault: cfg.get("steerByDefault", false),
         expandDiffCard: cfg.get("expandDiffCard", false),
+        showTurnDuration: cfg.get("showTurnDuration", false),
         promptNav: cfg.get("promptNav", true),
         autoCompactSettings: this.autoCompactSettings(),
         museSettings: this.museSettings(),
@@ -25078,6 +25234,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         }
         if (msg.type === "museSettings") surface.update({ museSettings: msg.value });
         if (msg.type === "autoCompactSettings") surface.update({ autoCompactSettings: msg.value });
+        if (msg.type === "showTurnDuration") surface.update({ showTurnDuration: msg.value });
         if (msg.type === "deskAlerts") surface.update({ deskAlerts: msg.value });
         if (msg.type === "voiceConfigured") {
           surface.update({ voiceConfigured: !!msg.value, voiceBackendState: msg.backendState,

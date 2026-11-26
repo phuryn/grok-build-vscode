@@ -185,6 +185,7 @@
    * have sent one anyway.
    */
   const EXPAND_DIFF_CARD_KEY = "grok.remote.expandDiffCard";
+  const SHOW_TURN_DURATION_KEY = "grok.remote.showTurnDuration";
   const PIN_LIVE_WORKFLOWS_KEY = IS_REMOTE ? "grok.remote.pinLiveWorkflows" : "grok.pinLiveWorkflows";
   const PROMPT_NAV_KEY = IS_REMOTE ? "grok.remote.promptNav" : "grok.promptNav";
   const INPUT_NEEDED_SOUND_KEY = "grok.remote.inputNeededSound";
@@ -1074,6 +1075,8 @@
     pinLiveWorkflows: IS_REMOTE ? storedBool(PIN_LIVE_WORKFLOWS_KEY, true) : true,
     // Independent of tool expansion; a remote owns its per-device default.
     expandDiffCard: IS_REMOTE ? storedBool(EXPAND_DIFF_CARD_KEY, false) : false,
+    showTurnDuration: IS_REMOTE ? storedBool(SHOW_TURN_DURATION_KEY, false) : false,
+    turnDurationAvailable: false,
     // grok.steerByDefault (persisted, global): when true a message sent while
     // grok is working SKIPS the queue and is interjected into the running turn.
     // False = today's behavior (queue, with an on-demand Steer button).
@@ -3765,6 +3768,8 @@
       promptNav: !!state.promptNav,
       autoCompactSettings: state.autoCompactSettings,
       expandDiffCard: !!state.expandDiffCard,
+      showTurnDuration: state.showTurnDuration,
+      turnDurationAvailable: state.turnDurationAvailable,
       providers: state.providers || [],
       museSettings: state.museSettings,
       museSandboxUnavailable: state.museSandboxUnavailable,
@@ -3820,6 +3825,11 @@
         state.expandDiffCard = !!value;
         storeRemotePref(EXPAND_DIFF_CARD_KEY, state.expandDiffCard);
         applyExpandDiffCard();
+        return;
+      case "showTurnDuration":
+        if (!IS_REMOTE) break;
+        applyShowTurnDuration(!!value);
+        storeRemotePref(SHOW_TURN_DURATION_KEY, state.showTurnDuration);
         return;
       case "promptNav":
         // Remote only. A desk lets the message through to the host and gets
@@ -7524,6 +7534,118 @@
       clearTimeout(railTransitionTimer);
       railTransitionTimer = null;
     }
+  }
+
+  let starPromptId = null;
+  let starPromptCard = null;
+
+  function starPromptSlotReady() {
+    return !state.busy && !state.replaying && !settingsSurface && !state.appUpdate
+      && !modalAboveCount && !document.querySelector(".welcome-cli-update")
+      && !messagesEl.querySelector(".card:is(.permission, .question, .plan):not(.resolved, .plan-history)")
+      && !input.value && !composerHasSendIntent("", state.chips);
+  }
+
+  function clearStarPrompt(report = true) {
+    const id = starPromptId;
+    starPromptId = null;
+    if (starPromptCard) {
+      starPromptCard.remove();
+      starPromptCard = null;
+      scrollToBottom();
+    }
+    if (report && id) vscode.postMessage({ type: "starPromptAction", id, action: "dismiss" });
+  }
+
+  // Once the card is up, only its own buttons take it down.
+  function cancelPendingStarPrompt() {
+    if (!starPromptCard) clearStarPrompt();
+  }
+
+  function renderStarPrompt(msg) {
+    if (IS_REMOTE) return;
+    const { id, phase, login } = msg;
+    if (phase === "check") {
+      if (!starPromptId && starPromptSlotReady()) {
+        starPromptId = id;
+        vscode.postMessage({ type: "starPromptAction", id, action: "ready" });
+      }
+      return;
+    }
+    if (id !== starPromptId) return;
+    if (phase === "close") {
+      clearStarPrompt(false);
+      return;
+    }
+    const thanks = phase === "thanks";
+    if (thanks) {
+      if (starPromptCard?.getAttribute("aria-busy") !== "true") return;
+    } else {
+      if (phase !== "offer" || starPromptCard) return;
+      if (!starPromptSlotReady()) {
+        clearStarPrompt();
+        return;
+      }
+    }
+    const card = document.createElement("div");
+    card.className = "card star-card" + (thanks ? " star-thanks" : "");
+    card.setAttribute("role", thanks ? "status" : "region");
+    const { GITHUB_MARK, GITHUB_REPO_URL } = globalThis.GrokSettings;
+    const post = (action) => {
+      if (starPromptCard !== card || card.getAttribute("aria-busy") === "true") return;
+      if (action === "star") {
+        for (const button of card.querySelectorAll("button")) button.disabled = true;
+        card.setAttribute("aria-busy", "true");
+      } else {
+        clearStarPrompt(false);
+      }
+      vscode.postMessage({ type: "starPromptAction", id, action });
+    };
+    const button = (label, classes, action) => {
+      const el = document.createElement("button");
+      el.type = "button";
+      el.className = classes;
+      el.textContent = label;
+      el.onclick = () => post(action);
+      return el;
+    };
+    if (thanks) {
+      card.innerHTML = GITHUB_MARK;
+      const copy = document.createElement("span");
+      copy.textContent = l10n("Starred as @{0}. Thank you!", login);
+      const close = button("", "icon-btn star-close", "dismiss");
+      close.innerHTML = ICON.x;
+      close.title = l10n("Close");
+      close.setAttribute("aria-label", close.title);
+      card.append(copy, close);
+    } else {
+      card.setAttribute("aria-label", l10n("Star AFK Pilot on GitHub"));
+      card.innerHTML = `<div class="star-main"><div class="star-copy">${GITHUB_MARK}<div></div></div><div class="star-actions"></div></div>`;
+      const copy = card.querySelector(".star-copy > div");
+      copy.textContent = l10n("Enjoying AFK Pilot? A star on GitHub helps other developers find it.");
+      if (login) {
+        const alt = document.createElement("div");
+        alt.className = "star-alt";
+        const link = document.createElement("a");
+        link.className = "muted-link";
+        link.href = GITHUB_REPO_URL;
+        link.textContent = l10n("Open GitHub instead");
+        // The document's own link handler would open it a second time.
+        link.onclick = (event) => { event.preventDefault(); event.stopPropagation(); post("open"); };
+        const [before, after] = l10n("Not your account? {0}").split("{0}");
+        alt.append(before, link, after || "");
+        copy.appendChild(alt);
+      }
+      card.querySelector(".star-actions").append(
+        button(login ? l10n("Star as @{0}", login) : l10n("Star on GitHub"), "onb-action", login ? "star" : "open"),
+        button(l10n("Not now"), "onb-action onb-secondary", "dismiss"),
+      );
+    }
+    if (starPromptCard) starPromptCard.replaceWith(card);
+    else document.querySelector("footer.composer").prepend(card);
+    starPromptCard = card;
+    scrollToBottom();
+    if (!thanks) vscode.postMessage({ type: "starPromptAction", id, action: "shown" });
   }
 
   // ---------- "Add <folder> to Projects?" ----------
@@ -12546,16 +12668,22 @@
   // signal: promptComplete/agentEnd/agentError live, the next user message or
   // replay end on restore. Stamps the time at reveal so it reads as the
   // turn's END time, not the moment the last segment happened to start.
-  function revealTurnFooter(timestampMs) {
+  function revealTurnFooter(timestampMs, end) {
     const a = state.turnAgentActionsEl;
-    if (!a || !a.hidden) return;
-    a.hidden = false;
-    // Same boundary as the copy/timestamp footer: pin the turn's file-change
-    // list under the last content so it reads as the turn's conclusion. Ahead
-    // of the timestamp write, which returns early on a footer without one.
-    pinTurnDiffSummary();
+    if (!a || (!a.hidden && !end)) return;
+    if (a.hidden) {
+      a.hidden = false;
+      pinTurnDiffSummary();
+    }
     const ts = a.querySelector(".msg-timestamp");
     if (!ts) return;
+    if (Number.isFinite(end?.durationMs) && end.durationMs >= 1000) {
+      const duration = a.querySelector(".msg-duration") || document.createElement("span");
+      duration.className = "msg-duration";
+      const elapsed = formatWaitElapsed(end.durationMs);
+      duration.textContent = end.stopped === true ? l10n("Stopped after {0}", elapsed) : l10n("Worked for {0}", elapsed);
+      ts.after(duration);
+    }
     if (!state.replaying) {
       ts.textContent = formatTime(Date.now());
     } else if (typeof timestampMs === "number" && Number.isFinite(timestampMs)) {
@@ -12563,6 +12691,10 @@
     }
   }
 
+  function applyShowTurnDuration(value) {
+    state.showTurnDuration = value;
+    document.body.classList.toggle("show-turn-duration", value);
+  }
 
   // ---- Turn-level file change summary ----
   // Aggregates edit-tool diffs + delete mutations (kind:delete or shell
@@ -21175,7 +21307,7 @@ ${fullText}`
     "museSettings",
     "autoCompactSettings",
     "cloudHostUpdateState", "initialState", "showThinking", "appPurpose", "expandCommandOutputs",
-    "steerByDefault", "promptNav", "expandDiffCard", "steerUnavailable", "soundNotifications", "processingSound", "inputNeededSound", "deskAlerts",
+    "steerByDefault", "promptNav", "expandDiffCard", "showTurnDuration", "steerUnavailable", "soundNotifications", "processingSound", "inputNeededSound", "deskAlerts",
     "readRepliesAloud", "summarizeRepliesAloud", "fontScale", "voiceConfigured",
     "providerState", "githubState", "mcpServers", "mcpConnectors", "remoteStatus", "telemetryEnabled", "thumbsFeedback", "grokUpdateStatus", "initialized",
   ]);
@@ -21243,9 +21375,11 @@ ${fullText}`
         if (!state.autoCompactSettings) state.autoCompact = null;
         state.museSettings = msg.museSettings;
         state.museSandboxUnavailable = msg.museSandboxUnavailable;
+        state.turnDurationAvailable = typeof msg.showTurnDuration === "boolean";
         if (!IS_REMOTE) {
           state.expandDiffCard = msg.expandDiffCard === true;
           applyExpandDiffCard();
+          applyShowTurnDuration(msg.showTurnDuration === true);
         }
         if (typeof msg.soundNotifications === "boolean") state.soundNotifications = msg.soundNotifications;
         if (typeof msg.processingSound === "boolean") state.processingSound = msg.processingSound;
@@ -21345,6 +21479,9 @@ ${fullText}`
             reposError: typeof msg.error === "string" ? msg.error : "",
           });
         }
+        break;
+      case "starPrompt":
+        renderStarPrompt(msg);
         break;
       case "welcomeTips":
         // Deliberately NOT an advance: this frame arrives on startup and after
@@ -21579,6 +21716,9 @@ ${fullText}`
         break;
       case "pinLiveWorkflows":
         if (!IS_REMOTE) applyPinLiveWorkflows(!!msg.value);
+        break;
+      case "showTurnDuration":
+        if (!IS_REMOTE) applyShowTurnDuration(!!msg.value);
         break;
       case "museSettings":
         state.museSettings = msg.value;
@@ -21858,6 +21998,7 @@ ${fullText}`
         const version = typeof msg.version === "string" ? msg.version.trim() : "";
         const url = typeof msg.url === "string" ? msg.url.trim() : "";
         if (version && url) {
+          cancelPendingStarPrompt();
           state.appUpdate = { version, url, ready: false };
           ensureRailGear();
           renderAppUpdateAffordance();
@@ -21867,6 +22008,7 @@ ${fullText}`
       case "updateReady": {
         const version = typeof msg.version === "string" ? msg.version.trim() : "";
         if (version) {
+          cancelPendingStarPrompt();
           const prevUrl = state.appUpdate && typeof state.appUpdate.url === "string"
             ? state.appUpdate.url : "";
           state.appUpdate = { version, url: prevUrl, ready: true };
@@ -22182,6 +22324,7 @@ ${fullText}`
         state.chips = composerRestoredChips.length
           ? [...msg.chips.filter((chip) => !composerRestoredChips.some((c) => c.id === chip.id)), ...composerRestoredChips]
           : msg.chips;
+        if (composerHasSendIntent("", state.chips)) cancelPendingStarPrompt();
         renderChips();
         updateSendButton();
         break;
@@ -22284,6 +22427,7 @@ ${fullText}`
         handleTurnFileDiffResult(msg);
         break;
       case "agentStart":
+        cancelPendingStarPrompt();
         // A user-initiated turn began. Show Grokking until content replaces it.
         // Previous completed turn keeps its footer but loses thumbs — only the
         // turn that just finished is rateable.
@@ -22675,6 +22819,7 @@ ${fullText}`
         applyRunProgress(msg.update);
         break;
       case "permissionRequest":
+        if ((msg.req.options || []).length > 0) cancelPendingStarPrompt();
         addPermissionCard(msg.req);
         // A card with no options cannot be answered, so nothing is waiting on
         // anyone. A session-granted command (#61) arrives already resolved in
@@ -22712,6 +22857,7 @@ ${fullText}`
         break;
       }
       case "exitPlanRequest":
+        cancelPendingStarPrompt();
         addPlanCard(msg.req);
         break;
       case "planResolved": {
@@ -22730,6 +22876,7 @@ ${fullText}`
         break;
       }
       case "questionRequest":
+        cancelPendingStarPrompt();
         addQuestionCard(msg.req);
         if (!state.replaying) {
           const questions = (msg.req?.questions || [])
@@ -22901,7 +23048,7 @@ ${fullText}`
         // empty) would otherwise orphan the dots forever — content-based
         // clearing never fires.
         if (msg.forkPoint) addForkAction(state.turnAgentActionsEl, msg.forkPoint);
-        revealTurnFooter();
+        revealTurnFooter(undefined, msg);
         markLiveTurnFeedback();
         state.busy = false;
         updateSendButton();
@@ -23099,6 +23246,7 @@ ${fullText}`
         addSessionContextBanner();
         break;
       case "clearMessages":
+        cancelPendingStarPrompt();
         state.commands = state.commands.filter(cmd => !cmd?._meta?.["afk/compact"] && !cmd?._meta?.["muse/skill"]);
         recalledPrompt = null;
         removeProjectPrompt();
@@ -24337,6 +24485,7 @@ ${fullText}`
   // default purpose is knowledge work, so the class has to be right before
   // the host has said anything.
   applyTurnDiffSummaryVisibility();
+  applyShowTurnDuration(state.showTurnDuration);
   donutEl.onclick = (e) => {
     e.stopPropagation();
     if (contextPopover.hidden) openContextPopover(); else closePopovers();
@@ -24794,6 +24943,7 @@ ${fullText}`
   });
   input.addEventListener("pointerdown", () => { composerPreferredColumn = null; });
   input.addEventListener("input", () => {
+    if (input.value) cancelPendingStarPrompt();
     recalledPrompt = null;
     if (composerLoadDraft) composerLoadDraft.edited = true;
     composerPreferredColumn = null;

@@ -78,7 +78,7 @@ Details, build-from-source, and signing notes: **[docs/desktop.md](docs/desktop.
 Open **Settings** from **+** in VS Code, or the rail gear in Desktop and on your phone.
 
 1. **Open** AFK Pilot — in VS Code: `Ctrl/Cmd+;` (Secondary Side Bar by default); in Desktop: launch the app and add a project folder.
-2. **Type a prompt** and press **Enter**; the agent's answer streams in. Want its reasoning inline? Turn on **Show thinking traces** in Settings.
+2. **Type a prompt** and press **Enter**; the agent's answer streams in. Want its reasoning inline? Turn on **Show thinking traces** in Settings; **Show turn duration** adds how long each reply took.
 3. **Approve actions.** When the agent wants to write a file or run a command it may raise a permission card — preview an edit (native diff in VS Code; in-app viewer on Desktop), then pick one of the card's options, such as *Allow once* or *Reject*.
 4. **Pick your model** and **reasoning effort** from the model chip, and a **mode** from the bottom toolbar when the agent offers one; the picker lists what that agent has.
 5. **Resume anytime** — the clock icon lists past sessions for this project.

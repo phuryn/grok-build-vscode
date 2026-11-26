@@ -1243,7 +1243,7 @@ export function isRecentConversation(meta: SessionMetaOverride | undefined, now:
   return typeof meta.openedAt === "number" && meta.openedAt >= now - RECENT_OPENED_MS;
 }
 
-function isRoutineRun(meta: SessionMetaOverride): boolean {
+export function isRoutineRun(meta: SessionMetaOverride): boolean {
   return typeof meta.customName === "string" && meta.customName.trim().startsWith(ROUTINE_TAG);
 }
 

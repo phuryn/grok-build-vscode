@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { AcpClient } from "../src/acp";
 import { GrokSidebar } from "../src/sidebar";
 import { RemoteClientState } from "../src/remote-client-state";
-import { Session } from "../src/session";
+import { Session, beginTurn, endTurn } from "../src/session";
 import { bootWebview, click, dispatch } from "./webview-harness";
 
 function harness() {
@@ -36,6 +36,32 @@ function harness() {
 }
 
 describe("session-bound human request lifecycles", () => {
+  it("keeps the turn clock paused through overlapping cards until the last answer", async () => {
+    const { sidebar, session, written } = harness();
+    sidebar.showDeskAlert = vi.fn();
+    let now = 0;
+    const clock = vi.spyOn(performance, "now").mockImplementation(() => now);
+    try {
+      const turn = beginTurn(session);
+      now = 2_000;
+      sidebar.postQuestionRequest(session, { id: 1, questions: [{ question: "First?" }] });
+      now = 5_000;
+      sidebar.postQuestionRequest(session, { id: 2, questions: [{ question: "Second?" }] });
+      now = 10_000;
+      await sidebar.onMessage({ type: "questionAnswer", requestId: 1, answers: { "First?": "Yes" } }, "remote", "desk");
+      expect(sidebar.setStatus).toHaveBeenLastCalledWith(session, "needs-you");
+      now = 20_000;
+      await sidebar.onMessage({ type: "questionAnswer", requestId: 2, answers: { "Second?": "Yes" } }, "remote", "desk");
+      expect(sidebar.setStatus).toHaveBeenLastCalledWith(session, "working");
+      expect(written.map((response) => response.id)).toEqual([1, 2]);
+      now = 23_000;
+      expect(endTurn(session, turn)).toBe(true);
+      expect(turn.durationMs).toBe(5_000);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   it.each(["completed", "failed"])("%s closes the matching open question on every surface and preserves its draft", (status) => {
     const { sidebar, session, written, surfaces } = harness();
     session.pendingQuestions.set(0, "call-colour");

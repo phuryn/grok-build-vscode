@@ -264,6 +264,23 @@ export async function readGithubAuthState(
   return { ...DISCONNECTED_GITHUB };
 }
 
+const STAR_REPO = "phuryn/grok-build-vscode";
+export const STAR_REPO_URL = `https://github.com/${STAR_REPO}`;
+
+export async function starAfkPilotRepo(
+  io: GithubAuthIo = REAL_IO,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<boolean> {
+  if (githubEnvTokenName(env)) return false;
+  try {
+    const result = await execGh(["api", "-X", "PUT", `user/starred/${STAR_REPO}`], io,
+      { ...env, GH_HOST: "github.com" }, STATUS_TIMEOUT_MS);
+    return result.ok;
+  } catch {
+    return false;
+  }
+}
+
 export async function listGithubRepositories(
   io: GithubAuthIo = REAL_IO,
   env: NodeJS.ProcessEnv = process.env,

@@ -640,6 +640,18 @@
       message: (value) => ({ type: "setExpandDiffCard", value }),
     },
     {
+      id: "showTurnDuration",
+      category: "general",
+      title: l10n("Show turn duration"),
+      description: l10n("Show how long each reply took. Time spent waiting for your approval or answer is left out."),
+      kind: "toggle",
+      defaultValue: false,
+      get: (s) => !!(s && s.showTurnDuration),
+      visible: (s, env) => !(env && env.isRemote) || !!(s && s.turnDurationAvailable),
+      localOnly: (s, env) => !!(env && env.isRemote),
+      message: (value) => ({ type: "setShowTurnDuration", value }),
+    },
+    {
       id: "steerByDefault",
       category: "general",
       title: l10n("Steer by default"),
@@ -1637,8 +1649,8 @@
       id: "aboutRepo",
       category: "about",
       icon: "github",
-      title: "phuryn/grok-build-vscode",
-      description: l10n("Source repository on GitHub."),
+      title: l10n("Star on GitHub"),
+      description: "phuryn/grok-build-vscode",
       kind: "action",
       actionLabel: l10n("Open"),
       href: GITHUB_REPO_URL,
@@ -1817,6 +1829,9 @@
       case "expandDiffCard":
         next.expandDiffCard = !!value;
         break;
+      case "showTurnDuration":
+        next.showTurnDuration = !!value;
+        break;
       case "promptNav":
         next.promptNav = !!value;
         break;
@@ -1903,6 +1918,8 @@
       traySupported: false,
       desktopTray: true,
       expandDiffCard: false,
+      showTurnDuration: false,
+      turnDurationAvailable: false,
       promptNav: true,
       providers: [],
       // Host-owned, never latched locally: an older host that ignores
@@ -4638,6 +4655,7 @@
     THUMBS_COPY,
     ABOUT_DISCLAIMER,
     GITHUB_REPO_URL,
+    GITHUB_MARK: ROW_ICONS.github,
     GROK_CONNECTORS_URL,
     ICON_SETTINGS,
     CONNECTOR_LOGO_IDS,

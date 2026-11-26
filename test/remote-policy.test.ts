@@ -1553,6 +1553,22 @@ describe("the diff-card preference belongs to each device", () => {
   });
 });
 
+describe("the turn duration preference belongs to each device", () => {
+  it("keeps the preference on its device and mirrors the session's live duration", () => {
+    expect(INBOUND_DISPOSITION.setShowTurnDuration).toBe("host-local");
+    expect(REMOTE_REQUIRES_BOUND_SESSION.setShowTurnDuration).toBe(false);
+    expect(OUTBOUND_DISPOSITION.showTurnDuration).toBe("host-local");
+    expect(OUTBOUND_PROJECT_AUTH.showTurnDuration).toBe("none");
+    expect(transformHostMsgForRemote({ type: "showTurnDuration", value: true })).toBeNull();
+    // The desk's value crosses only as the sign that this host sends durations.
+    expect(transformHostMsgForRemote({ type: "initialState", showTurnDuration: true } as HostMsg))
+      .toEqual({ type: "initialState", showTurnDuration: true });
+    const end = { type: "agentEnd", durationMs: 4_500, stopped: true } as const;
+    expect(OUTBOUND_PROJECT_AUTH.agentEnd).toBe("scope");
+    expect(transformHostMsgForRemote(end)).toEqual(end);
+  });
+});
+
 describe("the live-workflow pin preference belongs to each device", () => {
   it("keeps both directions host-local and needs no remote session binding", () => {
     expect(INBOUND_DISPOSITION.setPinLiveWorkflows).toBe("host-local");

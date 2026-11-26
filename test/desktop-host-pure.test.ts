@@ -179,14 +179,17 @@ describe("desktop ConfigStore", () => {
     expect(store.getConfiguration("grok").get("cliPath", "")).toBe("");
     expect(store.getConfiguration("grok").get("showThinking", false)).toBe(false);
     expect(store.getConfiguration("grok").get("expandDiffCard", true)).toBe(false);
+    expect(store.getConfiguration("grok").get("showTurnDuration", true)).toBe(false);
 
     await store.getConfiguration("grok").update("cliPath", "/bin/fake-grok");
     expect(store.getConfiguration("grok").get("cliPath")).toBe("/bin/fake-grok");
     await store.getConfiguration("grok").update("expandDiffCard", true, "global");
+    await store.getConfiguration("grok").update("showTurnDuration", true, "global");
 
     const again = new ConfigStore(file);
     expect(again.getConfiguration("grok").get("cliPath")).toBe("/bin/fake-grok");
     expect(again.getConfiguration("grok").get("expandDiffCard")).toBe(true);
+    expect(again.getConfiguration("grok").get("showTurnDuration")).toBe(true);
   });
 
   it("persists the Codex CLI override through the desktop config store", async () => {
@@ -1361,7 +1364,7 @@ describe("webview message schema validation — display-preference setters", () 
   // VS Code accepts (no gate there) and a phone never posts (local-only) can
   // therefore be dead on the desktop and on a cloud machine alone — which is
   // exactly what happened to setExpandDiffCard the day it shipped.
-  it.each(["setExpandDiffCard", "setPinLiveWorkflows"])("accepts %s with a boolean and refuses anything else", type => {
+  it.each(["setExpandDiffCard", "setShowTurnDuration", "setPinLiveWorkflows"])("accepts %s with a boolean and refuses anything else", type => {
     expect(parseWebviewMsg({ type, value: true })).toEqual({ type, value: true });
     expect(parseWebviewMsg({ type, value: false })?.type).toBe(type);
     expect(parseWebviewMsg({ type, value: "yes" })).toBeNull();

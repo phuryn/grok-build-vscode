@@ -918,6 +918,7 @@ async function createApp(): Promise<void> {
 
   sidebar.resolveWebviewView({
     webview,
+    get visible() { return !!mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible(); },
     show() {
       mainWindow?.show();
     },

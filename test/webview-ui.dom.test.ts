@@ -4005,6 +4005,130 @@ describe("agent message footer (copy + timestamp) — one per turn", () => {
   });
 });
 
+describe("live turn duration footer", () => {
+  function startReply(h: ReturnType<typeof bootWebview>) {
+    dispatch(h.window, { type: "userMessage", text: "q" });
+    dispatch(h.window, { type: "agentStart" });
+    dispatch(h.window, { type: "messageChunk", text: "answer" });
+  }
+
+  it("hides duration by default and toggles the same footer beside its timestamp", () => {
+    const h = bootWebview();
+    const style = h.doc.createElement("style");
+    style.textContent = readFileSync(new URL("../media/chat.css", import.meta.url), "utf8");
+    h.doc.head.appendChild(style);
+    startReply(h);
+    dispatch(h.window, { type: "promptComplete", meta: {} });
+    dispatch(h.window, { type: "agentEnd", durationMs: 125_999 });
+
+    const timestamp = h.doc.querySelector(".msg.agent .msg-timestamp")!;
+    const duration = timestamp.nextElementSibling as HTMLElement;
+    expect(duration.className).toBe("msg-duration");
+    expect(duration.textContent).toBe("Worked for 2m 5s");
+    expect(duration.hasAttribute("title")).toBe(false);
+    // Happy DOM caches an element's computed style across ancestor class changes.
+    const display = () => {
+      const probe = duration.cloneNode(true) as HTMLElement;
+      duration.after(probe);
+      const value = h.window.getComputedStyle(probe).display;
+      probe.remove();
+      return value;
+    };
+    expect(display()).toBe("none");
+    dispatch(h.window, { type: "showTurnDuration", value: true });
+    expect(timestamp.nextElementSibling).toBe(duration);
+    expect(display()).not.toBe("none");
+    dispatch(h.window, { type: "showTurnDuration", value: false });
+    expect(display()).toBe("none");
+  });
+
+  it("keeps the duration on a stopped turn after steering with no further chunks", () => {
+    const h = bootWebview();
+    dispatch(h.window, { type: "initialState", showTurnDuration: true });
+    startReply(h);
+    dispatch(h.window, { type: "userMessage", text: "revise the answer", steer: true });
+    dispatch(h.window, { type: "promptComplete", meta: {} });
+    dispatch(h.window, { type: "agentEnd", durationMs: 4_100, stopped: true });
+
+    expect(h.doc.body.classList.contains("show-turn-duration")).toBe(true);
+    const durations = h.doc.querySelectorAll(".msg .msg-duration");
+    expect(durations).toHaveLength(1);
+    expect(durations[0].closest(".msg")?.classList.contains("agent")).toBe(true);
+    expect(durations[0].textContent).toBe("Stopped after 4s");
+  });
+
+  it("formats 3661 seconds as hours and minutes", () => {
+    const h = bootWebview();
+    startReply(h);
+    dispatch(h.window, { type: "agentEnd", durationMs: 3_661_000 });
+    expect(h.doc.querySelector(".msg.agent .msg-duration")!.textContent).toBe("Worked for 1h 1m");
+  });
+
+  it.each([
+    { type: "agentError", text: "boom", durationMs: 8_700 },
+    { type: "agentEnd" },
+    { type: "agentEnd", durationMs: 999 },
+  ])("omits the duration for %j", (end) => {
+    const h = bootWebview();
+    dispatch(h.window, { type: "initialState", showTurnDuration: true });
+    startReply(h);
+    dispatch(h.window, end);
+    expect(h.doc.querySelector(".msg.agent .msg-timestamp")).not.toBeNull();
+    expect(h.doc.querySelector(".msg-duration")).toBeNull();
+  });
+
+  it("never puts an empty turn duration on a previous reply", () => {
+    const h = bootWebview();
+    startReply(h);
+    dispatch(h.window, { type: "agentEnd" });
+    dispatch(h.window, { type: "userMessage", text: "another question" });
+    dispatch(h.window, { type: "agentStart" });
+    dispatch(h.window, { type: "agentEnd", durationMs: 4_100, stopped: true });
+    expect(h.doc.querySelectorAll(".msg.agent")).toHaveLength(1);
+    expect(h.doc.querySelector(".msg-duration")).toBeNull();
+  });
+
+  it("shows the duration of a reply that ended out of view, without a stray separator", () => {
+    const h = bootWebview();
+    dispatch(h.window, { type: "initialState", showTurnDuration: true });
+    dispatch(h.window, { type: "clearMessages" });
+    dispatch(h.window, { type: "historyReplay", active: true });
+    startReply(h);
+    dispatch(h.window, { type: "agentEnd", durationMs: 4_100 });
+    dispatch(h.window, { type: "userMessage", text: "next" });
+    dispatch(h.window, { type: "agentStart" });
+    dispatch(h.window, { type: "messageChunk", text: "second" });
+    dispatch(h.window, { type: "agentEnd", durationMs: 61_000, stopped: true });
+    dispatch(h.window, { type: "historyReplay", active: false });
+
+    expect([...h.doc.querySelectorAll(".msg.agent .msg-duration")].map((el) => el.textContent))
+      .toEqual(["Worked for 4s", "Stopped after 1m 1s"]);
+    expect(h.doc.querySelector(".msg-duration")!.matches(".msg-timestamp:empty + .msg-duration")).toBe(true);
+  });
+
+  it("omits duration when loading a reply from history and keeps its timestamp", () => {
+    const h = bootWebview();
+    dispatch(h.window, { type: "initialState", showTurnDuration: true });
+    startReply(h);
+    dispatch(h.window, { type: "agentEnd", durationMs: 4_100 });
+    expect(h.doc.querySelector(".msg-duration")!.textContent).toBe("Worked for 4s");
+
+    const agentAt = Date.UTC(2026, 6, 30, 6, 19);
+    dispatch(h.window, { type: "clearMessages" });
+    dispatch(h.window, { type: "historyReplay", active: true });
+    dispatch(h.window, { type: "userMessageChunk", text: "q" });
+    dispatch(h.window, { type: "messageChunk", text: "answer" });
+    dispatch(h.window, {
+      type: "subagentUpdate", update: { sessionUpdate: "turn_completed", duration_ms: 4_100 }, timestampMs: agentAt,
+    });
+    dispatch(h.window, { type: "agentEnd" });
+    dispatch(h.window, { type: "historyReplay", active: false });
+
+    expect(h.doc.querySelector(".msg.agent .msg-timestamp")!.textContent).toBe(clock(agentAt));
+    expect(h.doc.querySelector(".msg-duration")).toBeNull();
+  });
+});
+
 describe("user prompt counter parity (interjections never count)", () => {
   const messageIndex = (doc: Document, text: string) =>
     [...$(doc, "messages").children].findIndex((el) => el.textContent?.includes(text));

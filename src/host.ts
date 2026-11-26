@@ -488,6 +488,8 @@ export interface HostFileSystem {
  */
 export interface Host {
   // ── Notifications ──────────────────────────────────────────────────────
+  /** Window presence on desktop platforms without native desk alerts. */
+  isChatWindowAway?(): boolean;
   deskAlerts?: {
     readonly canApproveOnce: boolean;
     isAway(showingConversation: boolean): boolean;

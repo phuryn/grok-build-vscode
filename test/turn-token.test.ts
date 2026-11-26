@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Session, beginTurn, endTurn, turnIsInFlight } from "../src/session";
+import { Session, beginTurn, endTurn, setTurnWaiting, turnIsInFlight, turnWasStopped } from "../src/session";
 
 // `status` used to stand in for "is a turn running", and could not do the job:
 // it is set to "working" beside the prompt and only leaves it when that promise
@@ -99,5 +99,50 @@ describe("turn token", () => {
     // turn, but no prompt is running and sends must go through.
     session.status = "working";
     expect(turnIsInFlight(session)).toBe(false);
+  });
+
+  it("freezes the elapsed work on the settled token, through the next turn", () => {
+    const session = new Session();
+    const turn = beginTurn(session, 0);
+    setTurnWaiting(session, true, 2_000);
+    setTurnWaiting(session, false, 7_000);
+    setTurnWaiting(session, true, 10_000);
+    setTurnWaiting(session, false, 30_000);
+    expect(endTurn(session, turn, 32_400)).toBe(true);
+    expect(turn.durationMs).toBe(7_400);
+
+    const next = beginTurn(session, 50_000);
+    expect(endTurn(session, turn, 51_000)).toBe(false);
+    expect(endTurn(session, next, 54_000)).toBe(true);
+    expect(next.durationMs).toBe(4_000);
+    expect(turn.durationMs).toBe(7_400);
+  });
+
+  it("counts overlapping waits once and resumes only when the last closes", () => {
+    const session = new Session();
+    const turn = beginTurn(session, 0);
+    setTurnWaiting(session, true, 2_000);
+    setTurnWaiting(session, true, 4_000);
+    setTurnWaiting(session, true, 7_000);
+    setTurnWaiting(session, false, 12_000);
+    setTurnWaiting(session, false, 14_000);
+    expect(endTurn(session, turn, 15_000)).toBe(true);
+    expect(turn.durationMs).toBe(5_000);
+  });
+
+  it("excludes a wait still open when the turn settles", () => {
+    const session = new Session();
+    const turn = beginTurn(session, 0);
+    setTurnWaiting(session, true, 4_000);
+    expect(endTurn(session, turn, 50_000)).toBe(true);
+    expect(turn.durationMs).toBe(4_000);
+  });
+
+  it("is stopped by the person's Stop or by the agent's own word for it", () => {
+    const turn = beginTurn(new Session(), 0);
+    expect(turnWasStopped(turn, { lastPromptStopReason: "end_turn" })).toBe(false);
+    expect(turnWasStopped(turn, { lastPromptStopReason: "cancelled" })).toBe(true);
+    turn.stopRequested = true;
+    expect(turnWasStopped(turn, { lastPromptStopReason: "end_turn" })).toBe(true);
   });
 });

@@ -812,7 +812,7 @@ describe("settings overlay (chat.js)", () => {
     });
     const ids = api.visibleRows(snapshot, vscodeEnv).map((row: { id: string }) => row.id);
     expect(ids).toEqual(expect.arrayContaining([
-      "showThinking", "expandCommandOutputs", "expandDiffCard", "steerByDefault",
+      "showThinking", "expandCommandOutputs", "expandDiffCard", "showTurnDuration", "steerByDefault",
       "soundNotifications", "processingSound", "inputNeededSound",
       "readRepliesAloud", "summarizeRepliesAloud",
       "openProjectConfig", "showLogs",
@@ -1714,23 +1714,23 @@ describe("settings overlay (chat.js)", () => {
     expect(api.TELEMETRY_COPY).toContain("The IP address is discarded, never stored.");
   });
 
-  it("orders General rows as purpose, text size, coding display, steer, stats, previous prompt, thumbs on every surface", () => {
+  it("orders General rows as purpose, text size, display, steer, stats, previous prompt, thumbs on every surface", () => {
     const api = loadSettings();
-    const coding = api.defaultSnapshot({ appPurpose: "coding" });
+    const coding = api.defaultSnapshot({ appPurpose: "coding", turnDurationAvailable: true });
     const generalIds = (env: Record<string, unknown>) =>
       api.visibleRows(coding, api.defaultEnv(env))
         .filter((row) => row.category === "general")
         .map((row) => row.id);
     expect(generalIds(fullEnv({ isDesktop: true, isRemote: false }))).toEqual([
-      "appPurpose", "chatFontScale", "showThinking", "expandCommandOutputs", "expandDiffCard", "steerByDefault",
+      "appPurpose", "chatFontScale", "showThinking", "expandCommandOutputs", "expandDiffCard", "showTurnDuration", "steerByDefault",
       "telemetryDesktop", "promptNav", "thumbsFeedback",
     ]);
     expect(generalIds(fullEnv({ isDesktop: false, isRemote: false, clientOwnsFontScale: false }))).toEqual([
-      "appPurpose", "openChatFontScale", "showThinking", "expandCommandOutputs", "expandDiffCard", "steerByDefault",
+      "appPurpose", "openChatFontScale", "showThinking", "expandCommandOutputs", "expandDiffCard", "showTurnDuration", "steerByDefault",
       "telemetryVsCode", "promptNav", "thumbsFeedback",
     ]);
     expect(generalIds(fullEnv({ isDesktop: true, isRemote: true }))).toEqual([
-      "appPurpose", "chatFontScale", "showThinking", "expandCommandOutputs", "expandDiffCard", "steerByDefault",
+      "appPurpose", "chatFontScale", "showThinking", "expandCommandOutputs", "expandDiffCard", "showTurnDuration", "steerByDefault",
       "telemetryRemote", "promptNav", "thumbsFeedbackRemote",
     ]);
   });
@@ -3502,6 +3502,66 @@ describe("every desktop toggle reaches the desktop host", () => {
     for (const row of toggles) {
       expect(parseWebviewMsg(row.message(true)), row.id).not.toBeNull();
     }
+  });
+});
+
+describe("Show turn duration across settings surfaces", () => {
+  it("posts the default-off switch from the standalone IDE settings page in Knowledge work", () => {
+    const api = loadSettings();
+    const w = new Window({ url: "https://localhost/" });
+    const sent: unknown[] = [];
+    const surface = api.mount(w.document.body as unknown as Element, {
+      snapshot: api.defaultSnapshot(),
+      env: api.defaultEnv({ isRemote: false, isDesktop: false }),
+      post: (msg: unknown) => sent.push(msg),
+    });
+    const row = w.document.querySelector('[data-id="showTurnDuration"]')!;
+    expect(row.textContent).toContain("Show turn duration");
+    expect(row.textContent).toContain("Show how long each reply took. Time spent waiting for your approval or answer is left out.");
+    const toggle = row.querySelector(".settings-switch") as any;
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    toggle.click();
+    expect(sent).toContainEqual({ type: "setShowTurnDuration", value: true });
+    surface.dispose();
+  });
+
+  it("offers the remote row only when the host sends durations", () => {
+    const h = bootWebview({ remote: true });
+    seedChat(h);
+    openSettings(h);
+    expect(h.doc.querySelector('[data-id="expandCommandOutputs"]')).not.toBeNull();
+    expect(h.doc.querySelector('[data-id="showTurnDuration"]')).toBeNull();
+
+    const current = bootWebview({ remote: true });
+    seedChat(current, { showTurnDuration: false });
+    openSettings(current);
+    expect(current.doc.querySelector('[data-id="showTurnDuration"]')).not.toBeNull();
+  });
+
+  it("toggles existing remote replies locally and keeps its choice on reconnect", () => {
+    const h = bootWebview({ remote: true });
+    seedChat(h, { showTurnDuration: true });
+    dispatch(h.window, { type: "agentStart" });
+    dispatch(h.window, { type: "messageChunk", text: "Reply." });
+    dispatch(h.window, { type: "agentEnd", durationMs: 2_000 });
+    const duration = h.doc.querySelector(".msg-duration")!;
+    expect(duration.textContent).toBe("Worked for 2s");
+    expect(h.doc.body.classList.contains("show-turn-duration")).toBe(false);
+
+    openSettings(h);
+    click(h.window, h.doc.querySelector('[data-id="showTurnDuration"] .settings-switch')!);
+    expect(h.posted.filter((m) => m.type === "setShowTurnDuration")).toEqual([]);
+    expect(h.window.localStorage.getItem("grok.remote.showTurnDuration")).toBe("true");
+    seedChat(h, { showTurnDuration: false });
+    dispatch(h.window, { type: "showTurnDuration", value: false });
+    expect(h.doc.querySelector(".msg-duration")).toBe(duration);
+    expect(h.doc.body.classList.contains("show-turn-duration")).toBe(true);
+
+    const reopened = bootWebview({
+      remote: true,
+      beforeScripts: (w) => w.localStorage.setItem("grok.remote.showTurnDuration", h.window.localStorage.getItem("grok.remote.showTurnDuration")!),
+    });
+    expect(reopened.doc.body.classList.contains("show-turn-duration")).toBe(true);
   });
 });
 

@@ -471,6 +471,11 @@
           "default": false,
           "markdownDescription": "%configuration.grok.expandDiffCard.markdownDescription%"
         },
+        "grok.showTurnDuration": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "%configuration.grok.showTurnDuration.markdownDescription%"
+        },
         "grok.steerByDefault": {
           "type": "boolean",
           "default": false,

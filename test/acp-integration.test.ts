@@ -20,12 +20,15 @@
 // Cross-platform: uses fake-grok-acp.cmd on Windows, fake-grok-acp.sh elsewhere
 // (both wrap the .cjs script via node). Subprocess startup adds ~50–100ms per
 // test — same order as the existing terminal-manager suite.
-import { describe, it, expect, beforeEach, afterEach, beforeAll } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, beforeAll, vi } from "vitest";
 import * as path from "node:path";
 import * as os from "node:os";
 import * as fs from "node:fs";
 import { AcpClient } from "../src/acp";
 import { contextUsedFromCompactNotification } from "../src/acp-dispatch";
+import type { HostMsg } from "../src/protocol";
+import { Session } from "../src/session";
+import { GrokSidebar } from "../src/sidebar";
 
 function fixtureCli(): string {
   const dir = path.join(__dirname, "fixtures");
@@ -194,6 +197,56 @@ describe("ACP integration (real subprocess, fake CLI)", () => {
     expect(JSON.parse(capsJson)).toEqual({ fs: { writeTextFile: true }, terminal: true });
     const meta = await client.prompt("hello");
     expect(meta).toMatchObject({ totalTokens: 10 });
+  });
+
+  it.each([false, true])("reports live work time around a real ACP question (cancelled: %s)", async (cancelled) => {
+    let now = 0;
+    const clock = vi.spyOn(performance, "now").mockImplementation(() => now);
+    const session = new Session();
+    Object.assign(session, { client, cwd: workspace, hasHistory: true, activeSessionId: client.sessionId });
+    const live: HostMsg[] = [];
+    const sidebar = Object.assign(Object.create(GrokSidebar.prototype), {
+      focused: session,
+      pendingAttach: new Set(),
+      workspaceRoot: () => workspace,
+      view: { webview: { postMessage: (msg: HostMsg) => live.push(msg) } },
+      state: { get: (_key: string, fallback: unknown) => fallback },
+      host: { getConfiguration: () => ({ get: (_key: string, fallback: unknown) => fallback }) },
+    });
+    for (const method of ["postChips", "refreshImplicitChip", "reportRemoteMessage", "startTurnDiffBaseline",
+      "noteSessionActivity", "maybeAskToAddProject", "noteLiveTurnEnded", "setProviderNeedsLogin",
+      "maybeGenerateTitle", "postSessionName", "maybeFlushQueuedSends", "mirrorToProjectsRail", "sendRemoteSession",
+      "pushDot", "refreshKeepAwake", "refreshSessionOrderAfterTurn", "showDeskAlert"]) sidebar[method] = vi.fn();
+    client.on("questionRequest", (req) => {
+      now = 2_000;
+      sidebar.postQuestionRequest(session, req);
+    });
+    try {
+      const question = waitFor<{ id: number }>(client, "questionRequest");
+      const prompt = sidebar.handleSend(
+        cancelled ? "SCENARIO_ASK_QUESTION_CANCELLED" : "SCENARIO_ASK_QUESTION", false, session,
+      );
+      const req = await Promise.race([
+        question,
+        prompt.then(() => { throw new Error("Turn ended before the question"); }),
+      ]);
+      expect(session.status).toBe("needs-you");
+      now = 42_000;
+      await sidebar.onAdmittedMessage({
+        type: "questionAnswer", requestId: req.id, answers: { "Pick one?": "Option A" },
+      }, "local");
+      now = 45_000;
+      await prompt;
+
+      expect(session.status).toBe("done");
+      expect(live).toContainEqual({ type: "questionResolved", requestId: req.id, outcome: "accepted" });
+      expect(live.filter((msg) => msg.type === "agentEnd")).toEqual([
+        { type: "agentEnd", meta: expect.any(Object), durationMs: 5_000, stopped: cancelled },
+      ]);
+      expect(session.buffer.filter((msg) => msg.type === "agentEnd")).toEqual(live.filter((msg) => msg.type === "agentEnd"));
+    } finally {
+      clock.mockRestore();
+    }
   });
 
   it("advertises the delegated handshake on grok 0.2.117", async () => {

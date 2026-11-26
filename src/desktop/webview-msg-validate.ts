@@ -283,6 +283,7 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
     case "setPromptNav":
     case "setPinLiveWorkflows":
     case "setExpandDiffCard":
+    case "setShowTurnDuration":
     case "setTelemetryEnabled":
     case "setDesktopTray":
     case "setThumbsFeedback":
@@ -552,6 +553,11 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
     case "agySignIn":
       if (raw.method !== "google" && raw.method !== "api-key") return null;
       if (raw.key !== undefined && (raw.method !== "api-key" || !isString(raw.key) || raw.key.length > MAX_AGY_API_KEY_CHARS)) return null;
+      break;
+    case "starPromptAction":
+      if (!isString(raw.id) || !raw.id || raw.id.length > 64
+        || Object.keys(raw).length !== 3
+        || !["ready", "shown", "star", "open", "dismiss"].includes(raw.action as string)) return null;
       break;
     case "welcomeTipShown":
     case "dismissWelcomeTip":

@@ -2326,7 +2326,10 @@ body.turn-busy .queued-steer:hover {
 /* Edit is the complement: shown only on the tip, where Rewind is hidden (#56). */
 .msg-edit-btn[hidden] { display: none; }
 body:not(.turn-fork-supported) .msg-fork-btn { display: none; }
-.msg-timestamp { font-size: 11px; }
+.msg-timestamp, .msg-duration { font-size: 11px; }
+body:not(.show-turn-duration) .msg-duration { display: none; }
+.msg-duration::before { content: "·"; margin-inline-end: 4px; }
+.msg-timestamp:empty + .msg-duration::before { content: none; }
 .msg.thinking {
   background: transparent;
   padding: 2px 0;
@@ -3985,6 +3988,57 @@ body.hide-turn-diff-summary .turn-diff-summary { display: none; }
 }
 
 /* ---- composer ---- */
+
+.card.star-card {
+  flex: none;
+  flex-direction: row;
+  align-items: flex-start;
+  margin: 0 0 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--vscode-widget-border, var(--vscode-editorWidget-border));
+  border-radius: 8px;
+  background: var(--vscode-textBlockQuote-background, var(--vscode-editorWidget-background));
+  color: var(--vscode-foreground);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+/* An approval or a question keeps the person's whole attention. */
+:is(.messages, #messages-wrap):has(.card:is(.permission, .question, .plan):not(.resolved, .plan-history)) ~ .composer > .star-card { display: none; }
+.star-card svg[fill="currentColor"] { flex: none; margin-top: 1px; }
+.star-card.star-thanks { align-items: center; }
+.star-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+.star-copy {
+  flex: 1 1 300px;
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  text-wrap: pretty;
+}
+.star-actions {
+  margin-inline-start: 24px;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.star-card .onb-action:focus-visible,
+.star-alt a:focus-visible {
+  outline: 2px solid var(--vscode-focusBorder);
+  outline-offset: 1px;
+}
+.star-card[aria-busy="true"] .onb-action { cursor: default; opacity: .6; }
+.star-alt { margin-top: 2px; font-size: 11px; color: var(--vscode-descriptionForeground); }
+.star-close { margin: -5px -6px -5px auto; }
+.star-close.icon-btn svg { width: 12px; height: 12px; }
 
 /* No border-top separator: the card's own border is the boundary between the
    messages scroll area and the input (mirrors Claude Code / Cursor composers ÔÇö
