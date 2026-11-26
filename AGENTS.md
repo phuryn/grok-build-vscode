@@ -1,6 +1,3 @@
-# Repository Instructions
+# AGENTS.md — grok-build-vscode
 
-Import the repository instructions from `CLAUDE.md` instead of duplicating them.
-
-If instruction imports are unavailable, ask the user for permission to read `CLAUDE.md`
-before proceeding.
+This repository's instructions are in `CLAUDE.md`, one file for every agent. Read it from disk before your first plan, all the way to the end: it is long, and § Publishing and § Repo conventions come last.
