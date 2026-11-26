@@ -118,6 +118,31 @@ describe("when to show a live desk alert", () => {
     expect(h.session.pendingPermissions.has(1)).toBe(true);
   });
 
+  it("treats a visible split as shown and a covered tab as away", () => {
+    const h = harness();
+    h.sidebar.focused = new Session();
+    const panel = { visible: true, active: false };
+    h.sidebar.editorChats = new Set([{ panel, session: h.session }]);
+
+    h.request();
+    h.sidebar.showDeskAlert(h.session, "done");
+    h.sidebar.showDeskAlert(h.session, "error");
+    expect(vscode.showInformationMessage).not.toHaveBeenCalled();
+    expect(vscode.showErrorMessage).not.toHaveBeenCalled();
+
+    panel.visible = false;
+    h.request();
+    h.sidebar.showDeskAlert(h.session, "done");
+    h.sidebar.showDeskAlert(h.session, "error");
+    expect(vscode.showInformationMessage).toHaveBeenCalledTimes(2);
+    expect(vscode.showErrorMessage).toHaveBeenCalledOnce();
+
+    panel.visible = true;
+    vscode.state.focused = false;
+    h.sidebar.showDeskAlert(h.session, "done");
+    expect(vscode.showInformationMessage).toHaveBeenCalledTimes(3);
+  });
+
   it("shows the complete command when the chat is hidden", () => {
     const h = harness();
     const command = `npm ${"x".repeat(116)}`;

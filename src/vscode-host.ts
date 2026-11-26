@@ -159,6 +159,34 @@ function toVsCodeShowOptions(opts: HostTextShowOptions): vscode.TextDocumentShow
   return out;
 }
 
+function isConversationTab(tab: vscode.Tab | undefined): boolean {
+  return tab?.input instanceof vscode.TabInputWebview
+    && /^(?:mainThreadWebview-)?grok\.conversation$/.test(tab.input.viewType);
+}
+
+async function editorShowOptions(opts?: HostTextShowOptions): Promise<vscode.TextDocumentShowOptions | undefined> {
+  if (!opts) return undefined;
+  const result = toVsCodeShowOptions(opts);
+  if (!opts.besideConversation) return result;
+  // Always name the group: VS Code updates the active group asynchronously, so
+  // leaving it implicit can land the editor on a chat revealed a moment earlier.
+  const active = vscode.window.tabGroups.activeTabGroup;
+  const groups = vscode.window.tabGroups.all;
+  const free = isConversationTab(active.activeTab) ? groups.find(group => !isConversationTab(group.activeTab)) : active;
+  if (free) {
+    result.viewColumn = free.viewColumn;
+  } else if (groups.length < vscode.ViewColumn.Nine) {
+    // A new numbered column creates a group. Beside can reuse an adjacent chat.
+    result.viewColumn = groups.length + 1;
+  } else {
+    await vscode.commands.executeCommand("workbench.action.newGroupRight");
+    const group = vscode.window.tabGroups.activeTabGroup;
+    if (isConversationTab(group.activeTab)) throw new Error("Could not open a separate editor group");
+    result.viewColumn = group.viewColumn;
+  }
+  return result;
+}
+
 function wrapTextEditor(editor: vscode.TextEditor): HostTextEditor {
   return {
     document: { uri: fromVsCodeUri(editor.document.uri) },
@@ -314,17 +342,28 @@ export function createVsCodeHost(
       const panel = vscode.window.createWebviewPanel(
         opts.viewType,
         opts.title,
-        { viewColumn: vscode.ViewColumn.Active, preserveFocus: false },
+        { viewColumn: opts.column === "beside" ? vscode.ViewColumn.Beside : vscode.ViewColumn.Active, preserveFocus: false },
         {
           enableScripts: true,
           retainContextWhenHidden: true,
           localResourceRoots: opts.localResourceRoots.map(toVsCodeUri),
         },
       );
+      if (opts.icon) panel.iconPath = toVsCodeUri(opts.icon);
       return {
         webview: wrapWebview(panel.webview),
+        get visible() { return panel.visible; },
+        get active() { return panel.active; },
+        get title() { return panel.title; },
+        set title(value) { if (value !== undefined) panel.title = value; },
         reveal() {
-          panel.reveal(vscode.ViewColumn.Active);
+          if (opts.column === "beside") panel.reveal();
+          else panel.reveal(vscode.ViewColumn.Active);
+        },
+        onDidFocus(listener) {
+          return panel.onDidChangeViewState(({ webviewPanel }) => {
+            if (webviewPanel.active) listener();
+          });
         },
         onDidDispose(listener) {
           return panel.onDidDispose(listener);
@@ -500,14 +539,14 @@ export function createVsCodeHost(
     },
     async openTextFile(fsPath: string, options?: HostTextShowOptions) {
       const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(fsPath));
-      await vscode.window.showTextDocument(doc, options ? toVsCodeShowOptions(options) : undefined);
+      await vscode.window.showTextDocument(doc, await editorShowOptions(options));
     },
     async openResource(target: string | Uri, options?: HostTextShowOptions) {
       const uri = typeof target === "string" ? vscode.Uri.file(target) : toVsCodeUri(target);
       await vscode.commands.executeCommand(
         "vscode.open",
         uri,
-        options ? toVsCodeShowOptions(options) : undefined,
+        await editorShowOptions(options),
       );
     },
     async showInFolder(fsPath: string) {
@@ -523,12 +562,17 @@ export function createVsCodeHost(
       ensureConfigToml(p, PROJECT_CONFIG_STUB);
       await vscode.commands.executeCommand("vscode.open", vscode.Uri.file(p));
     },
-    async openHostResolvedPath(fsPath: string) {
-      await vscode.commands.executeCommand("vscode.open", vscode.Uri.file(fsPath));
+    async openHostResolvedPath(fsPath: string, options?: HostTextShowOptions) {
+      if (options) {
+        await vscode.commands.executeCommand("vscode.open", vscode.Uri.file(fsPath), await editorShowOptions(options));
+      } else {
+        await vscode.commands.executeCommand("vscode.open", vscode.Uri.file(fsPath));
+      }
     },
-    async openUntitledText(content: string, language?: string) {
+    async openUntitledText(content: string, language?: string, _suggestedFilename?: string, options?: HostTextShowOptions) {
       const doc = await vscode.workspace.openTextDocument(untitledTextOpenOptions(content, language));
-      await vscode.window.showTextDocument(doc);
+      if (options) await vscode.window.showTextDocument(doc, await editorShowOptions(options));
+      else await vscode.window.showTextDocument(doc);
     },
     async openDiff(left: Uri, right: Uri, title: string, options?: HostTextShowOptions) {
       await vscode.commands.executeCommand(
@@ -536,7 +580,7 @@ export function createVsCodeHost(
         toVsCodeUri(left),
         toVsCodeUri(right),
         title,
-        options ? toVsCodeShowOptions(options) : undefined,
+        await editorShowOptions(options),
       );
     },
     openWorkspaceTextFiles() {
@@ -661,6 +705,8 @@ export function createVsCodeHost(
     canPreviewInApp: false,
     // Editor-area settings tab. Desktop/remotes keep the in-page overlay.
     canOpenSettingsEditor: true,
+    canOpenConversationEditor: true,
+    isConversationEditorActive: () => isConversationTab(vscode.window.tabGroups.activeTabGroup.activeTab),
   };
 }
 

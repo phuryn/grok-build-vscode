@@ -21,6 +21,18 @@ function show(h: Harness, login?: string) {
 }
 
 describe("Star on GitHub renderer", () => {
+  it("ignores an offer in a conversation editor", () => {
+    const h = bootWebview({
+      vscode: true,
+      beforeScripts: window => { window.document.body.dataset.editorChat = "true"; },
+    });
+    dispatch(h.window, { type: "editorChatBound", binding: 1 });
+    frame(h, "check");
+    frame(h, "offer", "octocat");
+    expect(card(h)).toBeNull();
+    expect(h.posted.some(msg => msg.type === "editorChatAction")).toBe(false);
+  });
+
   it("places one labelled offer at the top of the composer without taking focus", () => {
     const h = bootWebview({ vscode: true });
     const input = h.doc.getElementById("input")!;

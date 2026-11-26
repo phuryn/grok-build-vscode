@@ -112,6 +112,16 @@ function harness(provider: "codex" | "claude") {
 beforeEach(() => vi.clearAllMocks());
 
 describe.each(["codex", "claude"] as const)("%s explicit CLI update", (provider) => {
+  it("resumes a clientless conversation in its existing editor tab", async () => {
+    const { host } = harness(provider);
+    const session = Object.assign(new Session(), { provider, activeSessionId: "editor-thread", userMessageCount: 2 });
+    const panel = { dispose: vi.fn() };
+    host.editorChats = new Set([{ session, panel }]);
+    await host.updateProviderCliOnDemand(provider);
+    expect(host.startSession).toHaveBeenCalledWith("editor-thread", session, "ensure", undefined, { silent: true });
+    expect(panel.dispose).not.toHaveBeenCalled();
+  });
+
   it("awaits every target process exit, re-observes the memoized version, and re-reads models", async () => {
     const { host, store, local, phone, background, other } = harness(provider);
     const exits = [defer(), defer(), defer()];
@@ -448,6 +458,21 @@ describe("grok explicit CLI update", () => {
     }));
     await host.updateGrokCliOnDemand();
     expect(host.runGrokUpdate).toHaveBeenCalledWith("/installed/grok", ["update"]);
+    expect(host.startSession).toHaveBeenCalledWith("grok-thread");
+  });
+
+  it("closes a tab sharing the replaced session before the Grok update", async () => {
+    const host = grokHarness(() => ({ stdout: JSON.stringify({ updateAvailable: true }), stderr: "" }));
+    const dispose = vi.fn();
+    host.focused.hasHistory = true;
+    host.editorChats = new Set([{ session: host.focused, panel: { dispose } }]);
+    host.editorDrafts = new Map([[host.focused, { text: "Draft in the tab", chips: [] }]]);
+    host.rememberQueuedDraft = vi.fn();
+    host.runGrokUpdate.mockImplementation(async () => {
+      expect(dispose).toHaveBeenCalledOnce();
+      expect(host.rememberQueuedDraft).toHaveBeenCalledWith("grok-thread", "Draft in the tab", undefined, true);
+    });
+    await host.updateGrokCliOnDemand();
     expect(host.startSession).toHaveBeenCalledWith("grok-thread");
   });
 

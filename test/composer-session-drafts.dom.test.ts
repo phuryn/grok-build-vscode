@@ -3,6 +3,155 @@ import { bootWebview, click, dispatch } from "./webview-harness";
 import { GrokSidebar } from "../src/sidebar";
 import { Session } from "../src/session";
 
+it("keeps a new editor's draft when the selected model starts a different provider ID", () => {
+  const { window, doc, posted } = bootWebview({ vscode: true,
+    beforeScripts: win => { win.document.body.dataset.editorChat = "true"; },
+  });
+  const input = doc.querySelector<HTMLTextAreaElement>("#input")!;
+  const identify = (sessionId: string) => dispatch(window, { type: "sessionName", sessionId, name: "New session", cwd: "/repo" });
+  dispatch(window, { type: "editorChatBinding", sessionId: "grok-shell" });
+  dispatch(window, { type: "editorChatBound", binding: 1 });
+  identify("grok-shell");
+  input.value = "Still writing my first prompt";
+  input.dispatchEvent(new (window as any).Event("input", { bubbles: true }));
+  // switchModel restarts the same Session in place and publishes a new id.
+  dispatch(window, { type: "session", sessionId: "codex-shell", models: [], provider: "codex" });
+  identify("codex-shell");
+  expect(input.value).toBe("Still writing my first prompt");
+  expect(posted.filter(msg => msg.type === "editorChatDraft").at(-1)?.text).toBe(input.value);
+});
+
+it("keeps the outgoing composer until the host accepts a History open", () => {
+  const { window, doc, posted } = bootWebview({ vscode: true,
+    beforeScripts: win => { win.document.body.dataset.editorChat = "true"; },
+  });
+  const input = doc.querySelector<HTMLTextAreaElement>("#input")!;
+  const identify = (sessionId: string) => dispatch(window, { type: "sessionName", sessionId, name: sessionId, cwd: "/repo" });
+  const type = (text: string) => {
+    input.value = text;
+    input.dispatchEvent(new (window as any).Event("input", { bubbles: true }));
+  };
+  const chooseB = () => {
+    click(window, doc.getElementById("history-btn")!);
+    dispatch(window, { type: "sessions", activeId: "a", entries: ["a", "b"].map(id => ({
+      id, displayName: id, cwd: "/repo", updatedAt: 1, numMessages: 2,
+    })) });
+    click(window, doc.querySelector('#history-popover [data-session-id="b"]')!);
+  };
+  dispatch(window, { type: "editorChatBinding", sessionId: "a" });
+  dispatch(window, { type: "editorChatBound", binding: 1 });
+  identify("a");
+  type("Draft for A");
+  chooseB();
+  expect(input.value).toBe("Draft for A");
+  dispatch(window, { type: "sessionOpening", sessionId: "b", failed: true });
+  expect(input.value).toBe("Draft for A");
+
+  chooseB();
+  dispatch(window, { type: "editorChatBinding", sessionId: "b", switchDraft: true });
+  dispatch(window, { type: "restoreComposer", sessionId: "b", text: "Draft for B", draft: true });
+  dispatch(window, { type: "editorChatBound", binding: 2 });
+  dispatch(window, { type: "historyReplay", active: true });
+  type("Draft for B plus load typing");
+  identify("b");
+  dispatch(window, { type: "historyReplay", active: false });
+  expect(input.value).toBe("Draft for B plus load typing");
+  expect(posted.filter(msg => msg.type === "editorChatDraft" && msg.binding === 2).at(-1)?.text).toBe(input.value);
+});
+
+it.each(["new", "history"])("switches the tab draft when the host accepts %s", gesture => {
+  const { window, doc, posted } = bootWebview({ vscode: true,
+    beforeScripts: win => { win.document.body.dataset.editorChat = "true"; },
+  });
+  const input = doc.querySelector<HTMLTextAreaElement>("#input")!;
+  const type = (text: string) => {
+    input.value = text;
+    input.dispatchEvent(new (window as any).Event("input", { bubbles: true }));
+  };
+  const identify = (id: string) => dispatch(window, { type: "sessionName", sessionId: id, name: id, cwd: "/repo" });
+  dispatch(window, { type: "initialState", capabilities: { composerDraftSession: true } });
+  dispatch(window, { type: "editorChatBinding", sessionId: "a" });
+  identify("a");
+  dispatch(window, { type: "editorChatBound", binding: 1 });
+  type("source draft");
+
+  if (gesture === "new") click(window, doc.getElementById("new-btn")!);
+  else {
+    click(window, doc.getElementById("history-btn")!);
+    dispatch(window, { type: "sessions", activeId: "a", entries: ["a", "b"].map(id => ({
+      id, displayName: id, cwd: "/repo", updatedAt: 1, numMessages: 2,
+    })) });
+    click(window, doc.querySelector('#history-popover [data-session-id="b"]')!);
+  }
+  const action = posted.find(m => m.type === "editorChatAction" && (m.message as any).type === (gesture === "new" ? "newSession" : "resumeSession"));
+  expect(action?.binding).toBe(1);
+  expect(action?.message).not.toHaveProperty("draftId");
+  expect(posted.filter(m => m.type === "editorChatDraft" && m.binding === 1).at(-1)?.text).toBe("source draft");
+  expect(input.value).toBe("source draft");
+  dispatch(window, { type: "editorChatBinding", sessionId: gesture === "history" ? "b" : undefined, switchDraft: true });
+  expect(input.value).toBe("");
+  if (gesture === "history") dispatch(window, { type: "restoreComposer", sessionId: "b", text: "destination draft", draft: true });
+  dispatch(window, { type: "editorChatBound", binding: 2 });
+  type([input.value, "typed while opening"].filter(Boolean).join("\n\n"));
+  identify("b");
+  expect(input.value).toBe(gesture === "history" ? "destination draft\n\ntyped while opening" : "typed while opening");
+  expect(posted.filter(m => m.type === "editorChatDraft" && m.binding === 2).at(-1)?.text).toBe(input.value);
+});
+
+it("keeps text typed before New gets an id when the provider restarts", () => {
+  const { window, doc, posted } = bootWebview({ vscode: true,
+    beforeScripts: win => { win.document.body.dataset.editorChat = "true"; },
+  });
+  const input = doc.querySelector<HTMLTextAreaElement>("#input")!;
+  dispatch(window, { type: "initialState", capabilities: { composerDraftSession: true } });
+  dispatch(window, { type: "editorChatBinding", sessionId: "a" });
+  dispatch(window, { type: "sessionName", sessionId: "a", name: "A", cwd: "/repo" });
+  dispatch(window, { type: "editorChatBound", binding: 1 });
+  click(window, doc.getElementById("new-btn")!);
+  dispatch(window, { type: "editorChatBinding", switchDraft: true });
+  dispatch(window, { type: "editorChatBound", binding: 2 });
+  input.value = "Still writing my first prompt";
+  input.dispatchEvent(new (window as any).Event("input", { bubbles: true }));
+  expect(posted.at(-1)).toMatchObject({ type: "editorChatDraft", binding: 2, text: input.value });
+
+  dispatch(window, { type: "editorChatBinding" });
+  dispatch(window, { type: "editorChatBound", binding: 3 });
+  dispatch(window, { type: "sessionName", sessionId: "new-id", name: "New", cwd: "/repo" });
+  expect(input.value).toBe("Still writing my first prompt");
+  click(window, doc.getElementById("send-btn")!);
+  expect(posted).toContainEqual(expect.objectContaining({ type: "editorChatAction", binding: 3,
+    message: expect.objectContaining({ type: "send", text: "Still writing my first prompt" }),
+  }));
+});
+
+it("routes editor chat drafts and sends with the current editor binding", () => {
+  const { window, doc, posted } = bootWebview({
+    beforeScripts: (win) => { win.document.body.dataset.editorChat = "true"; },
+  });
+  const input = doc.getElementById("input") as HTMLTextAreaElement;
+  const bind = (id: string, binding: number, draft = "") => {
+    dispatch(window, { type: "editorChatBinding", sessionId: id, switchDraft: true });
+    dispatch(window, { type: "clearMessages" });
+    dispatch(window, { type: "sessionName", sessionId: id, cwd: "/repo", name: id });
+    dispatch(window, { type: "setBusy", value: false });
+    if (draft) dispatch(window, { type: "restoreComposer", text: draft, draft: true });
+    dispatch(window, { type: "editorChatBound", binding });
+  };
+  bind("a", 1);
+  input.value = "draft on A";
+  input.dispatchEvent(new (window as any).Event("input", { bubbles: true }));
+  expect(posted).toContainEqual(expect.objectContaining({ type: "editorChatDraft", binding: 1, text: "draft on A" }));
+  bind("b", 2, "draft on B");
+  expect(input.value).toBe("draft on B");
+  click(window, doc.getElementById("send-btn")!);
+  expect(posted).toContainEqual({
+    type: "editorChatAction", binding: 2, message: { type: "send", text: "draft on B" },
+  });
+  expect(posted.some(msg => msg.type === "send")).toBe(false);
+  bind("a", 3, "draft on A");
+  expect(input.value).toBe("draft on A");
+});
+
 describe.each(["desktop", "vscode", "remote"])("composer session drafts (%s)", (surface) => {
   function setup(draftReplies = true, initialSession = true) {
     const h = bootWebview({

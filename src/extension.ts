@@ -243,12 +243,7 @@ export function activate(context: vscode.ExtensionContext): GrokExtensionApi {
     vscode.commands.registerCommand("grok.applyWorktree", () => sidebar.applyFocusedWorktree()),
     vscode.commands.registerCommand("grok.removeWorktree", () => sidebar.removeFocusedWorktree()),
     vscode.commands.registerCommand("grok.rewind", () => sidebar.rewindFocusedSession()),
-    vscode.commands.registerCommand("grok.compact", () => {
-      // emulated by sending the slash command as a prompt; CLI handles it
-      vscode.window.showInformationMessage(
-        "Type /compact in the composer to compress the conversation.",
-      );
-    }),
+    vscode.commands.registerCommand("grok.compact", () => sidebar.compactCurrentSession()),
     vscode.commands.registerCommand("grok.pickModel", () => sidebar.pickModel()),
     vscode.commands.registerCommand("grok.toggleMode", () => sidebar.openModePopover()),
     vscode.commands.registerCommand("grok.sendSelection", () =>

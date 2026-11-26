@@ -122,6 +122,36 @@ function logout(sidebar: any, provider: "grok" | "codex" = "grok"): Promise<void
 }
 
 describe("a background conversation's draft when its provider signs out", () => {
+  it("closes a clientless editor tab of the signed-out provider and saves both drafts", async () => {
+    const memento: Memento = {};
+    const sidebar = makeSidebar({ memento, connected: ["codex"] });
+    sidebar.focused.provider = "codex";
+    const session = Object.assign(new Session(), { provider: "grok", activeSessionId: "editor", cwd: "/repo", hasHistory: true });
+    session.queuedSends = [{ text: "Queued question", chips: [] }];
+    const panel = { dispose: vi.fn() };
+    sidebar.editorChats = new Set([{ session, panel }]);
+    sidebar.editorDrafts = new Map([[session, { text: "Unsent question", chips: [] }]]);
+    await logout(sidebar);
+    expect(panel.dispose).toHaveBeenCalledOnce();
+    expect(memento["grok.sessionMeta"]).toMatchObject({ editor: { queuedDraft: "Queued question\n\nUnsent question" } });
+  });
+
+  it("keeps a never-sent editor draft in its tab when the provider has no saved history", async () => {
+    const sidebar = makeSidebar({ connected: ["codex"] });
+    sidebar.focused.provider = "codex";
+    const session = Object.assign(new Session(), { provider: "grok", activeSessionId: "unsaved-shell", cwd: "/repo" });
+    const panel = { dispose: vi.fn() };
+    const tab = { session, panel, binding: 1, ready: false };
+    sidebar.editorChats = new Set([tab]);
+    sidebar.editorDrafts = new Map([[session, { text: "Before my first send", chips: [] }]]);
+    await logout(sidebar);
+    expect(panel.dispose).not.toHaveBeenCalled();
+    expect(tab.session.activeSessionId).toBeUndefined();
+    expect(tab.binding).toBe(2);
+    expect(sidebar.editorDrafts.get(tab.session)).toEqual({ text: "Before my first send", chips: [] });
+    expect(sidebar.startSession).toHaveBeenCalledWith(undefined, tab.session);
+  });
+
   it("real logout parks the draft on that conversation and tells no remote tab", async () => {
     const sidebar = makeSidebar({ connected: ["codex"] });
     // The desk is reading a Codex conversation; a phone is attached to it. The

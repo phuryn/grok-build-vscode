@@ -226,8 +226,8 @@ describe("unavailable Plan recovery", () => {
     expect(modeChangedListener).toContain("!client.usesClientPlanGate");
     expect(modeChangedListener).toContain("applyAgentModeToHostPlan(id, false)");
     expect(modeChangedListener).toContain("this.setPlanActive(session, next.planActive)");
-    const grokDescriptive = modeChangedListener.slice(modeChangedListener.indexOf("} else if (session === this.focused)"));
-    expect(grokDescriptive).toContain("this.postMode()");
+    const grokDescriptive = modeChangedListener.slice(modeChangedListener.indexOf("} else if (session === this.focused || this.editorChatFor(session))"));
+    expect(grokDescriptive).toContain("this.postMode(session)");
     expect(grokDescriptive).not.toContain("this.setPlanActive(session, false)");
   });
 

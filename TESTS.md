@@ -433,6 +433,34 @@ happy-dom test locking in the native-Windows regressions this build fixed (plus 
 - **Welcome version lifecycle** — flips to "Connected · v<version>" only when session start finishes, not at the bare ACP handshake; later busy toggles don't overwrite it
 - **Settings → About / Providers** — host-reported CLI versions include Muse; Grok, Codex and Claude have CLI update actions while Muse does not. `test/settings-surface.dom.test.ts`, `test/provider-cli-update.test.ts` and `test/muse-cli-version.test.ts` pin those surfaces and probes
 
+### Conversation editor tabs
+
+- `test/conversation-editor.test.ts` drives the local Projects and editor
+  message handlers for binding, send isolation, focus, reveal, renames,
+  closing a running conversation, draft recovery, and shared display settings.
+  It covers a side gesture from a focused tab followed by the new tab becoming
+  ready mid-load, then sending after the transcript appears. It also checks
+  project creation, file routing, the active-file chip, idle cleanup, phone
+  delete protection, and handoff session ownership.
+- The separate Projects rail DOM tests cover the conversation and project
+  menus, mouse gestures, and the capability check for older hosts. The
+  composer, handoff, and star-card DOM tests exercise the shared chat script.
+- The VS Code integration suite opens two fake-provider conversations into
+  separate native editor groups, checks their replay and live sessions, and
+  verifies reveal and file and diff placement while both chats remain visible.
+- `test/desk-alerts.test.ts` checks visible splits, covered tabs, and unfocused
+  windows. `test/conversation-editor.test.ts` checks that alert Open reveals and
+  focuses the existing tab, and that only one local surface can play a turn
+  tone. `test/sound-notifications.dom.test.ts` exercises those tones and silent
+  replays through the shared renderer. `test/input-needed-sound.dom.test.ts`
+  covers input-needed routing to one local surface while both receive the dot.
+- The composer draft tests cover accepted and refused navigation, typing during
+  a load, and provider identity changes. The host tests check that a rail open
+  keeps a tab with a never-sent draft. Conversation editor and rewind tests check
+  the sidebar draft handoff, worktree confirmation targeting, and restoring the
+  prompt in the asking tab. Provider sign-out and CLI update tests exercise
+  closing and retaining tabs through process teardown.
+
 ### `test/projects-rail.dom.test.ts` — the browser's projects rail (56 tests)
 
 The rail is the relay page's surface: `#projects-rail` lives in that page, never in the

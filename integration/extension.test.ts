@@ -179,6 +179,63 @@ suite("repo selection: isolated per remote tab, workspace-local in VS Code", () 
     }
   });
 
+  test("opens two conversations beside one another in real VS Code editor groups", async () => {
+    const cwd = hooks.workspaceRoot();
+    const ids = [`split-first-${Date.now()}`, `split-second-${Date.now()}`];
+    const sidebarBefore = hooks.focusedSessionId();
+    const restore = provisionFakeCli();
+    const output = vscode.window.createOutputChannel("Grok split integration");
+    const adapter = require("../out/vscode-host");
+    const host = adapter.createVsCodeHost(output);
+    const file = vscode.Uri.file(path.join(cwd, `.${ids[0]}.txt`));
+    const diffTitle = `Diff for ${ids[0]}`;
+    const conversationTabs = () => vscode.window.tabGroups.all.flatMap(group => group.tabs.filter(tab =>
+      tab.input instanceof vscode.TabInputWebview && tab.input.viewType.endsWith("grok.conversation")));
+    try {
+      for (const id of ids) {
+        writeStoredSession(id, cwd);
+        await hooks.openConversationBeside(id, cwd);
+      }
+      const deadline = Date.now() + 5_000;
+      while (Date.now() < deadline && ids.some(id => !hooks.editorConversation(id)?.ready)) {
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+      for (const id of ids) {
+        const chat = hooks.editorConversation(id);
+        assert.ok(chat?.ready && chat.live, `expected a resolved webview and live session for ${id}`);
+        assert.ok(chat.replay.some((message: unknown) => hostMsgCarriesText(message, storedSessionReplayMarker(id))));
+      }
+      const tabs = conversationTabs();
+      assert.strictEqual(tabs.length, 2);
+      assert.notStrictEqual(tabs[0].group.viewColumn, tabs[1].group.viewColumn);
+      assert.strictEqual(hooks.focusedSessionId(), sidebarBefore);
+      await hooks.openConversationBeside(ids[0], cwd);
+      assert.strictEqual(conversationTabs().length, 2);
+      fs.writeFileSync(file.fsPath, "sample file");
+      await host.openTextFile(file.fsPath, { besideConversation: true });
+      const fileGroup = vscode.window.tabGroups.activeTabGroup;
+      assert.ok(fileGroup.activeTab?.input instanceof vscode.TabInputText);
+      assert.strictEqual(fileGroup.activeTab.input.uri.toString(), file.toString());
+      assert.ok(conversationTabs().every(tab => tab.isActive && tab.group.viewColumn !== fileGroup.viewColumn));
+
+      await hooks.openConversationBeside(ids[0], cwd);
+      const oldPath = adapter.fromVsCodeUri(file);
+      const newPath = adapter.fromVsCodeUri(vscode.Uri.file(path.join(cwd, "README.md")));
+      await host.openDiff(oldPath, newPath, diffTitle, { besideConversation: true, preserveFocus: true });
+      assert.ok(vscode.window.tabGroups.all.some(group => group.viewColumn === fileGroup.viewColumn
+        && group.activeTab?.label === diffTitle), "the diff reused the file group");
+      assert.strictEqual(conversationTabs().length, 2, "both conversation tabs stay open");
+      assert.ok(conversationTabs().every(tab => tab.isActive), "both conversation tabs stay visible");
+    } finally {
+      const tabs = [...conversationTabs(), ...vscode.window.tabGroups.all.flatMap(group => group.tabs.filter(tab =>
+        tab.label === diffTitle || (tab.input instanceof vscode.TabInputText && tab.input.uri.toString() === file.toString())))];
+      if (tabs.length) await vscode.window.tabGroups.close(tabs, true);
+      fs.rmSync(file.fsPath, { force: true });
+      output.dispose();
+      restore();
+    }
+  });
+
   test("isolateFromInstalledGrok keeps locateProvider off an installed CLI", async () => {
     const decoyDir = fs.mkdtempSync(path.join(os.tmpdir(), "grok-iso-decoy-"));
     const decoy = path.join(decoyDir, process.platform === "win32" ? "grok.cmd" : "grok");

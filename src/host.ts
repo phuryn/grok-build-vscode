@@ -254,6 +254,7 @@ export interface HostTextShowOptions {
   preview?: boolean;
   preserveFocus?: boolean;
   selection?: HostRange;
+  besideConversation?: boolean;
 }
 
 export interface HostDisposable {
@@ -327,10 +328,14 @@ export interface HostWebviewView {
   show?(preserveFocus?: boolean): void;
 }
 
-/** Editor-area webview tab (VS Code settings). Desktop does not implement this. */
+/** Editor-area webview tab. Desktop does not implement this. */
 export interface HostEditorWebview extends HostDisposable {
   readonly webview: HostWebview;
+  readonly visible: boolean;
+  readonly active: boolean;
+  title?: string;
   reveal(): void;
+  onDidFocus?(listener: () => void): HostDisposable;
   onDidDispose(listener: () => void): HostDisposable;
 }
 
@@ -652,7 +657,7 @@ export interface Host {
    * globalStorage). Must never receive a path that originated from the
    * webview. Desktop skips workspace-root containment; VS Code opens normally.
    */
-  openHostResolvedPath(fsPath: string): Thenable<void>;
+  openHostResolvedPath(fsPath: string, options?: HostTextShowOptions): Thenable<void>;
   /**
    * Open an untitled document. Pass a language id to pin highlighting; omit it
    * so the editor can detect (never default the caller to plaintext).
@@ -661,7 +666,7 @@ export interface Host {
    * Desktop honors it with the OS save dialog (cancel writes nothing). VS Code
    * ignores it and still opens an untitled tab. Omit it for command View all.
    */
-  openUntitledText(content: string, language?: string, suggestedFilename?: string): Thenable<void>;
+  openUntitledText(content: string, language?: string, suggestedFilename?: string, options?: HostTextShowOptions): Thenable<void>;
   /**
    * Open a side-by-side diff of two portable URIs (content-provider or file).
    */
@@ -829,6 +834,8 @@ export interface Host {
    * for VS Code. Desktop and remotes keep the in-page overlay.
    */
   readonly canOpenSettingsEditor: boolean;
+  readonly canOpenConversationEditor?: boolean;
+  isConversationEditorActive?(): boolean;
   /**
    * Open (or create) an editor-area webview tab. VS Code implements this;
    * desktop returns undefined because settings live in the chat overlay there.
@@ -836,6 +843,8 @@ export interface Host {
   openEditorWebview(opts: {
     viewType: string;
     title: string;
+    column?: "beside";
+    icon?: Uri;
     localResourceRoots: Uri[];
   }): HostEditorWebview | undefined;
 }

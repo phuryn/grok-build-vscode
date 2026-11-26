@@ -46,6 +46,27 @@ function setup(desktop = true, draftReplies = true) {
 }
 
 describe("phone code follows the displayed conversation", () => {
+  it("sends the conversation editor's binding and clears its code on a tab switch", () => {
+    const h = bootWebview({ beforeScripts: window => { window.document.body.dataset.editorChat = "true"; } });
+    dispatch(h.window, { type: "editorChatBinding", sessionId: "editor-a" });
+    dispatch(h.window, { type: "editorChatBound", binding: 5 });
+    dispatch(h.window, { type: "remoteStatus", linked: true, handoffReady: true });
+    const button = h.doc.querySelector<HTMLButtonElement>("#remote-btn")!;
+    expect(button.hidden).toBe(false);
+    click(h.window, button);
+    const frame = h.posted.find(frame => frame.type === "editorChatAction");
+    expect(frame).toMatchObject({ binding: 5, message: { type: "remoteHandoff", sessionId: "editor-a" } });
+    const request = frame!.message as Posted;
+    dispatch(h.window, { type: "remoteHandoff", requestId: request.requestId, qrSvg: "<svg/>", title: "editor-a" });
+    dispatch(h.window, { type: "editorChatBinding", sessionId: "editor-b", switchDraft: true });
+    dispatch(h.window, { type: "editorChatBound", binding: 6 });
+    expect(h.doc.querySelector<HTMLElement>(".remote-handoff-popover")!.hidden).toBe(true);
+    click(h.window, button);
+    expect(h.posted.filter(frame => frame.type === "editorChatAction").at(-1)).toMatchObject({
+      binding: 6, message: { type: "remoteHandoff", sessionId: "editor-b" },
+    });
+  });
+
   it.each([true, false])("waits through a history resume (desktop: %s)", desktop => {
     const h = setup(desktop);
     h.resume("b", true);

@@ -1589,6 +1589,7 @@
     // the host starts in the project named on the row and moves the selection
     // with it — one message, no reliance on a selectRepo arriving first and
     // being processed before this one.
+    const newBeside = () => vscode.postMessage({ type: "newConversationBeside", cwd: repo.cwd });
     if (repo.available !== false) {
       const add = document.createElement("button");
       add.type = "button";
@@ -1597,10 +1598,22 @@
       add.title = l10n("New session");
       add.onclick = (e) => {
         e.stopPropagation();
+        if (state.conversationEditorAvailable && (e.ctrlKey || e.metaKey)) {
+          e.preventDefault();
+          newBeside();
+          return;
+        }
         // Whatever resume was still in flight is no longer what the user wants.
         cancelPendingResume();
         vscode.postMessage({ type: "newSession", cwd: repo.cwd });
       };
+      add.addEventListener("auxclick", (e) => {
+        if (state.conversationEditorAvailable && e.button === 1) {
+          e.preventDefault();
+          e.stopPropagation();
+          newBeside();
+        }
+      });
       actions.appendChild(add);
     }
 
@@ -1613,6 +1626,9 @@
     menuBtn.setAttribute("aria-label", menuBtn.title);
     const getMenuItems = () => {
       const items = [];
+      if (state.conversationEditorAvailable && repo.available !== false) {
+        items.push({ label: l10n("New session to the side"), onSelect: newBeside }, null);
+      }
       // "Hide project" — the same name and the same message the desktop rail
       // uses for the same act, and it posts `removeProjectFolder` there too.
       // Nothing is deleted on either surface: the folder leaves the list, and
@@ -1844,7 +1860,7 @@
 
   function renderSession(s, repo, opts) {
     const row = document.createElement("div");
-    const active = !!(state.activeSessionId && s.id === state.activeSessionId);
+    const active = s.id === (state.editorTarget ? state.editorSessionId : state.activeSessionId);
     row.className = "rail-session" + (active ? " active" : "");
     row.title = sessionRowName(s);
     row.setAttribute("role", "button");
@@ -1916,10 +1932,12 @@
     menuBtn.innerHTML = ICON.ellipsis;
     menuBtn.title = l10n("Session actions");
     menuBtn.setAttribute("aria-label", menuBtn.title);
+    const openBeside = () => vscode.postMessage({ type: "openConversationBeside", id: s.id, cwd: s.cwd || repo.cwd });
     menuBtn.onclick = (e) => {
       e.stopPropagation();
       const cwd = s.cwd || repo.cwd;
       openMenu(menuBtn, [
+        ...(state.conversationEditorAvailable ? [{ label: l10n("Open to the side"), onSelect: openBeside }] : []),
         {
           label: l10n("Rename"),
           onSelect: async () => {
@@ -1982,9 +2000,14 @@
 
     // Plain resume — no selectRepo, no window reload. The host already trusts
     // any discovered catalog cwd for local sessions (localTrustedSessionCwds).
-    row.onclick = () => {
-      if (active) return;
-      markResuming(s.id);
+    row.onclick = (e) => {
+      if (state.conversationEditorAvailable && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        openBeside();
+        return;
+      }
+      if (active && !state.editorTarget) return;
+      if (!state.editorTarget) markResuming(s.id);
       vscode.postMessage({
         type: "resumeSession",
         id: s.id,
@@ -1992,6 +2015,12 @@
         claim: true,
       });
     };
+    row.addEventListener("auxclick", (e) => {
+      if (state.conversationEditorAvailable && e.button === 1 && !e.target.closest("button")) {
+        e.preventDefault();
+        openBeside();
+      }
+    });
 
     return row;
   }
@@ -1999,6 +2028,15 @@
   function onMessage(msg) {
     if (!msg || typeof msg !== "object") return;
     switch (msg.type) {
+      case "conversationEditorAvailable":
+        state.conversationEditorAvailable = true;
+        break;
+      case "projectsRailChatTarget":
+        if (state.editorTarget === msg.editor && state.editorSessionId === msg.sessionId) break;
+        state.editorTarget = msg.editor === true;
+        state.editorSessionId = msg.sessionId;
+        render();
+        break;
       case "sessionOpening":
         noteSessionOpening(msg);
         break;

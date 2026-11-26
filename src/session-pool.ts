@@ -23,7 +23,7 @@ export interface ReapCandidate {
   status: SessionStatus;
   /** ms-epoch of the last time this session was created/focused/made busy. */
   lastActiveAt: number;
-  /** The currently-focused session — never reaped. */
+  /** A session open in the local sidebar or an editor tab — never reaped. */
   focused: boolean;
   /** Currently rendered by at least one remote client. */
   remoteVisible?: boolean;
@@ -50,12 +50,13 @@ export function buildReapCandidates<T extends Pick<ReapCandidate, "status" | "la
   sessions: Iterable<T>,
   focused: T,
   isRemoteVisible: (session: T) => boolean,
+  isOpenInEditor: (session: T) => boolean = () => false,
 ): Array<ReapCandidate & { session: T }> {
   return [...sessions].map((session) => ({
     session,
     status: session.status,
     lastActiveAt: session.lastActiveAt,
-    focused: session === focused,
+    focused: session === focused || isOpenInEditor(session),
     remoteVisible: isRemoteVisible(session),
     needsProvider: session.needsProvider,
     hasDraft: !!session.strandedDraft || !!session.queuedSends?.length,

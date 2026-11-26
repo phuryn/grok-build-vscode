@@ -127,7 +127,7 @@ describe("a file belongs to a conversation, not to the window", () => {
     // reached through the rail is deliberately not one of them — it would have
     // handed back an absolute path for an ordinary file in its own repo.
     const body = methodBody("private refreshImplicitChip(");
-    expect(body).toMatch(/this\.conversationRelPath\(absPath\)/);
+    expect(body).toMatch(/this\.conversationRelPath\(absPath, session\)/);
     expect(body).not.toMatch(/this\.host\.asRelativePath/);
   });
 

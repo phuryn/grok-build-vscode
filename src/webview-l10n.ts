@@ -8,7 +8,7 @@
  */
 export type WebviewStrings = Readonly<Record<string, string>>;
 
-function lookup(strings: WebviewStrings | undefined, key: string): string {
+export function webviewText(strings: WebviewStrings | undefined, key: string): string {
   const value = strings && Object.hasOwn(strings, key) ? strings[key] : undefined;
   return typeof value === "string" && value ? value : key;
 }
@@ -23,7 +23,7 @@ function escapeHtml(text: string): string {
 
 /** Lookup for text the host writes straight into a webview's HTML. */
 export function webviewHtmlText(strings: WebviewStrings | undefined): (key: string) => string {
-  return (key) => escapeHtml(lookup(strings, key));
+  return (key) => escapeHtml(webviewText(strings, key));
 }
 
 /** Hands the bundle to the page. Must precede webview-helpers.js: some tables

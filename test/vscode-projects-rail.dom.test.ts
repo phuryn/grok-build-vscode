@@ -127,6 +127,76 @@ function loadSessions(
   });
 }
 
+describe("Open to the side", () => {
+  it.each(["click", "Ctrl-click", "Cmd-click", "middle-click", "project menu"])("routes a project's New action via %s", (gesture) => {
+    const { window, doc, posted } = bootRail();
+    const api = railApi(window);
+    loadCatalog(api);
+    api.onMessage({ type: "conversationEditorAvailable" });
+    loadSessions(api, [row("a", "/work/alpha", "Conversation A")]);
+    const project = doc.querySelector('section[data-cwd="/work/alpha"]')!;
+    const add = project.querySelector<HTMLButtonElement>('[title="New session"]')!;
+    if (gesture === "project menu") {
+      project.querySelector<HTMLButtonElement>('[title="Project actions"]')!.click();
+      const item = [...doc.querySelectorAll("button")].find(button => button.textContent === "New session to the side");
+      expect(item).toBeDefined();
+      item!.click();
+    } else {
+      add.dispatchEvent(new window.MouseEvent(gesture === "middle-click" ? "auxclick" : "click", {
+        bubbles: true, cancelable: true, button: gesture === "middle-click" ? 1 : 0,
+        ctrlKey: gesture === "Ctrl-click", metaKey: gesture === "Cmd-click",
+      }));
+    }
+    const type = gesture === "click" ? "newSession" : "newConversationBeside";
+    expect(posted.filter(message => message.type === "newSession" || message.type === "newConversationBeside"))
+      .toEqual([{ type, cwd: "/work/alpha" }]);
+  });
+
+  it.each(["menu", "context menu", "Ctrl-click", "Cmd-click", "middle-click"])("opens the active row using %s", (gesture) => {
+    const { window, doc, posted } = bootRail();
+    window.matchMedia = (() => ({ matches: true })) as typeof window.matchMedia;
+    const api = railApi(window);
+    loadCatalog(api);
+    api.onMessage({ type: "conversationEditorAvailable" });
+    loadSessions(api, [row("a", "/work/alpha", "Conversation A")], "a");
+    const target = doc.querySelector('.rail-session[data-session-id="a"]')!;
+    const mouse = (type: string, init: { button?: number; ctrlKey?: boolean; metaKey?: boolean } = {}) =>
+      target.dispatchEvent(new window.MouseEvent(type, { bubbles: true, cancelable: true, ...init }));
+    switch (gesture) {
+      case "menu":
+      case "context menu": {
+        if (gesture === "menu") target.querySelector<HTMLButtonElement>('[title="Session actions"]')!.click();
+        else mouse("contextmenu", { button: 2 });
+        const item = [...doc.querySelectorAll("button")].find(button => button.textContent === "Open to the side");
+        expect(item).toBeDefined();
+        item!.click();
+        break;
+      }
+      case "Ctrl-click": mouse("click", { ctrlKey: true }); break;
+      case "Cmd-click": mouse("click", { metaKey: true }); break;
+      case "middle-click": mouse("auxclick", { button: 1 }); break;
+    }
+    expect(posted.filter(message => message.type === "openConversationBeside")).toEqual([
+      { type: "openConversationBeside", id: "a", cwd: "/work/alpha" },
+    ]);
+    expect(posted.some(message => message.type === "resumeSession")).toBe(false);
+  });
+
+  it("keeps an older or desktop host's plain click and has no side entry", () => {
+    const { window, doc, posted } = bootRail();
+    const api = railApi(window);
+    loadCatalog(api);
+    loadSessions(api, [row("a", "/work/alpha", "Conversation A")]);
+    const target = doc.querySelector('.rail-session[data-session-id="a"]')!;
+    target.querySelector<HTMLButtonElement>('[title="Session actions"]')!.click();
+    expect([...doc.querySelectorAll("button")].some(button => button.textContent === "Open to the side")).toBe(false);
+    target.dispatchEvent(new window.MouseEvent("auxclick", { button: 1, bubbles: true }));
+    target.dispatchEvent(new window.MouseEvent("click", { ctrlKey: true, bubbles: true }));
+    expect(posted.some(message => message.type === "openConversationBeside")).toBe(false);
+    expect(posted).toContainEqual({ type: "resumeSession", id: "a", cwd: "/work/alpha", claim: true });
+  });
+});
+
 it.each(INTERNAL_PROVIDERS)("offers row deletion only when implemented for %s", provider => {
   const { window, doc, posted } = bootRail();
   const api = railApi(window);

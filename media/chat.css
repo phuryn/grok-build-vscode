@@ -4266,6 +4266,7 @@ textarea#input {
   opacity: 0.75;
   transition: background 0.12s, color 0.12s, opacity 0.12s;
 }
+.desk[data-editor-chat] :is(.mic-btn, .remote-btn)[hidden] { display: none; }
 .mic-btn:hover { opacity: 1; background: var(--vscode-toolbar-hoverBackground); }
 .mic-btn:disabled { cursor: default; }
 /* Subtle "needs setup" dot when no voice API key is configured. */

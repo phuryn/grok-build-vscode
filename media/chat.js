@@ -1,6 +1,11 @@
 (function () {
   const { l10n, l10nHostDialog } = globalThis.GrokWebviewHelpers;
   const hostApi = acquireVsCodeApi();
+  const editorChat = document.body.dataset.editorChat === "true";
+  const canTrackLocalChatFocus = document.body.dataset.localChatFocus === "true";
+  let tracksLocalChatFocus = editorChat;
+  let editorChatBinding;
+  let editorDraftSignature;
   let museAdvertised = false;
   let museAvailable = false;
   // Provider advertisements keep this client compatible with older hosts.
@@ -26,6 +31,10 @@
             : "The machine is disconnected. Paste the key again when it is connected.");
           return false;
         }
+      }
+      if (editorChat && message.type !== "ready") {
+        if (editorChatBinding === undefined) return false;
+        return hostApi.postMessage({ type: "editorChatAction", binding: editorChatBinding, message });
       }
       return hostApi.postMessage(message);
     } };
@@ -1406,7 +1415,7 @@
     if (msg.type !== "sessionDot") return;
     const previous = inputSoundDots.get(msg.id);
     inputSoundDots.set(msg.id, msg.dot);
-    if (state.replaying || previous !== "working" || msg.dot !== "needs-you" || !state.inputNeededSound) return;
+    if (state.replaying || msg.suppressInputNeededSound || previous !== "working" || msg.dot !== "needs-you" || !state.inputNeededSound) return;
     if (document.visibilityState !== "hidden" && document.hasFocus()) return;
     playNotificationTone("inputNeeded");
   }
@@ -4583,13 +4592,16 @@
         || state.currentModelId !== identity.modelId || state.deepseekHarnessLocked || visibleUserBubbleCount() > 0) return;
       state.deepseekHarnessPending = true;
       // The replacement process still represents this untouched conversation.
-      const draftId = newRemoteTabToken();
-      pendingComposerDrafts.add(draftId);
-      composerSessionId = draftId;
-      composerLoadDraft = null;
-      composerExpectedSessionId = null;
-      syncFocusedRemoteHandoff();
-      vscode.postMessage({ type: "setDeepSeekHarness", ...identity, harness, draftId });
+      let draftId;
+      if (!editorChat) {
+        draftId = newRemoteTabToken();
+        pendingComposerDrafts.add(draftId);
+        composerSessionId = draftId;
+        composerLoadDraft = null;
+        composerExpectedSessionId = null;
+        syncFocusedRemoteHandoff();
+      }
+      vscode.postMessage({ type: "setDeepSeekHarness", ...identity, harness, ...(draftId ? { draftId } : {}) });
       renderContextPopover();
     };
     select.onchange = () => { const next = select.value; select.value = value; choose(next); };
@@ -7563,7 +7575,7 @@
   }
 
   function renderStarPrompt(msg) {
-    if (IS_REMOTE) return;
+    if (IS_REMOTE || editorChat) return;
     const { id, phase, login } = msg;
     if (phase === "check") {
       if (!starPromptId && starPromptSlotReady()) {
@@ -7729,7 +7741,7 @@
   let composerLoadDraft = null;
 
   function beginComposerLoad() {
-    if (!composerLoadDraft) composerLoadDraft = { text: input.value, chips: composerRestoredChips, edited: false };
+    if (!editorChat && !composerLoadDraft) composerLoadDraft = { text: input.value, chips: composerRestoredChips, edited: false };
   }
 
   function setComposerRestoredChips(chips) {
@@ -7775,6 +7787,11 @@
 
   function confirmComposerSession(sessionId) {
     if (!sessionId) return; // A loading host can temporarily have no active id.
+    if (editorChat) {
+      composerSessionId = sessionId;
+      syncFocusedRemoteHandoff();
+      return;
+    }
     // Identity echoes can arrive after another gesture. Only the correlated
     // New reply may bind its draft; ordinary frames cannot guess which New.
     if (pendingComposerDrafts.has(composerSessionId)) {
@@ -7824,6 +7841,7 @@
    * model.
    */
   function startRailTransition(fields) {
+    if (editorChat) return; // The host binding commits editor navigation.
     composerLoadDraft = null;
     if (state.sessionSuperseded) clearSessionSuperseded();
     clearRailTransitionTimer();
@@ -7857,8 +7875,8 @@
       switchComposerDraft(draftId);
       composerExpectedSessionId = null;
     } else {
-      switchComposerDraft(fields.sessionId);
       composerExpectedSessionId = fields.sessionId;
+      switchComposerDraft(fields.sessionId);
     }
     syncFocusedRemoteHandoff();
     // Highlight without a veil would claim conversation X while Y is still on
@@ -9191,6 +9209,10 @@
     // Empty open set: New would reset the welcome to Starting and then the
     // host would refuse to spawn. Leave the empty-state card up.
     if (state.onboardingMode === "no-project") return;
+    if (editorChat) {
+      vscode.postMessage({ type: "newSession" });
+      return;
+    }
     // Capture before reset — activeSessionId is host-confirmed and is the only
     // honest "what we are leaving" for the identity frames that will confirm
     // the new conversation (they must differ from previousSessionId).
@@ -10056,7 +10078,7 @@
         });
       }
     }
-    if (!active && !IS_REMOTE) items.push({
+    if (!active && !IS_REMOTE && !editorChat) items.push({
       label: l10n("Continue on phone…"), icon: ICON.smartphone,
       onSelect: () => openRemoteHandoff("rail", s.id, repo.cwd),
     });
@@ -19420,6 +19442,7 @@ ${fullText}`
   // both Enter and the button click funnel through, so send-intent can never
   // turn into a cancel (#37). A composer holding only an attachment is send-intent.
   function queueFromComposer() {
+    if (editorChat && editorChatBinding === undefined) return true;
     if (state.sessionSuperseded) return true;
     if (state.pendingPaste > 0) return true;
     const t = input.value.trim();
@@ -19651,6 +19674,7 @@ ${fullText}`
   }
 
   function sendOrStop(event) {
+    if (editorChat && editorChatBinding === undefined) return;
     // A model or effort the picker is still SHOWING belongs to this send. The
     // document's own click listener flushes on the way out, but it sits on the
     // bubble phase -- this button's handler runs first, so without this line
@@ -19835,7 +19859,7 @@ ${fullText}`
   }
 
   function toggleMic() {
-    if (state.sessionSuperseded) return;
+    if (editorChat || state.sessionSuperseded) return;
     if (IS_REMOTE) {
       toggleBrowserMic();
       return;
@@ -20174,6 +20198,14 @@ ${fullText}`
     // sites are exactly those.
     updateSendButton();
     autosizeInput();
+    if (editorChat && editorChatBinding !== undefined) {
+      const chipIds = composerRestoredChips.map(chip => chip.id);
+      const signature = JSON.stringify([input.value, chipIds]);
+      if (signature !== editorDraftSignature) {
+        editorDraftSignature = signature;
+        hostApi.postMessage({ type: "editorChatDraft", binding: editorChatBinding, text: input.value, chipIds });
+      }
+    }
     if (!inputHighlight) return;
     const text = input.value;
 
@@ -21321,6 +21353,30 @@ ${fullText}`
       return;
     }
     switch (msg.type) {
+      case "trackLocalChatFocus":
+        if (canTrackLocalChatFocus) tracksLocalChatFocus = true;
+        break;
+      case "editorChatBinding":
+        if (!editorChat) break;
+        if (remoteHandoff) closePopovers();
+        if (msg.switchDraft || composerSessionId !== msg.sessionId) remoteLinkReturn = undefined;
+        editorChatBinding = undefined;
+        editorDraftSignature = undefined;
+        composerSessionId = msg.sessionId || null;
+        if (msg.switchDraft) {
+          input.value = "";
+          recalledPrompt = null;
+          setComposerRestoredChips([]);
+          slashPopover.hidden = true;
+          hideMention();
+          renderInputHighlight();
+        }
+        break;
+      case "editorChatBound":
+        if (!editorChat) break;
+        editorChatBinding = msg.binding;
+        renderInputHighlight();
+        break;
       case "cloudHostUpdateState":
         receiveCloudHostUpdate(msg);
         break;
@@ -21944,12 +22000,12 @@ ${fullText}`
         break;
       }
       case "composerDraftSession":
-        bindComposerDraft(msg.draftId, msg.sessionId);
+        if (!editorChat) bindComposerDraft(msg.draftId, msg.sessionId);
         break;
       case "restoreComposer": {
         // The renderer's navigation gesture can precede the host's focus move.
         // Keep a reply for the old conversation with that conversation's draft.
-        if (msg.sessionId && composerSessionId && msg.sessionId !== composerSessionId) {
+        if (!editorChat && msg.sessionId && composerSessionId && msg.sessionId !== composerSessionId) {
           const draft = composerDrafts.get(msg.sessionId);
           const chips = new Map((draft?.chips || []).map((chip) => [chip.id, chip]));
           for (const chip of msg.chips || []) chips.set(chip.id, chip);
@@ -23037,7 +23093,7 @@ ${fullText}`
         state.busy = false;
         state.busyLocked = false; // an error ends any startup lock too
         updateSendButton();
-        if (!state.replaying) maybeNotifySound("error"); // #59 — live turns only, and only when away
+        if (!state.replaying && !msg.suppressTurnSound) maybeNotifySound("error");
         state.ttsTurnText = "";
         break;
       case "agentEnd":
@@ -23053,7 +23109,7 @@ ${fullText}`
         state.busy = false;
         updateSendButton();
         refreshChangesCount();
-        if (!state.replaying) maybeNotifySound("done"); // #59 — live turns only, and only when away
+        if (!state.replaying && !msg.suppressTurnSound) maybeNotifySound("done");
         speakCompletedTurn();
         break;
       case "exit":
@@ -23783,6 +23839,14 @@ ${fullText}`
   }
 
   window.addEventListener("message", (e) => handleHostMessage(e.data));
+  if (editorChat || canTrackLocalChatFocus) {
+    const tellHostFocused = () => {
+      if (tracksLocalChatFocus) hostApi.postMessage({ type: "localChatFocus" });
+    };
+    window.addEventListener("focus", tellHostFocused);
+    document.addEventListener("pointerdown", tellHostFocused, true);
+    document.addEventListener("keydown", tellHostFocused, true);
+  }
 
   // ---------- wire ----------
 

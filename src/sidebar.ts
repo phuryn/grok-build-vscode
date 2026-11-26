@@ -1,7 +1,7 @@
 import { decideDefaultModeCohort } from "./default-mode-cohort";
 import { autoCompactNotice, DEFAULT_AUTO_COMPACT_AT, isAutoCompactPreset, type AutoCompactSettings, type ReportedAutoCompaction } from "./auto-compact";
 import { workspaceGrokHome } from "./workspace-grok-home";
-import { webviewHtmlText, webviewLang, webviewStringsScript } from "./webview-l10n";
+import { webviewHtmlText, webviewLang, webviewStringsScript, webviewText } from "./webview-l10n";
 import { parseContextWindowSize, type ContextWindowSelection } from "./context-selection";
 import { remoteHandoffUrl, remoteHandoffQr, type HandoffSession } from "./remote-handoff";
 import type { RemoteHandoffSource } from "./protocol";
@@ -24,6 +24,7 @@ import type {
   HostContext,
   HostDisposable,
   HostTextDocumentContentProvider,
+  HostTextEditor,
   HostWebview,
   HostWebviewView,
   HostEditorWebview,
@@ -735,6 +736,25 @@ interface RemoteRequester {
   tabToken?: string;
 }
 
+interface EditorChatTab {
+  panel: HostEditorWebview;
+  session: Session;
+  targetId?: string;
+  binding: number;
+  openSeq: number;
+  ready: boolean;
+  focusComposerOnReveal?: boolean;
+}
+
+interface EditorChatDraft {
+  text: string;
+  chips: FileChip[];
+}
+
+type ProjectsRailMessage = WebviewMsg
+  | { type: "openConversationBeside"; id: string; cwd?: string }
+  | { type: "newConversationBeside"; cwd: string };
+
 /** Resolved at commit time, AFTER any await. Undefined means the tab that asked
  *  is gone and the attachment must be dropped — never redirected. */
 type AttachmentOwner = () => Session | undefined;
@@ -863,6 +883,11 @@ export class GrokSidebar {
   private projectsRail?: HostWebviewView;
   /** The session currently shown in the chat — one member of {@link pool}. */
   private focused = this.newLocalSession();
+  private readonly editorChats = new Set<EditorChatTab>();
+  private lastEditorChat?: EditorChatTab;
+  private readonly editorDrafts = new Map<string | Session, EditorChatDraft>();
+  private readonly editorPendingAttach = new WeakMap<Session, Set<Promise<void>>>();
+  private readonly editorPickerChanges = new WeakMap<Session, { wait: Promise<void>; release: () => void }>();
   /**
    * Every live session (each a spawned `grok agent stdio` process), including the
    * focused one. Backgrounded members keep streaming into their own buffers, so
@@ -961,6 +986,7 @@ export class GrokSidebar {
     absByRel: Map<string, string>;
   }>();
   private editorWatcher?: HostDisposable;
+  private lastRealTextEditor?: HostTextEditor;
   private terminalManager = new TerminalManager({
     beforeCreate: () => {
       if (this.cloudHostUpdate && !this.cloudHostUpdate.admitting) throw new Error(CLOUD_UPDATE_REFUSAL);
@@ -1341,7 +1367,11 @@ export class GrokSidebar {
    * resolves conversation A's confirm — and the thing on the other side of
    * that confirm reverts files on disk.
    */
-  private readonly pendingConfirms = new Map<string, { session: Session; resolve: (ok: boolean) => void }>();
+  private readonly pendingConfirms = new Map<string, {
+    session: Session;
+    request: Extract<HostMsg, { type: "uiConfirmRequest" }>;
+    resolve: (ok: boolean) => void;
+  }>();
   private confirmSeq = 0;
 
   /** Session names, pins, archives and the install id — held in `~/.grok` so a
@@ -3771,6 +3801,10 @@ export class GrokSidebar {
     // in an image-attach path) becomes a silent unhandled rejection and the
     // user's action just... does nothing.
     view.webview.onDidReceiveMessage((raw) => {
+      if ((raw as { type?: string }).type === "localChatFocus") {
+        if (this.view === view && this.lastEditorChat) this.setLastEditorChat(undefined);
+        return;
+      }
       const m = raw as WebviewMsg;
       if (m.type === "starPromptAction" && this.view !== view) return;
       void this.onMessage(m, "local").catch((e) => {
@@ -3929,7 +3963,7 @@ export class GrokSidebar {
       if (e.affectsConfiguration("grok.includeActiveFileByDefault")) {
         // Apply the toggle immediately: disabling removes a visible context
         // chip right away (not on the next editor event), enabling shows it.
-        this.refreshImplicitChip(true);
+        this.refreshImplicitChips(true);
       }
       if (e.affectsConfiguration("grok.mentionIndexLimit")) {
         // Drop the TTL-cached findFiles snapshot so the next `@` rebuilds with
@@ -3994,7 +4028,7 @@ export class GrokSidebar {
     };
     view.webview.html = this.getProjectsRailHtml(view.webview);
     view.webview.onDidReceiveMessage((raw) => {
-      const m = raw as WebviewMsg;
+      const m = raw as ProjectsRailMessage;
       void this.onProjectsRailMessage(m).catch((e) => {
         const msg = (e as Error)?.message ?? String(e);
         this.host.appendLine(`[projects-rail] ${m.type} failed: ${msg}`);
@@ -4026,9 +4060,27 @@ export class GrokSidebar {
    * (those belong to the chat view). Everything else reuses onMessage so there is
    * one host path for resume/pin/rename/delete.
    */
-  private async onProjectsRailMessage(msg: WebviewMsg): Promise<void> {
+  private async onProjectsRailMessage(msg: ProjectsRailMessage): Promise<void> {
     if (msg.type === "ready") {
       this.pushProjectsRailCatalog();
+      return;
+    }
+    if (msg.type === "openConversationBeside") {
+      if (this.host.canOpenConversationEditor) await this.openEditorConversation(msg.id, msg.cwd);
+      return;
+    }
+    if (msg.type === "newConversationBeside") {
+      if (!this.host.canOpenConversationEditor || typeof msg.cwd !== "string" || !msg.cwd) return;
+      const project = this.resolveLocalRepoTarget(msg.cwd);
+      if (project) await this.newEditorSession(undefined, project.cwd);
+      else {
+        void this.host.showWarningMessage(this.l10n("This project is no longer available."));
+        this.postRepoCatalog();
+      }
+      return;
+    }
+    if (msg.type === "resumeSession" && this.lastEditorChat) {
+      await this.openEditorConversation(msg.id, msg.cwd, this.lastEditorChat);
       return;
     }
     if (!GrokSidebar.PROJECTS_RAIL_WEBVIEW_TYPES.has(msg.type)) {
@@ -4053,10 +4105,324 @@ export class GrokSidebar {
   /** Catalog snapshot for a freshly-resolved rail (or its ready handshake). */
   private pushProjectsRailCatalog(): void {
     if (!this.projectsRail) return;
+    if (this.host.canOpenConversationEditor) {
+      void this.projectsRail.webview.postMessage({ type: "conversationEditorAvailable" });
+      this.postProjectsRailChatTarget();
+    }
     this.mirrorToProjectsRail(this.providerStateMessage());
     this.postRepoCatalog();
     this.postSessionsList();
   }
+
+  private setLastEditorChat(tab: EditorChatTab | undefined): void {
+    if (this.lastEditorChat === tab) return;
+    this.lastEditorChat = tab;
+    this.postProjectsRailChatTarget();
+  }
+
+  private postProjectsRailChatTarget(): void {
+    const tab = this.lastEditorChat;
+    void this.projectsRail?.webview.postMessage({
+      type: "projectsRailChatTarget", editor: !!tab, sessionId: tab?.targetId ?? tab?.session.activeSessionId,
+    });
+  }
+
+  private editorChatFor(session: Session): EditorChatTab | undefined {
+    return [...(this.editorChats ?? [])].find(tab => tab.session === session);
+  }
+
+  private editorSessions(): Session[] {
+    return [...(this.editorChats ?? [])].map(tab => tab.session);
+  }
+
+  private editorChatTitle(session: Session): string {
+    if (!session.activeSessionId || !session.hasHistory) {
+      const name = session.activeSessionId
+        ? this.state.get<SessionMetaOverrides>(SESSION_META_KEY, {})[session.activeSessionId]?.customName
+        : undefined;
+      return name || this.l10n("New session");
+    }
+    return this.sessionCache.get(session.activeSessionId)?.entry.displayName
+      || [...this.allAdapterCatalogs()].flat().find(entry => entry.id === session.activeSessionId)?.displayName
+      || this.sessionDisplayName(session);
+  }
+
+  private l10n(key: string): string {
+    return webviewText(this.host.webviewStrings, key);
+  }
+
+  private async openEditorConversation(id: string, cwd?: string, reuse?: EditorChatTab): Promise<void> {
+    if (!this.host.canOpenConversationEditor || typeof id !== "string" || !id) return;
+    const existing = [...this.editorChats].find(tab => (tab.targetId ?? tab.session.activeSessionId) === id);
+    if (existing) {
+      this.setLastEditorChat(existing);
+      existing.panel.reveal();
+      return;
+    }
+
+    const clock = new OpenClock();
+    const seq = reuse ? ++reuse.openSeq : 0;
+    const current = () => !reuse || (this.editorChats.has(reuse) && reuse.openSeq === seq);
+    const claim = await this.reserveBehindInFlightLoad(id, undefined, current, () => {});
+    if (!claim) return;
+    let failure: unknown;
+    try {
+      if (!current()) return;
+      const opened = [...this.editorChats].find(tab => (tab.targetId ?? tab.session.activeSessionId) === id);
+      if (opened) {
+        this.setLastEditorChat(opened);
+        opened.panel.reveal();
+        return;
+      }
+      const held = this.liveSessionById(id) ?? this.remoteClients.clients()
+        .map(clientId => this.remoteClients.active(clientId))
+        .find(session => session?.activeSessionId === id);
+      const session = held ?? this.newLocalSession();
+      if (!held && !this.configureLocalResumeSession(session, id, cwd)) {
+        void this.host.showInformationMessage(this.l10n("Could not open this conversation."));
+        return;
+      }
+      if (!held) {
+        session.activeSessionId = id;
+        session.hasHistory = true;
+      }
+      const tab = this.showEditorConversation(session, this.reusableEditor(reuse), id);
+      if (!tab) return;
+      if (!session.client) {
+        this.pool.add(session);
+        this.bindSessionLoad(id, claim.reservation, session);
+        await this.startSession(id, session, "ensure", clock);
+      }
+      if (tab.session === session) tab.targetId = undefined;
+      this.touch(session);
+      this.markRead(session);
+      if (session.activeSessionId === id && session.client) void this.noteSessionOpened(id);
+    } catch (error) {
+      failure = error;
+      throw error;
+    } finally {
+      this.releaseSessionLoad(id, claim.reservation, failure);
+    }
+  }
+
+  private createEditorChat(session: Session, targetId?: string): EditorChatTab | undefined {
+    // Capture the text editor before VS Code focuses the webview.
+    if (!this.editorWatcher) this.watchActiveEditor();
+    this.activeEditorForContext();
+    const panel = this.host.openEditorWebview({
+      viewType: "grok.conversation",
+      title: this.editorChatTitle(session),
+      column: "beside",
+      icon: Uri.joinPath(this.context.extensionUri, "resources", "grok-icon.png"),
+      localResourceRoots: this.chatLocalResourceRoots(),
+    });
+    if (!panel) return;
+    const tab: EditorChatTab = { panel, session, targetId, binding: 0, openSeq: 0, ready: false };
+    this.editorChats.add(tab);
+    this.takeParkedEditorDraft(tab);
+    if (this.editorChats.size === 1) void this.view?.webview.postMessage({ type: "trackLocalChatFocus" });
+    const focus = panel.onDidFocus?.(() => {
+      this.setLastEditorChat(tab);
+      this.refreshImplicitChip(false, tab.session);
+      this.focusEditorComposer(tab);
+    });
+    const soundConfig = this.host.onDidChangeConfiguration(event => {
+      if (!tab.ready) return;
+      for (const type of ["soundNotifications", "inputNeededSound"] as const) {
+        if (event.affectsConfiguration(`grok.${type}`)) {
+          void panel.webview.postMessage({ type, value: this.host.getConfiguration("grok").get(type, false) });
+        }
+      }
+    });
+    const messages = panel.webview.onDidReceiveMessage(raw => {
+      void this.onEditorChatMessage(tab, raw).catch(error => {
+        this.host.appendLine(`[editor-chat] ${errorDetail(error)}`);
+        this.reportEditorChatFailure(tab);
+      });
+    });
+    panel.onDidDispose(() => {
+      messages.dispose();
+      focus?.dispose();
+      soundConfig.dispose();
+      this.forgetEditorChat(tab);
+    });
+    panel.webview.html = this.getHtml(panel.webview, true);
+    return tab;
+  }
+
+  private reportEditorChatFailure(tab: EditorChatTab): void {
+    const text = this.l10n("Could not complete the conversation action.");
+    if (this.editorChats.has(tab)) void tab.panel.webview.postMessage({ type: "error", text });
+  }
+
+  private forgetEditorChat(tab: EditorChatTab): void {
+    if (!this.editorChats.delete(tab)) return;
+    this.parkBoundEditorDraft(tab);
+    if (this.lastEditorChat === tab) this.setLastEditorChat(undefined);
+  }
+
+  private closeEditorChat(tab: EditorChatTab): void {
+    this.forgetEditorChat(tab);
+    tab.panel.dispose();
+  }
+
+  private focusEditorComposer(tab: EditorChatTab): void {
+    if (tab.focusComposerOnReveal && tab.ready && tab.panel.active) {
+      tab.focusComposerOnReveal = false;
+      void tab.panel.webview.postMessage({ type: "focusInput", closeSettings: true });
+    }
+  }
+
+  private revealEditorComposer(tab: EditorChatTab): void {
+    this.setLastEditorChat(tab);
+    tab.focusComposerOnReveal = true;
+    tab.panel.reveal();
+    this.focusEditorComposer(tab);
+  }
+
+  private reusableEditor(tab?: EditorChatTab): EditorChatTab | undefined {
+    if (!tab) return;
+    const { session } = tab;
+    if ((this.editorDrafts?.has(session) || session.queuedSends.length)
+        && this.keepUnrecordedEditor(tab, session.activeSessionId ?? tab.targetId)) return;
+    return tab;
+  }
+
+  private showEditorConversation(session: Session, reuse?: EditorChatTab, targetId?: string): EditorChatTab | undefined {
+    const tab = reuse ?? this.createEditorChat(session, targetId);
+    if (!tab) return;
+    if (reuse) this.bindEditorChat(tab, session, true, targetId);
+    this.setLastEditorChat(tab);
+    if (reuse) tab.panel.reveal();
+    return tab;
+  }
+
+  private bindEditorChat(tab: EditorChatTab, session: Session, switchDraft: boolean, targetId?: string): void {
+    if (switchDraft) {
+      this.parkBoundEditorDraft(tab);
+      tab.session = session;
+      tab.targetId = targetId;
+      this.takeParkedEditorDraft(tab);
+    }
+    tab.focusComposerOnReveal = false;
+    tab.binding++;
+    tab.panel.title = this.editorChatTitle(session);
+    if (tab.ready) this.replayEditorChat(tab, switchDraft);
+    if (tab === this.lastEditorChat) this.postProjectsRailChatTarget();
+  }
+
+  private async newEditorSession(existing: EditorChatTab | undefined, cwd: string, spawn?: NewChatSpawn): Promise<void> {
+    const session = this.newLocalSession();
+    this.setSessionCwd(session, spawn?.cwd ?? cwd, this.workspaceRoot());
+    session.provider = spawn?.provider ?? this.defaultProviderForProject(this.sessionCwd(session));
+    const tab = this.showEditorConversation(session, spawn ? existing : this.reusableEditor(existing));
+    if (!tab) return;
+    await this.startSession(undefined, session, "replace", undefined, spawn?.modelId ? { modelId: spawn.modelId } : undefined);
+    if (spawn?.draft) this.restoreComposerFor(session, undefined, spawn.draft, undefined, true, tab);
+    this.sweepEmptySessions(this.sessionCwd(session));
+    this.postSessionsList();
+  }
+
+  private replayEditorChat(tab: EditorChatTab, switchDraft?: boolean): void {
+    const { session, panel: { webview } } = tab;
+    const send = (message: HostMsg) => void webview.postMessage(this.localizeHistoryMessage(message, webview));
+    void webview.postMessage({
+      type: "editorChatBinding", sessionId: session.activeSessionId,
+      ...(switchDraft ? { switchDraft: true } : {}),
+    });
+    send({ type: "clearMessages" });
+    send({ ...this.buildInitialStateMsg(session), cwd: this.sessionCwd(session), readRepliesAloud: false });
+    send(this.providerStateMessage());
+    send(this.modelPinsMessage());
+    const identity = this.sessionIdentityFrame(session);
+    if (identity) send(identity);
+    this.refreshWorkflowCompletions(session);
+    send({ type: "historyReplay", active: true });
+    if (session.activeSessionId) {
+      send({ type: "sessionDot", id: session.activeSessionId, dot: this.dotForId(session.activeSessionId) });
+    }
+    for (const message of session.buffer) {
+      if (message.type !== "historyReplay" && message.type !== "clearMessages") send(message);
+    }
+    // A cold load already owns the matching historyReplay(false) in emit().
+    // Opening a second bracket here would hold all transcript and turn frames.
+    if (!session.replaying) send({ type: "historyReplay", active: false });
+    this.refreshImplicitChip(false, session);
+    for (const message of sessionUiSnapshot(session, this.displayMode(session), this.localPreviewChips(session, webview))) send(message);
+    for (const pending of this.pendingConfirms?.values() ?? []) {
+      if (pending.session === session) send(pending.request);
+    }
+    send({ type: "setBusy", ...rehydrateBusyChrome(session) });
+    // Seed a fresh renderer or a different conversation. A rebind of the
+    // same conversation already has its draft on screen.
+    const draft = switchDraft === false ? undefined : this.editorDrafts.get(session);
+    if (draft) this.restoreComposerFor(session, undefined, draft.text, draft.chips, true, tab);
+    this.postSessionName(session);
+    void webview.postMessage({ type: "editorChatBound", binding: tab.binding });
+    this.restorePersistedDraft(session, tab);
+  }
+
+  private emitEditorSession(session: Session, message: HostMsg): void {
+    const tab = this.editorChatFor(session);
+    if (!tab) return;
+    if (message.type === "session" && message.sessionId && tab === this.lastEditorChat) this.postProjectsRailChatTarget();
+    if (message.type === "sessionName") tab.panel.title = this.editorChatTitle(session);
+    if (tab.ready) {
+      const webview = tab.panel.webview;
+      void webview.postMessage(this.localizeHistoryMessage(message, webview));
+    }
+  }
+
+  private static readonly EDITOR_CHAT_TYPES = new Set<WebviewMsg["type"]>([
+    "resumeSession", "newSession", "newWorktreeSession", "applyWorktree", "removeWorktree",
+    "send", "queueSend", "dequeueSend", "clearQueuedSends", "steerSend", "cancel",
+    "permissionAnswer", "questionAnswer", "questionCancel", "exitPlanAnswer", "uiConfirmAnswer",
+    "setContextWindow", "refreshContextDetails", "refreshSubscriptionUsage",
+    "setModel", "setEffort", "pickModel", "toggleModelPin", "setMode", "setDeepSeekHarness",
+    "removeChip", "toggleChip", "pickFile", "dropFile", "pasteImage", "uploadFile", "pasteText",
+    "mentionQuery", "addMentionFile", "requestImageFull", "requestImageOriginal",
+    "openFile", "showInFolder", "openUrl", "openText", "openDiff", "turnFileDiff", "turnFileOpenDiff", "exportExpr",
+    "turnFeedback", "rewindSession", "editLastMessage", "forkSession", "forkAtReply",
+    "workflowControl", "stopDelegatedWork", "retryProviderSession", "restartProviderSession",
+    "listSessions", "toggleSessionPin", "renameSession", "deleteSession",
+    "openSettingsSurface", "showLogs", "recheckConnection", "remoteHandoff", "remoteSignIn", "openRemotePortal",
+  ]);
+
+  private async onEditorChatMessage(tab: EditorChatTab, raw: unknown): Promise<void> {
+    if (!this.editorChats.has(tab) || !raw || typeof raw !== "object") return;
+    const frame = raw as { type: string; binding?: number; message?: WebviewMsg; text?: string; chipIds?: string[] };
+    if (frame.type === "ready") {
+      tab.ready = true;
+      this.replayEditorChat(tab);
+      this.focusEditorComposer(tab);
+      void this.postRemoteStatus();
+      return;
+    }
+    if (frame.type === "localChatFocus") {
+      this.setLastEditorChat(tab);
+      return;
+    }
+    if (!tab.ready || frame.binding !== tab.binding) return;
+    const session = tab.session;
+    if (frame.type === "editorChatDraft" && typeof frame.text === "string") {
+      const chipIds = Array.isArray(frame.chipIds) ? new Set(frame.chipIds) : undefined;
+      const chips = chipIds ? session.restoredChips.filter(chip => chipIds.has(chip.id)) : [];
+      if (frame.text || chips.length) this.editorDrafts.set(session, { text: frame.text, chips });
+      else this.editorDrafts.delete(session);
+      return;
+    }
+    if (frame.type !== "editorChatAction" || !frame.message) return;
+    if (GrokSidebar.EDITOR_CHAT_PROVIDER_SETUP_TYPES.has(frame.message.type)) {
+      await this.openSettingsEditor("providers");
+    } else if (GrokSidebar.EDITOR_CHAT_TYPES.has(frame.message.type)) {
+      await this.onMessage(frame.message, "local", undefined, tab);
+    }
+  }
+
+  private static readonly EDITOR_CHAT_PROVIDER_SETUP_TYPES = new Set<WebviewMsg["type"]>([
+    "runGrokLogin", "runInstallCmd", "runMuseInstallCmd", "installCodex", "installAgy",
+    "installDeepSeek", "logout", "disconnectProvider", "agySignIn", "deepseekConnect",
+  ]);
 
   /** Push the `grok.terminalShell` preference (#46) into the shared shell
    *  resolver so the next agent command re-resolves cmd vs PowerShell. */
@@ -4075,6 +4441,8 @@ export class GrokSidebar {
     pickIfMissing?: boolean;
     quiet?: boolean;
   }): boolean {
+    const tab = this.lastEditorChat;
+    const session = tab?.session ?? this.focused;
     const editor = this.host.getActiveTextEditor();
     // Prefer a full Uri end-to-end (scheme + authority) so asRelativePath matches
     // remote workspace folders. Explorer Send File passes the explorer Uri via
@@ -4088,7 +4456,10 @@ export class GrokSidebar {
       // commands (which have nothing to reference without an editor) surface a
       // hint so the command visibly did *something*.
       if (opts?.pickIfMissing) {
-        void this.trackAttach(this.pickFileFromComputer());
+        if (tab) {
+          const owner = () => this.editorChatFor(session) === tab ? session : undefined;
+          void this.trackAttach(this.pickFileFromComputer(owner, tab), session);
+        } else void this.trackAttach(this.pickFileFromComputer());
       } else {
         void this.host.showInformationMessage(
           "AFK Pilot: open a file in the editor first, then run this command.",
@@ -4107,8 +4478,8 @@ export class GrokSidebar {
     // VS Code's workspace folders, and a project reached through the rail is
     // deliberately not one of them, so it would have labelled an ordinary file
     // with its full absolute path.
-    const sessionRoot = this.sessionCwd(this.focused);
-    const relPath = this.conversationRelPath(absPath);
+    const sessionRoot = this.sessionCwd(session);
+    const relPath = this.conversationRelPath(absPath, session);
     if (relPath === undefined) {
       if (!opts?.quiet) {
         void this.host.showWarningMessage(
@@ -4125,40 +4496,47 @@ export class GrokSidebar {
       selStart = range.startLine;
       selEnd = range.endLine;
     }
-    this.chips.push(makeExplicitChip(absPath, relPath, selStart, selEnd));
-    this.postChips();
-    this.revealAndFocusComposer();
+    session.chips.push(makeExplicitChip(absPath, relPath, selStart, selEnd));
+    if (tab) {
+      this.postChips(session);
+      this.revealEditorComposer(tab);
+    } else {
+      this.postChips();
+      this.revealAndFocusComposer();
+    }
     return true;
   }
 
   newSession(): void {
-    void this.newFocusedSession("local");
+    const tab = this.lastEditorChat;
+    if (tab) void this.newEditorSession(tab, this.sessionCwd(tab.session));
+    else void this.newFocusedSession("local");
   }
 
-  async pickModel(): Promise<void> {
-    if (!this.focused.client || !this.focused.client.availableModels.length) {
+  async pickModel(session: Session = this.lastEditorChat?.session ?? this.focused): Promise<void> {
+    if (!session.client || !session.client.availableModels.length) {
       // A starting session has a client and no catalog yet: the picker stays
       // shut until it has one, the same as the composer's model chip.
-      this.host.showInformationMessage(this.focused.client ? "Models are still loading." : "Start a session first.");
+      this.host.showInformationMessage(session.client ? "Models are still loading." : "Start a session first.");
       return;
     }
     const models = this.modelsForSession(
-      this.focused,
-      this.focused.client.availableModels,
-      this.focused.client.currentModelId,
-      !this.focused.hasHistory,
+      session,
+      session.client.availableModels,
+      session.client.currentModelId,
+      !session.hasHistory,
     );
     const items = models.map((m) => ({
       label: `${providerDisplayName(m.provider)} · ${m.name ?? m.modelId}`,
-      description: m.provider === this.focused.provider && m.modelId === this.focused.client!.currentModelId ? "$(check) current" : "",
+      description: m.provider === session.provider && m.modelId === session.client?.currentModelId ? "$(check) current" : "",
       detail: m.description,
       modelId: m.modelId,
       provider: m.provider,
     }));
     const picked = await this.host.showQuickPick(items, {
-      placeHolder: this.focused.hasHistory ? "Pick a model" : "Pick an agent and model",
+      placeHolder: session.hasHistory ? "Pick a model" : "Pick an agent and model",
     });
-    if (picked) await this.switchModel(picked.modelId, this.focused, undefined, picked.provider);
+    if (picked) await this.switchModel(picked.modelId, session, undefined, picked.provider);
   }
 
   /**
@@ -4256,7 +4634,7 @@ export class GrokSidebar {
         );
         return;
       }
-      const mode = await this.pickRestartMode("Switching to this model requires a new session.");
+      const mode = await this.pickRestartMode("Switching to this model requires a new session.", session);
       if (!mode) return; // dismissed — keep the current model
       await this.rememberGrokConfig("defaultModel", modelId);
       await this.restartSession(mode, session);
@@ -4332,14 +4710,32 @@ export class GrokSidebar {
       );
       return;
     }
-    const mode = await this.pickRestartMode("Changing reasoning effort requires restarting the session.");
+    const mode = await this.pickRestartMode("Changing reasoning effort requires restarting the session.", session);
     if (!mode) return; // dismissed — leave the remembered effort untouched
     await this.rememberProviderEffort(session.provider, newLevel, session.client?.currentModelId);
     await this.restartSession(mode, session);
   }
 
   openModePopover(): void {
-    this.post({ type: "openModePopover" });
+    if (!this.postEditorCommand({ type: "openModePopover" })) this.post({ type: "openModePopover" });
+  }
+
+  private postEditorCommand(...messages: HostMsg[]): boolean {
+    const tab = this.lastEditorChat;
+    if (!tab) return false;
+    if (!tab.ready) {
+      void this.host.showInformationMessage(this.l10n("Wait for the conversation to finish opening."));
+      return true;
+    }
+    tab.panel.reveal();
+    for (const message of messages) this.emitEditorSession(tab.session, message);
+    return true;
+  }
+
+  compactCurrentSession(): void {
+    const tab = this.lastEditorChat;
+    if (tab) this.revealEditorComposer(tab);
+    void this.host.showInformationMessage(this.l10n("Type /compact in the composer to compress the conversation."));
   }
 
   /**
@@ -4376,17 +4772,22 @@ export async function getSessionToken(): Promise<string> {
 
 See design doc for the full state machine diagram.`;
 
-    this.post({
+    const session = this.lastEditorChat?.session ?? this.focused;
+    const request: HostMsg = {
       type: "exitPlanRequest",
       req: {
         id: "dummy-plan-" + Date.now(),
-        sessionId: this.focused.activeSessionId || "dummy-session",
+        sessionId: session.activeSessionId || "dummy-session",
         plan: dummyPlan,
       },
-    });
+    };
 
     // Make the bottom mode button reflect Plan during the manual test.
-    this.post({ type: "modeChanged", modeId: "plan", modes: sessionModes(this.focused.provider) });
+    const mode: HostMsg = { type: "modeChanged", modeId: "plan", modes: sessionModes(session.provider) };
+    if (!this.postEditorCommand(request, mode)) {
+      this.post(request);
+      this.post(mode);
+    }
   }
 
   private defaultModeForProvider(provider: string): string {
@@ -4502,6 +4903,7 @@ See design doc for the full state machine diagram.`;
   private postMode(session: Session = this.focused): void {
     const message = sessionModeMessage(session, this.displayMode(session));
     if (session === this.focused) this.view?.webview.postMessage(message);
+    this.emitEditorSession(session, message);
     this.sendRemoteSession(session, message);
   }
 
@@ -4737,8 +5139,9 @@ Only continue if you trust this code.`,
     if (!sessionPickerModes(session).includes(modeId) && modeId !== "plan") return;
     if (session.provider === "agy") {
       const client = session.client;
-      await this.trackPickerChange((this.pickerChange ?? Promise.resolve()).then(() =>
-        session.client === client ? this.setAgyCliMode(session, client, modeId, requester) : undefined));
+      await this.trackPickerChange((this.pickerFor(session) ?? Promise.resolve()).then(() =>
+        session.client === client ? this.setAgyCliMode(session, client, modeId, requester) : undefined),
+        this.editorChatFor(session) && session);
       return;
     }
     if (session.client.pickerModes) {
@@ -5530,8 +5933,10 @@ Only continue if you trust this code.`,
     if (!alerts || !id || session.replaying || session.suppressContent || session.priming
       || session.turnToken?.stopRequested || isCloudEnvironment()) return;
     try {
+      const showingConversation = (session === this.focused && this.view?.visible === true)
+        || this.editorChatFor(session)?.panel.visible === true;
       if (!this.host.getConfiguration("grok").get("deskAlerts", true)
-        || !alerts.isAway(session === this.focused && this.view?.visible === true)) return;
+        || !alerts.isAway(showingConversation)) return;
       const cwd = this.sessionCwd(session);
       const label = (text: string) => text.replace(/[\p{Cc}\p{Cf}\[\]]/gu, " ").trim().slice(0, 90);
       const project = label(this.resolveLocalRepoTarget(cwd)?.label || path.basename(cwd)) || "No project";
@@ -5540,6 +5945,12 @@ Only continue if you trust this code.`,
         title: DESK_ALERT_TITLES[kind],
         body: `${project} · ${label(this.sessionDisplayName(session)) || "Conversation"}`,
         open: async () => {
+          const tab = [...(this.editorChats ?? [])].find(tab => tab.session.activeSessionId === id);
+          if (tab) {
+            this.markRead(tab.session);
+            this.revealEditorComposer(tab);
+            return;
+          }
           if (this.focused.activeSessionId !== id) await this.openSession(id, cwd);
           else this.markRead(this.focused);
           await this.host.revealChatView();
@@ -5583,7 +5994,7 @@ Only continue if you trust this code.`,
 
   private starPromptWindowReady(attempt: NonNullable<GrokSidebar["starPrompt"]>): boolean {
     const { session, gen } = attempt;
-    return !isCloudEnvironment() && this.view?.visible === true && session === this.focused
+    return !isCloudEnvironment() && !this.lastEditorChat && this.view?.visible === true && session === this.focused
       && session.gen === gen && !session.replaying && !session.suppressContent && !turnIsInFlight(session)
       && session.pendingPermissions.size === 0 && session.pendingQuestions.size === 0 && session.pendingExitPlans.size === 0
       && (this.host.deskAlerts?.isAway(true) ?? this.host.isChatWindowAway?.()) === false;
@@ -6155,7 +6566,7 @@ Only continue if you trust this code.`,
    *  a new chat on the same agent, model and folder, with the prompt in the
    *  composer. The original conversation is left as it is. */
   private async editFirstPromptInNewChat(
-    session: Session, origin: MsgOrigin, requester: RemoteRequester | undefined, text: string,
+    session: Session, origin: MsgOrigin, requester: RemoteRequester | undefined, text: string, tab?: EditorChatTab,
   ): Promise<void> {
     // Offered only where this host put the point on the first bubble; a parked
     // conversation keeps it even without a live process.
@@ -6176,6 +6587,9 @@ Only continue if you trust this code.`,
       const current = requester && this.resolveRemoteRequester(requester);
       if (!current || this.remoteClients.active(current) !== session) return;
       await this.newRemoteSession(current, true, undefined, spawn);
+    } else if (tab) {
+      if (this.editorChatFor(session) !== tab) return;
+      await this.newEditorSession(tab, spawn.cwd, spawn);
     } else {
       if (this.focused !== session) return;
       await this.newFocusedSession(origin, undefined, undefined, spawn);
@@ -6232,6 +6646,7 @@ Only continue if you trust this code.`,
     session: Session = this.focused,
     requester?: RemoteRequester,
     point?: Extract<WebviewMsg, { type: "forkAtReply" }>,
+    tab?: EditorChatTab,
   ): Promise<void> {
     const { activeSessionId: parentId, provider } = session;
     const agy = provider === "agy";
@@ -6345,6 +6760,11 @@ Only continue if you trust this code.`,
         releasedSource = codexForkId !== undefined;
         await this.releaseForkSource(session, client, parentId);
         await this.openRemoteSession(currentClientId, r.newSessionId, cwd);
+      } else if (tab) {
+        if (this.editorChatFor(session) !== tab) return;
+        releasedSource = codexForkId !== undefined;
+        await this.releaseForkSource(session, client, parentId);
+        if (this.editorChatFor(session) === tab) await this.openEditorConversation(r.newSessionId, cwd, tab);
       } else {
         if (turnFork && this.focused !== session) return;
         releasedSource = codexForkId !== undefined;
@@ -6389,7 +6809,7 @@ Only continue if you trust this code.`,
           } finally {
             this.pendingForkDrafts?.delete(codexForkId);
             const copy = this.liveSessionById(codexForkId);
-            if (copy) this.restorePersistedDraft(copy, requester ?? "local");
+            if (copy) this.restorePersistedDraft(copy, tab ?? requester ?? "local");
           }
         }
         if (session.queuedSends.length) void this.maybeFlushQueuedSends(session);
@@ -6470,6 +6890,7 @@ Only continue if you trust this code.`,
     totalUserBubbles?: number,
     session: Session = this.focused,
     requester?: RemoteRequester,
+    tab?: EditorChatTab,
   ): Promise<void> {
     if (!session.client || !session.activeSessionId) {
       return void this.reportRequester(requester, "warning", "Start a session before editing a message.");
@@ -6528,7 +6949,7 @@ Only continue if you trust this code.`,
         // Was a modal offering "Copy text to composer" and awaiting the click.
         // Nobody can click it on a cloud machine, so the handler hung there —
         // and the button was the only sensible answer anyway. Do it, and say so.
-        this.restoreComposerFor(session, requester, text, chips);
+        this.restoreComposerFor(session, requester, text, chips, false, tab);
         return void this.reportRequester(
           requester,
           "info",
@@ -6587,7 +7008,7 @@ Only continue if you trust this code.`,
       const surviving = survivingUserMessagesAfterRewind(points, target);
       await this.truncateSessionCardsAfterRewind(resumeId, surviving);
       this.applyRewindToView(session, surviving);
-      this.restoreComposerFor(session, requester, text, chips);
+      this.restoreComposerFor(session, requester, text, chips, false, tab);
       if (reportedFiles > 0) {
         this.reportRequester(
           requester,
@@ -6630,6 +7051,7 @@ Only continue if you trust this code.`,
     text: string,
     chips?: FileChip[],
     draft = false,
+    tab?: EditorChatTab,
   ): void {
     if (!text && (!chips || !chips.length)) return;
     
@@ -6637,7 +7059,13 @@ Only continue if you trust this code.`,
     const retainChips = () => {
       if (chips) session.restoredChips = restoreQueuedChips(session.restoredChips, [{ text, chips }]);
     };
-    if (requester) {
+    if (tab) {
+      if (tab.ready && this.editorChatFor(session) === tab) {
+        retainChips();
+        this.emitEditorSession(session, message);
+        return;
+      }
+    } else if (requester) {
       // Resolve through the tab, so a phone that reconnected while the rewind
       // was in flight still receives its own text — then check the tab is still
       // ON this conversation. `sendRemoteRequester` alone would deliver to
@@ -6679,9 +7107,15 @@ Only continue if you trust this code.`,
     userBubbleIndex?: number,
     bubbleText?: string,
     totalUserBubbles?: number,
-    session: Session = this.focused,
+    session?: Session,
     requester?: RemoteRequester,
+    tab?: EditorChatTab,
   ): Promise<void> {
+    if (!session) {
+      tab = this.lastEditorChat;
+      session = tab?.session ?? this.focused;
+      tab?.panel.reveal();
+    }
     if (!session.client || !session.activeSessionId) {
       return void this.reportRequester(requester, "warning", "Start a session before rewinding it.");
     }
@@ -6838,7 +7272,10 @@ Only continue if you trust this code.`,
       // off. So the QuickPick path (no bubble) restores nothing rather than
       // pasting plumbing into the composer.
       const restored = (bubbleText ?? "").trim();
-      if (restored) this.restoreComposerFor(session, requester, restored);
+      if (restored) {
+        if (tab) this.restoreComposerFor(session, requester, restored, undefined, false, tab);
+        else this.restoreComposerFor(session, requester, restored);
+      }
       // Only speak up when something happened the chat itself doesn't show.
       // The messages vanishing and the text landing in the composer are their
       // own feedback; a toast restating them is noise. Reverted files are NOT
@@ -6960,10 +7397,14 @@ Only continue if you trust this code.`,
    * is skipped when `fromRemote` is true so a phone tap never stalls on a desk
    * input box (auto-named worktree instead).
    */
-  async newWorktreeSession(opts?: { fromRemote?: boolean }): Promise<void> {
+  async newWorktreeSession(opts?: { fromRemote?: boolean; tab?: EditorChatTab }, session = this.focused): Promise<void> {
+    if (!opts && this.lastEditorChat) {
+      const tab = this.lastEditorChat;
+      return this.newWorktreeSession({ tab }, tab.session);
+    }
     // No worktree-from-worktree — checkouts stay singular. The gear hides this
     // inside a worktree; guard the Command-Palette path too.
-    if (this.focused.worktree) {
+    if (session.worktree) {
       return void this.host.showInformationMessage(
         "You're already in a worktree. Start a new worktree from a normal session — worktrees don't nest.",
       );
@@ -6982,7 +7423,7 @@ Only continue if you trust this code.`,
     // One rule for every caller: a worktree is cut from the conversation it
     // continues. The Command Palette lands here too, and `focused` is the
     // conversation open there as well.
-    const sourcePath = this.sessionCwd(this.focused);
+    const sourcePath = this.sessionCwd(session);
     if (!isGitRepo(sourcePath, fs)) {
       return void this.host.showWarningMessage(
         "Worktree sessions need a git repository. Open a folder that is a git checkout (or run git init).",
@@ -7002,7 +7443,7 @@ Only continue if you trust this code.`,
     }
     this.worktreeCreateInFlight = true;
     try {
-      await this.createWorktreeSession(sourcePath, opts);
+      await this.createWorktreeSession(sourcePath, opts, session);
     } finally {
       this.worktreeCreateInFlight = false;
     }
@@ -7014,7 +7455,8 @@ Only continue if you trust this code.`,
   /** The body of {@link newWorktreeSession}, run under its single-flight guard. */
   private async createWorktreeSession(
     sourcePath: string,
-    opts?: { fromRemote?: boolean },
+    opts?: { fromRemote?: boolean; tab?: EditorChatTab },
+    source?: Session,
   ): Promise<void> {
     // Remote origin: skip the host input box (invisible to the phone). Local
     // and Command Palette still prompt for an optional label.
@@ -7239,7 +7681,6 @@ Only continue if you trust this code.`,
             });
 
             // Open a brand-new session whose process cwd is the worktree.
-            this.parkFocused();
             // Held as an OBJECT across the await, never re-read from
             // `this.focused`. Focus is free to move while startup runs — the
             // user can click another conversation — and reading it back
@@ -7248,14 +7689,21 @@ Only continue if you trust this code.`,
             // later treats that saved binding as authoritative, so the wrong
             // conversation comes back believing it lives in the worktree.
             const wtSession = this.newLocalSession();
-            this.focused = wtSession;
-            this.pool.add(wtSession);
             wtSession.cwd = wtPath;
             wtSession.worktree = {
               path: wtPath,
               label: wtLabel,
               sourceGitRoot,
             };
+            if (opts?.tab) {
+              if (source && this.editorChatFor(source) === opts.tab) {
+                this.showEditorConversation(wtSession, this.reusableEditor(opts.tab));
+              }
+            } else {
+              this.parkFocused();
+              this.focused = wtSession;
+            }
+            this.pool.add(wtSession);
             await this.startSession(undefined, wtSession);
             const id = wtSession.activeSessionId;
             if (id) {
@@ -7271,6 +7719,7 @@ Only continue if you trust this code.`,
                 },
               });
               this.sessionCache.delete(id);
+              if (opts?.tab) this.postSessionName(wtSession);
             }
               this.postSessionsList();
               void this.host.showInformationMessage(
@@ -7522,7 +7971,7 @@ Only continue if you trust this code.`,
 
   /** Merge the given session's worktree back into the main checkout.
    *  `skipConfirm` = the webview's custom confirm dialog already ran. */
-  async applyFocusedWorktree(session: Session = this.focused, skipConfirm = false): Promise<void> {
+  async applyFocusedWorktree(session: Session = this.lastEditorChat?.session ?? this.focused, skipConfirm = false): Promise<void> {
     const wt = session.worktree;
     if (!wt) {
       return void this.host.showInformationMessage(
@@ -7559,7 +8008,11 @@ Only continue if you trust this code.`,
 
   /** Remove the given session's worktree (after disposing processes that use it).
    *  `skipConfirm` = the webview's custom confirm dialog already ran. */
-  async removeFocusedWorktree(session: Session = this.focused, skipConfirm = false): Promise<void> {
+  async removeFocusedWorktree(session?: Session, skipConfirm = false, tab?: EditorChatTab): Promise<void> {
+    if (!session) {
+      tab = this.lastEditorChat;
+      session = tab?.session ?? this.focused;
+    }
     const wt = session.worktree;
     if (!wt) {
       return void this.host.showInformationMessage("This session is not in a worktree.");
@@ -7579,6 +8032,8 @@ Only continue if you trust this code.`,
       // checkout, and they must be re-homed once the removal succeeds instead
       // of being left on a dead session whose cwd no longer exists.
       const strandedHolders = new Set<string>();
+      const strandedEditors = this.editorSessions().filter(s => s.worktree && pathsEqual(s.worktree.path, wt.path));
+      const sidebarAffected = this.focused.worktree && pathsEqual(this.focused.worktree.path, wt.path);
       for (const s of [...this.pool]) {
         if (s.worktree && pathsEqual(s.worktree.path, wt.path)) {
           for (const holder of this.remoteClients.clientsForActiveValue(s)) strandedHolders.add(holder);
@@ -7673,14 +8128,21 @@ Only continue if you trust this code.`,
       // to. The open folder was right only while conversations were pinned to
       // it; the rail can put you in another project entirely, and landing in the
       // window's folder then dropped you somewhere you had not been working.
-      this.parkFocused();
-      this.focused = this.newLocalSession();
-      this.pool.add(this.focused);
       // The catalog PROJECT that owned the worktree (captured above), not its
       // git root — that is the relationship the rail draws, and where the work
       // goes back to.
-      this.focused.cwd = worktreeOwnerCwd || wt.sourceGitRoot || this.historyCwdFor("local");
-      await this.startSession();
+      const cwd = worktreeOwnerCwd || wt.sourceGitRoot || this.historyCwdFor("local");
+      if (!tab || sidebarAffected) {
+        this.parkFocused();
+        this.focused = this.newLocalSession();
+        this.pool.add(this.focused);
+        this.focused.cwd = cwd;
+        await this.startSession();
+      }
+      for (const source of strandedEditors) {
+        const editor = this.editorChatFor(source);
+        if (editor) await this.newEditorSession(editor, cwd, { cwd, provider: source.provider, draft: "" });
+      }
       this.postSessionsList();
       // Re-home the remote tabs that were on the removed worktree: a fresh
       // snapshot gives each a new conversation in its selected repository —
@@ -9690,6 +10152,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       }
     };
     for (const s of this.pool) consider(s);
+    for (const s of this.editorSessions()) consider(s);
     consider(this.focused);
     return bound;
   }
@@ -10019,30 +10482,104 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     });
   }
 
+  private async parkEditorDraft(session: Session, id = session.activeSessionId): Promise<void> {
+    if (!id) return;
+    const draft = this.editorDrafts?.get(id) ?? this.editorDrafts?.get(session);
+    const queue = session.queuedSends;
+    const text = [queuedSendsText(queue), draft?.text].filter(Boolean).join("\n\n");
+    const chips = restoreQueuedChips(draft?.chips ?? [], queue);
+    if (text || chips.length) await this.rememberQueuedDraft(id, text, chips.length ? chips : undefined, true);
+    if (this.editorDrafts?.get(id) === draft) this.editorDrafts?.delete(id);
+    if (this.editorDrafts?.get(session) === draft) this.editorDrafts?.delete(session);
+  }
+
+  private parkBoundEditorDraft(tab: EditorChatTab): void {
+    const { session } = tab;
+    const draft = this.editorDrafts?.get(session);
+    if (!draft) return;
+    this.editorDrafts.delete(session);
+    const id = session.activeSessionId ?? tab.targetId;
+    if (id) this.editorDrafts.set(id, draft);
+  }
+
+  private takeParkedEditorDraft(tab: EditorChatTab): void {
+    const { session } = tab;
+    const id = session.activeSessionId ?? tab.targetId;
+    if (!id) return;
+    const draft = this.editorDrafts?.get(id);
+    if (!draft) return;
+    this.editorDrafts.delete(id);
+    this.editorDrafts.set(session, draft);
+  }
+
+  private keepUnrecordedEditor(tab: EditorChatTab, id?: string): boolean {
+    if (!id) return true;
+    const { session } = tab;
+    if (tab.targetId || session.hasHistory || session.userMessageCount) return false;
+    // Some providers mint an id before they write any history. A draft parked
+    // against that id would have no conversation to reopen.
+    return !!this.editorDrafts?.has(session) || session.queuedSends.length > 0;
+  }
+
+  private resetUnrecordedEditor(tab: EditorChatTab): void {
+    const { session } = tab;
+    session.activeSessionId = undefined;
+    session.buffer = [];
+    const queued = session.queuedSends;
+    if (queued.length) {
+      session.queuedSends = [];
+      session.queuedSendRequiresRelay = false;
+      if (!tab.ready) {
+        const draft = this.editorDrafts.get(session);
+        this.editorDrafts.set(session, {
+          text: [queuedSendsText(queued), draft?.text].filter(Boolean).join("\n\n"),
+          chips: restoreQueuedChips(draft?.chips ?? [], queued),
+        });
+      }
+    }
+    this.bindEditorChat(tab, session, false);
+    if (tab.ready && queued.length) {
+      this.restoreComposerFor(session, undefined, queuedSendsText(queued), restoreQueuedChips([], queued), false, tab);
+    }
+  }
+
   /** Hand a parked draft back to this session's live composer, exactly once.
    *  Detached tabs keep META untouched until reattachment because
    *  `restoreComposer` is transient and has no recipient while detached. */
-  private restorePersistedDraft(session: Session, recipient?: RemoteRequester | "local"): void {
+  private restorePersistedDraft(session: Session, recipient?: RemoteRequester | EditorChatTab | "local"): void {
     const id = session.activeSessionId;
     if (!id) return;
+    if ((!recipient || recipient === "local") && session === this.focused && this.view && !this.editorChatFor(session)) {
+      const draft = this.editorDrafts?.get(id);
+      if (draft) {
+        this.restoreComposerFor(session, undefined, draft.text, draft.chips, true);
+        this.editorDrafts.delete(id);
+      }
+    }
     void this.updateSessionMeta((current) => {
       if (this.pendingForkDrafts?.has(id)) return null;
+      const editor = this.editorChatFor(session);
       const hasComposer =
         (session === this.focused && this.view !== undefined) ||
+        editor?.ready ||
         this.remoteClients.isActiveValueVisible(session);
       if (!hasComposer || session.needsProvider || session.activeSessionId !== id) return null;
       const meta = current[id];
       if (!meta?.queuedDraft && !meta?.queuedDraftChips?.length) return null;
-      if (recipient && recipient !== "local") {
-        const clientId = this.resolveRemoteRequester(recipient);
+      const tab = recipient && recipient !== "local" && "panel" in recipient ? recipient : undefined;
+      const remote = recipient && recipient !== "local" && "clientId" in recipient ? recipient : undefined;
+      if (tab && (tab !== editor || !tab.ready)) return null;
+      if (remote) {
+        const clientId = this.resolveRemoteRequester(remote);
         if (!clientId || this.remoteClients.active(clientId) !== session) return null;
       } else if (recipient === "local" && (session !== this.focused || !this.view)) return null;
       const draft = meta.queuedDraft ?? "";
-      if (recipient || meta.queuedDraftChips) {
+      const editorRecipient = tab ?? (!recipient && (session !== this.focused || !this.view) ? editor : undefined);
+      if (recipient || editorRecipient || meta.queuedDraftChips) {
         const clientId = this.remoteClients.clientsForActiveValue(session)[0];
-        const requester = recipient === "local" ? undefined : recipient ??
+        const requester = recipient === "local" || editorRecipient ? undefined : remote ??
           (session === this.focused && this.view ? undefined : clientId ? { clientId } : undefined);
-        this.restoreComposerFor(session, requester, draft, meta.queuedDraftChips, true);
+        this.restoreComposerFor(session, requester, draft, meta.queuedDraftChips, true, editorRecipient);
       } else this.emit(session, { type: "restoreComposer", text: draft, sessionId: id, draft: true });
       const { queuedDraft: _restored, queuedDraftChips: _chips, ...rest } = meta;
       return { ...current, [id]: rest };
@@ -10335,7 +10872,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       }
       const mime = m.mimeType || guessMediaMime(m.path);
       // Trusted session media: stream from disk when the webview can.
-      const webview = this.view?.webview;
+      const webview = this.view?.webview ?? this.editorChatFor(session)?.panel.webview;
       if (webview) {
         const src = webview.asWebviewUri(Uri.file(m.path));
         // Copy image needs PIXELS, and a webview cannot read them back out of an
@@ -10409,7 +10946,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     png?: string;
     svgDark?: string;
     svgLight?: string;
-  }, session: Session): Promise<void> {
+  }, session: Session, tab?: EditorChatTab): Promise<void> {
     try {
       const base = msg.kind === "mermaid" ? "diagram" : "equation";
       const toBytes = (png?: string) =>
@@ -10425,7 +10962,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         const file = path.join(dir, `${base}-${stamp}.${pngBytes ? "png" : "svg"}`);
         fs.writeFileSync(file, pngBytes ?? (msg.svg ?? ""), pngBytes ? undefined : "utf8");
         // Host-created path under globalStorage — not a renderer-supplied path.
-        await this.host.openHostResolvedPath(file);
+        if (tab) await this.host.openHostResolvedPath(file, { besideConversation: true });
+        else await this.host.openHostResolvedPath(file);
         return;
       }
 
@@ -10714,6 +11252,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   }
 
   private async resetProviderSessionsAfterLogout(provider: AcpProvider): Promise<void> {
+    const editors = new Set(this.editorSessions().filter(session => session.provider === provider));
     const affectedClients = this.remoteClients.clients().filter(
       (clientId) => this.remoteClients.active(clientId)?.provider === provider,
     );
@@ -10721,7 +11260,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       const active = this.remoteClients.active(clientId);
       return [clientId, {
         id: active?.activeSessionId,
-        text: active ? queuedSendsText(active.queuedSends) : "",
+        text: active && !editors.has(active) ? queuedSendsText(active.queuedSends) : "",
       }] as const;
     }));
     const connected = this.connectedProviders();
@@ -10743,7 +11282,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         replacement.priming = connected.length > 0;
         this.setSessionCwd(replacement, cwd, this.workspaceRoot());
         replacement.lastActiveAt = Date.now();
-        const queuedText = queuedSendsText(session.queuedSends);
+        const queuedText = editors.has(session) ? "" : queuedSendsText(session.queuedSends);
         // Nothing will start this tab until an account comes back, so the draft
         // has to outlive the buffered notice below (a start clears the buffer).
         if (queuedText) {
@@ -10764,15 +11303,17 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         .map((clientId) => this.remoteClients.active(clientId))
         .filter((session): session is Session => !!session),
       ...detachedSessions,
+      ...editors,
     ]);
     if (this.focused.provider === provider) affectedSessions.add(this.focused);
     const replacingFocused = this.focused.provider === provider;
-    const focusedQueuedText = replacingFocused ? queuedSendsText(this.focused.queuedSends) : "";
+    const focusedQueuedText = replacingFocused && !editors.has(this.focused) ? queuedSendsText(this.focused.queuedSends) : "";
     const focusedDraftId = replacingFocused ? this.focused.activeSessionId : undefined;
     const focusedCwd = replacingFocused ? this.sessionCwd(this.focused) : "";
     const backgroundQueued = [...affectedSessions]
       .filter((session) =>
         session !== this.focused &&
+        !editors.has(session) &&
         !this.remoteClients.isActiveValueVisible(session) &&
         !detachedSessions.includes(session) &&
         session.queuedSends.length > 0
@@ -10783,7 +11324,18 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         text: queuedSendsText(session.queuedSends),
       }));
 
+    const unboundEditors = new Set<Session>();
     for (const affected of affectedSessions) {
+      if (editors.has(affected)) {
+        const tab = this.editorChatFor(affected);
+        const id = affected.activeSessionId ?? tab?.targetId;
+        if (tab && this.keepUnrecordedEditor(tab, id)) unboundEditors.add(affected);
+        else if (id) {
+          if (tab) this.closeEditorChat(tab);
+          await this.parkEditorDraft(affected, id);
+        }
+        continue;
+      }
       const text = queuedSendsText(affected.queuedSends);
       if (text && affected.activeSessionId) {
         await this.rememberQueuedDraft(affected.activeSessionId, text);
@@ -10798,14 +11350,26 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // long after they have been read as a bug. Drafts were persisted to meta
     // above, so "empty" here is genuinely empty. Read BEFORE dispose, which
     // clears the ids this needs.
+    const meta = this.state.get<SessionMetaOverrides>(SESSION_META_KEY, {});
     const shells = [...affectedSessions]
       .filter((s) => !s.hasHistory && !s.worktree && s.chips.length === 0 && !s.priming
-        && !s.strandedDraft && s.queuedSends.length === 0 && !!s.activeSessionId)
+        && !s.strandedDraft && s.queuedSends.length === 0 && !!s.activeSessionId
+        && !meta[s.activeSessionId]?.queuedDraft && !meta[s.activeSessionId]?.queuedDraftChips?.length)
       .map((s) => ({ id: s.activeSessionId, cwd: this.sessionCwd(s), provider: s.provider }));
     // Atomic boundary: detach every signed-out-provider client before any
     // replacement startup can await. Membership is provider identity only;
     // another provider's crashed/clientless session remains resumable.
-    for (const session of affectedSessions) this.disposeSession(session);
+    for (const session of affectedSessions) {
+      if (unboundEditors.has(session)) {
+        void this.detachClient(session)?.dispose();
+        session.needsProvider = true;
+        this.pool.add(session);
+        const tab = this.editorChatFor(session);
+        if (tab) this.resetUnrecordedEditor(tab);
+        this.emit(session, { type: "setBusy", value: false });
+        if (needsProvider) this.emit(session, { type: "onboarding", state: "connect-agent", platform: process.platform });
+      } else this.disposeSession(session);
+    }
     for (const shell of shells) {
       if (usesAdapterHistory(shell.provider)) {
         void this.discardAdapterEmptySession(shell.provider, shell.id, shell.cwd);
@@ -10907,6 +11471,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       if (started && !localReplacement.needsProvider) this.restoreStrandedDraft(localReplacement);
     }
     if (connected.length) {
+      for (const session of unboundEditors) {
+        session.provider = replacementProvider(this.sessionCwd(session));
+        if (await this.startSession(undefined, session)) this.restoreStrandedDraft(session);
+      }
       for (const [clientId, replacement] of remoteReplacements) {
         const started = await this.startSession(undefined, replacement);
         if (started && !replacement.needsProvider) this.restoreStrandedDraft(replacement);
@@ -11077,6 +11645,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     try { this.keepAwake.stop(); } catch { /* the pid watcher reaps it anyway */ }
     try { this.settingsEditor?.dispose(); } catch { /* tab already gone */ }
     this.settingsEditor = undefined;
+    for (const tab of this.editorChats ?? []) tab.panel.dispose();
     void this.disposePool();
     for (const provider of new Set([...this.adapterHistoryClients.keys(), ...(this.museHistoryStart ? ["muse" as const] : [])])) {
       void this.disposeAdapterHistoryClient(provider);
@@ -11090,7 +11659,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   }
 
   moveComposerCaret(direction: "forward" | "previousLine"): void {
-    this.post({ type: "moveComposerCaret", direction });
+    const message = { type: "moveComposerCaret", direction } as const;
+    if (!this.postEditorCommand(message)) this.post(message);
   }
 
   // ---------- internals ----------
@@ -11638,9 +12208,22 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       );
       if (choice !== "Update Anyway") return;
     }
-    const resumeId = this.focused.activeSessionId;
-    const resumeCwd = this.focused.cwd;
-    const resumeWorktree = this.focused.worktree;
+    const previousFocus = this.focused;
+    let resumeId = previousFocus.activeSessionId;
+    const resumeCwd = previousFocus.cwd;
+    const resumeWorktree = previousFocus.worktree;
+    const unboundEditors: Session[] = [];
+    for (const session of this.editorSessions()) {
+      const tab = this.editorChatFor(session);
+      const id = session.activeSessionId ?? tab?.targetId;
+      if (tab && this.keepUnrecordedEditor(tab, id)) {
+        unboundEditors.push(session);
+        if (session === previousFocus) resumeId = undefined;
+        continue;
+      }
+      if (tab) this.closeEditorChat(tab);
+      await this.parkEditorDraft(session, id);
+    }
     // Free the binary: every pooled session's process holds it open (a hard lock
     // on Windows), so tear the whole pool down before the update replaces the
     // executable, then resume the focused session on the fresh binary. Other
@@ -11654,9 +12237,20 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     this.post({ type: "clearMessages" });
     this.post({ type: "cliUpdating" });
     await this.disposePool();
+    for (const session of unboundEditors) {
+      const tab = this.editorChatFor(session);
+      if (tab) {
+        this.resetUnrecordedEditor(tab);
+        this.emit(session, { type: "setBusy", value: true, locked: true });
+        this.setStartupStage(session, "updating");
+      }
+    }
     await this.runGrokUpdate(cliPath, updateArgs);
     // Respawn on the (possibly) updated binary, resuming the same session.
     await this.startSession(resumeId);
+    for (const session of unboundEditors) {
+      if (this.editorChatFor(session)) await this.startSession(session.activeSessionId, session);
+    }
   }
 
   /** Did WE install this Codex? Then our installer is its updater. No managed
@@ -11734,6 +12328,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     }
     const affected = () => [...new Set([
       ...this.pool, this.focused,
+      ...this.editorSessions(),
       ...this.remoteClients.clients().map((id) => this.remoteClients.active(id)),
     ])].filter((s): s is Session => !!s && s.provider === provider);
     const stopped: Session[] = [];
@@ -11828,7 +12423,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         this.emit(session, { type: "setBusy", value: false });
         // Resume the same conversations on every visible surface. Background
         // sessions keep their ids and load on their next send/focus.
-        if (session === this.focused || this.remoteClients.isActiveValueVisible(session)) {
+        if (session === this.focused || this.editorChatFor(session) || this.remoteClients.isActiveValueVisible(session)) {
           try {
             // startSessionBody reports its OWN failure into the conversation and
             // returns undefined rather than throwing, so this catch never sees
@@ -11892,9 +12487,11 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   /** Confirm a restart for a setting that only applies on a fresh session
    *  (reasoning effort, cross-agent model). Returns the chosen restart mode, or
    *  undefined if the user dismissed the dialog. */
-  private async pickRestartMode(message: string): Promise<"clear" | "summarize" | undefined> {
+  private async pickRestartMode(message: string, session?: Session): Promise<"clear" | "summarize" | undefined> {
     // From here on the picker change is blocked on a person, not on the CLI.
-    this.releasePickerWaits();
+    const editor = session && this.editorPickerChanges?.get(session);
+    if (editor) editor.release();
+    else this.releasePickerWaits();
     const choice = await this.host.showInformationMessage(
       message,
       "Summarize & Restart",
@@ -12680,11 +13277,11 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           session.autoApprove = next.autoApprove;
           this.setPlanActive(session, next.planActive);
         }
-      } else if (session === this.focused) {
+      } else if (session === this.focused || this.editorChatFor(session)) {
         // A non-plan update is descriptive, not authority to lower the safety
         // gate. The verdict handler settles that gate before its response; direct
         // Agent/YOLO choices do so in setMode. Just refresh the button label.
-        this.postMode();
+        this.postMode(session);
       }
     });
     client.on("commandsUpdate", (cmds) => {
@@ -13622,7 +14219,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       this.emit(session, { type: "error", text });
       if (session.client) this.emit(session, { type: "contextWindowSelection", selection: session.client.contextWindowSelection });
     };
-    if (session.priming || turnIsInFlight(session) || this.pickerChange) {
+    if (session.priming || turnIsInFlight(session) || this.pickerFor(session)) {
       refuse("Wait for the current turn or session setup to finish before changing the context window.");
       return;
     }
@@ -13630,16 +14227,18 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     catch (error) { refuse(`Failed to change context window: ${(error as Error).message}`); }
   }
 
-  private async onMessage(msg: WebviewMsg, origin: MsgOrigin, clientId?: string): Promise<void> {
+  private async onMessage(msg: WebviewMsg, origin: MsgOrigin, clientId?: string, tab?: EditorChatTab): Promise<void> {
     if (this.cloudHostUpdate && !this.cloudHostUpdate.admitting) {
       const refusal: HostMsg = { type: "error", text: CLOUD_UPDATE_REFUSAL };
       if (msg.type === "toggleModelPin") this.post(this.modelPinsMessage());
       if (origin === "remote" && clientId) this.sendRemoteClient(clientId, refusal);
+      else if (tab) this.emitEditorSession(tab.session, refusal);
       else this.post(refusal);
       return;
     }
     try {
-      await this.withCloudHostWork(() => this.onAdmittedMessage(msg, origin, clientId));
+      const dispatch = () => this.onAdmittedMessage(msg, origin, clientId, tab);
+      await this.withCloudHostWork(dispatch);
     } catch (error) {
       if (msg.type !== "agySignIn" && msg.type !== "deepseekConnect"
         && !(msg.type === "submitDeviceLoginCode" && msg.provider === "agy")) throw error;
@@ -13647,13 +14246,14 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       this.host.appendLine(`[providers] ${msg.type} failed`);
       const reply: HostMsg = { type: "error", text: "Could not connect the agent. Try connecting again." };
       if (clientId) this.sendRemoteClient(clientId, reply);
+      else if (tab) this.emitEditorSession(tab.session, reply);
       else this.postLocal(reply);
     }
   }
 
-  private async onAdmittedMessage(msg: WebviewMsg, origin: MsgOrigin, clientId?: string): Promise<void> {
+  private async onAdmittedMessage(msg: WebviewMsg, origin: MsgOrigin, clientId?: string, tab?: EditorChatTab): Promise<void> {
     if (msg.type === "starPromptAction") {
-      await this.handleStarPromptAction(msg, origin);
+      if (!tab) await this.handleStarPromptAction(msg, origin);
       return;
     }
     if (msg.type === "cloudHostUpdate") {
@@ -13664,7 +14264,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       ? this.remoteClients.active(clientId)
       : undefined;
     if (msg.type === "toggleModelPin") {
-      await this.updateModelPin(msg, origin === "remote" ? remoteBound : this.focused);
+      await this.updateModelPin(msg, origin === "remote" ? remoteBound : tab?.session ?? this.focused);
       return;
     }
     if (
@@ -13676,14 +14276,19 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       this.refuseUnboundRemoteSession(clientId);
       return;
     }
-    const session = remoteBound ?? this.focused;
+    const session = tab?.session ?? remoteBound ?? this.focused;
     const requester = origin === "remote" && clientId
       ? this.captureRemoteRequester(clientId)
       : undefined;
-    const attachmentOwner: AttachmentOwner = () => this.attachmentOwner(origin, clientId);
+    const attachmentOwner: AttachmentOwner = tab ? () => session : () => this.attachmentOwner(origin, clientId);
+    const replyLocal = (message: HostMsg) => {
+      if (!tab) this.postLocal(message);
+      else if (this.editorChatFor(session) === tab) this.emitEditorSession(session, message);
+    };
+    const trackAttachment = (operation: Promise<unknown>) => this.trackAttach(operation, tab ? session : undefined);
     const messageCwd = origin === "remote" && clientId
       ? this.remoteClients.cwd(clientId)
-      : this.workspaceRoot();
+      : tab ? this.sessionCwd(session) : this.workspaceRoot();
     switch (msg.type) {
       case "ready": {
         if (origin === "local") this.cancelStarPrompt();
@@ -13701,6 +14306,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           !!this.focused.client,
         );
         this.chatReadyForHandoff = true;
+        if (this.editorChats?.size) void this.view?.webview.postMessage({ type: "trackLocalChatFocus" });
         this.postInitialState();
         if (this.pendingRemoteHandoff) {
           this.postLocal(this.pendingRemoteHandoff);
@@ -13762,7 +14368,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         );
         const response: HostMsg = { type: "speechSummary", requestId: msg.requestId, text };
         if (requester) this.sendRemoteRequester(requester, response);
-        else this.postLocal(response);
+        else replyLocal(response);
         break;
       }
       case "requestImageFull":
@@ -13789,7 +14395,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           ? { type: "imageOriginal", fullId: msg.fullId, requestId: msg.requestId, src }
           : { type: "imageFull", fullId: msg.fullId, src };
         if (requester) this.sendRemoteRequester(requester, response);
-        else this.postLocal(response);
+        else replyLocal(response);
         break;
       }
       case "setContextWindow":
@@ -13832,13 +14438,23 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           this.host.appendLine("[queue] ignored an unidentifiable legacy dequeue echo");
           break;
         }
+        let tabStarted = false;
+        let restored = false;
+        const restoreSend = () => {
+          if (queuedSendCommit || restored) return;
+          restored = true;
+          this.restoreComposerFor(session, requester, msg.text, undefined, false, tab);
+        };
         try {
           // A phone can take over a running turn: its send may be queued before
           // handleSend reaches the prompt commit point. Receipt is remote use.
           if (session.hasHistory) this.reportRemoteMessage(session, origin);
-          await this.handleSend(msg.text, msg.bare === true, session, origin, queuedSendCommit, msg.submissionId, undefined, msg.chips,
-            // A send can fail before committing. Return text to its sender.
-            () => { if (!queuedSendCommit) this.restoreComposerFor(session, requester, msg.text); });
+          await this.handleSend(msg.text, msg.bare === true, session, origin, queuedSendCommit, msg.submissionId,
+            tab ? () => { tabStarted = true; } : undefined, msg.chips, restoreSend,
+            !!tab);
+        } catch (error) {
+          if (tab && !tabStarted) restoreSend();
+          throw error;
         } finally {
           if (queuedSendCommit) finishQueuedSendCommit(session, queuedSendCommit, false);
         }
@@ -13847,7 +14463,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         const onCreated = this.composerDraftReply(msg.draftId, requester);
         // A remote's cwd is deliberately not forwarded: newRemoteSession starts
         // in that tab's own repo, which is the only project it is entitled to.
-        if (origin === "remote" && clientId) await this.newRemoteSession(clientId, true, onCreated);
+        if (tab) await this.newEditorSession(tab, this.sessionCwd(session));
+        else if (origin === "remote" && clientId) await this.newRemoteSession(clientId, true, onCreated);
         else await this.newFocusedSession(origin, msg.cwd, onCreated);
         break;
       }
@@ -13922,19 +14539,20 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         break;
       case "forkSession":
         if (this.refuseMismatchedSessionId(msg.sessionId, session, requester)) break;
-        await this.forkFocusedSession(session, requester);
+        await this.forkFocusedSession(session, requester, undefined, tab);
         break;
       case "forkAtReply":
         if (typeof msg.sessionId !== "string" || !msg.sessionId || this.refuseMismatchedSessionId(msg.sessionId, session, requester)) break;
         if (msg.draft !== undefined && typeof msg.draft !== "string") break;
         if (msg.messageId === FIRST_PROMPT_EDIT) {
-          await this.editFirstPromptInNewChat(session, origin, requester, msg.draft ?? "");
+          await this.editFirstPromptInNewChat(session, origin, requester, msg.draft ?? "", tab);
           break;
         }
-        await this.forkFocusedSession(session, requester, msg);
+          await this.forkFocusedSession(session, requester, msg, tab);
         break;
       case "newWorktreeSession":
-        await this.newWorktreeSession({ fromRemote: origin === "remote" });
+        if (tab) await this.newWorktreeSession({ tab }, session);
+        else await this.newWorktreeSession({ fromRemote: origin === "remote" });
         break;
       case "setAppPurpose": {
         const purpose = parseAppPurpose(msg.value);
@@ -13946,18 +14564,20 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       case "applyWorktree":
         // The webview's custom confirm already ran (native modals stay only on
         // the Command-Palette path).
-        if (this.refuseMismatchedSessionId(msg.sessionId, session, requester)) break;
+        if (this.refuseMismatchedSessionId(msg.sessionId, session, requester, tab)) break;
         await this.applyFocusedWorktree(session, true);
         break;
       case "removeWorktree":
-        if (this.refuseMismatchedSessionId(msg.sessionId, session, requester)) break;
-        await this.removeFocusedWorktree(session, true);
+        if (this.refuseMismatchedSessionId(msg.sessionId, session, requester, tab)) break;
+        if (tab) await this.removeFocusedWorktree(session, true, tab);
+        else await this.removeFocusedWorktree(session, true);
         break;
       case "showRemoteHandoff":
         await this.continueOnPhone(msg.source, msg.sessionId, msg.repoCwd, msg.explain);
         break;
       case "remoteHandoff":
-        await this.replyRemoteHandoff(msg);
+        if (tab) await this.replyRemoteHandoff(msg, tab);
+        else await this.replyRemoteHandoff(msg);
         break;
       case "remoteSignIn":
         await this.linkRemoteDevice(msg.source);
@@ -13994,6 +14614,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           msg.totalUserBubbles,
           session,
           requester,
+          tab,
         );
         break;
       case "uiConfirmAnswer": {
@@ -14012,7 +14633,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         break;
       }
       case "editLastMessage":
-        await this.editLastMessage(msg.userBubbleIndex, msg.text, msg.totalUserBubbles, session, requester);
+        await this.editLastMessage(msg.userBubbleIndex, msg.text, msg.totalUserBubbles, session, requester, tab);
         break;
       case "workflowControl":
         await this.controlWorkflow(msg.action, msg.displayName, session);
@@ -14052,7 +14673,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         break;
       }
       case "pickModel":
-        await this.pickModel();
+        await this.pickModel(session);
         break;
       case "setMode":
         await this.setMode(msg.modeId, session, requester);
@@ -14092,21 +14713,25 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       }
       case "openFile": {
         const { ref, path: p } = this.resolveChatOpenPath(session, msg.path);
+        const placement = tab ? { besideConversation: true } : undefined;
         if (ref.startLine != null) {
           const startLine = Math.max(0, ref.startLine - 1);
           const endLine = ref.endLine != null ? Math.max(startLine, ref.endLine - 1) : startLine;
           try {
             await this.host.openTextFile(p, {
+              ...placement,
               selection: {
                 start: { line: startLine, character: 0 },
                 end: { line: endLine, character: Number.MAX_SAFE_INTEGER },
               },
             });
           } catch {
-            void this.host.openResource(p);
+            if (placement) await this.host.openResource(p, placement);
+            else void this.host.openResource(p);
           }
         } else {
-          void this.host.openResource(p);
+          if (placement) await this.host.openResource(p, placement);
+          else void this.host.openResource(p);
         }
         break;
       }
@@ -14127,7 +14752,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         // Basename only — a renderer-supplied path must not choose the directory.
         const name = typeof msg.filename === "string" ? path.basename(msg.filename.trim()) : "";
         const suggested = name ? path.join(this.sessionCwd(session), name) : undefined;
-        await this.host.openUntitledText(msg.content, msg.language, suggested);
+        if (tab) await this.host.openUntitledText(msg.content, msg.language, suggested, { besideConversation: true });
+        else await this.host.openUntitledText(msg.content, msg.language, suggested);
         break;
       }
       case "openDiff":
@@ -14142,7 +14768,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         );
         break;
       case "exportExpr":
-        await this.exportExpr(msg, session);
+        await this.exportExpr(msg, session, tab);
         break;
       case "dropFile":
         // Which transfer types a drop carried and which one yielded a path.
@@ -14158,34 +14784,36 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         // still posts a path from drag-drop. Missing path is a no-op (forged
         // handle already refused at the Electron gate).
         if (typeof msg.path === "string" && msg.path.length > 0) {
-          await this.trackAttach(this.addDroppedFile(msg.path, msg.shift, attachmentOwner));
+          await trackAttachment(this.addDroppedFile(msg.path, msg.shift, attachmentOwner));
         }
         break;
       case "pasteImage":
-        await this.trackAttach(this.addPastedImage(
+        await trackAttachment(this.addPastedImage(
           msg.data,
           msg.mimeType,
           attachmentOwner,
           requester,
           msg.previewId,
+          tab,
         ));
         break;
       case "uploadFile":
-        await this.trackAttach(this.addUploadedFile(
+        await trackAttachment(this.addUploadedFile(
           msg.name,
           msg.data,
           attachmentOwner,
           requester,
+          tab,
         ));
         break;
       case "pasteText":
         if (isPasteTextId(msg.pasteId)) {
           try {
-            await this.trackAttach(this.addPastedText(msg.text, attachmentOwner, requester));
+            await trackAttachment(this.addPastedText(msg.text, attachmentOwner, requester));
           } finally {
             const reply: HostMsg = { type: "pasteTextSettled", pasteId: msg.pasteId };
             if (requester) this.sendRemoteRequester(requester, reply);
-            else this.postLocal(reply);
+            else replyLocal(reply);
           }
         }
         break;
@@ -14259,7 +14887,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           if (typeof effort === "string" && session.activeSessionId === before) {
             await this.applyEffort(effort, session, origin, clientId, requester);
           }
-        })());
+        })(), tab ? session : undefined);
         break;
       }
       case "listRoutines":
@@ -14359,7 +14987,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         this.codexInstallAbort?.abort(new Error("Installation cancelled."));
         break;
       case "setEffort":
-        await this.trackPickerChange(this.applyEffort(msg.level, session, origin, clientId, requester));
+        await this.trackPickerChange(this.applyEffort(msg.level, session, origin, clientId, requester), tab ? session : undefined);
         break;
       case "addProjectFolder":
         await this.addProjectFolder();
@@ -14871,10 +15499,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         break;
       }
       case "setDeepSeekHarness": {
-        const reply = this.composerDraftReply(msg.draftId, requester);
+        const reply = tab ? undefined : this.composerDraftReply(msg.draftId, requester);
         if (session.provider !== "deepseek") { reply?.(msg.sessionId); break; }
         const matches = () => session.client?.sessionId === msg.sessionId && session.gen === msg.generation
-          && session.client?.currentModelId === msg.modelId && !session.priming && !turnIsInFlight(session) && !this.pickerChange;
+          && session.client?.currentModelId === msg.modelId && !session.priming && !turnIsInFlight(session) && !this.pickerFor(session);
         if (!matches() || (msg.harness !== "minimal" && msg.harness !== "default") || (session.deepseekHarness ?? "default") === msg.harness) {
           reply?.(msg.sessionId);
           this.emit(session, sessionModeMessage(session, this.displayMode(session)));
@@ -14979,6 +15607,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
             ...(provider === "muse" || provider === "agy" ? { device: { status: "failed" as const, message: `${providerDisplayName(provider)} is not installed on this machine.` } } : {}),
           };
           if (clientId) this.sendRemoteClient(clientId, message);
+          else if (tab) replyLocal(message);
           else if (provider === "muse" || provider === "agy") this.postLocal(message);
           else this.post(message);
           break;
@@ -14987,6 +15616,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           if (provider === "muse" || provider === "agy") {
             const message: HostMsg = { type: "onboarding", state: providerLoginState(provider), provider, platform: process.platform };
             if (clientId) this.sendRemoteClient(clientId, message);
+            else if (tab) replyLocal(message);
             else this.postLocal(message);
           }
           break;
@@ -15071,7 +15701,11 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         await this.updateProviderCliOnDemand(msg.type === "updateCodex" ? "codex" : "claude");
         break;
       case "listSessions":
-        if (origin === "remote" && clientId) {
+        if (tab) {
+          replyLocal(this.buildSessionsList(messageCwd, {
+            offset: msg.offset, limit: msg.limit, query: msg.query, providerCursor: msg.providerCursor,
+          }, session.activeSessionId));
+        } else if (origin === "remote" && clientId) {
           this.sendRemoteClient(clientId, this.buildSessionsList(messageCwd, {
           offset: msg.offset, limit: msg.limit, query: msg.query, providerCursor: msg.providerCursor,
           }, this.remoteActiveSessionId(clientId)));
@@ -15118,7 +15752,12 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         await this.toggleRepoPin(msg.cwd, msg.pinned);
         break;
       case "resumeSession":
-        if (origin === "remote" && clientId) {
+        if (tab) {
+          await this.openEditorConversation(msg.id, msg.cwd, tab);
+          if (this.editorChatFor(tab.session) === tab && tab.session.activeSessionId !== msg.id) {
+            this.emitEditorSession(tab.session, { type: "sessionOpening", sessionId: msg.id, failed: true });
+          }
+        } else if (origin === "remote" && clientId) {
           await this.openRemoteSession(clientId, msg.id, msg.cwd, true, msg.claim === true);
           // A tap is the person choosing it; a reconnect restore is not.
           if (msg.claim === true && this.remoteClients.active(clientId)?.activeSessionId === msg.id) {
@@ -15133,13 +15772,14 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           this.renameSession(msg.id, msg.name, origin, clientId, msg.cwd);
           break;
       case "deleteSession":
-        await this.deleteSession(msg.id, msg.name, origin, clientId, msg.cwd);
+        if (tab) await this.deleteSession(msg.id, msg.name, origin, clientId, msg.cwd, tab);
+        else await this.deleteSession(msg.id, msg.name, origin, clientId, msg.cwd);
         break;
       case "clearAllSessions":
         await this.clearAllSessions(msg.cwd, origin, clientId);
         break;
       case "pickFile":
-        await this.trackAttach(this.pickFileFromComputer());
+        await trackAttachment(tab ? this.pickFileFromComputer(attachmentOwner, tab) : this.pickFileFromComputer());
         break;
       case "mentionQuery": {
         // Answer from the TTL-cached index; a failed build degrades to an empty
@@ -15153,6 +15793,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         }
         if (requester) {
           this.sendRemoteRequester(requester, { type: "mentionResults", query: msg.query, files });
+        } else if (tab) {
+          replyLocal({ type: "mentionResults", query: msg.query, files });
         } else {
           this.post({ type: "mentionResults", query: msg.query, files });
         }
@@ -15205,7 +15847,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           // Stale/garbage catalog entries remain a no-op, as before.
           break;
         }
-        await this.trackAttach(this.addDroppedFile(abs, false, attachmentOwner));
+        await trackAttachment(this.addDroppedFile(abs, false, attachmentOwner));
         break;
       }
       case "readProviderConfig":
@@ -15539,10 +16181,11 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         const correlation = { requestId: msg.requestId, turnId: msg.turnId, cwd: msg.cwd, path: msg.path };
         const reply = (body: Extract<HostMsg, { type: "turnFileDiffResult" }>) => {
           if (requester) this.sendRemoteRequester(requester, body);
+          else if (tab) replyLocal(body);
           else this.post(body);
         };
         const fail = (reason: string) => reply({ type: "turnFileDiffResult", ...correlation, ok: false, reason });
-        const rootResult = this.resolveGitRoot(msg.cwd, origin, clientId);
+        const rootResult = this.resolveGitRoot(msg.cwd, origin, clientId, tab ? this.sessionCwd(session) : undefined);
         if (!rootResult.ok) { fail(rootResult.reason); break; }
         const baseline = this.turnDiffBaselines.get(msg.turnId);
         if (!baseline?.sha || !pathsEqual(baseline.root, rootResult.root)) {
@@ -15570,8 +16213,11 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         break;
       }
       case "turnFileOpenDiff": {
-        const fail = (text: string) => this.post({ type: "error", text });
-        const rootResult = this.resolveGitRoot(msg.cwd, origin, clientId);
+        const fail = (text: string) => {
+          if (tab) replyLocal({ type: "error", text });
+          else this.post({ type: "error", text });
+        };
+        const rootResult = this.resolveGitRoot(msg.cwd, origin, clientId, tab ? this.sessionCwd(session) : undefined);
         if (!rootResult.ok) { fail(rootResult.reason); break; }
         const baseline = this.turnDiffBaselines.get(msg.turnId);
         if (!baseline?.sha || !pathsEqual(baseline.root, rootResult.root)) {
@@ -15734,14 +16380,16 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     claimedCwd: string,
     origin: MsgOrigin,
     clientId?: string,
+    editorCwd?: string,
   ): { ok: true; root: string } | { ok: false; reason: string } {
-    const selectedCwd = origin === "remote" && clientId ? this.remoteClients.cwd(clientId) : this.workspaceRoot();
+    const root = editorCwd ?? this.workspaceRoot();
+    const selectedCwd = origin === "remote" && clientId ? this.remoteClients.cwd(clientId) : root;
     const resolved = resolveRemoteFileRoot({
       origin,
       claimedCwd,
       selectedCwd,
-      workspaceRoot: this.workspaceRoot(),
-      isKnownCwd: (cwd) => (origin === "remote" ? this.remoteTargetableCwd(cwd) : pathsEqual(cwd, this.workspaceRoot())),
+      workspaceRoot: root,
+      isKnownCwd: (cwd) => (origin === "remote" ? this.remoteTargetableCwd(cwd) : pathsEqual(cwd, root)),
       sameCwd: pathsEqual,
     });
     if (!resolved.ok) {
@@ -17102,6 +17750,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       ...(owner && !pathsEqual(owner, cwd) ? { repoCwd: owner } : {}),
     };
     if (session === this.focused) this.postLocal(message);
+    this.emitEditorSession(session, message);
     this.sendRemoteSession(session, message);
   }
 
@@ -17262,7 +17911,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       ?? (requestedCwd ? this.repoOwningSessionCwd(requestedCwd, overrides) : undefined);
     if (!selectedCwd) return { reason: "scope" };
     const allowedCwds = this.sessionCwdsForRepo(selectedCwd, overrides);
-    const live = [...this.pool].find((session) => session.activeSessionId === id);
+    const live = this.liveSessionById(id);
     if (live) {
       const cwd = this.sessionCwd(live);
       if (sessionCwdBelongsToRepo(cwd, allowedCwds, pathsEqual)) return { cwd };
@@ -17366,7 +18015,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         }));
       }
     }
-    const live = [...this.pool].find((session) => session.activeSessionId === id);
+    const live = [...this.pool].find((session) => session.activeSessionId === id)
+      ?? this.editorSessions().find(session => session.activeSessionId === id);
     this.postSessionsList();
     // Recompute rather than echoing `trimmed`: an empty rename DROPS the custom
     // name, and the view then has to be told the title it falls back to.
@@ -17428,7 +18078,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
    */
   private sessionHasLiveOwner(session: Session): boolean {
     const localOwner = session === this.focused && !isCloudEnvironment();
-    return localOwner || this.remoteClients.isActiveValueVisible(session);
+    return localOwner || !!this.editorChatFor(session) || this.remoteClients.isActiveValueVisible(session);
   }
 
   private reportProtectedSession(origin: MsgOrigin, clientId: string | undefined, action: "delete" | "clear"): void {
@@ -17480,11 +18130,14 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     requestedId: string | undefined,
     session: Session,
     requester: RemoteRequester | undefined,
+    tab?: EditorChatTab,
   ): boolean {
     if (requestedId === undefined || requestedId === session.activeSessionId) return false;
     const text = "That conversation is no longer focused — nothing was changed.";
     if (requester) {
       this.reportRequester(requester, "info", text);
+    } else if (tab) {
+      this.emitEditorSession(session, { type: "hostNotice", level: "info", text });
     } else {
       this.postLocal({ type: "hostNotice", level: "info", text });
     }
@@ -17514,6 +18167,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     origin: MsgOrigin,
     clientId?: string,
     requestedCwd?: string,
+    tab?: EditorChatTab,
   ): Promise<void> {
     const overridesNow = this.state.get<SessionMetaOverrides>(SESSION_META_KEY, {});
     const target = origin === "remote" && clientId
@@ -17529,7 +18183,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       this.reportProtectedSession(origin, clientId, "delete");
       return;
     }
-    const live = [...this.pool].find((s) => s.activeSessionId === id);
+    const live = this.editorSessions().find(s => s.activeSessionId === id)
+      ?? [...this.pool].find(s => s.activeSessionId === id);
     // Deleting the conversation you are READING is allowed. The guard exists to
     // stop one surface pulling a conversation out from under another, not to
     // protect you from your own delete — and having the same conversation open
@@ -17540,7 +18195,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     const requesterWatches = !!live && (
       origin === "remote" && clientId
         ? watchers.includes(clientId)
-        : live === this.focused
+        : live === (tab?.session ?? this.focused)
     );
     if (live && this.sessionHasLiveOwner(live) && !requesterWatches) {
       // Enough to prove the mechanism from one production line. The bare
@@ -17697,6 +18352,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // from a live one without re-deriving it from an id that outlives the
     // directory.
     if (live) live.deleted = true;
+    this.editorDrafts?.delete(id);
     this.sessionCache.delete(id);
     this.removePlanReviews(id); // snapshots live outside grok's session dir
     const overrides = this.state.get<SessionMetaOverrides>(SESSION_META_KEY, {});
@@ -17851,7 +18507,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       }
     }
     const protectedIds = new Set(
-      [...this.pool]
+      [...this.pool, ...this.editorSessions()]
         .filter((session) => this.sessionHasLiveOwner(session))
         .map((session) => session.activeSessionId)
         .filter((id): id is string => !!id),
@@ -18008,7 +18664,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     if (keptForAnotherOwner) this.reportProtectedSession(origin, clientId, "clear");
   }
 
-  private async pickFileFromComputer(): Promise<void> {
+  private async pickFileFromComputer(owner?: AttachmentOwner, tab?: EditorChatTab): Promise<void> {
     const picked = await this.host.showOpenDialog({
       canSelectFiles: true,
       canSelectFolders: false,
@@ -18018,14 +18674,18 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     if (!picked || picked.length === 0) return;
     for (const filePath of picked) {
       try {
-        await this.addDroppedFile(filePath, false);
+        await this.addDroppedFile(filePath, false, owner);
       } catch (e) {
         // Per-file: one unreadable pick must not abort the rest of a multi-select.
         this.host.appendLine(`[image] could not attach ${filePath}: ${(e as Error).message}`);
         void this.host.showErrorMessage(`AFK Pilot: could not attach ${path.basename(filePath)} — ${(e as Error).message}`);
       }
     }
-    this.revealAndFocusComposer();
+    if (!tab) this.revealAndFocusComposer();
+    else {
+      const session = owner?.();
+      if (session && this.editorChatFor(session) === tab) this.emitEditorSession(session, { type: "focusInput" });
+    }
   }
 
   /** The `@` popover's file index, rebuilt at most once per
@@ -18167,13 +18827,21 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
    *  warm re-focus re-applies the latch; a cold reopen (no buffer) falls back to
    *  the persisted grok.expandCommandOutputs default. Never persisted to disk. */
   setAllToolDetails(open: boolean): void {
-    this.emit(this.focused, { type: "setAllToolDetails", open });
+    const tab = this.lastEditorChat;
+    // Keep the setting in the session's transcript snapshot, but update only
+    // the requesting chat if the sidebar and editor share the same session.
+    if (tab) {
+      const message = { type: "setAllToolDetails", open } as const;
+      tab.session.buffer.push(message);
+      this.emitEditorSession(tab.session, message);
+    } else this.emit(this.focused, { type: "setAllToolDetails", open });
   }
 
   /** Command Palette / Ctrl+F fallback: open in-webview find (#99). `post`
    *  (not emit) so a focus-swap cannot replay it; host-local so a desk
    *  invocation does not pop find on a linked phone. */
   findInSession(): void {
+    if (this.postEditorCommand({ type: "findInSession" })) return;
     this.view?.show?.(false);
     this.post({ type: "findInSession" });
   }
@@ -19195,6 +19863,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // immediately clickable. `selection` opens a whole-file diff on the edit
     // instead of at line 1 (#66) — harmless at 0 when expansion fell back.
     await this.host.openDiff(left, right, title, {
+      ...(this.editorChatFor(session) ? { besideConversation: true } : {}),
       preview: false,
       preserveFocus: true,
       selection: {
@@ -19368,8 +20037,9 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   ): Promise<boolean> {
     const id = `confirm-${++this.confirmSeq}`;
     return new Promise<boolean>((resolve) => {
-      this.pendingConfirms.set(id, { session, resolve });
-      this.emit(session, { type: "uiConfirmRequest", id, ...opts });
+      const request = { type: "uiConfirmRequest" as const, id, ...opts };
+      this.pendingConfirms.set(id, { session, request, resolve });
+      this.emit(session, request);
     });
   }
 
@@ -19429,10 +20099,15 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
    *  not serialize async onDidReceiveMessage handlers), so handleSend settles
    *  this set before snapshotting chips: the chip must make THIS send, not the
    *  next one. */
-  private trackAttach(op: Promise<unknown>): Promise<void> {
+  private trackAttach(op: Promise<unknown>, editorSession?: Session): Promise<void> {
     const tracked = op.then(() => undefined);
-    this.pendingAttach.add(tracked);
-    const done = () => { this.pendingAttach.delete(tracked); };
+    let pending = this.pendingAttach;
+    if (editorSession) {
+      pending = this.editorPendingAttach.get(editorSession) ?? new Set();
+      this.editorPendingAttach.set(editorSession, pending);
+    }
+    pending.add(tracked);
+    const done = () => { pending.delete(tracked); };
     void tracked.then(done, done);
     return tracked;
   }
@@ -19449,10 +20124,22 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
    *  a question to the user, not work in flight, and a notification nobody
    *  answers must never swallow the message queued behind it. The change itself
    *  runs on regardless — the caller awaits all of it. */
-  private trackPickerChange(op: Promise<unknown>): Promise<void> {
+  private pickerFor(session: Session): Promise<void> | undefined {
+    return this.editorPickerChanges?.get(session)?.wait ?? this.pickerChange;
+  }
+
+  private trackPickerChange(op: Promise<unknown>, editorSession?: Session): Promise<void> {
     let release!: () => void;
     const asked = new Promise<void>((resolve) => { release = resolve; });
     const tracked = Promise.race([op.then(() => undefined, () => undefined), asked]);
+    if (editorSession) {
+      const change = { wait: tracked, release };
+      this.editorPickerChanges.set(editorSession, change);
+      void tracked.then(() => {
+        if (this.editorPickerChanges.get(editorSession) === change) this.editorPickerChanges.delete(editorSession);
+      });
+      return op.then(() => undefined);
+    }
     this.pickerRelease = release;
     this.pickerChange = tracked;
     const done = () => {
@@ -19556,6 +20243,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     data: string,
     owner: AttachmentOwner = () => this.focused,
     requester?: RemoteRequester,
+    tab?: EditorChatTab,
   ): Promise<void> {
     const prepared = prepareFileUpload(suppliedName, data, MAX_VISION_IMAGE_BYTES);
     if (!prepared.ok) {
@@ -19577,7 +20265,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       await fs.promises.mkdir(dir, { recursive: true });
       await fs.promises.writeFile(absPath, prepared.bytes, { flag: "wx" });
       const session = await this.addDroppedFile(absPath, false, owner);
-      if (session === this.focused) this.revealAndFocusComposer();
+      if (!tab && session === this.focused) this.revealAndFocusComposer();
     } catch (e) {
       void fs.promises.rm(dir, { recursive: true, force: true }).catch(() => {});
       this.host.appendLine(`[upload] staging failed for ${prepared.name}: ${(e as Error).message}`);
@@ -19710,6 +20398,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     owner: AttachmentOwner = () => this.focused,
     requester?: RemoteRequester,
     previewId?: string,
+    tab?: EditorChatTab,
   ): Promise<void> {
     try {
       if (!isVisionMime(mimeType)) {
@@ -19723,7 +20412,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         return;
       }
       const session = await this.stageImageAttachment(bytes, mimeType, undefined, owner, previewId);
-      if (session === this.focused) this.revealAndFocusComposer();
+      if (!tab && session === this.focused) this.revealAndFocusComposer();
     } catch (e) {
       this.host.appendLine(`[image] paste failed: ${(e as Error).message}`);
       this.reportRequester(requester, "error", `AFK Pilot: could not attach the pasted image — ${(e as Error).message}`);
@@ -19926,12 +20615,13 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     onStarted?: () => void,
     requestedChips?: FileChip[],
     onPreflightFailure?: () => void,
+    editorSend = false,
   ): Promise<void> {
     if (this.cloudHostUpdate && !this.cloudHostUpdate.admitting) {
       this.emit(target ?? this.focused, { type: "error", text: CLOUD_UPDATE_REFUSAL });
       return;
     }
-    await this.withCloudHostWork(() => this.handleAdmittedSend(text, bare, target, origin, queuedSendCommit, submissionId, onStarted, requestedChips, onPreflightFailure));
+    await this.withCloudHostWork(() => this.handleAdmittedSend(text, bare, target, origin, queuedSendCommit, submissionId, onStarted, requestedChips, onPreflightFailure, editorSend));
   }
 
   private async handleAdmittedSend(
@@ -19940,6 +20630,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     onStarted?: () => void,
     requestedChips?: FileChip[],
     onPreflightFailure?: () => void,
+    editorSend = false,
   ): Promise<void> {
     // `target` lets a queued-send flush fire into a BACKGROUNDED session (its
     // turn ended while another was focused). Only the focused session may spawn
@@ -19959,7 +20650,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // One promise, not a set: a second commit supersedes the first, and it was
     // posted after it. Optional because handleSend runs against hand-built
     // instances in the suite that never ran a constructor.
-    const picking = this.pickerChange;
+    const picking = this.pickerFor(session);
     const codexModeChange = session.codexModeChange;
     if (picking) await picking;
     if (codexModeChange && !await codexModeChange) {
@@ -20009,7 +20700,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     }
     const client = session.client ?? await this.ensureClient(session, agyRemoteClientId);
     if (!client) {
-      if (session.provider === "agy") onPreflightFailure?.();
+      if (editorSend || session.provider === "agy") onPreflightFailure?.();
       return;
     }
     // ensureClient may return mid-startSession; re-check before committing work.
@@ -20024,10 +20715,13 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // import is tens of ms. Settle the in-flight set so its chip makes THIS
     // send. One-shot snapshot on purpose: an op starting during this await was
     // posted after send, so it belongs to the next turn.
-    const staging = [...this.pendingAttach];
+    const staging = [...this.pendingAttach, ...(this.editorPendingAttach?.get(session) ?? [])];
     if (staging.length) {
       await Promise.allSettled(staging);
-      if (gen !== session.gen) return;
+      if (gen !== session.gen) {
+        if (editorSend) onPreflightFailure?.();
+        return;
+      }
     }
 
     // Snapshot attachments. A live send reads the composer's chips; a queued
@@ -20075,7 +20769,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       for (const chip of chips) {
         if (chip.hidden || !isImageChip(chip)) continue;
         const read = await this.readImageChip(chip, session, gen);
-        if (read === "gone") return;
+        if (read === "gone") {
+          if (editorSend) onPreflightFailure?.();
+          return;
+        }
         if (read === "failed") { onPreflightFailure?.(); return; }
         images.push(read);
       }
@@ -20083,7 +20780,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // Mirror the failure path's guard: if the client was torn down during the
     // pre-read awaits, bail BEFORE consuming chips / unlinking staged files —
     // the composer keeps its attachments for the session that replaced us.
-    if (gen !== session.gen) return;
+    if (gen !== session.gen) {
+      if (editorSend) onPreflightFailure?.();
+      return;
+    }
 
     // A leading context envelope knocks a slash command off position 0 of the
     // text block, and the CLI then routes it to the LLM instead of dispatching
@@ -20118,7 +20818,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // Keep staged documents available for the conversation, including resends
     // of a pasted-text attachment after an edit.
     await this.retainUploadedFilesForSession(session, chips);
-    if (gen !== session.gen) return;
+    if (gen !== session.gen) {
+      if (editorSend) onPreflightFailure?.();
+      return;
+    }
 
     // COMMIT-POINT re-check: that was the last await before this send turns
     // into a prompt — everything from here through setStatus("working") is
@@ -20234,7 +20937,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       // would end a turn that is no longer ours.
       if (!endTurn(session, turn)) return;
       const compacted = slashCommand === "compact";
-      if (!compacted) this.scheduleStarPrompt(session, turn, client);
+      if (!compacted && !editorSend) this.scheduleStarPrompt(session, turn, client);
       const end: Extract<HostMsg, { type: "agentEnd" }> = {
         type: "agentEnd",
         meta,
@@ -20878,6 +21581,11 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       const localMessage: HostMsg = { type: "chips", chips: this.localPreviewChips(session, webview) };
       void webview.postMessage(localMessage);
     }
+    const tab = this.editorChatFor(session);
+    if (tab?.ready) {
+      const webview = tab.panel.webview;
+      void webview.postMessage({ type: "chips", chips: this.localPreviewChips(session, webview) });
+    }
     this.sendRemoteSession(session, remoteMessage);
   }
 
@@ -20889,6 +21597,9 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   }
 
   private localizeHistoryMessage(message: HostMsg, webview: HostWebview): HostMsg {
+    if (message.type === "media" && message.path && message.src && !message.src.startsWith("data:")) {
+      return { ...message, src: webview.asWebviewUri(Uri.file(message.path)) };
+    }
     if ((message.type === "userMessage" || message.type === "restoreComposer") && message.chips) {
       return { ...message, chips: message.chips.map((chip) => isImageChip(chip)
         ? { ...chip, ...(fs.existsSync(chip.path)
@@ -21009,12 +21720,21 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     if (this.focused.suppressContent && GrokSidebar.SUPPRESS_TYPES.has(message.type)) return;
     this.view?.webview.postMessage(message);
     this.mirrorToProjectsRail(message);
+    if (GrokSidebar.EDITOR_CHAT_SHARED_TYPES.has(message.type)) {
+      for (const session of this.editorSessions()) this.emitEditorSession(session, message);
+    }
     if (GrokSidebar.DEVICE_GLOBAL_REMOTE_TYPES.has(message.type)) {
       this.broadcastRemoteDevice(message);
     } else {
       this.sendRemoteSession(this.focused, message);
     }
   }
+
+  private static readonly EDITOR_CHAT_SHARED_TYPES = new Set<HostMsg["type"]>([
+    "providerState", "modelPins", "fontScale", "showThinking", "expandCommandOutputs",
+    "expandDiffCard", "showTurnDuration", "steerByDefault", "promptNav", "autoCompactSettings", "pinLiveWorkflows",
+    "museSettings", "thumbsFeedback", "appPurpose", "remoteStatus",
+  ]);
 
   /** Chat + the settings tab (when open) both consume About update status. */
   private postGrokUpdateStatus(message: Extract<HostMsg, { type: "grokUpdateStatus" }>): void {
@@ -21184,6 +21904,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     onPost(fn: (dest: MsgOrigin, message: HostMsg, clientIds?: string[]) => void): void;
     fromRemote(message: WebviewMsg, clientId?: string): void;
     fromLocal(message: WebviewMsg): Promise<void>;
+    openConversationBeside(id: string, cwd: string): Promise<void>;
+    editorConversation(id: string): { ready: boolean; live: boolean; replay: HostMsg[] } | undefined;
     fromRelayFrame(raw: string): void;
     emitRemote(clientId: string, message: HostMsg): void;
     replayRemote(clientId: string, messages: HostMsg[], during?: () => void, fail?: boolean): Promise<void>;
@@ -21281,6 +22003,11 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       },
       fromRemote: (message, clientId = "test-client") => this.handleRemoteMessage(clientId, message),
       fromLocal: (message) => this.onMessage(message, "local"),
+      openConversationBeside: (id, cwd) => this.onProjectsRailMessage({ type: "openConversationBeside", id, cwd }),
+      editorConversation: (id) => {
+        const tab = [...this.editorChats].find(candidate => candidate.session.activeSessionId === id);
+        return tab && { ready: tab.ready, live: !!tab.session.client, replay: tab.session.buffer };
+      },
       fromRelayFrame: (raw) => {
         const frame = parseRelayFrame(raw);
         if (frame?.t !== "client-ready") return;
@@ -21668,10 +22395,23 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       session.liveFeedbackEligible = false;
       session.turnRating = 0;
     }
+    let editorMessage = message;
+    let sidebarMessage = message;
+    if ((message.type === "agentEnd" || message.type === "agentError") && session === this.focused && this.view) {
+      const tab = this.editorChatFor(session);
+      if (tab?.ready) {
+        // Prefer the shown surface, then the last-used one if both are shown.
+        // Keep suppression local to this delivery so history and phones see the original event.
+        const quiet: HostMsg = { ...message, suppressTurnSound: true };
+        if (this.editorOwnsSound(tab)) sidebarMessage = quiet;
+        else editorMessage = quiet;
+      }
+    }
+    this.emitEditorSession(session, editorMessage);
     if (session === this.focused) {
       this.postTap?.("local", message);
       const webview = this.view?.webview;
-      if (webview) webview.postMessage(this.localizeHistoryMessage(message, webview));
+      if (webview) webview.postMessage(this.localizeHistoryMessage(sidebarMessage, webview));
       // Active-session identity for the projects rail (highlight + pin home).
       this.mirrorToProjectsRail(message);
     }
@@ -21717,6 +22457,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       session.liveFeedbackEligible = false;
       session.turnRating = 0;
     }
+    this.emitEditorSession(session, message);
     if (session !== this.focused) return;
     this.postTap?.("local", message);
     const webview = this.view?.webview;
@@ -21727,6 +22468,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   /** Desk-targeted, non-replayable delivery for one-shot notices. */
   private emitLocalTransient(session: Session, message: HostMsg): void {
     if (session.suppressContent && GrokSidebar.SUPPRESS_TYPES.has(message.type)) return;
+    this.emitEditorSession(session, message);
     if (session !== this.focused) return;
     this.postTap?.("local", message);
     const webview = this.view?.webview;
@@ -21772,7 +22514,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
    */
   private liveSessionById(id: string): Session | undefined {
     if (this.focused.activeSessionId === id) return this.focused;
-    return [...this.pool].find((session) => session.activeSessionId === id);
+    return this.editorSessions().find(session => session.activeSessionId === id)
+      ?? [...this.pool].find((session) => session.activeSessionId === id);
   }
 
   /** An unused empty conversation is one nobody is looking at, with no real
@@ -21784,6 +22527,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       && !this.pendingAgyForkHandoff(session)
       && !session.worktree
       && session.chips.length === 0
+      && !this.editorDrafts?.has(session.activeSessionId)
+      && !this.editorDrafts?.has(session)
       && !session.priming
       && !session.strandedDraft
       && session.queuedSends.length === 0
@@ -22088,7 +22833,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // are reserved per session id, not globally.
     if (cur.priming) return;
     // Co-attached: a remote tab still shows this session — not ours to tear down.
-    if (this.remoteClients.clientsForActiveValue(cur).length > 0) return;
+    if (this.editorChatFor(cur) || this.remoteClients.clientsForActiveValue(cur).length > 0) return;
     // Empty session being left behind (New Session, or switching to
     // another): tear down its process AND delete its on-disk dir so it doesn't pile
     // up in history (#24). The next focused session becomes the single live "New
@@ -22131,7 +22876,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     ) return;
     // Co-attached elsewhere (the VS Code view, or — defensively — another
     // tab): the session is still on screen there; only this tab lets go.
-    if (current === this.focused) return;
+    if (current === this.focused || this.editorChatFor(current)) return;
     if (this.remoteClients.clientsForActiveValue(current).some((ownerId) => ownerId !== clientId)) return;
     const id = current.activeSessionId;
     const cwd = this.sessionCwd(current);
@@ -22281,6 +23026,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // process that has not started yet, and it has no pool entry to protect it.
     const liveIds = new Set<string>();
     for (const s of this.pool) if (s.activeSessionId) liveIds.add(s.activeSessionId);
+    for (const key of this.editorDrafts?.keys() ?? []) if (typeof key === "string") liveIds.add(key);
+    for (const s of this.editorSessions()) if (s.activeSessionId) liveIds.add(s.activeSessionId);
     if (this.focused.activeSessionId) liveIds.add(this.focused.activeSessionId);
     for (const clientId of this.remoteClients.clients()) {
       const id = this.remoteClients.active(clientId)?.activeSessionId;
@@ -22433,6 +23180,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
    *  green; an idle/read one goes gray. */
   private disposeSession(session: Session): Promise<void> {
     const id = session.activeSessionId;
+    const tab = this.editorChatFor(session);
+    if (tab) this.closeEditorChat(tab);
     // Returned, not dropped. `dispose()` resolves when the process is actually
     // gone — on Windows that is a `taskkill` still running — and a caller about
     // to DELETE the session's directory must wait for it. Callers that only
@@ -22467,6 +23216,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       this.pool,
       this.focused,
       (session) => this.remoteClients.isActiveValueVisible(session),
+      (session) => !!this.editorChatFor(session),
     );
     const doomed = selectReapable(candidates, {
       maxLive: GrokSidebar.MAX_LIVE_SESSIONS,
@@ -22698,7 +23448,11 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     const id = session.activeSessionId;
     if (!id) return;
     const message: HostMsg = { type: "sessionDot", id, dot: this.dotForId(id) };
-    this.view?.webview.postMessage(message);
+    const tab = this.editorChatFor(session);
+    const quiet: HostMsg = { ...message, suppressInputNeededSound: true };
+    const editorOwnsSound = tab && (session !== this.focused || (tab.ready && this.editorOwnsSound(tab)));
+    if (tab?.ready) this.emitEditorSession(session, editorOwnsSound ? message : quiet);
+    this.view?.webview.postMessage(editorOwnsSound ? quiet : message);
     this.mirrorToProjectsRail(message);
     const overrides = this.state.get<SessionMetaOverrides>(SESSION_META_KEY, {});
     const sent = new Set<string>();
@@ -22711,6 +23465,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       sent.add(key);
       this.sendRemoteRepo(repoCwd, message);
     }
+  }
+
+  private editorOwnsSound(tab: EditorChatTab): boolean {
+    return !this.view?.visible || (tab.panel.visible && this.lastEditorChat === tab);
   }
 
   /** The dashboard dot for a grok-session id, from live status (if it's a live pool
@@ -23647,16 +24405,14 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     const { selectedCwd, actualCwd, provider } = target;
     const overrides = this.state.get<SessionMetaOverrides>(SESSION_META_KEY, {});
     const current = this.remoteClients.active(clientId);
-    // Mirror of the desk-side adoption: if the DESK still holds this
-    // conversation as a clientless object (crashed / reaped focused session),
-    // resume INTO that object rather than forking the session directory into
-    // a second live process. Other tabs' objects can't reach here — the
-    // conflictingOwner guard above refused them regardless of client state.
+    // Reuse a clientless session still held by a local viewer so a reconnect
+    // restores that same object. Other remote owners were handled above.
     const session = current?.activeSessionId === id
       ? current
       : this.focused.activeSessionId === id
         ? this.focused
-        : [...this.pool].find((candidate) => candidate.activeSessionId === id && !candidate.client)
+        : this.editorSessions().find(candidate => candidate.activeSessionId === id)
+          ?? [...this.pool].find((candidate) => candidate.activeSessionId === id && !candidate.client)
           ?? new Session();
     session.provider = provider;
     const savedWorktree = overrides[id];
@@ -23864,7 +24620,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // object here would hand the same Grok session directory to two live
     // processes the moment both views touch it — adopt the held object
     // instead, so this restart lands in BOTH views.
-    const held = this.remoteClients.clients()
+    const held = this.editorSessions().find(s => s.activeSessionId === id) ?? this.remoteClients.clients()
       .map((clientId) => this.remoteClients.active(clientId))
       .find((s): s is Session => !!s && s.activeSessionId === id);
     if (held) {
@@ -23897,29 +24653,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     }
     this.focused = this.newLocalSession();
     this.pool.add(this.focused);
-    // Session cwd is resolved host-side from the on-disk catalog. The message
-    // may name an id (and optionally a look-first cwd that must already be
-    // trusted); it never supplies the process root.
-    const overrides = this.state.get<SessionMetaOverrides>(SESSION_META_KEY, {});
-    const o = overrides[id];
-    this.focused.provider = o?.provider ?? "grok";
-    const trustedCwds = this.localTrustedSessionCwds(overrides);
-    const candidates = orderedResumeCwdCandidates({
-      messageCwd: sessionCwd,
-      trustedCwds,
-      metaWorktreePath: o?.worktreePath,
-      cachedCwd: o?.providerCwd ?? this.sessionCache.get(id)?.entry.cwd,
-      sameCwd: pathsEqual,
-    });
-    const cwd = usesAdapterHistory(this.focused.provider)
-      ? candidates.find((candidate) => trustedCwds.some((trusted) => pathsEqual(candidate, trusted)))
-      : findSessionCatalogCwd({
-          fs: defaultFs,
-          grokHome: resolveGrokHome(process.env),
-          id,
-          candidates,
-        });
-    if (!cwd) {
+    if (!this.configureLocalResumeSession(this.focused, id, sessionCwd)) {
       this.host.appendLine(
         `[sessions] refused resumeSession (session ${id} not found under any trusted catalog cwd)`,
       );
@@ -23930,9 +24664,41 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       this.postRepoCatalog();
       return;
     }
-    this.focused.cwd = cwd;
+    await this.followSessionWorkspace(this.focused);
+    // Keep the provider binding even if the provider cannot start right now.
+    this.focused.hasHistory = true;
+    await this.startSession(id, this.focused, "ensure", clock);
+    this.markRead(this.focused);
+    this.postRepoCatalog();
+  }
+
+  private configureLocalResumeSession(session: Session, id: string, sessionCwd?: string): boolean {
+    // Session cwd is resolved host-side from the on-disk catalog. The message
+    // may name an id (and optionally a look-first cwd that must already be
+    // trusted); it never supplies the process root.
+    const overrides = this.state.get<SessionMetaOverrides>(SESSION_META_KEY, {});
+    const o = overrides[id];
+    session.provider = o?.provider ?? "grok";
+    const trustedCwds = this.localTrustedSessionCwds(overrides);
+    const candidates = orderedResumeCwdCandidates({
+      messageCwd: sessionCwd,
+      trustedCwds,
+      metaWorktreePath: o?.worktreePath,
+      cachedCwd: o?.providerCwd ?? this.sessionCache.get(id)?.entry.cwd,
+      sameCwd: pathsEqual,
+    });
+    const cwd = usesAdapterHistory(session.provider)
+      ? candidates.find((candidate) => trustedCwds.some((trusted) => pathsEqual(candidate, trusted)))
+      : findSessionCatalogCwd({
+          fs: defaultFs,
+          grokHome: resolveGrokHome(process.env),
+          id,
+          candidates,
+        });
+    if (!cwd) return false;
+    session.cwd = cwd;
     if (o?.worktreePath && pathsEqual(o.worktreePath, cwd)) {
-      this.focused.worktree = {
+      session.worktree = {
         path: o.worktreePath,
         label: o.worktreeLabel || path.basename(o.worktreePath),
         sourceGitRoot: o.sourceGitRoot || this.workspaceRoot(),
@@ -23940,7 +24706,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     } else {
       const hit = matchWorktreeForCwd(cwd, worktreesForRepo(this.worktreeCache, this.workspaceRoot(), { includeDead: true }));
       if (hit) {
-        this.focused.worktree = {
+        session.worktree = {
           path: hit.path,
           label: hit.label,
           sourceGitRoot: hit.sourceRepo || this.workspaceRoot(),
@@ -23948,15 +24714,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         };
       }
     }
-    await this.followSessionWorkspace(this.focused);
-    // Same as the remote open: this id already has a conversation. startSession
-    // resets hasHistory if the load actually runs; if the provider cannot
-    // answer we return first, and this bit stops a later re-check from
-    // retargeting the row onto a different agent.
-    this.focused.hasHistory = true;
-    await this.startSession(id, this.focused, "ensure", clock);
-    this.markRead(this.focused); // opening a cold session clears its unread badge
-    this.postRepoCatalog();
+    return true;
   }
 
   /** Reveal the panel AND move keyboard focus into the composer, so every flow
@@ -23974,10 +24732,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   private watchActiveEditor(): void {
     this.editorWatcher?.dispose();
     this.editorWatcher = disposeAll(
-      this.host.onDidChangeActiveTextEditor(() => this.refreshImplicitChip()),
+      this.host.onDidChangeActiveTextEditor(() => this.refreshImplicitChips()),
       // Host already filters to the active editor (split editors that are not
       // active must not drive the context chip).
-      this.host.onDidChangeActiveTextEditorSelection(() => this.refreshImplicitChip()),
+      this.host.onDidChangeActiveTextEditorSelection(() => this.refreshImplicitChips()),
     );
   }
 
@@ -24010,8 +24768,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
    * permissions), there is no containment to demonstrate, and a chip is not
    * worth guessing about.
    */
-  private conversationRelPath(absPath: string): string | undefined {
-    const root = this.sessionCwd(this.focused);
+  private conversationRelPath(absPath: string, session: Session = this.focused): string | undefined {
+    const root = this.sessionCwd(session);
     const lexical = relativePathWithin(root, absPath);
     if (lexical === undefined) return undefined;
     try {
@@ -24026,17 +24784,32 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     return lexical;
   }
 
-  private refreshImplicitChip(forcePost = false): void {
+  private activeEditorForContext(): HostTextEditor | undefined {
+    const active = this.host.getActiveTextEditor();
+    if (active?.document.uri.scheme === "file") this.lastRealTextEditor = active;
+    return active;
+  }
+
+  private refreshImplicitChips(forcePost = false): void {
+    this.refreshImplicitChip(forcePost);
+    for (const session of this.editorSessions()) {
+      if (session !== this.focused) this.refreshImplicitChip(forcePost, session);
+    }
+  }
+
+  private refreshImplicitChip(forcePost = false, session = this.focused): void {
     const includeActive = this.host.getConfiguration("grok")
       .get<boolean>("includeActiveFileByDefault", true);
-    const prev = this.chips.find(isImplicitChip);
-    const editor = this.host.getActiveTextEditor();
+    const prev = session.chips.find(isImplicitChip);
+    const active = this.activeEditorForContext();
+    const editor = active ?? (this.editorChatFor(session) && this.host.isConversationEditorActive?.() ? this.lastRealTextEditor : undefined);
+    const post = () => session === this.focused ? this.postChips() : this.postChips(session);
 
     if (!includeActive || !editor || editor.document.uri.scheme !== "file") {
       // No chip to show — and if one is lingering, the webview must hear about
       // its removal (the old code cleared host-side but never posted).
-      this.chips = clearImplicitChips(this.chips);
-      if (prev || forcePost) this.postChips();
+      session.chips = clearImplicitChips(session.chips);
+      if (prev || forcePost) post();
       return;
     }
 
@@ -24055,10 +24828,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // against VS Code's workspace folders, and a project reached through the
     // rail is deliberately not one of them, so it would have handed back an
     // absolute path for a file that is perfectly ordinary inside its own repo.
-    const relPath = this.conversationRelPath(absPath);
+    const relPath = this.conversationRelPath(absPath, session);
     if (relPath === undefined) {
-      this.chips = clearImplicitChips(this.chips);
-      if (prev || forcePost) this.postChips();
+      session.chips = clearImplicitChips(session.chips);
+      if (prev || forcePost) post();
       return;
     }
     let selStart: number | undefined;
@@ -24076,15 +24849,15 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       prev.selectionStart === selStart &&
       prev.selectionEnd === selEnd
     ) {
-      if (forcePost) this.postChips();
+      if (forcePost) post();
       return;
     }
 
     const next = makeImplicitChip(absPath, relPath, selStart, selEnd);
     next.hidden = implicitChipStartsHidden(prev, this.implicitChipHidden());
-    this.chips = clearImplicitChips(this.chips);
-    this.chips.push(next);
-    this.postChips();
+    session.chips = clearImplicitChips(session.chips);
+    session.chips.push(next);
+    post();
   }
 
   /** Parse the workspace `.env` into a plain map (no process.env merge). Used by
@@ -24837,6 +25610,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
 
   async continueOnPhone(source: RemoteHandoffSource = "palette", sessionId?: string, repoCwd?: string, explain?: boolean): Promise<void> {
     const msg: Extract<HostMsg, { type: "showRemoteHandoff" }> = { type: "showRemoteHandoff", source, sessionId, repoCwd, explain };
+    if (source === "palette" && !sessionId && this.postEditorCommand(msg)) return;
     this.pendingRemoteHandoff = msg;
     await this.host.revealChatView();
     if (this.chatReadyForHandoff && this.pendingRemoteHandoff === msg) {
@@ -24846,10 +25620,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   }
 
   /** Resolve the row against host-owned catalogs; never substitute the focused chat for a missing id. */
-  private handoffSession(sessionId?: string, repoCwd?: string): HandoffSession | undefined {
-    const id = sessionId || this.focused.activeSessionId;
+  private handoffSession(sessionId?: string, repoCwd?: string, bound?: Session): HandoffSession | undefined {
+    const id = bound ? bound.activeSessionId : sessionId || this.focused.activeSessionId;
     if (!id) return undefined;
-    const live = [...this.pool, this.focused].find((s) => s.activeSessionId === id);
+    const live = bound ?? [...this.pool, this.focused].find((s) => s.activeSessionId === id);
     const overrides = this.state.get<SessionMetaOverrides>(SESSION_META_KEY, {});
     const cached = this.sessionCache.get(id)?.entry
       ?? [...this.allAdapterCatalogs()].flat().find((s) => s.id === id);
@@ -24863,10 +25637,14 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     return { id, repoCwd: repo.cwd, cwd, title: title || "this conversation" };
   }
 
-  private async replyRemoteHandoff(msg: Extract<WebviewMsg, { type: "remoteHandoff" }>): Promise<void> {
+  private async replyRemoteHandoff(msg: Extract<WebviewMsg, { type: "remoteHandoff" }>, tab?: EditorChatTab): Promise<void> {
+    const bound = tab?.session;
+    const id = bound?.activeSessionId;
+    if (tab && (!id || msg.sessionId !== id)) return;
     const linked = !!await this.readDeviceToken();
+    if (tab && (!bound || this.editorChatFor(bound) !== tab || bound.activeSessionId !== id)) return;
     if (!msg.action || msg.action === "show") this.reportHandoffEvent("remote_handoff_shown", { source: msg.source, linked });
-    const session = this.handoffSession(msg.sessionId, msg.repoCwd);
+    const session = bound ? this.handoffSession(id, undefined, bound) : this.handoffSession(msg.sessionId, msg.repoCwd);
     const url = linked ? remoteHandoffUrl(this.relayUrl(), this.remoteDeviceId(), session) : undefined;
     if (msg.action === "open") {
       this.reportRemotePortalOpened(!url, msg.source);
@@ -24877,7 +25655,9 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     if (url) {
       try { qrSvg = remoteHandoffQr(url); } catch { /* Oversized link: Copy/Open still work. */ }
     }
-    this.postLocal({ type: "remoteHandoff", requestId: msg.requestId, url, qrSvg, title: session?.title || "this conversation" });
+    const reply: HostMsg = { type: "remoteHandoff", requestId: msg.requestId, url, qrSvg, title: session?.title || "this conversation" };
+    if (bound) this.emitEditorSession(bound, reply);
+    else this.postLocal(reply);
   }
 
   /** Ordered catch-up built from this client's cwd and active remote session. */
@@ -25291,7 +26071,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
 </html>`;
   }
 
-  private getHtml(webview: HostWebview): string {
+  private getHtml(webview: HostWebview, editorChat = false): string {
     const nonce = getNonce();
     const strings = this.host.webviewStrings;
     const l10n = webviewHtmlText(strings);
@@ -25391,7 +26171,7 @@ ${firstFrameLayout}
 <link rel="stylesheet" href="${mediaUri("settings.css")}" />
 ${filePanelStyle}
 </head>
-<body class="desk${deskLayoutClass}${this.showThinking() ? "" : " thinking-hidden"}" style="--chat-zoom: ${this.chatFontScale()}">
+<body class="desk${deskLayoutClass}${this.showThinking() ? "" : " thinking-hidden"}" ${editorChat ? 'data-editor-chat="true"' : this.host.canOpenConversationEditor ? 'data-local-chat-focus="true"' : ""} style="--chat-zoom: ${this.chatFontScale()}">
 ${this.host.canSwitchWorkspaceFolder ? `<script nonce="${nonce}">try{if(localStorage.getItem("desk-rail-open")==="0")document.body.classList.add("desk-rail-collapsed")}catch(e){}</script>` : ""}
 ${railMount}
 ${openMain}
@@ -25435,7 +26215,7 @@ ${fileShellOpen}
       <div class="composer-toolbar">
         <div class="toolbar-left">
           <button id="add-btn" class="icon-btn" title="${l10n("Add context")}"></button>
-          <button id="mic-btn" class="icon-btn mic-btn" title="${l10n("Voice control")}"></button>
+          <button id="mic-btn" class="icon-btn mic-btn" title="${l10n("Voice control")}"${editorChat ? " hidden" : ""}></button>
           <button id="gear-btn" class="toolbar-btn model-chip" title="${l10n("Model and effort")}"></button>
           <div class="context-donut" id="donut" title="${l10n("Context usage")}">
             <svg width="16" height="16" viewBox="0 0 16 16">

@@ -74,6 +74,18 @@ function makeRewindSidebar(hasFiles = true) {
   return { sidebar, session, original, replacement, points, confirmation };
 }
 
+it("returns a tab's rewound prompt to that tab even when the sidebar shares its conversation", async () => {
+  const { sidebar, session, original } = makeRewindSidebar(false);
+  original.executeRewind.mockResolvedValueOnce({ success: true, targetPromptIndex: 0, revertedFiles: [] } as any);
+  const postMessage = vi.fn();
+  const tab = { session, ready: true, panel: { webview: { postMessage } } };
+  sidebar.editorChats = new Set([tab]);
+  sidebar.restoreComposerFor = (GrokSidebar.prototype as any).restoreComposerFor;
+  await sidebar.onMessage({ type: "rewindSession", userBubbleIndex: 0, totalUserBubbles: 2, text: "Restore to tab" }, "local", undefined, tab);
+  expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "restoreComposer", text: "Restore to tab" }));
+  expect(sidebar.postLocal).not.toHaveBeenCalledWith(expect.objectContaining({ type: "restoreComposer" }));
+});
+
 it.each(["local", "remote"] as const)("Edit restores only host-recorded chips through the %s handler", async source => {
   const { sidebar, session, original } = makeRewindSidebar(false);
   const chip = { id: "recorded", path: "/repo/recorded.txt", relPath: "recorded.txt", kind: "file" as const };
@@ -179,7 +191,7 @@ it("Edit never restores a supplied chip when the host has no attachment record",
   original.executeRewind.mockResolvedValueOnce({ success: true, targetPromptIndex: 1, revertedFiles: [] } as any);
   await sidebar.onMessage({ type: "editLastMessage", userBubbleIndex: 1, totalUserBubbles: 2, text: "latest",
     chips: [{ id: "forged", path: "/outside/private.txt", kind: "file" }] }, "local");
-  expect(sidebar.restoreComposerFor).toHaveBeenCalledWith(session, undefined, "latest", undefined);
+  expect(sidebar.restoreComposerFor).toHaveBeenCalledWith(session, undefined, "latest", undefined, false, undefined);
 });
 
 describe.each(["editLastMessage", "rewindSession"] as const)("%s lifecycle", (type) => {

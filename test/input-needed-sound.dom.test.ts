@@ -1,13 +1,17 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { bootWebview, dispatch, press } from "./webview-harness";
+import { GrokSidebar } from "../src/sidebar";
+import { Session } from "../src/session";
+import type { HostMsg } from "../src/protocol";
 
-function boot(options: { remote?: boolean; vscode?: boolean; enabled?: boolean } = {}) {
+function boot(options: { remote?: boolean; vscode?: boolean; enabled?: boolean; editor?: boolean } = {}) {
   const notes: number[] = [];
   const contexts: any[] = [];
   const h = bootWebview({
     ...options,
     beforeScripts(w) {
       if (!options.remote && !options.vscode) (w as any).grokDesktopShell = true;
+      if (options.editor) w.document.body.dataset.editorChat = "true";
       class AudioContext {
         state = "suspended";
         currentTime = 0;
@@ -55,6 +59,38 @@ function waiting(h: ReturnType<typeof boot>, id = "conversation") {
 const inputTone = [784, 659, 784];
 
 describe("sound when input is needed (#228)", () => {
+  it.each(["editor-only", "shared with editor last used", "shared with sidebar last used"])(
+    "plays once for %s while the sidebar still receives its dot", scenario => {
+    const editor = boot({ vscode: true, editor: true });
+    const sidebar = boot({ vscode: true });
+    const editorSession = Object.assign(new Session(), { activeSessionId: "editor" });
+    const sidebarSession = Object.assign(new Session(), { activeSessionId: "sidebar" });
+    const received: HostMsg[] = [];
+    const tab = { session: editorSession, ready: true, panel: { visible: true,
+      webview: { postMessage: (frame: HostMsg) => dispatch(editor.window, frame) },
+    } };
+    const editorOwnsSound = scenario !== "shared with sidebar last used";
+    const controller = Object.assign(Object.create(GrokSidebar.prototype), {
+      focused: scenario === "editor-only" ? sidebarSession : editorSession,
+      lastEditorChat: editorOwnsSound ? tab : undefined,
+      view: { visible: true, webview: { postMessage: (frame: HostMsg) => {
+        received.push(frame);
+        dispatch(sidebar.window, frame);
+      } } },
+      editorChats: new Set([tab]),
+      pool: new Set([editorSession, sidebarSession]),
+      state: { get: (_key: string, fallback: unknown) => fallback },
+      remoteClients: { clients: () => [] },
+      refreshKeepAwake() {},
+    });
+    controller.setStatus(editorSession, "working");
+    controller.setStatus(editorSession, "needs-you");
+    controller.pushDot(editorSession); // A repeated catalog status stays quiet.
+    expect(editor.notes).toEqual(editorOwnsSound ? inputTone : []);
+    expect(sidebar.notes).toEqual(editorOwnsSound ? [] : inputTone);
+    expect(received.at(-1)).toMatchObject({ type: "sessionDot", id: "editor", dot: "needs-you" });
+  });
+
   it.each([
     ["desk", { vscode: true }], ["desktop", {}], ["remote", { remote: true }],
   ] as const)("plays locally on a live transition while away on %s", (_surface, options) => {

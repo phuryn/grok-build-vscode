@@ -918,8 +918,9 @@ export type HostMsg =
       autoCompactThresholdPercent?: number;
     }
   | { type: "agentReset" }
-  | { type: "agentError"; text: string }
-  | { type: "agentEnd"; meta?: PromptResultMeta; forkPoint?: string; durationMs?: number; stopped?: boolean }
+  // suppressTurnSound is only attached when delivering a live outcome to the other local view.
+  | { type: "agentError"; text: string; suppressTurnSound?: true }
+  | { type: "agentEnd"; meta?: PromptResultMeta; forkPoint?: string; durationMs?: number; stopped?: boolean; suppressTurnSound?: true }
   | { type: "exit"; code: number | null }
   | { type: "setBusy"; value: boolean; locked?: boolean }
   | { type: "summarizing" }
@@ -1138,7 +1139,8 @@ export type HostMsg =
        */
       workspaceCwd?: string;
     }
-  | { type: "sessionDot"; id: string; dot: Dot }
+  // suppressInputNeededSound is only attached to the other local view's copy.
+  | { type: "sessionDot"; id: string; dot: Dot; suppressInputNeededSound?: true }
   // Full snapshot of the focused session's host-owned send queue (#37) — the
   // webview renders pending user blocks from this; replay rebuilds them.
   // `items` stays string[] so an older webview still renders text. `queued` is

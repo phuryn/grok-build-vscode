@@ -183,7 +183,7 @@ describe("DeepSeek desk boundary and credentials", () => {
     const requester = { tabId: "phone-tab" };
     s.captureRemoteRequester = () => requester;
     await s.onMessage({ type: "send", text: "Keep my image question" }, origin, origin === "remote" ? "phone" : undefined);
-    expect(s.restoreComposerFor).toHaveBeenCalledWith(session, origin === "remote" ? requester : undefined, "Keep my image question");
+    expect(s.restoreComposerFor).toHaveBeenCalledWith(session, origin === "remote" ? requester : undefined, "Keep my image question", undefined, false, undefined);
     expect(s.emit).toHaveBeenCalledWith(session, { type: "agentError", text: expect.stringContaining("Remove the image") });
     expect(session.chips).toHaveLength(1);
     expect(session.client.prompt).not.toHaveBeenCalled();

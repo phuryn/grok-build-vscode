@@ -116,6 +116,36 @@ describe("AudioContext is not held open while silent (#107)", () => {
     expect(created[0].suspendCalls).toBeGreaterThanOrEqual(2); // unlock + after tone
   });
 
+  it.each([{ type: "agentEnd" }, { type: "agentError", text: "Failed" }])(
+    "keeps replay and the second surface silent for $type", (message) => {
+      let created: FakeCtx[] = [];
+      const { window, doc } = bootWebview({ beforeScripts: (w) => {
+        w.document.body.dataset.editorChat = "true";
+        created = installFakeAudio(w);
+      } });
+      dispatch(window, { type: "soundNotifications", value: true });
+      gesture(window, doc);
+      hidePanel(doc);
+
+      dispatch(window, { type: "historyReplay", active: true });
+      dispatch(window, message);
+      dispatch(window, { type: "historyReplay", active: false });
+      expect(created[0].oscStarts).toBe(0);
+      dispatch(window, { ...message, suppressTurnSound: true });
+      expect(created[0].oscStarts).toBe(0);
+      dispatch(window, message);
+      expect(created[0].oscStarts).toBe(2);
+      Object.defineProperty(doc, "visibilityState", { value: "visible", configurable: true });
+      Object.defineProperty(doc, "hasFocus", { value: () => true, configurable: true });
+      dispatch(window, message);
+      expect(created[0].oscStarts).toBe(2);
+      hidePanel(doc);
+      dispatch(window, { type: "soundNotifications", value: false });
+      dispatch(window, message);
+      expect(created[0].oscStarts).toBe(2);
+    },
+  );
+
   it("does not suspend a second tone when a previous tone's suspend is still pending", async () => {
     let created: FakeCtx[] = [];
     const { window, doc } = bootWebview({

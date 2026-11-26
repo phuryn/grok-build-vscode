@@ -155,7 +155,9 @@ describe("insertActiveMention accepts non-file schemes (regression #1)", () => {
     // path. The remote-scheme guarantee this test exists for is untouched:
     // `fsPath` is still what both the containment check and the label are built
     // from, so `vscode-remote://` resolves exactly as a local path does.
-    expect(body).toMatch(/this\.conversationRelPath\(absPath\)/);
+    // Split view passes the target chat's session so a tab's attachment is
+    // relative to that tab's project.
+    expect(body).toMatch(/this\.conversationRelPath\(absPath, session\)/);
     expect(body).not.toMatch(/this\.host\.asRelativePath/);
     expect(body).not.toMatch(/opts\?\s*\.\s*path\b/);
     expect(body).not.toMatch(/Uri\.file\(\s*opts\.path\s*\)/);
