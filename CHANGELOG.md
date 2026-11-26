@@ -1,5 +1,14 @@
 # Changelog
 
+## 4.17.16 — 2026-11-26
+
+**How long each reply took, and a GitHub star.**
+
+### Added
+
+- **How long each reply took.** Turn on **Show turn duration** in Settings → General, and a finished reply's footer reads "Worked for 2m 5s", or "Stopped after 4s" when you stopped it. Time spent waiting for your approval or answer is left out, and the line is not kept when a conversation is reopened from history. A phone or browser keeps its own choice. Contributed by @funkpopo (#142).
+- **A star on GitHub.** Once you have sent messages in five conversations, a card above the message box asks for a star, 30 seconds after a reply finishes and while nothing waits on you. With `gh` signed in, one click stars the repository as that account; otherwise it opens the page. **Not now** asks again in 30 days; starring or opening the page ends it. Never on a phone, in a browser or on a cloud machine. Settings → About now reads **Star on GitHub**.
+
 ## 4.17.15 — 2026-11-25
 
 **Pinned models, and model lists that refresh themselves.**
