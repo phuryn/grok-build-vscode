@@ -359,17 +359,30 @@ body.desk-split-compact #projects-rail {
   box-shadow: 0 0 12px var(--vscode-widget-shadow);
 }
 body.desk-split-compact #projects-rail { inset-inline-start: 0; }
-.desk-ft-shell.desk-ft-pair-compact { position: relative; }
+.desk-ft-shell.desk-ft-pair-compact { position: relative; overflow: hidden; }
 .desk-ft-pair-compact > #desk-ft-panel {
   position: absolute;
-  inset-block: var(--desk-ft-pair-top, 0) 0;
+  inset-block: var(--desk-ft-pair-top, 0) var(--desk-ft-pair-bottom, 0);
   inset-inline-end: 0;
   height: auto;
   z-index: 35;
   box-shadow: 0 0 12px var(--vscode-widget-shadow);
 }
-.desk-ft-pair-compact > #desk-ft-resizer,
-.desk-ft-pair-compact #desk-ft-maximize { display: none; }
+/* Leave room for the active file, overflow chip and panel close in Plan C. */
+.desk-ft-pair-compact .gfp-title.gfp-title-icon-only { padding-inline: 6px; }
+.desk-ft-pair-compact .gfp-strip-c .gfp-tabs { padding-inline-end: 4px; }
+.desk-ft-pair-compact .gfp-strip-c .gfp-tab-active { min-width: 0; padding-inline: 4px; gap: 3px; }
+.desk-ft-pair-compact .gfp-strip-c .gfp-close { margin-inline-end: 4px; }
+@container desk-ft (max-width: 200px) {
+  /* Changes stays reachable from the tree. While viewing a file, give its
+     tab and close button the room they need beside the chip. */
+  .desk-ft-pair-compact .gfp-header:has(.gfp-tab-active) .gfp-changes-btn { display: none; }
+  .desk-ft-pair-compact .gfp-strip-c .gfp-tab-active .gfp-tab-dirty:not(:empty) {
+    position: absolute;
+    inset-block-start: 0;
+    inset-inline-start: 4px;
+  }
+}
 #desk-conversation-close[hidden] { display: none; }
 
 /* Scroll-edge fades — port of AFK Pilot web/chat.html (not shared chat.css). */

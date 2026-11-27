@@ -8,6 +8,25 @@
  */
 import { CHAT_MIN_WIDTH, FILES_MIN_WIDTH, FILES_RESIZER_WIDTH } from "./conversation-layout";
 
+const fileTileSizing = { chatAndDivider: CHAT_MIN_WIDTH + FILES_RESIZER_WIDTH, dockMin: FILES_MIN_WIDTH };
+
+// The mount bootstrap runs in the renderer. Pass the grid's sizing constants
+// in explicitly so it and the host-side tests use the same pure calculation.
+function desktopFilesPlanner({ chatAndDivider, dockMin }: typeof fileTileSizing) {
+  return (tileWidthDips: number, zoom: number, preferred: number) => {
+    const tileWidth = tileWidthDips / zoom;
+    const overlay = tileWidthDips < (chatAndDivider + dockMin) * zoom;
+    const minWidth = overlay ? 160 : dockMin;
+    const cap = overlay ? Math.round(tileWidth * 0.62)
+      : Math.floor(Math.min(tileWidth * 0.7, tileWidth - chatAndDivider));
+    const maxWidth = Math.max(minWidth, cap);
+    const width = Math.max(minWidth, Math.min(Math.round(preferred), maxWidth));
+    return { overlay, minWidth, maxWidth, width };
+  };
+}
+
+export const planDesktopFiles = desktopFilesPlanner(fileTileSizing);
+
 /** Minimal open-tab fields retained for callers/tests of the old pure surface. */
 export interface DeskFtTabLike {
   dirty: boolean;
@@ -51,6 +70,7 @@ export const FILE_TREE_PANEL_CSS = "";
 export function fileTreePanelBootSource(_iconsDir?: string): string {
   const revealLabel = revealInFolderLabel();
   return `(async () => {
+    const planFiles = (${desktopFilesPlanner.toString()})(${JSON.stringify(fileTileSizing)});
     const api = window.grokDesktopFileTree;
     const shared = window.GrokFilePanel;
     if (!api || !shared || typeof shared.createFilePanel !== "function") {
@@ -98,6 +118,7 @@ export function fileTreePanelBootSource(_iconsDir?: string): string {
     const topBar = layoutHost.querySelector(":scope > .top-bar") || layoutHost.querySelector(".top-bar");
     const pane = document.body.dataset.editorChat === "true";
     if (pane && topBar) chat.prepend(topBar);
+    const composer = chat.querySelector(".composer");
     const closeChat = document.getElementById("desk-conversation-close");
     document.body.classList.add("desk-with-ft");
 
@@ -147,18 +168,23 @@ export function fileTreePanelBootSource(_iconsDir?: string): string {
       ? new URL("file-icons/", componentScript.src).href
       : "";
     const split = () => pane || !!document.getElementById("desk-conversation-columns");
+    let dockLayout;
     const fit = () => {
       const zoom = Number(getComputedStyle(document.body).zoom) || 1;
       const bounds = shell.getBoundingClientRect();
-      const width = Math.floor(bounds.width / zoom);
-      const max = width - ${CHAT_MIN_WIDTH + FILES_RESIZER_WIDTH};
-      const compact = split() && max < ${FILES_MIN_WIDTH};
+      dockLayout = split() ? planFiles(bounds.width, zoom, preferredWidth()) : undefined;
+      const compact = dockLayout?.overlay === true;
       shell.classList.toggle("desk-ft-pair-compact", compact);
+      panel.refreshPresentation();
       if (compact && topBar) {
-        const top = Math.max(0, Math.ceil((topBar.getBoundingClientRect().bottom - bounds.top) / zoom));
+        const top = Math.max(0, (topBar.getBoundingClientRect().bottom - bounds.top) / zoom);
         shell.style.setProperty("--desk-ft-pair-top", top + "px");
       }
-      if (split()) panel.setWidth(Math.max(${FILES_MIN_WIDTH}, Math.min(preferredWidth(), compact ? width : max)), false);
+      if (compact && composer) {
+        const bottom = Math.max(0, (bounds.bottom - composer.getBoundingClientRect().top) / zoom);
+        shell.style.setProperty("--desk-ft-pair-bottom", bottom + "px");
+      }
+      if (dockLayout) panel.setWidth(dockLayout.width, false);
     };
     const onOpen = open => {
       document.body.classList.toggle("desk-ft-closed", !open);
@@ -174,12 +200,12 @@ export function fileTreePanelBootSource(_iconsDir?: string): string {
           panelHost: shell,
           toggleHost: topBar,
           presentation: "dock",
-          availableWidth: () => split() ? shell.getBoundingClientRect().width /
-            (Number(getComputedStyle(document.body).zoom) || 1) : undefined,
+          dockLayout: () => dockLayout,
+          closeLabel: topBar?.dataset.filesCloseLabel,
+          onCloseButton: () => document.getElementById("input")?.focus(),
           id: "desk-ft-panel",
           viewingBodyClass: "desk-ft-viewing",
-          // Content-area maximize. Not persisted. The shared panel hides the
-          // control itself while it is an overlay (phone / <900).
+          // The shared panel disables maximize in either overlay placement.
           maximize: true,
           elementIds: {
             resizer: "desk-ft-resizer",
@@ -281,6 +307,7 @@ export function fileTreePanelBootSource(_iconsDir?: string): string {
       }
     }
 
+    fit();
     // Share narrow-window pressure with the project rail. Dragging persists the
     // preferred width in the component; coordinator reclamps are paint-only.
     if (typeof window.__grokRegisterSidePanel === "function") {
@@ -295,8 +322,10 @@ export function fileTreePanelBootSource(_iconsDir?: string): string {
       window.__grokReclampSidePanels();
     }
     const observer = new ResizeObserver(fit);
+    window.addEventListener("resize", fit);
     observer.observe(shell);
     if (topBar) observer.observe(topBar);
+    if (composer) observer.observe(composer);
     window.__grokFitDesktopFiles = fit;
     let request = 0;
     let adoptedTabs;
@@ -337,6 +366,7 @@ export function fileTreePanelBootSource(_iconsDir?: string): string {
       request++;
       off();
       observer.disconnect();
+      window.removeEventListener("resize", fit);
       window.removeEventListener("message", receive);
     };
     window.__grokDeskFilePanel = panel;

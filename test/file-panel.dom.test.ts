@@ -1588,6 +1588,67 @@ describe("title strip is a folder label plus file-type tabs", () => {
   });
 });
 
+describe("split desktop Files mount", () => {
+  it("keeps the default dock minimum and hides its panel close", async () => {
+    const h = harness({ mount: { presentation: "dock", availableWidth: () => 340 } });
+    try {
+      h.panel.setOpen(true);
+      expect(h.panel.setWidth(160, false)).toBe(200);
+      expect(h.panel.element.style.getPropertyValue("--gfp-min-width")).toBe("");
+      expect(h.document.querySelector<HTMLButtonElement>(".gfp-close")!.hidden).toBe(true);
+    } finally {
+      h.panel.destroy();
+      await h.window.happyDOM.close();
+    }
+  });
+
+  it("switches from a maximized dock to a 160 px overlay while preserving an unsaved edit through the X", async () => {
+    let dockLayout = { overlay: false, minWidth: 200, maxWidth: 290 };
+    const h = harness({
+      mount: { presentation: "dock", maximize: true, dockLayout: () => dockLayout },
+      confirm: async () => "cancel",
+    });
+    try {
+      await settle();
+      await openAndEdit(h, "notes.md", "Keep this unsaved draft");
+      const close = h.document.querySelector<HTMLButtonElement>(".gfp-close")!;
+      const maximize = h.document.querySelector<HTMLButtonElement>(".gfp-maximize")!;
+      expect(close.hidden).toBe(false);
+      expect(maximize.hidden).toBe(false);
+      expect(h.panel.setMaximized(true)).toBe(true);
+
+      dockLayout = { overlay: true, minWidth: 160, maxWidth: 211 };
+      h.panel.refreshPresentation();
+      expect(h.panel.isMaximized()).toBe(false);
+      expect(h.panel.setMaximized(true)).toBe(false);
+      expect(maximize.hidden).toBe(true);
+      expect(close.hidden).toBe(false);
+      expect(h.panel.resizer.hidden).toBe(true);
+      expect(h.panel.setWidth(290, false)).toBe(211);
+      expect(h.panel.setWidth(120, false)).toBe(160);
+      expect(h.panel.element.style.getPropertyValue("--gfp-min-width")).toBe("160px");
+      expect(h.panel.element.classList.contains("gfp-overlay")).toBe(false);
+
+      close.click();
+      expect(h.panel.isOpen()).toBe(false);
+      expect(await h.panel.confirmClose()).toBe(false);
+      h.panel.toggleElement.click();
+      expect(h.panel.hasDirty()).toBe(true);
+      expect(h.document.querySelector<HTMLTextAreaElement>(".gfp-editor")!.value).toBe("Keep this unsaved draft");
+
+      dockLayout = { overlay: false, minWidth: 200, maxWidth: 290 };
+      h.panel.refreshPresentation();
+      expect(h.panel.setWidth(160, false)).toBe(200);
+      expect(h.panel.element.style.getPropertyValue("--gfp-min-width")).toBe("");
+      expect(maximize.hidden).toBe(false);
+      expect(close.hidden).toBe(false);
+    } finally {
+      h.panel.destroy();
+      await h.window.happyDOM.close();
+    }
+  });
+});
+
 describe("desktop maximize is opt-in on the mount", () => {
   it("does not render the control unless the mount asks for it", async () => {
     const h = harness();

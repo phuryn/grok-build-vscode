@@ -94,6 +94,7 @@
   "Clone {0}": "克隆 {0}",
   "Close": "关闭",
   "Close chat pane": "关闭聊天窗格",
+  "Close file panel": "关闭文件面板",
   "Close find": "关闭查找",
   "Closing the window leaves the app running in the tray, so your agent and any linked phone keep working. Turn this off to quit on close.": "关闭窗口后应用仍在托盘中运行，你的 agent 和已关联的手机可继续工作。关闭此项则关窗即退出。",
   "Cloud host update": "云主机更新",

@@ -880,8 +880,8 @@
     const closePanel = doc.createElement("button");
     closePanel.type = "button";
     closePanel.className = "gfp-close files-browse-close";
-    closePanel.title = "Close";
-    closePanel.setAttribute("aria-label", "Close file panel");
+    closePanel.title = mount.closeLabel || "Close";
+    closePanel.setAttribute("aria-label", mount.closeLabel || "Close file panel");
     closePanel.innerHTML = ICON.close;
 
     // Re-list the tree. Present on every mount — the phone needs it most, since
@@ -958,7 +958,10 @@
     toggleCount.setAttribute("aria-hidden", "true");
     toggle.appendChild(toggleCount);
     toggle.addEventListener("click", () => setOpen(!open));
-    closePanel.addEventListener("click", () => setOpen(false));
+    closePanel.addEventListener("click", () => {
+      setOpen(false);
+      mount.onCloseButton?.();
+    });
     title.addEventListener("click", showTree);
     changesBtn.addEventListener("click", () => {
       if (changesMode) showTree();
@@ -994,6 +997,10 @@
     function applyPresentation() {
       const wasOverlay = rootEl.classList.contains("gfp-overlay");
       const overlay = isOverlay();
+      const dock = mount.dockLayout?.();
+      // The host places a compact dock inside its tile. It shares the overlay
+      // controls without moving into the viewport overlay used by phones.
+      const overChat = overlay || dock?.overlay === true;
       rootEl.classList.toggle("gfp-overlay", overlay);
       rootEl.classList.toggle("gfp-docked", !overlay);
       // An overlay starts below the host's own bar, so it occupies the same band
@@ -1018,18 +1025,18 @@
       const bar = overlay && (from || toggle.parentElement);
       const top = bar ? Math.max(0, Math.round(bar.getBoundingClientRect().bottom)) : 0;
       rootEl.style.setProperty("--gfp-overlay-top", top + "px");
-      resizer.hidden = !open || overlay || maximized;
-      closePanel.hidden = !overlay;
-      // Overlay is already the full remaining viewport (phone / <900). A second
-      // maximize would fight that layout, so drop it and hide the control.
-      if (overlay && maximized) {
+      resizer.hidden = !open || overChat || maximized;
+      closePanel.hidden = !overlay && !dock;
+      if (dock?.overlay) rootEl.style.setProperty("--gfp-min-width", dock.minWidth + "px");
+      else rootEl.style.removeProperty("--gfp-min-width");
+      if (overChat && maximized) {
         maximized = false;
         rootEl.classList.toggle("gfp-maximized", false);
         paintMaximize();
         applyMaximizedBodyClass();
         if (typeof options.onMaximizedChanged === "function") options.onMaximizedChanged(false);
       }
-      if (maximizeBtn) maximizeBtn.hidden = overlay;
+      if (maximizeBtn) maximizeBtn.hidden = overChat;
       if (!overlay && mount.dockHost && rootEl.parentElement !== mount.dockHost) {
         mount.dockHost.appendChild(resizer);
         mount.dockHost.appendChild(rootEl);
@@ -1099,12 +1106,11 @@
 
     function setMaximized(next) {
       if (!canMaximize) return false;
-      const overlay = isOverlay();
-      // Overlay is already full-viewport; refuse rather than fight that layout.
-      const value = !!next && open && !overlay;
+      const overChat = isOverlay() || mount.dockLayout?.()?.overlay === true;
+      const value = !!next && open && !overChat;
       if (maximized === value) {
         paintMaximize();
-        if (maximizeBtn) maximizeBtn.hidden = overlay;
+        if (maximizeBtn) maximizeBtn.hidden = overChat;
         return maximized;
       }
       maximized = value;
@@ -1432,7 +1438,7 @@
         let plan = forcedStripPlan || planStrip({
           ...collectStripMeasurements(),
           slack: 12,
-          preferChip: coarsePointer(),
+          preferChip: coarsePointer() || mount.dockLayout?.()?.overlay === true,
         });
         applyPlanToDom(plan);
         // Promotions are speculative: verify against the RENDERED truth and
@@ -1460,7 +1466,7 @@
       }
     }
 
-    function setPanelWidth(px, persist) {
+    function defaultMaxPanelWidth() {
       // What a drag may eat into is the ROW the panel shares with the chat, not
       // the panel's own column.
       //
@@ -1488,8 +1494,14 @@
         || (mount.widthBasis && mount.widthBasis.getBoundingClientRect().width)
         || (rootEl.parentElement && rootEl.parentElement.getBoundingClientRect().width)
         || win.innerWidth || 800;
-      const max = Math.max(MIN_WIDTH, Math.min(hostWidth * 0.7, hostWidth - MIN_CHAT_WIDTH));
-      const value = Math.max(MIN_WIDTH, Math.min(max, Math.round(Number(px) || DEFAULT_WIDTH)));
+      return Math.max(MIN_WIDTH, Math.min(hostWidth * 0.7, hostWidth - MIN_CHAT_WIDTH));
+    }
+
+    function setPanelWidth(px, persist) {
+      const dock = mount.dockLayout?.();
+      const min = dock?.minWidth ?? MIN_WIDTH;
+      const max = dock?.maxWidth ?? defaultMaxPanelWidth();
+      const value = Math.max(min, Math.min(max, Math.round(Number(px) || DEFAULT_WIDTH)));
       rootEl.style.setProperty("--gfp-width", value + "px");
       if (persist !== false && options.preferences && options.preferences.setWidth) {
         options.preferences.setWidth(value);
@@ -1514,7 +1526,7 @@
         return unzoom(clientPx, zoomOf(doc));
       };
       resizer.addEventListener("pointerdown", (event) => {
-        if (!open || isOverlay()) return;
+        if (!open || isOverlay() || mount.dockLayout?.()?.overlay) return;
         dragging = true;
         startX = layoutPx(event.clientX);
         startWidth = layoutPx(rootEl.getBoundingClientRect().width);
@@ -1523,7 +1535,7 @@
         event.preventDefault();
       });
       resizer.addEventListener("pointermove", (event) => {
-        if (dragging) setPanelWidth(startWidth + startX - layoutPx(event.clientX));
+        if (dragging && !mount.dockLayout?.()?.overlay) setPanelWidth(startWidth + startX - layoutPx(event.clientX));
       });
       const stop = (event) => {
         if (!dragging) return;
@@ -4159,8 +4171,9 @@
     paintTitle();
     paintMaximize();
     paintRefresh();
+    // A desktop tile may already be narrow at mount. Keep the drag preference.
     setPanelWidth(options.preferences && options.preferences.getWidth
-      ? options.preferences.getWidth() : DEFAULT_WIDTH, true);
+      ? options.preferences.getWidth() : DEFAULT_WIDTH, !mount.dockLayout);
     if (typeof access.onScopeChanged === "function") {
       unsubscribeScope = access.onScopeChanged((scope) => void setScope(scope));
     }
@@ -4196,6 +4209,7 @@
       refreshDisplayed,
       refreshFileNotice,
       setWidth: setPanelWidth,
+      refreshPresentation: applyPresentation,
       setMaximized,
       isMaximized: () => maximized,
       openPath: openFile,

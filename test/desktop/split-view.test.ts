@@ -687,16 +687,46 @@ it("shows every chat in the desktop grid and aligns split headers", async () => 
     };
     const topBar = page.locator(".top-bar");
     const files = page.locator("#desk-ft-top-toggle");
+    const filesPanel = page.locator("#desk-ft-panel");
+    const closeFiles = page.getByRole("button", { name: "Close file panel", exact: true });
     await files.click();
-    await page.locator("#desk-ft-panel").waitFor();
+    await filesPanel.waitFor();
+    await closeFiles.waitFor({ state: "hidden" });
     const single = await topBar.boundingBox();
     const singleShell = await page.locator("#desk-ft-shell").boundingBox();
+    const singleChat = (await page.locator(".desk-ft-chat").boundingBox())!;
+    const singlePanel = (await filesPanel.boundingBox())!;
     expect(single!.width).toBeCloseTo(singleShell!.width, 0);
     expect(single!.height).toBeLessThan(44);
+    expect(singlePanel.x).toBeGreaterThanOrEqual(singleChat.x + singleChat.width - 1);
+    expect(singlePanel.width).toBeGreaterThanOrEqual(200);
     await files.click();
+
+    const inThemes = async (check: (theme: string) => Promise<void>) => {
+      const panes = await nativeChats(app!);
+      for (const theme of ["light", "dark"]) {
+        if (await page.locator("html").getAttribute("data-theme") !== theme) {
+          await page.locator("#desk-theme-toggle").click();
+        }
+        for (const { id } of panes) {
+          await vi.waitFor(async () => expect(await paneEval(app!, 'document.documentElement.dataset.theme', id)).toBe(theme));
+        }
+        await check(theme);
+      }
+    };
+    const capture = async (name: string) => {
+      const [pane] = await nativeChats(app!);
+      await paneEval(app!, `[...document.querySelectorAll(".msg.agent .body")].find(
+        el => el.textContent === "Acknowledged.").scrollIntoView({ block: "center" })`, pane.id);
+      const file = path.join(screenshots, name + ".png");
+      console.log(`${file} (${await captureWindow(app!, file, "Acknowledged.")})`);
+    };
+    await mkdir(screenshots, { recursive: true });
 
     await open(1);
     await files.click();
+    await closeFiles.waitFor();
+    await page.getByRole("button", { name: "Maximize file panel" }).waitFor();
     await vi.waitFor(async () => {
       const chatBar = (await topBar.boundingBox())!;
       const filesBar = (await page.locator("#desk-ft-panel .gfp-header").boundingBox())!;
@@ -711,7 +741,9 @@ it("shows every chat in the desktop grid and aligns split headers", async () => 
         expect(bottom).toBe(chatBar.y + chatBar.height);
       }
     });
-    await files.click();
+    await inThemes(theme => capture(`files-docked-split-${theme}`));
+    await closeFiles.click();
+    await filesPanel.waitFor({ state: "hidden" });
 
     const assertGrid = (expectedRows: number[]) => vi.waitFor(async () => {
       const area = (await page.locator("#desk-conversation-columns").boundingBox())!;
@@ -744,29 +776,126 @@ it("shows every chat in the desktop grid and aligns split headers", async () => 
       expect(columns.map(column => column.length)).toEqual(expectedRows);
       expect(await page.getByLabel("Switch to an open chat").count()).toBe(0);
     });
-    const captureGrid = async (count: number) => {
-      const panes = await nativeChats(app!);
-      for (const theme of ["light", "dark"]) {
-        if (await page.locator("html").getAttribute("data-theme") !== theme) {
-          await page.locator("#desk-theme-toggle").click();
-        }
-        for (const { id } of panes) {
-          await vi.waitFor(async () => expect(await paneEval(app!, 'document.documentElement.dataset.theme', id)).toBe(theme));
-        }
-        await paneEval(app!, `[...document.querySelectorAll(".msg.agent .body")].find(
-          el => el.textContent === "Acknowledged.").scrollIntoView({ block: "center" })`, panes[0].id);
-        const file = path.join(screenshots, `grid-${count}-1280x800-${theme}.png`);
-        console.log(`${file} (${await captureWindow(app!, file, "Acknowledged.")})`);
-      }
+    const setRailWidth = (width: number) => page.evaluate(value => {
+      localStorage.setItem("rail-width", String(value));
+      (window as any).__grokReclampSidePanels();
+    }, width);
+    const setWindowWidth = (width: number) => app!.evaluate(({ BrowserWindow }, width) => {
+      BrowserWindow.getAllWindows()[0].setSize(width, 800);
+    }, width);
+    const readOverlay = (id: number) => paneEval<{
+      tileWidth: number; width: number; top: number; barBottom: number; headerHeight: number; right: number;
+      chatRight: number; visibleChatWidth: number; bottom: number; composerTop: number; sendReachable: boolean;
+      maximizeHidden: boolean; compact: boolean; strip: string; visibleTabs: number; activeInside: boolean;
+      chipInside: boolean; chevron: boolean; closeInside: boolean; headerFits: boolean;
+    }>(app!, `(() => {
+      const get = sel => document.querySelector(sel);
+      const rect = sel => get(sel).getBoundingClientRect();
+      const tile = rect("#desk-ft-shell");
+      const files = rect("#desk-ft-panel");
+      const chat = rect(".desk-ft-chat");
+      const bar = rect(".desk-ft-chat > .top-bar");
+      const header = rect(".gfp-header");
+      const tabs = get(".gfp-tabs");
+      const send = rect("#send-btn");
+      const hit = document.elementFromPoint(send.x + send.width / 2, send.y + send.height / 2);
+      const fits = (sel, container) => {
+        const box = get(sel)?.getBoundingClientRect();
+        return !!box?.width && box.left >= container.left && box.right <= container.right + 1 &&
+          box.top >= container.top && box.bottom <= container.bottom + 1;
+      };
+      return {
+        tileWidth: tile.width, width: files.width, top: files.top, barBottom: bar.bottom,
+        headerHeight: header.height, right: files.right, chatRight: chat.right,
+        visibleChatWidth: files.left - chat.left, bottom: files.bottom, composerTop: rect(".composer").top,
+        sendReachable: !!hit?.closest("#send-btn"), maximizeHidden: get("#desk-ft-maximize").hidden,
+        compact: get("#desk-ft-shell").classList.contains("desk-ft-pair-compact"),
+        strip: get("#desk-ft-panel").dataset.stripState, visibleTabs: tabs.querySelectorAll(".gfp-tab:not([hidden])").length,
+        activeInside: !!get(".gfp-tab-active") && fits(".gfp-tab-active .gfp-tab-close", rect(".gfp-tab-active")),
+        chipInside: fits(".gfp-overflow-chip", tabs.getBoundingClientRect()), chevron: !!get(".gfp-overflow-chip svg"),
+        closeInside: fits(".gfp-close", header),
+        headerFits: getComputedStyle(get(".gfp-header")).flexWrap === "nowrap" &&
+          tabs.scrollWidth <= tabs.clientWidth + 1 && get(".gfp-header").scrollWidth <= header.width + 1,
+      };
+    })()`, id);
+    const expectOverlay = (id: number, expectedWidth?: number) => vi.waitFor(async () => {
+      const state = await readOverlay(id);
+      expect(state.tileWidth).toBeLessThan(561);
+      expect(state.width).toBe(Math.max(160, Math.min(290, Math.round(state.tileWidth * 0.62))));
+      if (expectedWidth !== undefined) expect(Math.abs(state.width - expectedWidth)).toBeLessThanOrEqual(expectedWidth === 160 ? 0 : 8);
+      expect(state.top).toBeCloseTo(state.barBottom, 0);
+      expect(state.headerHeight).toBe(44);
+      expect(state.right).toBeCloseTo(state.chatRight, 0);
+      expect(state.visibleChatWidth).toBeGreaterThan(0);
+      expect(state.bottom).toBeLessThanOrEqual(state.composerTop + 0.5);
+      expect(state).toMatchObject({
+        sendReachable: true, maximizeHidden: true, compact: true, strip: "c", visibleTabs: 1,
+        chipInside: true, chevron: true, closeInside: true, activeInside: true, headerFits: true,
+      });
+    });
+    const openFiles = async (id: number) => {
+      const opened = await paneEval(app!, `(async () => {
+        const panel = window.__grokDeskFilePanel;
+        panel.toggleElement.click();
+        const paths = ["package.json", "src/index.ts", "src/util.ts", "docs/notes.md"];
+        const results = [];
+        for (const rel of paths) results.push((await panel.openPath(rel)).ok);
+        return results;
+      })()`, id);
+      expect(opened).toEqual([true, true, true, true]);
     };
-    await mkdir(screenshots, { recursive: true });
+    const closePaneFiles = (id: number) => paneEval(app!, `(() => {
+      const close = document.querySelector(".gfp-close");
+      close.focus();
+      close.click();
+      return { open: window.__grokDeskFilePanel.isOpen(), focus: document.activeElement.id };
+    })()`, id);
+
     await open(2);
     await open(3);
     await assertGrid([2, 2]);
-    await captureGrid(4);
+    await inThemes(theme => capture(`grid-4-1280x800-${theme}`));
+
+    // With the default rail, a single open panel can widen its column to dock.
+    // Widening Projects leaves under 922 px for both column minimums.
+    const rail = page.locator("#projects-rail");
+    const originalRailWidth = (await rail.boundingBox())!.width;
+    await setRailWidth(380);
+    await vi.waitFor(async () => {
+      expect((await rail.boundingBox())!.width).toBe(380);
+      expect((await nativeChats(app!))[2].bounds.width).toBeLessThan(460);
+    });
+    await assertGrid([2, 2]);
+    const fourChats = await nativeChats(app);
+    const overlayId = fourChats[2].id;
+    await vi.waitFor(async () => expect(await paneEval(app!, 'document.querySelector("#input").disabled', overlayId)).toBe(false));
+    await paneEval(app, `(() => {
+      document.querySelector("#input").focus();
+      document.execCommand("insertText", false, "Draft beside Files");
+    })()`, overlayId);
+    await openFiles(overlayId);
+    await inThemes(async theme => {
+      await expectOverlay(overlayId);
+      expect(await nativeChats(app!)).toEqual(fourChats);
+      await capture(`files-over-chat-1280x800-${theme}`);
+    });
+    expect(await closePaneFiles(overlayId)).toEqual({ open: false, focus: "input" });
+    expect(await paneEval(app, 'document.querySelector("#input").value', overlayId)).toBe("Draft beside Files");
+    expect(await nativeChats(app)).toEqual(fourChats);
+    await setRailWidth(originalRailWidth);
+
     for (let i = 4; i < sessions.length; i++) await open(i);
     await assertGrid([2, 2, 3]);
-    await captureGrid(7);
+    await inThemes(theme => capture(`grid-7-1280x800-${theme}`));
+    const seven = await nativeChats(app);
+    const portraitTile = seven.at(-1)!.id;
+    await openFiles(portraitTile);
+    await inThemes(async () => { await expectOverlay(portraitTile, 211); });
+    await setWindowWidth(960);
+    await inThemes(async () => { await expectOverlay(portraitTile, 160); });
+    await setWindowWidth(1280);
+    await expectOverlay(portraitTile, 211);
+    expect(await closePaneFiles(portraitTile)).toEqual({ open: false, focus: "input" });
 
     for (const { id } of await nativeChats(app)) {
       await paneEval(app, 'requestAnimationFrame(() => document.querySelector("#desk-conversation-close").click())', id);
@@ -774,7 +903,8 @@ it("shows every chat in the desktop grid and aligns split headers", async () => 
     }
     await page.locator("#desk-conversation-columns").waitFor({ state: "detached" });
     await files.click();
-    await page.locator("#desk-ft-panel").waitFor();
+    await filesPanel.waitFor();
+    await closeFiles.waitFor({ state: "hidden" });
     expect((await topBar.boundingBox())!.height).toBe(single!.height);
   } catch (error) {
     await reportSplitFailure(app, path.join(temp, "desktop-wire.jsonl"));

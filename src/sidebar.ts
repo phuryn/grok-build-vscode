@@ -26819,7 +26819,7 @@ ${filePanelStyle}
 ${desktopChrome ? `<script nonce="${nonce}">try{if(localStorage.getItem("desk-rail-open")==="0")document.body.classList.add("desk-rail-collapsed")}catch(e){}</script>` : ""}
 ${railMount}
 ${openMain}
-  <header class="top-bar"${desktopChat ? ` data-files-label="${l10n("Toggle file panel")}"` : ""}>
+  <header class="top-bar"${desktopChat ? ` data-files-label="${l10n("Toggle file panel")}" data-files-close-label="${l10n("Close file panel")}"` : ""}>
     <div id="session-name-chip" class="session-name-chip" hidden>
       <button id="session-name-label" class="session-name-label" type="button"></button>
       <!-- Which project this conversation belongs to. History went

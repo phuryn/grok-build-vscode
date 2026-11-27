@@ -518,7 +518,10 @@ in a `WebContentsView` and uses the same bindings as an editor tab. The window
 renderer measures the space after Projects. `planConversationGrid` assigns cells
 in chat order with up to three rows per column and the main chat at the top left.
 Chat count, available space and zoom determine the rows and columns. Open Files
-docks affect column width when every column's minimum fits. Each
+docks affect column width when every column's minimum fits. On a tile too
+narrow for chat plus dock, `planDesktopFiles` (`file-tree-panel.ts`) places Files
+over the chat's right side through the shared component's `dockLayout` mount
+option; phone and browser mounts keep the component's defaults. Each
 renderer mounts the shared Files component and invokes the same desktop file
 IPC. The registered sender and main frame resolve to a host-owned chat root,
 and a root named by the renderer only checks freshness. Chat file and diff opens

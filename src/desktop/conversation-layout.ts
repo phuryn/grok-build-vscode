@@ -163,8 +163,8 @@ export const DESKTOP_CONVERSATION_LAYOUT_BOOT = `
       setDrawer("");
       columns = undefined;
       measuredZoom = undefined;
-      window.__grokReclampSidePanels?.();
       window.__grokFitDesktopFiles?.();
+      window.__grokReclampSidePanels?.();
       return;
     }
     if (!columns?.isConnected) {

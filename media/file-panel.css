@@ -79,7 +79,7 @@ body.desk-rail-collapsed .desk-rail-open-btn { display: inline-flex; }
   flex: 0 0 var(--gfp-width);
   flex-direction: column;
   width: var(--gfp-width);
-  min-width: 200px;
+  min-width: var(--gfp-min-width, 200px);
   min-height: 0;
   overflow: hidden;
   container: desk-ft / inline-size;

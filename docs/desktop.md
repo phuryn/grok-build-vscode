@@ -88,7 +88,11 @@ left to right, with up to three rows per column. The window's own chat stays
 at the top left. Each Files button opens that chat's project tree and Changes.
 Files also opens files and diffs requested from its chat. Opening Files can
 widen its column while preserving the order and rows of the grid.
-In split view, the chat bars match the Projects and docked Files header height.
+In split view, Files docks when the tile can fit the chat and a 200 px panel.
+The docked Files and chat headers line up with Projects. On narrower tiles,
+Files opens between the chat bar and composer, covering part of the transcript.
+Its header has a close button in both placements. Closing Files leaves its open
+tabs and edits available when you reopen it.
 
 While multiple chats are open, **Close chat pane** removes any chat from
 the window. Its agent keeps running, and reopening the conversation recovers
