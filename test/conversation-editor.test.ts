@@ -1010,7 +1010,7 @@ describe("desktop Projects routing", () => {
         pane.receive({ type: "ready" });
         pane.receive({ type: "editorChatDraft", binding: old.binding(pane), text: `Unsent in pane ${i + 1}` });
       }
-      old.controller.revealDesktopPane(old.panels[0].webview);
+      await old.controller.openDesktopConversationFromRail("one", "/repo");
       old.controller.saveDesktopMainDraft("sidebar", "Unsent in main", []);
       old.controller.preserveDesktopConversationLayout();
       for (const pane of old.panels) pane.dispose();
@@ -1026,7 +1026,7 @@ describe("desktop Projects routing", () => {
       };
       next.controller.bindSessionLoad = vi.fn();
       next.controller.startSession = vi.fn(async () => true);
-      expect(next.controller.restoreDesktopConversationLayout()).toBe(next.panels[0].webview);
+      next.controller.restoreDesktopConversationLayout();
       expect(next.panels.map(pane => next.controller.desktopEditorSession(pane.webview).activeSessionId)).toEqual(["one", "two"]);
       expect(next.main).toHaveBeenLastCalledWith(expect.objectContaining({
         type: "projectsRailChatTarget", editor: true, sessionId: "one",
@@ -1133,18 +1133,17 @@ describe("desktop Projects routing", () => {
     expect(saveMainDraft).toHaveBeenLastCalledWith("one", "Unsplit again", []);
   });
 
-  it("reveals an overflow pane by its existing webview without changing its session or draft", async () => {
+  it("focuses a pane from Projects without changing its session or draft", async () => {
     const { controller, panels, binding, first, second, host } = desktop();
     await controller.openDesktopConversationBeside("one", "/repo");
     await controller.openDesktopConversationBeside("two", "/repo");
-    const [hidden, shown] = panels;
-    hidden.visible = hidden.active = false;
-    hidden.receive({ type: "ready" });
-    hidden.receive({ type: "editorChatDraft", binding: binding(hidden), text: "Keep this unsent draft" });
-    controller.revealDesktopPane(hidden.webview);
-    expect(hidden.reveal).toHaveBeenCalled();
-    expect(controller.desktopEditorSession(hidden.webview)).toBe(first);
-    expect(controller.desktopEditorSession(shown.webview)).toBe(second);
+    const [left, right] = panels;
+    left.receive({ type: "ready" });
+    left.receive({ type: "editorChatDraft", binding: binding(left), text: "Keep this unsent draft" });
+    await controller.openDesktopConversationFromRail("one", "/repo");
+    expect(left.reveal).toHaveBeenCalled();
+    expect(controller.desktopEditorSession(left.webview)).toBe(first);
+    expect(controller.desktopEditorSession(right.webview)).toBe(second);
     expect(controller.editorDrafts.get(first)?.text).toBe("Keep this unsent draft");
     expect(host.openEditorWebview).toHaveBeenCalledTimes(2);
     expect(controller.openSession).not.toHaveBeenCalled();

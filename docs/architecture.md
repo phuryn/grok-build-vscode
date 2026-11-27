@@ -515,8 +515,10 @@ plain clicks or keyboard activation reuse the preferred chat or reveal an
 already-open conversation. The embedded rail leaves chat focus tracking to
 the chats themselves. Each added pane hosts the conversation-only renderer
 in a `WebContentsView` and uses the same bindings as an editor tab. The window
-renderer measures the space after Projects. `planConversationColumns` assigns
-chat and Files pairs, with a 360 px chat floor and a 200 px dock floor. Each
+renderer measures the space after Projects. `planConversationGrid` assigns cells
+in chat order with up to three rows per column and the main chat at the top left.
+Chat count, available space and zoom determine the rows and columns. Open Files
+docks affect column width when every column's minimum fits. Each
 renderer mounts the shared Files component and invokes the same desktop file
 IPC. The registered sender and main frame resolve to a host-owned chat root,
 and a root named by the renderer only checks freshness. Chat file and diff opens

@@ -5,44 +5,70 @@ export const CHAT_MIN_WIDTH = 360;
 export const FILES_MIN_WIDTH = 200;
 // The 5px grab area overlaps its neighbours by 2px on each side.
 export const FILES_RESIZER_WIDTH = 1;
+const ROW_MIN_HEIGHT = 200;
+const MAX_ROWS = 3;
 
-/** Keep chat/panel pairs together. Size the pairs evenly unless one needs more room. */
-export function planConversationColumns(width: number, filesOpen: readonly boolean[], preferred = -1, zoom = 1) {
-  const minimum = (index: number) => Math.ceil(zoom * (CHAT_MIN_WIDTH +
-    (filesOpen[index] ? FILES_MIN_WIDTH + FILES_RESIZER_WIDTH : 0)));
-  const visible = [0];
-  let remaining = width - minimum(0);
-  const tryFit = (index: number) => {
-    const cost = minimum(index) + 1;
-    if (remaining < cost) return;
-    visible.push(index);
-    remaining -= cost;
-  };
-  if (preferred > 0 && preferred < filesOpen.length) tryFit(preferred);
-  for (let index = 1; index < filesOpen.length; index++) {
-    if (index !== preferred) tryFit(index);
+/** Return cells in chat order with integer bounds relative to the conversation area, in DIPs. */
+export function planConversationGrid(width: number, height: number, filesOpen: readonly boolean[], zoom = 1) {
+  const count = filesOpen.length;
+  if (!count) return [];
+  const fit = Math.max(1, Math.floor((width + 1) / (CHAT_MIN_WIDTH * zoom + 1)));
+  const rowsMax = Math.min(MAX_ROWS, Math.max(1, Math.floor((height + 1) / (ROW_MIN_HEIGHT * zoom + 1))));
+  const columnCount = Math.min(count, Math.max(fit, Math.ceil(count / rowsMax)));
+  const rows: number[] = Array(columnCount).fill(1);
+  let extra = count - columnCount;
+  for (let row = 1; row < rowsMax && extra > 0; row++) {
+    for (let column = columnCount - 1; column >= 0 && extra > 0; column--) {
+      rows[column]++;
+      extra--;
+    }
   }
-  visible.sort((a, b) => a - b);
-  let space = width - (visible.length - 1);
-  const widths = new Map<number, number>();
-  for (const index of [...visible].sort((a, b) => minimum(b) - minimum(a))) {
-    const share = Math.ceil(space / (visible.length - widths.size));
-    const size = visible.length === 1 ? space : Math.max(minimum(index), share);
-    widths.set(index, size);
-    space -= size;
+
+  // Reserve the divider only when there is room for it. A transient empty
+  // rectangle (e.g. while resizing) must still yield in-bounds cells.
+  const columnGap = width >= 2 * columnCount - 1 ? 1 : 0;
+  let widthLeft = width - columnGap * (columnCount - 1);
+  let start = 0;
+  const filesWidth = FILES_MIN_WIDTH + FILES_RESIZER_WIDTH;
+  const columns = rows.map((rowCount, index) => {
+    const hasFiles = filesOpen.slice(start, start + rowCount).some(Boolean);
+    start += rowCount;
+    return { index, need: Math.ceil(zoom * (CHAT_MIN_WIDTH + (hasFiles ? filesWidth : 0))) };
+  });
+  const minimumsFit = columns.reduce((sum, { need }) => sum + need, 0) <= widthLeft;
+  const widths: number[] = [];
+  if (minimumsFit) columns.sort((a, b) => b.need - a.need);
+  for (const [i, { index, need }] of columns.entries()) {
+    const share = Math.ceil(widthLeft / (columnCount - i));
+    const assigned = minimumsFit ? Math.max(need, share) : share;
+    widths[index] = assigned;
+    widthLeft -= assigned;
   }
-  return visible.map(index => ({ index, width: widths.get(index)! }));
+
+  const cells: { x: number; y: number; width: number; height: number }[] = [];
+  let x = 0;
+  for (const [column, rowCount] of rows.entries()) {
+    const rowGap = height >= 2 * rowCount - 1 ? 1 : 0;
+    let heightLeft = height - rowGap * (rowCount - 1);
+    let y = 0;
+    for (let row = 0; row < rowCount; row++) {
+      const rowHeight = Math.ceil(heightLeft / (rowCount - row));
+      cells.push({ x, y, width: widths[column], height: rowHeight });
+      y += rowHeight + rowGap;
+      heightLeft -= rowHeight;
+    }
+    x += widths[column] + columnGap;
+  }
+  return cells;
 }
 
-// The DOM measures the space after Projects. The host assigns the first pair
-// and the native views within that rectangle in window DIPs.
+// The DOM measures the space after Projects. The host assigns the main chat
+// and the native views their cells within that rectangle in window DIPs.
 export const DESKTOP_CONVERSATION_LAYOUT_BOOT = `
 (() => {
   const CHAT_MIN_WIDTH = ${CHAT_MIN_WIDTH};
   const compactWidth = CHAT_MIN_WIDTH + 180 + 200 + 8;
   let columns;
-  let slot;
-  let picker;
   let observer;
   let layers;
   let covered;
@@ -106,33 +132,13 @@ export const DESKTOP_CONVERSATION_LAYOUT_BOOT = `
       }, zoom, !!window.__grokDeskFilePanel?.isOpen());
     });
   };
-  window.__grokConversationPicker = (hidden, stacked) => {
-    if (!picker) return;
-    picker.hidden = hidden.length === 0 && !stacked;
-    if (picker.hidden && document.activeElement === picker) document.getElementById("input")?.focus();
-    const unread = hidden.filter(chat => chat.unread).length;
-    const label = hidden.length ? "More chats (" + hidden.length + ")" : "Chats";
-    const option = (title, value) => {
-      const node = document.createElement("option");
-      node.value = value;
-      node.textContent = title;
-      return node;
-    };
-    picker.replaceChildren(option(label + (unread ? " · " + unread + " unread" : ""), ""),
-      ...hidden.map(chat => option(chat.title + (chat.unread ? " · Unread" : ""), String(chat.id))));
-    picker.options[0].disabled = true;
-    picker.value = "";
-    picker.dataset.unread = String(unread > 0);
-    if (stacked) picker.append(option(picker.dataset.firstChatLabel, "0"));
-  };
   window.__grokCloseCompactProjects = () => {
     if (body().dataset.splitDrawer === "projects") setDrawer("");
   };
-  window.__grokConversationGeometry = (width, stacked, nativeCount) => {
+  window.__grokConversationGeometry = (width, height) => {
     if (!columns?.isConnected) return;
-    columns.classList.toggle("desk-chat-stacked", stacked);
-    columns.style.setProperty("--desk-first-column-width", width + "px");
-    slot.hidden = !nativeCount;
+    columns.style.setProperty("--desk-main-cell-width", width + "px");
+    columns.style.setProperty("--desk-main-cell-height", height + "px");
   };
   window.__grokMeasureConversationLayout = measure;
   window.__grokConversationLayout = (count) => {
@@ -155,9 +161,7 @@ export const DESKTOP_CONVERSATION_LAYOUT_BOOT = `
       body().classList.remove("desk-split-compact");
       body().style.removeProperty("--desk-drawer-top");
       setDrawer("");
-      picker?.remove();
       columns = undefined;
-      slot = undefined;
       measuredZoom = undefined;
       window.__grokReclampSidePanels?.();
       window.__grokFitDesktopFiles?.();
@@ -172,26 +176,10 @@ export const DESKTOP_CONVERSATION_LAYOUT_BOOT = `
       columns = document.createElement("div");
       columns.id = "desk-conversation-columns";
       shell.before(columns);
-      slot = document.createElement("div");
-      slot.id = "desk-conversation-slot";
-      slot.setAttribute("aria-hidden", "true");
-      columns.append(shell, slot);
+      columns.append(shell);
       window.__grokReclampSidePanels?.();
       window.__grokFitDesktopFiles?.();
       window.__grokRefreshDesktopTheme?.();
-      picker = document.createElement("select");
-      picker.id = "desk-conversation-picker";
-      picker.dataset.firstChatLabel = header?.dataset.firstChatLabel || "";
-      picker.setAttribute("aria-label", "Switch to an open chat");
-      picker.hidden = true;
-      picker.addEventListener("change", () => {
-        if (picker.value !== "") {
-          if (body().dataset.splitDrawer) setDrawer("");
-          bridge()?.showPane(Number(picker.value));
-        }
-        picker.value = "";
-      });
-      header?.after(picker);
       observer?.disconnect();
       observer = new ResizeObserver(measure);
       observer.observe(columns);

@@ -3268,7 +3268,7 @@
   // Its z-index (110) is below Settings (120), so it does not set modalAbove:
   // Settings must keep its existing Escape path when it is over this preview.
   function desktopSplitFileViews() {
-    return desktopChatPane || !!(desktopConversations && document.getElementById("desk-conversation-slot"));
+    return desktopChatPane || !!(desktopConversations && document.getElementById("desk-conversation-columns"));
   }
 
   function hostPreviewsInApp() {

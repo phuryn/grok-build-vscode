@@ -5,7 +5,7 @@ import type { BrowserWindow, IpcMainInvokeEvent, Rectangle } from "electron";
 import type { Host, HostEditorWebview } from "../host";
 import {
   DESKTOP_CONVERSATION_PANE_ARG, type DesktopChatDraftSnapshot, type DesktopPaneCloseSnapshot,
-  planConversationColumns,
+  planConversationGrid,
 } from "./conversation-layout";
 import type { DesktopOpenFileContext } from "./desktop-policy";
 import { APP_DOCUMENT_URL, desktopChromeBootSource, ElectronWebview } from "./electron-webview";
@@ -20,19 +20,13 @@ type Pane = {
   panel: HostEditorWebview;
   stateChanged: () => void;
   shown: boolean;
-  inLayout: boolean;
-  unread: boolean;
   filesOpen: boolean;
 };
 
 export class DesktopConversationPanes {
   private readonly panes = new Map<number, Pane>();
   private covered = false;
-  private showBelow = false;
-  private stacked = false;
-  private preferred?: number;
   private pendingFocus?: number;
-  private pickerSnapshot?: string;
   private geometry?: string;
   private promoting = false;
 
@@ -71,9 +65,8 @@ export class DesktopConversationPanes {
     const stateChanged = () => { for (const listener of stateListeners) listener(); };
     const dispose = () => {
       if (!this.panes.delete(id)) return;
-      if (this.preferred === id) this.preferred = undefined;
       if (this.pendingFocus === id) this.pendingFocus = undefined;
-      if (!this.panes.size) this.covered = this.showBelow = this.stacked = false;
+      if (!this.panes.size) this.covered = false;
       if (!win.isDestroyed()) win.contentView.removeChildView(view);
       for (const listener of disposeListeners) listener();
       disposeListeners.clear();
@@ -84,17 +77,14 @@ export class DesktopConversationPanes {
     const panes = this.panes;
     const reveal = () => {
       if (!panes.has(id) || contents.isDestroyed()) return;
-      this.preferred = id;
-      if (panel.visible) return contents.focus();
-      this.pendingFocus = id;
-      this.showBelow = true;
-      this.refreshLayout();
+      this.pendingFocus = panel.visible ? undefined : id;
+      if (panel.visible) contents.focus();
     };
     let title = opts.title;
     const panel: HostEditorWebview = {
       webview,
       get title() { return title; },
-      set title(value) { title = value; updatePicker(); },
+      set title(value) { title = value; },
       get visible() {
         return !!panes.get(id)?.shown && !win.isDestroyed() && win.isVisible() && !win.isMinimized();
       },
@@ -110,23 +100,7 @@ export class DesktopConversationPanes {
       },
       dispose,
     };
-    const updatePicker = () => this.publishPicker();
-    const pane: Pane = { view, webview, url, panel, stateChanged, shown: false, inLayout: false, unread: false, filesOpen: false };
-    let sessionId: unknown;
-    webview.onHostMessage = message => {
-      if (!message || typeof message !== "object") return;
-      const frame = message as { type?: string; sessionId?: unknown; id?: unknown; dot?: string };
-      if (frame.type === "editorChatBinding" || frame.type === "session") {
-        if (sessionId !== frame.sessionId) {
-          sessionId = frame.sessionId;
-          pane.unread = false;
-          updatePicker();
-        }
-      } else if (frame.type === "sessionDot" && frame.id === sessionId) {
-        pane.unread = frame.dot === "unread" || frame.dot === "error";
-        updatePicker();
-      }
-    };
+    const pane: Pane = { view, webview, url, panel, stateChanged, shown: false, filesOpen: false };
 
     installWindowSecurityLocks({ webContents: contents }, {
       log: this.log,
@@ -145,10 +119,7 @@ export class DesktopConversationPanes {
       void contents.executeJavaScript("window.__grokConversationClose?.(true)").catch(() => {});
       void injectFileTreePanelLogged(contents, this.log);
     });
-    contents.on("focus", () => {
-      if (pane.shown) this.preferred = id;
-      stateChanged();
-    });
+    contents.on("focus", stateChanged);
     contents.on("blur", stateChanged);
     contents.once("destroyed", dispose);
     view.setVisible(false);
@@ -209,7 +180,7 @@ export class DesktopConversationPanes {
     const dirty = await Promise.all([...this.panes.values()].map(({ view }) =>
       view.webContents.executeJavaScript("window.__grokDeskFilePanel?.hasDirty()").catch(() => !view.webContents.isDestroyed())));
     if (!dirty.some(Boolean)) return true;
-    // A chat may be in More chats. Confirm in the visible window.
+    // Confirm once in the window for edits across all panes.
     return await contents.executeJavaScript("window.__grokDeskFtBeforeClose?.(true)") === true;
   }
 
@@ -255,7 +226,7 @@ export class DesktopConversationPanes {
     let lostFocus = false;
     for (const pane of this.panes.values()) {
       const { width, height } = pane.view.getBounds();
-      const shown = !this.covered && pane.inLayout && width > 0 && height > 0;
+      const shown = !this.covered && width > 0 && height > 0;
       if (shown === pane.shown) continue;
       lostFocus ||= !shown && pane.view.webContents.isFocused();
       pane.shown = shown;
@@ -275,7 +246,6 @@ export class DesktopConversationPanes {
   refreshLayout(): void {
     this.geometry = undefined;
     this.runInMain(`window.__grokConversationLayout?.(${this.panes.size}); window.__grokConversationClose?.(${this.panes.size > 0})`);
-    this.publishPicker(true);
   }
 
   private runInMain(source: string): void {
@@ -284,40 +254,11 @@ export class DesktopConversationPanes {
     void win.webContents.executeJavaScript(source).catch(() => {});
   }
 
-  private publishPicker(force = false): void {
-    const hidden = [...this.panes].filter(([, pane]) => !pane.inLayout)
-      .map(([id, pane]) => ({ id, title: pane.panel.title, unread: pane.unread }));
-    const snapshot = JSON.stringify([hidden, this.stacked]);
-    if (!force && snapshot === this.pickerSnapshot) return;
-    this.pickerSnapshot = snapshot;
-    this.runInMain(`window.__grokConversationPicker?.(...${snapshot})`);
-  }
-
-  webviewForPicker(id: number): HostEditorWebview["webview"] | undefined {
-    return this.panes.get(id)?.webview;
-  }
-
-  preferRestoredPane(webview: HostEditorWebview["webview"]): void {
-    for (const [id, pane] of this.panes) {
-      if (pane.webview === webview) {
-        this.preferred = id;
-        return;
-      }
-    }
-  }
-
   windowVisibilityChanged(): void {
     for (const pane of this.panes.values()) {
       if (pane.shown) pane.stateChanged();
     }
-  }
-
-  showMainOnly(): void {
-    this.showBelow = false;
-    this.pendingFocus = undefined;
-    this.refreshLayout();
-    this.getWindow()?.webContents.focus();
-    this.focusMain();
+    this.applyVisibility();
   }
 
   focusedContents(): Electron.WebContents | undefined {
@@ -331,37 +272,24 @@ export class DesktopConversationPanes {
     const { x, y, width, height } = raw as Rectangle;
     if (![x, y, width, height].every(Number.isSafeInteger) || x < 0 || y < 0 || width < 0 || height < 0) return;
     const content = win.getContentBounds();
-    const usableWidth = Math.max(0, Math.min(width, content.width - x));
-    const usableHeight = Math.max(0, Math.min(height, content.height - y));
-    const entries = [...this.panes];
-    const preferred = entries.findIndex(([id]) => id === this.preferred) + 1;
-    let columns = planConversationColumns(usableWidth, [mainFilesOpen, ...entries.map(([, pane]) => pane.filesOpen)], preferred, zoom);
-    this.stacked = this.showBelow && preferred > 0 && !columns.some(column => column.index === preferred);
-    if (this.stacked) columns = [{ index: 0, width: usableWidth }, { index: preferred, width: usableWidth }];
-    else if (columns.length > 1) this.showBelow = false;
-    const geometry = JSON.stringify([columns[0].width / zoom, this.stacked, columns.length - 1]);
+    const left = Math.min(x, content.width);
+    const top = Math.min(y, content.height);
+    const usableWidth = Math.min(width, content.width - left);
+    const usableHeight = Math.min(height, content.height - top);
+    if (!Number.isFinite(Math.max(usableWidth, usableHeight) / zoom)) return;
+    const panes = [...this.panes.values()];
+    const [main, ...cells] = planConversationGrid(usableWidth, usableHeight,
+      [mainFilesOpen, ...panes.map(pane => pane.filesOpen)], zoom);
+    const geometry = JSON.stringify([main.width / zoom, main.height / zoom]);
     if (geometry !== this.geometry) {
       this.geometry = geometry;
       this.runInMain(`window.__grokConversationGeometry?.(...${geometry})`);
     }
-    const bounds = new Map<number, Rectangle>();
-    let left = x;
-    for (const { index, width: pairWidth } of columns) {
-      if (index > 0) {
-        const top = this.stacked ? y + Math.ceil(usableHeight / 2) + 1 : y;
-        bounds.set(entries[index - 1][0], { x: this.stacked ? x : left, y: top, width: pairWidth,
-          height: Math.max(0, usableHeight - (top - y)) });
-      }
-      left += pairWidth + 1;
-    }
-    for (const [id, pane] of this.panes) {
-      const next = bounds.get(id);
-      if (next) pane.view.setBounds(next);
-      else if (pane.inLayout) pane.view.setBounds({ x: 0, y: 0, width: 0, height: 0 });
-      pane.inLayout = !!next;
+    for (const [i, pane] of panes.entries()) {
+      const cell = cells[i];
+      pane.view.setBounds({ ...cell, x: left + cell.x, y: top + cell.y });
     }
     this.applyVisibility();
-    this.publishPicker();
   }
 
   dispose(): void {

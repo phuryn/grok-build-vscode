@@ -970,14 +970,6 @@ async function createApp(): Promise<void> {
     ipcMain.on("desk-conversations:bounds", (event, bounds: unknown, zoom: unknown, filesOpen: unknown) => {
       if (isTrustedMainFrameIpc(event, () => mainWindow)) conversationPanes.layout(bounds, zoom, filesOpen);
     });
-    ipcMain.on("desk-conversations:pick", (event, id: unknown) => {
-      if (typeof id !== "number" || !Number.isSafeInteger(id) || !isTrustedMainFrameIpc(event, () => mainWindow)) return;
-      if (id === 0) conversationPanes.showMainOnly();
-      else {
-        const chosen = conversationPanes.webviewForPicker(id);
-        if (chosen) sidebar?.revealDesktopPane(chosen);
-      }
-    });
     ipcMain.on("desk-conversations:covered", (event, covered: unknown) => {
       if (typeof covered === "boolean" && isTrustedMainFrameIpc(event, () => mainWindow)) {
         conversationPanes.setCovered(covered);
@@ -1029,7 +1021,7 @@ async function createApp(): Promise<void> {
   mainWindow.webContents.on("did-start-navigation", (_event, url, inPlace, isMainFrame) => {
     if (!inPlace && isMainFrame && isAppDocumentUrl(url)) conversationPanes?.setCovered(true);
   });
-  // Remount Files before the chrome fades and native columns after a reload.
+  // Remount Files before the chrome fades and the native grid after a reload.
   mainWindow.webContents.on("did-finish-load", () => {
     pinAppDocumentZoom(mainWindow);
     void (async () => {
@@ -1051,10 +1043,7 @@ async function createApp(): Promise<void> {
       mainWindow?.show();
     },
   });
-  if (conversationPanes) {
-    const preferred = sidebar.restoreDesktopConversationLayout();
-    if (preferred) conversationPanes.preferRestoredPane(preferred);
-  }
+  if (conversationPanes) sidebar.restoreDesktopConversationLayout();
 
   // Windows/macOS/AppImage update in-app. Debian installs get a direct .deb
   // download notice; apt handles elevation, dependencies and maintainer scripts.

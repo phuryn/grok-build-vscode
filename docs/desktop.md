@@ -83,11 +83,12 @@ the lighter highlight. Desktop `config.json` supports `grok.openConversationIn`
 with `lastUsed` (the default), `sidebar` (the first chat), or `editor` (an added
 pane).
 
-Every chat has a Files dock to its right. The dock shows the chat's project
-tree and Changes, and opens files and diffs requested from that chat. Each
-Files button controls its own dock. If the window runs out of room,
-**More chats** lists the other open chats. Closing a Files dock gives its
-space back to its chat.
+All open chats share the window. As space changes, chats fill columns from
+left to right, with up to three rows per column. The window's own chat stays
+at the top left. Each Files button opens that chat's project tree and Changes.
+Files also opens files and diffs requested from its chat. Opening Files can
+widen its column while preserving the order and rows of the grid.
+In split view, the chat bars match the Projects and docked Files header height.
 
 While multiple chats are open, **Close chat pane** removes any chat from
 the window. Its agent keeps running, and reopening the conversation recovers
@@ -97,7 +98,7 @@ their drafts and Files dock preferences. File tabs and their edit buffers
 live in memory while the app is running.
 
 Run `npm run test:desktop -- test/desktop/split-view.test.ts` on an interactive
-desktop to exercise both chats with the fake ACP CLI. The driver writes light
+desktop to exercise chat panes with the fake ACP CLI. The driver writes light
 and dark PNGs under `.screens/desktop-split/` and checks that each capture
 contains the native pane's reply.
 

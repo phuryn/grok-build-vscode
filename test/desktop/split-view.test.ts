@@ -53,7 +53,10 @@ function nativeChats(app: ElectronApplication) {
   return app.evaluate(({ BrowserWindow, WebContentsView }) => BrowserWindow.getAllWindows()[0].contentView.children
     .filter((view): view is Electron.WebContentsView =>
       view instanceof WebContentsView && view.webContents.getURL().includes("/__app__/conversation-"))
-    .map(view => ({ id: view.webContents.id, bounds: view.getBounds(), zoom: view.webContents.getZoomFactor() })));
+    .map(view => ({
+      id: view.webContents.id, bounds: view.getBounds(), zoom: view.webContents.getZoomFactor(),
+      visible: (view as Electron.WebContentsView & { visibleForGridTest?: boolean }).visibleForGridTest,
+    })));
 }
 
 async function reportSplitFailure(app: ElectronApplication | undefined, traceFile: string) {
@@ -221,7 +224,7 @@ async function captureWindow(app: ElectronApplication, file: string, reply = pan
   return capture.kind;
 }
 
-it("routes desktop chats and keeps them usable through Files, overlays, resizing, and overflow", async () => {
+it("routes desktop chats and keeps them usable through Files, overlays, and resizing", async () => {
   const temp = await mkdtemp(path.join(tmpdir(), "afk-desktop-split-"));
   const traceFile = path.join(temp, "desktop-wire.jsonl");
   const turnGate = path.join(temp, "finish-held-turn");
@@ -282,20 +285,19 @@ it("routes desktop chats and keeps them usable through Files, overlays, resizing
       expect(await page.evaluate(headerControls)).toEqual(orderedControls);
       expect(await paneEval(app!, `(${headerControls.toString()})()`)).toEqual(orderedControls);
     });
-    const [mainWidth, paneWidth] = await page.locator(".desk-ft-chat, #desk-conversation-slot").evaluateAll(
-      elements => elements.map(element => element.getBoundingClientRect().width),
-    );
+    const mainWidth = await page.locator(".desk-ft-chat").evaluate(element => element.getBoundingClientRect().width);
+    const native = (await nativeChats(app))[0];
+    const paneWidth = native.bounds.width;
     expect(mainWidth).toBeGreaterThan(360);
     expect(Math.abs(mainWidth - paneWidth)).toBeLessThanOrEqual(2);
     const headers = await page.evaluate(() => {
       const chat = document.querySelector(".desk-ft-chat")!.getBoundingClientRect();
       const header = document.querySelector(".desk-ft-chat > .top-bar")!.getBoundingClientRect();
-      const slot = document.querySelector("#desk-conversation-slot")!.getBoundingClientRect();
-      return { mainWidth: chat.width, headerWidth: header.width, headerTop: header.top, slotTop: slot.top };
+      return { mainWidth: chat.width, headerWidth: header.width, headerTop: header.top };
     });
     const childHeaderTop = await paneEval<number>(app, 'document.querySelector(".top-bar").getBoundingClientRect().top');
     expect(Math.abs(headers.mainWidth - headers.headerWidth)).toBeLessThanOrEqual(1);
-    expect(Math.abs(headers.headerTop - (headers.slotTop + childHeaderTop))).toBeLessThanOrEqual(2);
+    expect(Math.abs(headers.headerTop - (native.bounds.y + childHeaderTop))).toBeLessThanOrEqual(2);
     const nativeWidth = async () => (await nativeChats(app!))[0]?.bounds.width ?? 0;
     await vi.waitFor(async () => expect(Math.abs(await nativeWidth() - paneWidth)).toBeLessThanOrEqual(3));
     const paneChatWidth = () => paneEval<number>(app!, 'document.querySelector(".desk-ft-chat").getBoundingClientRect().width');
@@ -407,7 +409,7 @@ it("routes desktop chats and keeps them usable through Files, overlays, resizing
     const closePane = async () => {
       // Let executeJavaScript return before the click closes its renderer.
       await paneEval(app!, 'requestAnimationFrame(() => document.querySelector("#desk-conversation-close").click())');
-      await page.locator("#desk-conversation-slot").waitFor({ state: "detached" });
+      await page.locator("#desk-conversation-columns").waitFor({ state: "detached" });
       await vi.waitFor(async () => expect(await page.evaluate(() => document.activeElement?.id)).toBe("input"));
     };
     await closePane();
@@ -510,7 +512,6 @@ it("routes desktop chats and keeps them usable through Files, overlays, resizing
     await openBeside();
     await vi.waitFor(async () => expect(await paneEval(app!, transcript)).toContain(paneReply));
     const firstId = (await nativeChats(app))[0].id;
-    const resizeTarget = await width();
     const visibleIds = async () => (await nativeChats(app!)).filter(chat => chat.bounds.width > 0 && chat.bounds.height > 0)
       .map(chat => chat.id);
     await vi.waitFor(async () => expect(await visibleIds()).toEqual([firstId]));
@@ -521,27 +522,26 @@ it("routes desktop chats and keeps them usable through Files, overlays, resizing
     await railRow(replacement.id).click({ modifiers: [process.platform === "darwin" ? "Meta" : "Control"] });
     await vi.waitFor(async () => expect(await paneCount()).toBe(2));
     const thirdId = (await nativeChats(app)).find(chat => chat.id !== firstId)!.id;
-    await vi.waitFor(async () => expect(await visibleIds()).toEqual([thirdId]));
+    await vi.waitFor(async () => expect(await visibleIds()).toEqual([firstId, thirdId]));
     await vi.waitFor(async () =>
       expect(await paneEval(app!, 'document.querySelector("#session-name-label")?.textContent', thirdId)).toContain(replacement.title));
-    expect(await width()).toBe(resizeTarget);
-    const picker = page.getByLabel("Switch to an open chat");
-    const draft = "Draft kept by the overflow picker";
+    const draft = "Draft kept after focusing another chat";
     await fillPane(draft, thirdId);
+    await railRow(replacement.id).click();
+    await expectTarget(replacement.id, paneSession.id);
+    const gridBeforeFocus = await nativeChats(app);
     await writeFile(turnGate, "finish");
+    // Every chat is on screen in the grid, so a turn that ends in a visible pane is never unread.
+    await vi.waitFor(async () => expect(await dot.getAttribute("data-dot")).toBe("none"), { timeout: 15_000 });
+    await railRow(paneSession.id).click();
+    await expectTarget(paneSession.id, replacement.id);
+    expect(await nativeChats(app)).toEqual(gridBeforeFocus);
+    await railRow(replacement.id).click();
     await vi.waitFor(async () => {
-      expect(await picker.getAttribute("data-unread")).toBe("true");
-      expect(await dot.getAttribute("data-dot")).toBe("unread");
-      expect(await picker.locator(`option[value="${firstId}"]`).textContent()).toContain("Unread");
-    }, { timeout: 15_000 });
-    await picker.selectOption(String(firstId));
-    await vi.waitFor(async () => expect(await visibleIds()).toEqual([firstId]));
-    await picker.selectOption(String(thirdId));
-    await vi.waitFor(async () => {
-      expect(await visibleIds()).toEqual([thirdId]);
       expect(await paneEval(app!, 'document.activeElement?.id', thirdId)).toBe("input");
       expect(await paneEval(app!, 'document.querySelector("#input").value', thirdId)).toBe(draft);
     });
+    expect(await nativeChats(app)).toEqual(gridBeforeFocus);
 
     // Invoke the real application menu with the child focused. A timestamp
     // from each document distinguishes a child Reload from a window Reload.
@@ -595,8 +595,7 @@ it("routes desktop chats and keeps them usable through Files, overlays, resizing
 
     await setWidth(400);
     await vi.waitFor(async () => expect(await width()).toBe(400));
-    await vi.waitFor(async () => expect(await visibleIds()).toEqual([]));
-    await picker.waitFor();
+    await vi.waitFor(async () => expect(await visibleIds()).toEqual([firstId, thirdId]));
     expect(await paneCount()).toBe(2);
     await rail.waitFor({ state: "hidden" });
     const filesToggle = page.locator("#desk-ft-top-toggle");
@@ -609,61 +608,176 @@ it("routes desktop chats and keeps them usable through Files, overlays, resizing
       const chat = (document.querySelector(".desk-ft-chat") || document.body).getBoundingClientRect();
       return input.width > 100 && send.width > 0 && send.right <= chat.right && send.bottom <= chat.bottom;
     })()`;
-    expect(await page.evaluate(composerFits)).toBe(true);
-    await picker.selectOption(String(thirdId));
     await vi.waitFor(async () => {
-      expect(await visibleIds()).toEqual([thirdId]);
-      const child = (await nativeChats(app!)).find(chat => chat.id === thirdId)!;
-      const main = await page.locator(".desk-ft-chat").boundingBox();
-      expect(child.bounds.y).toBeGreaterThanOrEqual(Math.floor(main!.y + main!.height));
-      expect(await paneEval(app!, composerFits, thirdId)).toBe(true);
+      expect(await page.evaluate(composerFits)).toBe(true);
+      for (const id of [firstId, thirdId]) expect(await paneEval(app!, composerFits, id)).toBe(true);
     });
-    expect(await page.evaluate(composerFits)).toBe(true);
-    expect(await width()).toBe(400);
-    await picker.selectOption("0");
-    await vi.waitFor(async () => expect(await visibleIds()).toEqual([]));
-    for (const theme of ["light", "dark"]) {
-      if (await page.locator("html").getAttribute("data-theme") !== theme) {
-        await page.locator("#desk-rail-open-btn").click();
-        await rail.waitFor();
-        await page.locator("#desk-theme-toggle").click();
-        await page.locator("#desk-rail-toggle").click();
-      }
-      await rail.waitFor({ state: "hidden" });
-      await picker.waitFor();
-      await page.screenshot({ path: path.join(screenshots, `narrow-picker-${theme}.png`) });
-    }
+    const compactChats = await nativeChats(app);
+    await page.locator("#desk-rail-open-btn").click();
+    await rail.waitFor();
+    await railRow(replacement.id).click();
+    await rail.waitFor({ state: "hidden" });
+    expect(await nativeChats(app)).toEqual(compactChats);
     await setWidth(wide);
     await rail.waitFor();
     await filesToggle.click();
     await files.waitFor();
-    // Make room for all three chats on displays with less work area.
-    if (await page.locator("#desk-conversation-columns").evaluate(el => el.getBoundingClientRect().width) < 1288) {
-      await page.locator("#desk-ft-top-toggle").click();
-    }
-    if (await page.locator("#desk-conversation-columns").evaluate(el => el.getBoundingClientRect().width) < 1082) {
-      await page.locator("#desk-rail-toggle").click();
-    }
-    if (await page.locator("#desk-conversation-columns").evaluate(el => el.getBoundingClientRect().width) < 1082) {
-      await page.evaluate(() => (window as any).__grokFontScale.set(0.8));
-    }
     await vi.waitFor(async () => expect(await visibleIds()).toEqual([firstId, thirdId]));
-    await picker.waitFor({ state: "hidden" });
     expect(await paneEval(app, 'document.querySelector("#input").value', thirdId)).toBe(draft);
-    for (const theme of ["light", "dark"]) {
-      if (await page.locator("html").getAttribute("data-theme") !== theme) {
-        await page.evaluate(() => (window as any).__toggleDesktopTheme());
-      }
-      for (const id of [firstId, thirdId]) {
-        await vi.waitFor(async () => expect(await paneEval(app!, 'document.documentElement.dataset.theme', id)).toBe(theme));
-      }
-      await paneEval(app, `[...document.querySelectorAll(".msg.agent .body")].find(
-        el => el.textContent === ${JSON.stringify(paneReply)}).scrollIntoView({ block: "center" })`, firstId);
-      const screenshot = path.join(screenshots, `restored-wide-${theme}.png`);
-      console.log(`${screenshot} (${await captureWindow(app, screenshot)})`);
-    }
   } catch (error) {
     await reportSplitFailure(app, traceFile);
+    throw error;
+  } finally {
+    try { await app?.close(); }
+    finally { await rm(temp, { recursive: true, force: true }); }
+  }
+}, 180_000);
+
+it("shows every chat in the desktop grid and aligns split headers", async () => {
+  const temp = await mkdtemp(path.join(tmpdir(), "afk-desktop-grid-"));
+  const profile = path.join(temp, "profile");
+  let app: ElectronApplication | undefined;
+  try {
+    const qa = buildQaFixture(temp, undefined, ["Trace a failed test", "Review a pull request", "Plan the next release"]);
+    const sessions = [...qa.sessions].reverse();
+    const fake = path.join(root, "test", "fixtures", process.platform === "win32" ? "fake-grok-acp.cmd" : "fake-grok-acp.sh");
+    await mkdir(profile);
+    await writeFile(path.join(profile, "config.json"), JSON.stringify({ "grok.cliPath": fake, "grok.desktop.tray": false }));
+    await writeFile(path.join(profile, "globalState.json"), JSON.stringify({ "grok.providerConnections.v2": { grok: true } }));
+    const launch = desktopLaunch(root, require("electron"), qa.project, profile, temp, {
+      ...process.env, GROK_HOME: qa.grokHome, CODEX_HOME: path.join(temp, "codex"), FAKE_SESSION_ID_FROM_PID: "1",
+    });
+    delete launch.env.GROK_RELAY_DEVICE_TOKEN;
+    delete launch.env.GROK_RELAY_URL;
+    delete launch.env.GROK_CLOUD_ENVIRONMENT;
+    launch.env.NODE_ENV = "test";
+    launch.env.GROK_DESKTOP_TEST_ALLOW_MULTIPLE = "1";
+    app = await electron.launch({ ...launch, timeout: 45_000 });
+    const page = await app.firstWindow();
+    const size = await app.evaluate(({ BrowserWindow, WebContentsView }) => {
+      const win = BrowserWindow.getAllWindows()[0];
+      win.setSize(1280, 800);
+      win.focus();
+      // Electron exposes no View visibility getter. Observe the real native calls.
+      const original = WebContentsView.prototype.setVisible;
+      WebContentsView.prototype.setVisible = function (this: Electron.WebContentsView & { visibleForGridTest?: boolean }, visible) {
+        original.call(this, visible);
+        this.visibleForGridTest = visible;
+      };
+      return win.getSize();
+    });
+    expect(size).toEqual([1280, 800]);
+
+    const row = (id: string) => page.locator(`#projects-rail .rail-session[data-session-id="${id}"]:visible`).first();
+    await row(sessions[0].id).click();
+    await page.locator("#messages .msg.user").filter({ hasText: sessions[0].title }).waitFor();
+    const open = async (index: number) => {
+      const item = row(sessions[index].id);
+      const more = page.locator("#projects-rail .rail-repo").filter({ hasText: qa.projectName })
+        .getByRole("button", { name: "Show more", exact: true }).first();
+      if (!(await item.count())) await more.click();
+      await item.click({ modifiers: [process.platform === "darwin" ? "Meta" : "Control"] });
+      await vi.waitFor(async () => {
+        const panes = await nativeChats(app!);
+        expect(panes).toHaveLength(index);
+        expect(panes[index - 1].visible).toBe(true);
+        expect(await paneEval(app!, 'document.querySelector("#messages")?.textContent', panes[index - 1].id))
+          .toContain(sessions[index].title);
+      }, { timeout: 15_000 });
+    };
+    const topBar = page.locator(".top-bar");
+    const files = page.locator("#desk-ft-top-toggle");
+    await files.click();
+    await page.locator("#desk-ft-panel").waitFor();
+    const single = await topBar.boundingBox();
+    const singleShell = await page.locator("#desk-ft-shell").boundingBox();
+    expect(single!.width).toBeCloseTo(singleShell!.width, 0);
+    expect(single!.height).toBeLessThan(44);
+    await files.click();
+
+    await open(1);
+    await files.click();
+    await vi.waitFor(async () => {
+      const chatBar = (await topBar.boundingBox())!;
+      const filesBar = (await page.locator("#desk-ft-panel .gfp-header").boundingBox())!;
+      const railBar = (await page.locator("#projects-rail .rail-top").boundingBox())!;
+      const [pane] = await nativeChats(app!);
+      const child = await paneEval<{ top: number; height: number }>(app!, `(() => {
+        const { top, height } = document.querySelector(".top-bar").getBoundingClientRect();
+        return { top, height };
+      })()`, pane.id);
+      for (const { height } of [chatBar, filesBar, railBar, child]) expect(height).toBe(44);
+      for (const bottom of [filesBar.y + filesBar.height, railBar.y + railBar.height, pane.bounds.y + child.top + child.height]) {
+        expect(bottom).toBe(chatBar.y + chatBar.height);
+      }
+    });
+    await files.click();
+
+    const assertGrid = (expectedRows: number[]) => vi.waitFor(async () => {
+      const area = (await page.locator("#desk-conversation-columns").boundingBox())!;
+      const main = (await page.locator("#desk-ft-shell").boundingBox())!;
+      const panes = await nativeChats(app!);
+      const cells = [main, ...panes.map(pane => pane.bounds)];
+      expect(cells).toHaveLength(expectedRows.reduce((sum, rows) => sum + rows, 0));
+      expect(panes.every(pane => pane.visible)).toBe(true);
+      expect(main.x).toBeCloseTo(area.x, 0);
+      expect(main.y).toBeCloseTo(area.y, 0);
+      const columns: typeof cells[] = [];
+      for (const cell of cells) {
+        expect(cell.width).toBeGreaterThan(0);
+        expect(cell.height).toBeGreaterThan(0);
+        expect(cell.x).toBeGreaterThanOrEqual(area.x);
+        expect(cell.y).toBeGreaterThanOrEqual(area.y);
+        expect(cell.x + cell.width).toBeLessThanOrEqual(area.x + area.width);
+        expect(cell.y + cell.height).toBeLessThanOrEqual(area.y + area.height);
+        const column = columns.at(-1);
+        if (column && Math.abs(cell.x - column[0].x) < 0.5) {
+          const above = column.at(-1)!;
+          expect(cell.y - (above.y + above.height)).toBeCloseTo(1, 0);
+          column.push(cell);
+        } else {
+          expect(cell.y).toBeCloseTo(area.y, 0);
+          if (column) expect(cell.x - (column[0].x + column[0].width)).toBeCloseTo(1, 0);
+          columns.push([cell]);
+        }
+      }
+      expect(columns.map(column => column.length)).toEqual(expectedRows);
+      expect(await page.getByLabel("Switch to an open chat").count()).toBe(0);
+    });
+    const captureGrid = async (count: number) => {
+      const panes = await nativeChats(app!);
+      for (const theme of ["light", "dark"]) {
+        if (await page.locator("html").getAttribute("data-theme") !== theme) {
+          await page.locator("#desk-theme-toggle").click();
+        }
+        for (const { id } of panes) {
+          await vi.waitFor(async () => expect(await paneEval(app!, 'document.documentElement.dataset.theme', id)).toBe(theme));
+        }
+        await paneEval(app!, `[...document.querySelectorAll(".msg.agent .body")].find(
+          el => el.textContent === "Acknowledged.").scrollIntoView({ block: "center" })`, panes[0].id);
+        const file = path.join(screenshots, `grid-${count}-1280x800-${theme}.png`);
+        console.log(`${file} (${await captureWindow(app!, file, "Acknowledged.")})`);
+      }
+    };
+    await mkdir(screenshots, { recursive: true });
+    await open(2);
+    await open(3);
+    await assertGrid([2, 2]);
+    await captureGrid(4);
+    for (let i = 4; i < sessions.length; i++) await open(i);
+    await assertGrid([2, 2, 3]);
+    await captureGrid(7);
+
+    for (const { id } of await nativeChats(app)) {
+      await paneEval(app, 'requestAnimationFrame(() => document.querySelector("#desk-conversation-close").click())', id);
+      await vi.waitFor(async () => expect((await nativeChats(app!)).some(pane => pane.id === id)).toBe(false));
+    }
+    await page.locator("#desk-conversation-columns").waitFor({ state: "detached" });
+    await files.click();
+    await page.locator("#desk-ft-panel").waitFor();
+    expect((await topBar.boundingBox())!.height).toBe(single!.height);
+  } catch (error) {
+    await reportSplitFailure(app, path.join(temp, "desktop-wire.jsonl"));
     throw error;
   } finally {
     try { await app?.close(); }
@@ -864,7 +978,7 @@ it("docks each chat's project and restores each Files toggle independently", asy
   }
 }, 180_000);
 
-it("restores the split profile, starts only visible conversations, and keeps dictation with its owner", async () => {
+it("restores all grid chats and keeps dictation with its owner", async () => {
   const temp = await mkdtemp(path.join(tmpdir(), "afk-desktop-restore-"));
   const profile = path.join(temp, "profile");
   let traceFile = path.join(temp, "desktop-wire.jsonl");
@@ -913,28 +1027,29 @@ it("restores the split profile, starts only visible conversations, and keeps dic
       document.querySelector("#input").focus();
       document.execCommand("insertText", false, ${JSON.stringify(text)});
     })()`, id);
-    const expectPane = (index: number, name: string, visible: boolean) => vi.waitFor(async () => {
+    const expectPane = (index: number, name: string) => vi.waitFor(async () => {
       const pane = (await nativeChats(app!))[index];
       expect(pane).toBeDefined();
-      expect(pane.bounds.width > 0).toBe(visible);
+      expect(pane.bounds.width).toBeGreaterThan(0);
+      expect(pane.bounds.height).toBeGreaterThan(0);
       expect(await paneEval(app!, title, pane.id)).toContain(name);
       return pane.id;
     }, { timeout: 15_000 });
     await railRow(main.id).click();
     await page.locator("#session-name-label").filter({ hasText: main.title }).waitFor();
     await beside(first.id);
-    await fillPane(await expectPane(0, first.title, true), drafts[1]);
+    await fillPane(await expectPane(0, first.title), drafts[1]);
     if (!(await railRow(second.id).count())) {
       await page.locator("#projects-rail .rail-repo").filter({ hasText: qa.projectName })
         .getByRole("button", { name: "Show more", exact: true }).first().click();
     }
     await beside(second.id);
-    const shown = await expectPane(1, second.title, true);
+    const shown = await expectPane(1, second.title);
     await fillPane(shown, drafts[2]);
     await page.locator("#input").fill(drafts[0]);
     await railRow(second.id).click();
     await vi.waitFor(async () => expect(await railRow(second.id).getAttribute("aria-current")).toBe("true"));
-    await expectPane(0, first.title, false);
+    await expectPane(0, first.title);
 
     const memento = path.join(profile, "workspaceState.json");
     const snapshot = () => readFile(memento, "utf8").then(JSON.parse);
@@ -966,8 +1081,8 @@ it("restores the split profile, starts only visible conversations, and keeps dic
       expect(found).toBeDefined();
       return found!;
     }, { timeout: 15_000 });
-    const firstId = await expectPane(0, first.title, false);
-    const secondId = await expectPane(1, second.title, true);
+    const firstId = await expectPane(0, first.title);
+    const secondId = await expectPane(1, second.title);
     expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getSize())).toEqual(size);
     await page.locator("#session-name-label").filter({ hasText: main.title }).waitFor();
     await vi.waitFor(async () => {
@@ -978,12 +1093,7 @@ it("restores the split profile, starts only visible conversations, and keeps dic
     }, { timeout: 15_000 });
     const loads = async () => (await readTrace(traceFile)).filter(event => event.direction === "send"
       && event.message.method === "session/load").map(event => event.message.params?.sessionId);
-    await vi.waitFor(async () => expect(await loads()).toEqual(expect.arrayContaining([main.id, second.id])));
-    expect(await loads()).not.toContain(first.id);
-    const picker = page.getByLabel("Switch to an open chat");
-    await picker.selectOption(String(firstId));
-    await expectPane(0, first.title, true);
-    await vi.waitFor(async () => expect((await loads()).filter(id => id === first.id)).toHaveLength(1));
+    await vi.waitFor(async () => expect((await loads()).sort()).toEqual([main.id, first.id, second.id].sort()));
     await vi.waitFor(async () => expect(await paneEval(app!, 'document.querySelector("#messages").textContent', firstId)).toContain("Acknowledged."));
 
     // Grow into three columns for the restored captures. The docked rail can
@@ -995,7 +1105,7 @@ it("restores the split profile, starts only visible conversations, and keeps dic
     const columnsWidth = () => page.locator("#desk-conversation-columns").evaluate(el => el.getBoundingClientRect().width);
     if (await columnsWidth() < 1082) await page.locator("#desk-rail-toggle").click();
     if (await columnsWidth() < 1082) await page.evaluate(() => (window as any).__grokFontScale.set(0.8));
-    await expectPane(1, second.title, true);
+    await expectPane(1, second.title);
     await mkdir(screenshots, { recursive: true });
     for (const theme of ["light", "dark"]) {
       if (await page.locator("html").getAttribute("data-theme") !== theme) {
@@ -1058,7 +1168,7 @@ it("restores the split profile, starts only visible conversations, and keeps dic
     const rail = page.locator("#projects-rail");
     if (!(await rail.isVisible())) await page.locator("#desk-rail-open-btn").click();
     await beside(second.id);
-    const reopenedId = await expectPane(1, second.title, true);
+    const reopenedId = await expectPane(1, second.title);
     expect(await paneDraft(reopenedId)).toBe(drafts[2]);
 
     // Close the original window chat. The next chat occupies its column and
@@ -1092,7 +1202,7 @@ it("restores the split profile, starts only visible conversations, and keeps dic
     expect(await nativeChats(app)).toEqual([]);
     if (!(await page.locator("#projects-rail").isVisible())) await page.locator("#desk-rail-open-btn").click();
     await beside(main.id);
-    const restoredFormerMain = await expectPane(0, main.title, true);
+    const restoredFormerMain = await expectPane(0, main.title);
     await vi.waitFor(async () => expect(await paneDraft(restoredFormerMain)).toBe(mainResult));
   } catch (error) {
     await reportSplitFailure(app, traceFile);

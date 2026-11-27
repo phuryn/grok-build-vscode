@@ -76,7 +76,6 @@ if (isConversationPane) {
     openBeside: (id: string, cwd?: string) => ipcRenderer.send("desk-conversations:open", id, cwd, true),
     open: (id: string, cwd?: string) => ipcRenderer.send("desk-conversations:open", id, cwd, false),
     setBounds: (bounds: unknown, zoom: number, filesOpen: boolean) => ipcRenderer.send("desk-conversations:bounds", bounds, zoom, filesOpen),
-    showPane: (id: number) => ipcRenderer.send("desk-conversations:pick", id),
     setCovered: (covered: boolean) => ipcRenderer.send("desk-conversations:covered", covered),
     close: (draft: DesktopMainCloseSnapshot) => ipcRenderer.invoke("desk-conversations:close-main", draft),
     saveMainDraft: (id: string | null, text: string, chipIds: string[]) =>

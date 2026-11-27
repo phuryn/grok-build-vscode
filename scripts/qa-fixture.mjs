@@ -76,10 +76,12 @@ function write(file, body, at) {
  *
  * @param root where to build; defaults to a fresh temp directory
  * @param {(cwd: string) => string} encodeCatalogLeaf the product encoder. Unit tests can pass the source import.
+ * @param {string[]} extraTitles more conversations for grid captures
  */
 export function buildQaFixture(
   root = fs.mkdtempSync(path.join(os.tmpdir(), "grok-qa-")),
   encodeCatalogLeaf = require("../out/sessions.js").encodeSessionCatalogLeaf,
+  extraTitles = [],
 ) {
   const project = path.join(root, QA_PROJECT_NAME);
   const grokHome = path.join(root, "grok-home");
@@ -91,7 +93,11 @@ export function buildQaFixture(
   write(path.join(project, "payload.bin"), Buffer.from([0, 1, 2, 0, 9, 0]));
 
   const sessionsDir = path.join(grokHome, "sessions", encodeCatalogLeaf(project));
-  for (const session of SESSIONS) {
+  const sessions = [...SESSIONS, ...extraTitles.map((title, index) => ({
+    id: `0000qa${String(SESSIONS.length + index + 1).padStart(2, "0")}-0000-4000-8000-00000000cafe`,
+    title, messages: 4, at: minutes(150 + index * 30),
+  }))];
+  for (const session of sessions) {
     const dir = path.join(sessionsDir, session.id);
     write(path.join(dir, "summary.json"), JSON.stringify({
       info: { id: session.id, cwd: project },
@@ -122,9 +128,9 @@ export function buildQaFixture(
     project,
     grokHome,
     projectName: QA_PROJECT_NAME,
-    sessions: SESSIONS.map((s) => ({ id: s.id, title: s.title })),
+    sessions: sessions.map((s) => ({ id: s.id, title: s.title })),
     /** Newest first, which is the order the rail should show. */
-    expectedOrder: [...SESSIONS].sort((a, b) => b.at - a.at).map((s) => s.title),
+    expectedOrder: [...sessions].sort((a, b) => b.at - a.at).map((s) => s.title),
     cleanup: () => fs.rmSync(root, { recursive: true, force: true }),
   };
 }

@@ -323,56 +323,29 @@ body.desk .desk-ft-chat > .composer {
   flex: 1 1 0;
   min-width: 0;
   min-height: 0;
-}
-#desk-conversation-columns > .desk-ft-shell, #desk-conversation-slot {
-  flex: 1 1 0;
-  min-width: 0;
-  min-height: 0;
-}
-body.desk #desk-conversation-columns > .desk-ft-shell {
-  flex: 0 0 var(--desk-first-column-width, 100%);
-  width: auto;
-}
-#desk-conversation-slot[hidden] { display: none; }
-#desk-conversation-slot {
-  border-inline-start: 1px solid var(--vscode-editorWidget-border);
   background: var(--vscode-editorWidget-border);
 }
-#desk-conversation-columns.desk-chat-stacked { flex-direction: column; }
-body.desk #desk-conversation-columns.desk-chat-stacked > .desk-ft-shell {
-  flex: 1 1 0;
-  height: auto;
+body.desk #desk-conversation-columns > .desk-ft-shell {
+  flex: none;
+  width: var(--desk-main-cell-width, 100%);
+  height: var(--desk-main-cell-height, 100%);
 }
-.desk-chat-stacked #desk-conversation-slot {
-  border-inline-start: 0;
-  border-block-start: 1px solid var(--vscode-editorWidget-border);
+/* Match the Files and Projects headers' desktop tap-target height. */
+body.desk[data-editor-chat] .top-bar,
+#desk-conversation-columns .desk-ft-chat > .top-bar {
+  min-height: 44px;
 }
 /* Keep the send row in view when an autosized draft fills a short split. */
-.desk-chat-stacked textarea#input {
-  max-block-size: calc(2lh + 2 * var(--pad));
-  overflow-y: auto !important;
+body.desk[data-editor-chat] .desk-ft-shell,
+#desk-conversation-columns > .desk-ft-shell {
+  container: desk-conversation / size;
 }
-@media (max-height: 330px) {
-  body[data-editor-chat] textarea#input {
+@container desk-conversation (max-height: 330px) {
+  textarea#input {
     max-block-size: calc(2lh + 2 * var(--pad));
     overflow-y: auto !important;
   }
 }
-#desk-conversation-picker {
-  align-self: start;
-  flex: none;
-  field-sizing: content;
-  max-inline-size: min(calc(100% - 2 * var(--pad)), 28ch);
-  margin: 4px var(--pad) 0;
-  padding: 3px 6px;
-  font: inherit;
-  color: var(--vscode-dropdown-foreground);
-  background: var(--vscode-dropdown-background);
-  border: 1px solid var(--vscode-dropdown-border);
-  border-radius: 8px;
-}
-#desk-conversation-picker[data-unread="true"] { border-color: var(--vscode-charts-green); }
-#desk-conversation-picker:focus-visible { outline: 2px solid var(--vscode-focusBorder); }
 body.desk-split-compact #desk-rail-open-btn { display: inline-flex; }
 body.desk-split-compact #rail-resizer,
 body.desk-split-compact:not([data-split-drawer="projects"]) #projects-rail { display: none !important; }
@@ -498,7 +471,6 @@ export class ElectronWebview implements HostWebview {
   readonly fileSelection = new FileSelectionRegistry();
   /** Optional log for dropped IPC (wired from main). */
   onDroppedMessage?: (reason: string, raw: unknown) => void;
-  onHostMessage?: (message: unknown) => void;
   /**
    * Workspace root for desktop openFile policy. Wired from main after the
    * folder is chosen; when unset, openFile is refused.
@@ -592,7 +564,6 @@ export class ElectronWebview implements HostWebview {
       return Promise.resolve(false);
     }
     contents.send("host-to-webview", message);
-    this.onHostMessage?.(message);
     return Promise.resolve(true);
   }
 

@@ -4404,11 +4404,6 @@ export class GrokSidebar {
     return true;
   }
 
-  revealDesktopPane(webview: HostWebview): void {
-    const tab = [...this.editorChats].find(chat => chat.panel.webview === webview);
-    if (tab) this.revealEditorComposer(tab);
-  }
-
   desktopFileSession(webview: HostWebview): Session | undefined {
     return this.view?.webview === webview ? this.focused : this.desktopEditorSession(webview);
   }
@@ -4480,7 +4475,7 @@ export class GrokSidebar {
     return this.desktopConversationLayout().panes.length > 0;
   }
 
-  restoreDesktopConversationLayout(): HostWebview | undefined {
+  restoreDesktopConversationLayout(): void {
     const saved = this.desktopConversationLayout();
     this.restoringDesktopPanes = true;
     try {
@@ -4491,7 +4486,6 @@ export class GrokSidebar {
       }
       const last = [...this.editorChats].find(tab => tab.restoreKey === saved.lastUsed);
       this.setLastEditorChat(last);
-      return last?.panel.webview;
     } finally {
       this.restoringDesktopPanes = false;
     }
@@ -26825,7 +26819,7 @@ ${filePanelStyle}
 ${desktopChrome ? `<script nonce="${nonce}">try{if(localStorage.getItem("desk-rail-open")==="0")document.body.classList.add("desk-rail-collapsed")}catch(e){}</script>` : ""}
 ${railMount}
 ${openMain}
-  <header class="top-bar"${desktopChat ? ` data-files-label="${l10n("Toggle file panel")}"` : ""}${splitChat && !editorChat ? ` data-first-chat-label="${l10n("Show first chat only")}"` : ""}>
+  <header class="top-bar"${desktopChat ? ` data-files-label="${l10n("Toggle file panel")}"` : ""}>
     <div id="session-name-chip" class="session-name-chip" hidden>
       <button id="session-name-label" class="session-name-label" type="button"></button>
       <!-- Which project this conversation belongs to. History went
