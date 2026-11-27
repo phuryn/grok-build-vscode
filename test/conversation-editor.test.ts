@@ -895,6 +895,92 @@ describe("desktop Projects routing", () => {
     return { ...h, main };
   }
 
+  it("moves the surviving conversation and its draft to the window without stopping either agent", async () => {
+    const { controller, panels, binding, first, sidebar, pool, main } = desktop();
+    const stored = editorWorkspaceState();
+    controller.context.workspaceState = stored;
+    controller.chatReadyForHandoff = true;
+    controller.postMode = vi.fn();
+    await controller.openDesktopConversationBeside("one", "/repo");
+    const pane = panels[0];
+    pane.receive({ type: "ready" });
+    const closing = { sessionId: "sidebar", text: "Draft from closed chat", chipIds: [], revision: 0 };
+    const survivor = { binding: binding(pane), text: "  Draft from surviving chat\n", chipIds: [], revision: 0, scrollTop: 45 };
+    expect(controller.closeDesktopMainChat(pane.webview, closing, survivor)).toBe(true);
+    expect(controller.focused).toBe(first);
+    expect(controller.desktopEditorSession(pane.webview)).toBeUndefined();
+    expect(pool.has(sidebar)).toBe(true);
+    expect(sidebar.client.cancel).not.toHaveBeenCalled();
+    expect(first.client.cancel).not.toHaveBeenCalled();
+    expect(stored.get("grok.editorChatDraft.sidebar")).toMatchObject({ text: closing.text });
+    expect(stored.get("grok.editorChatDraft.one")).toBeUndefined();
+    expect(stored.get("grok.desktopMainDraft")).toMatchObject({ sessionId: "one", text: survivor.text });
+    expect(main.mock.calls.filter(([msg]) => msg.type === "restoreComposer")).toEqual([
+      [expect.objectContaining({ sessionId: "one", text: survivor.text })],
+    ]);
+    expect(controller.hasSavedDesktopPanes()).toBe(false);
+  });
+
+  it("rejects a promotion whose renderer binding has changed and leaves both drafts in place", async () => {
+    const { controller, panels, binding, sidebar } = desktop();
+    const stored = editorWorkspaceState();
+    controller.context.workspaceState = stored;
+    await controller.openDesktopConversationBeside("one", "/repo");
+    const pane = panels[0];
+    pane.receive({ type: "ready" });
+    const token = binding(pane);
+    pane.receive({ type: "editorChatDraft", binding: token, text: "Still in the pane" });
+    expect(controller.closeDesktopMainChat(pane.webview,
+      { sessionId: "sidebar", text: "Still in the window", chipIds: [], revision: 0 },
+      { binding: token + 1, text: "", chipIds: [], revision: 0, scrollTop: null },
+    )).toBe(false);
+    expect(controller.focused).toBe(sidebar);
+    expect(controller.hasSavedDesktopPanes()).toBe(true);
+    expect(stored.get("grok.editorChatDraft.sidebar")).toBeUndefined();
+  });
+
+  it("keeps a draft restored by the host after the pane's close snapshot was taken", async () => {
+    const { controller, panels, binding, first } = desktop();
+    const stored = editorWorkspaceState();
+    controller.context.workspaceState = stored;
+    await controller.openDesktopConversationBeside("one", "/repo");
+    const pane = panels[0];
+    pane.receive({ type: "ready" });
+    const oldSnapshot = { binding: binding(pane), text: "Typed", chipIds: [], revision: 0, scrollTop: null };
+    pane.receive({ type: "editorChatDraft", binding: oldSnapshot.binding, text: oldSnapshot.text });
+    const [tab] = controller.editorChats;
+    controller.restoreComposerFor(first, undefined, "Restored by host", [], false, tab);
+    expect(controller.saveDesktopPaneDraft(pane.webview, oldSnapshot)).toBe(false);
+    expect(controller.saveDesktopPaneDraft(pane.webview, {
+      ...oldSnapshot, text: "Typed\n\nRestored by host", revision: 1,
+    })).toBe(true);
+    pane.dispose();
+    expect(stored.get("grok.editorChatDraft.one")).toMatchObject({ text: "Typed\n\nRestored by host" });
+  });
+
+  it("recovers a closed unsent draft once in the same project", async () => {
+    const { controller, panels, binding, first, second, main } = desktop();
+    const stored = editorWorkspaceState();
+    controller.context.workspaceState = stored;
+    await controller.openDesktopConversationBeside("one", "/repo");
+    const pane = panels[0];
+    pane.receive({ type: "ready" });
+    first.hasHistory = false;
+    pane.receive({ type: "editorChatDraft", binding: binding(pane), text: "Unsent without history" });
+    pane.dispose();
+    controller.focused = second;
+    second.hasHistory = false;
+    second.cwd = "/different";
+    controller.restoreClosedDesktopDraft(second);
+    expect(main).not.toHaveBeenCalledWith(expect.objectContaining({ type: "restoreComposer" }));
+    second.cwd = "/repo";
+    controller.restoreClosedDesktopDraft(second);
+    controller.restoreClosedDesktopDraft(second);
+    expect(main.mock.calls.filter(([msg]) => msg.type === "restoreComposer")).toEqual([
+      [expect.objectContaining({ text: "Unsent without history" })],
+    ]);
+  });
+
   it("restores saved panes in creation order with independent drafts and the last-used target after quit", async () => {
     const profile = mkdtempSync(join(tmpdir(), "afk-split-restore-"));
     const file = join(profile, "workspaceState.json");
@@ -1027,7 +1113,7 @@ describe("desktop Projects routing", () => {
     expect(saveMainDraft).toHaveBeenLastCalledWith("one", "Updated", []);
     dispatch(ui.window, { type: "projectsRailChatTarget", editor: false, openSessionIds: ["one"], hasPanes: false });
     type("Unsplit again");
-    expect(saveMainDraft).toHaveBeenCalledTimes(2);
+    expect(saveMainDraft).toHaveBeenLastCalledWith("one", "Unsplit again", []);
   });
 
   it("reveals an overflow pane by its existing webview without changing its session or draft", async () => {

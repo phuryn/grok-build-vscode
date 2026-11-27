@@ -55,7 +55,7 @@ import {
 } from "./tray";
 import { createAppResourceHandler } from "./app-resource-handler";
 import { DESKTOP_CONVERSATIONS_ARG } from "./conversation-layout";
-import { DesktopConversationPanes } from "./conversation-panes";
+import { DesktopConversationPanes, isDesktopChatDraftSnapshot, parsePaneCloseSnapshot } from "./conversation-panes";
 import type { DesktopOpenFileContext } from "./desktop-policy";
 import { createElectronHost, ensureWorkspaceRoot, type ElectronRemoteActions } from "./electron-host";
 import {
@@ -964,9 +964,31 @@ async function createApp(): Promise<void> {
         conversationPanes.setCovered(covered);
       }
     });
-    ipcMain.on("desk-conversations:close", (event) => {
-      if (!conversationPanes.close(event)) log("[desk-pane] refused close from non-pane sender/frame");
-      else sidebar?.focusDesktopMainChat();
+    ipcMain.handle("desk-conversations:close", (event, raw: unknown) => {
+      const snapshot = parsePaneCloseSnapshot(raw);
+      if (!snapshot || !conversationPanes.close(event, (pane) => sidebar?.saveDesktopPaneDraft(pane, snapshot) === true)) return;
+      sidebar?.focusDesktopMainChat();
+      return true;
+    });
+    ipcMain.handle("desk-conversations:close-main", async (event, snapshot: unknown) => {
+      if (!isTrustedMainFrameIpc(event, () => mainWindow) || !isDesktopChatDraftSnapshot(snapshot) || !("sessionId" in snapshot)) return;
+      const { sessionId } = snapshot;
+      if (sessionId !== null && !isValidSessionId(sessionId)) return;
+      try {
+        return await conversationPanes.closeMain((pane, promoted) =>
+          sidebar?.closeDesktopMainChat(pane, { ...snapshot, sessionId }, promoted) === true);
+      } catch (error) {
+        log(`[desk-pane] close failed: ${String(error)}`);
+      }
+    });
+    ipcMain.on("desk-conversations:toggle-files", event => {
+      conversationPanes.toggleFiles(event);
+    });
+    ipcMain.on("desk-conversations:files-state", (event, expanded: unknown, title: unknown, count: unknown) => {
+      if (isTrustedMainFrameIpc(event, () => mainWindow) &&
+          typeof expanded === "boolean" && typeof title === "string" && typeof count === "string") {
+        conversationPanes.publishFiles(expanded, title, count);
+      }
     });
     ipcMain.on("desk-conversations:main-draft", (event, id: unknown, text: unknown, chips: unknown) => {
       if (isTrustedMainFrameIpc(event, () => mainWindow) && (id === null || isValidSessionId(id))

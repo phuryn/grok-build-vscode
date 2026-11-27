@@ -514,10 +514,14 @@ as VS Code. Its row menu, Ctrl/Cmd-click, and middle-click open beside, and
 plain clicks or keyboard activation reuse the preferred chat or reveal an
 already-open conversation. The embedded rail leaves chat focus tracking to
 the chats themselves. Each added pane hosts the conversation-only renderer
-in a `WebContentsView` and uses the same bindings as an editor tab. The main
-renderer reserves equal columns between Projects and Files and keeps the
-main header inside its column while split. IPC binds to the registered pane
-and its main frame. Closing a pane removes its view and registration.
+in a `WebContentsView` and uses the same bindings as an editor tab. The window
+renderer reserves equal columns between Projects and the shared Files dock.
+It places its chat header inside the first column while split. Every header
+can toggle Files and close its chat while multiple chats are open. The IPC
+handler checks the sender and its main frame. When the first chat closes,
+`closeDesktopMainChat` parks its draft, adopts the next view's live `Session`,
+and disposes the redundant view. The open order and drafts survive restart
+through desktop workspace state.
 
 Two details make the pool safe:
 

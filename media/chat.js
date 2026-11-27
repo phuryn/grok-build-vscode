@@ -9,6 +9,7 @@
   let editorDraftSignature;
   let desktopMainDraftScope;
   let desktopMainDraftSignature;
+  let desktopDraftRevision = 0;
   let museAdvertised = false;
   let museAvailable = false;
   // Provider advertisements keep this client compatible with older hosts.
@@ -20344,6 +20345,44 @@ ${fullText}`
     desktopConversations.saveMainDraft(composerSessionId, input.value, chipIds);
   }
 
+  const closeDesktopChat = document.getElementById("desk-conversation-close");
+  if (closeDesktopChat && window.grokDesktopConversations) {
+    const bridge = window.grokDesktopConversations;
+    closeDesktopChat.innerHTML = ICON.x;
+    window.__grokConversationClose = canClose => { closeDesktopChat.hidden = !canClose; };
+    const draftSnapshot = () => ({
+      // The host already has the confirmed draft while dictation is provisional.
+      text: state.voiceLive && state.voiceInsertionActive ? null : input.value,
+      chipIds: composerRestoredChips.map(chip => chip.id),
+      revision: desktopDraftRevision,
+    });
+    const takePaneSnapshot = () => ({
+      ...draftSnapshot(), binding: editorChatBinding,
+      scrollTop: state.stickToBottom ? null : messagesEl.scrollTop,
+    });
+    if (desktopChatPane) {
+      window.__grokLockPaneForPromotion = () => {
+        if (document.body.inert || state.composingIME || editorChatBinding === undefined) return;
+        document.body.inert = true;
+        return takePaneSnapshot();
+      };
+    }
+    closeDesktopChat.addEventListener("click", async () => {
+      if (closeDesktopChat.hidden || document.body.inert || state.composingIME) return;
+      if (desktopChatPane && editorChatBinding === undefined) return;
+      if (!desktopChatPane && (composerExpectedSessionId || pendingComposerDrafts.has(composerSessionId))) return;
+      document.body.inert = true;
+      let closed;
+      try {
+        closed = await (desktopChatPane ? bridge.close(takePaneSnapshot())
+          : bridge.close({ ...draftSnapshot(), sessionId: composerSessionId }));
+      } finally {
+        document.body.inert = false;
+      }
+      if (closed && !desktopChatPane) input.focus({ preventScroll: true });
+    });
+  }
+
   // Submit a message with explicit text — the send half of sendOrStop without
   // reading the composer. Used by the busy-queue flush and by continuous voice
   // ("grok send"), whose composer is cleared separately so the mic can keep
@@ -21459,9 +21498,30 @@ ${fullText}`
         break;
       case "projectsRailChatTarget":
         if (desktopConversations?.open) noteDesktopRailChatTarget(msg);
-        if (!msg.hasPanes) {
+        break;
+      case "desktopChatAdopted":
+        if (desktopConversations?.open) {
+          // The departing draft is parked by the host. Clear any renderer copy
+          // of either draft before the host restores the surviving composer's text.
+          composerDrafts.delete(composerSessionId);
+          composerDrafts.delete(msg.sessionId);
+          composerSessionId = msg.sessionId;
+          composerLoadDraft = null;
           desktopMainDraftScope = undefined;
           desktopMainDraftSignature = undefined;
+          input.value = "";
+          setComposerRestoredChips([]);
+          closePopovers();
+          renderInputHighlight();
+        }
+        break;
+      case "desktopDraftRevision":
+        if (desktopChatPane || desktopConversations?.open) desktopDraftRevision = msg.value;
+        break;
+      case "desktopChatScroll":
+        if (desktopConversations?.open && msg.sessionId === composerSessionId && msg.top !== null) {
+          state.stickToBottom = false;
+          messagesEl.scrollTop = msg.top;
         }
         break;
       case "desktopMainDraftScope":

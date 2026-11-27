@@ -2322,14 +2322,14 @@ describe("IPC sender validation helper", () => {
 });
 
 describe("file-tree panel assets", () => {
-  it("top-bar order is Remote, History, New, overflow, then Panel with separator on Panel only", () => {
+  it("orders the desktop chat controls with the Files divider before Files and Close", () => {
     // Owner preference: Remote, Session history, New, ⋯, |, Panel — not ⋯ first.
     // Separator lives on the Panel toggle so remote (no panel) has no dangling |.
     const sidebar = fs.readFileSync(
       path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "src", "sidebar.ts"),
       "utf8",
     );
-    const topBar = sidebar.match(/<header class="top-bar">[\s\S]*?<\/header>/)?.[0] ?? "";
+    const topBar = sidebar.match(/<header class="top-bar"[^>]*>[\s\S]*?<\/header>/)?.[0] ?? "";
     expect(topBar).toBeTruthy();
     const remote = topBar.indexOf('id="remote-btn"');
     const history = topBar.indexOf('id="history-btn"');
@@ -2339,6 +2339,12 @@ describe("file-tree panel assets", () => {
     expect(history).toBeGreaterThan(remote);
     expect(newSession).toBeGreaterThan(history);
     expect(overflow).toBeGreaterThan(newSession);
+    const separator = topBar.indexOf('id="desk-ft-top-sep"');
+    const files = topBar.indexOf('id="desk-ft-top-toggle"');
+    const close = topBar.indexOf('id="desk-conversation-close"');
+    expect(separator).toBeGreaterThan(overflow);
+    expect(files).toBeGreaterThan(separator);
+    expect(close).toBeGreaterThan(files);
     // Mutation: overflow before remote would fail.
     expect(overflow).toBeGreaterThan(remote);
 

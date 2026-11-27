@@ -184,9 +184,12 @@ describe("the very first conversation", () => {
     // the cwd is set before either.
     const at = sidebar.indexOf("const reopen = !this.focused.client");
     expect(at).toBeGreaterThan(-1);
-    const before = sidebar.slice(Math.max(0, at - 700), at);
+    // A desktop New-chat draft restored after a restart may name its own
+    // project; otherwise the selected project is the fallback.
+    const before = sidebar.slice(Math.max(0, at - 1200), at);
     expect(before).toMatch(/if \(!this\.focused\.cwd\)/);
-    expect(before).toMatch(/this\.setSessionCwd\(\s*this\.focused,\s*this\.historyCwdFor\("local"\)/);
+    expect(before).toMatch(/\? desktopDraft\.cwd : this\.historyCwdFor\("local"\)/);
+    expect(before).toMatch(/this\.setSessionCwd\(\s*this\.focused,\s*cwd,/);
   });
 });
 

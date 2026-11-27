@@ -93,6 +93,7 @@ export function fileTreePanelBootSource(_iconsDir?: string): string {
       }
     }
     const topBar = layoutHost.querySelector(":scope > .top-bar") || layoutHost.querySelector(".top-bar");
+    const closeChat = document.getElementById("desk-conversation-close");
     document.body.classList.add("desk-with-ft");
 
     let separator = document.getElementById("desk-ft-top-sep");
@@ -101,7 +102,7 @@ export function fileTreePanelBootSource(_iconsDir?: string): string {
       separator.id = "desk-ft-top-sep";
       separator.className = "desk-ft-top-sep";
       separator.setAttribute("aria-hidden", "true");
-      topBar.appendChild(separator);
+      topBar.insertBefore(separator, closeChat);
     }
 
     const normalizeRoot = (value) => value && value.ok !== false && value.root
@@ -226,6 +227,7 @@ export function fileTreePanelBootSource(_iconsDir?: string): string {
       },
     });
     panel.toggleElement.id = "desk-ft-top-toggle";
+    if (topBar && closeChat?.parentElement === topBar) topBar.insertBefore(panel.toggleElement, closeChat);
 
     // The project rail is desktop chrome, not part of the file component, but
     // its collapse controls used to live in the old panel bootstrap. Keep that

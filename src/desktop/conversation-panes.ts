@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
 import * as path from "node:path";
 import { app, shell, WebContentsView } from "electron";
-import type { BrowserWindow, IpcMainEvent, Rectangle } from "electron";
+import type { BrowserWindow, IpcMainInvokeEvent, Rectangle } from "electron";
 import type { Host, HostEditorWebview } from "../host";
-import { DESKTOP_CONVERSATION_PANE_ARG } from "./conversation-layout";
+import {
+  DESKTOP_CONVERSATION_PANE_ARG, type DesktopChatDraftSnapshot, type DesktopPaneCloseSnapshot,
+} from "./conversation-layout";
 import type { DesktopOpenFileContext } from "./desktop-policy";
 import { APP_DOCUMENT_URL, desktopChromeBootSource, ElectronWebview } from "./electron-webview";
 import { installWindowSecurityLocks } from "./window-security";
@@ -28,6 +30,8 @@ export class DesktopConversationPanes {
   private preferred?: number;
   private pendingFocus?: number;
   private pickerSnapshot?: string;
+  private filesState?: string;
+  private promoting = false;
 
   constructor(
     private readonly getWindow: () => BrowserWindow | null,
@@ -135,6 +139,8 @@ export class DesktopConversationPanes {
     contents.on("did-finish-load", () => {
       pinZoom();
       void contents.executeJavaScript(desktopChromeBootSource()).catch(() => {});
+      void contents.executeJavaScript("window.__grokConversationClose?.(true)").catch(() => {});
+      if (this.filesState) void contents.executeJavaScript(this.filesState).catch(() => {});
     });
     contents.on("focus", () => {
       if (pane.shown) this.preferred = id;
@@ -163,7 +169,7 @@ export class DesktopConversationPanes {
     return null;
   }
 
-  private fromEvent(event: IpcMainEvent): Pane | undefined {
+  private fromEvent(event: Pick<IpcMainInvokeEvent, "sender" | "senderFrame">): Pane | undefined {
     const pane = this.panes.get(event.sender.id);
     if (!pane || pane.view.webContents !== event.sender || event.sender.isDestroyed()) return;
     const frame = event.senderFrame;
@@ -173,16 +179,48 @@ export class DesktopConversationPanes {
     return pane;
   }
 
-  dispatch(event: IpcMainEvent, message: unknown): boolean {
+  dispatch(event: Pick<IpcMainInvokeEvent, "sender" | "senderFrame">, message: unknown): boolean {
     return this.fromEvent(event)?.webview.dispatchConversationMessage(message) ?? false;
   }
 
-  close(event: IpcMainEvent): boolean {
+  close(event: Pick<IpcMainInvokeEvent, "sender" | "senderFrame">,
+    saveDraft: (webview: ElectronWebview) => boolean): boolean {
     const pane = this.fromEvent(event);
-    if (!pane) return false;
+    if (!pane || this.promoting || !saveDraft(pane.webview)) return false;
     pane.panel.dispose();
     this.getWindow()?.webContents.focus();
     return true;
+  }
+
+  async closeMain(adopt: (webview: ElectronWebview, snapshot: DesktopPaneCloseSnapshot) => boolean): Promise<boolean> {
+    const first = this.panes.entries().next().value;
+    if (!first || this.promoting) return false;
+    const [id, pane] = first;
+    const contents = pane.view.webContents;
+    this.promoting = true;
+    try {
+      const raw: unknown = await contents.executeJavaScript("window.__grokLockPaneForPromotion?.()");
+      const snapshot = parsePaneCloseSnapshot(raw);
+      return !!snapshot && this.panes.get(id) === pane && adopt(pane.webview, snapshot);
+    } finally {
+      this.promoting = false;
+      if (!contents.isDestroyed()) void contents.executeJavaScript("document.body.inert = false").catch(() => {});
+    }
+  }
+
+  toggleFiles(event: Pick<IpcMainInvokeEvent, "sender" | "senderFrame">): boolean {
+    if (!this.fromEvent(event)) return false;
+    this.runInMain('document.getElementById("desk-ft-top-toggle")?.click()');
+    return true;
+  }
+
+  publishFiles(expanded: boolean, title: string, count: string): void {
+    const source = `window.__grokConversationFiles?.(...${JSON.stringify([expanded, title, count])})`;
+    if (this.filesState === source) return;
+    this.filesState = source;
+    for (const { view } of this.panes.values()) {
+      if (!view.webContents.isDestroyed()) void view.webContents.executeJavaScript(source).catch(() => {});
+    }
   }
 
   setCovered(covered: boolean): void {
@@ -219,7 +257,7 @@ export class DesktopConversationPanes {
   }
 
   refreshLayout(): void {
-    this.runInMain(`window.__grokConversationLayout?.(${this.panes.size}, ${this.showBelow})`);
+    this.runInMain(`window.__grokConversationLayout?.(${this.panes.size}, ${this.showBelow}); window.__grokConversationClose?.(${this.panes.size > 0})`);
     this.publishPicker(true);
   }
 
@@ -299,5 +337,21 @@ export class DesktopConversationPanes {
 
   dispose(): void {
     for (const { panel } of this.panes.values()) panel.dispose();
+  }
+}
+
+export function isDesktopChatDraftSnapshot(raw: unknown): raw is DesktopChatDraftSnapshot {
+  if (!raw || typeof raw !== "object") return false;
+  const { text, chipIds, revision } = raw as Partial<DesktopChatDraftSnapshot>;
+  return (text === null || typeof text === "string") && Array.isArray(chipIds) &&
+    chipIds.every(id => typeof id === "string") && typeof revision === "number" && Number.isSafeInteger(revision) && revision >= 0;
+}
+
+export function parsePaneCloseSnapshot(raw: unknown): DesktopPaneCloseSnapshot | undefined {
+  if (!isDesktopChatDraftSnapshot(raw) || !("binding" in raw) || !("scrollTop" in raw)) return;
+  const { binding, scrollTop } = raw;
+  if (typeof binding === "number" && Number.isSafeInteger(binding) && binding >= 0 &&
+      (scrollTop === null || (typeof scrollTop === "number" && Number.isFinite(scrollTop)))) {
+    return { ...raw, binding, scrollTop };
   }
 }

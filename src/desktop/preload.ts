@@ -14,7 +14,10 @@
  * globally to every module.
  */
 import { contextBridge, ipcRenderer, webUtils } from "electron";
-import { DESKTOP_CONVERSATIONS_ARG, DESKTOP_CONVERSATION_PANE_ARG } from "./conversation-layout";
+import {
+  DESKTOP_CONVERSATIONS_ARG, DESKTOP_CONVERSATION_PANE_ARG,
+  type DesktopMainCloseSnapshot, type DesktopPaneCloseSnapshot,
+} from "./conversation-layout";
 
 declare const window: {
   dispatchEvent(event: { type: string; data?: unknown }): boolean;
@@ -65,7 +68,8 @@ contextBridge.exposeInMainWorld("grokDesktopShell", true);
 const isConversationPane = process.argv.includes(DESKTOP_CONVERSATION_PANE_ARG);
 if (isConversationPane) {
   contextBridge.exposeInMainWorld("grokDesktopConversations", {
-    close: () => ipcRenderer.send("desk-conversations:close"),
+    close: (draft: DesktopPaneCloseSnapshot) => ipcRenderer.invoke("desk-conversations:close", draft),
+    toggleFiles: () => ipcRenderer.send("desk-conversations:toggle-files"),
   });
 } else if (process.argv.includes(DESKTOP_CONVERSATIONS_ARG)) {
   contextBridge.exposeInMainWorld("grokDesktopConversations", {
@@ -74,6 +78,9 @@ if (isConversationPane) {
     setBounds: (bounds: unknown, slots: number, stacked: boolean) => ipcRenderer.send("desk-conversations:bounds", bounds, slots, stacked),
     showPane: (id: number) => ipcRenderer.send("desk-conversations:pick", id),
     setCovered: (covered: boolean) => ipcRenderer.send("desk-conversations:covered", covered),
+    close: (draft: DesktopMainCloseSnapshot) => ipcRenderer.invoke("desk-conversations:close-main", draft),
+    publishFiles: (expanded: boolean, title: string, count: string) =>
+      ipcRenderer.send("desk-conversations:files-state", expanded, title, count),
     saveMainDraft: (id: string | null, text: string, chipIds: string[]) =>
       ipcRenderer.send("desk-conversations:main-draft", id, text, chipIds),
   });

@@ -80,12 +80,15 @@ middle-click it. A plain click or Enter on a row opens it in the chat you used
 last. If the conversation is already open, Projects focuses that chat. The
 destination for new opens has the stronger highlight. Other open chats have
 the lighter highlight. Desktop `config.json` supports `grok.openConversationIn`
-with `lastUsed` (the default), `sidebar` (the main chat), or `editor` (an added
+with `lastUsed` (the default), `sidebar` (the first chat), or `editor` (an added
 pane).
 
-Each chat has its own header, transcript, and composer, with a shared theme
-and text zoom. **Close chat pane** removes the added chat from the window.
-Its running turn stays in the session pool.
+Every chat has the same header controls, including access to the shared
+Files dock. While multiple chats are open, **Close chat pane** removes any
+chat from the window. Its agent keeps running, and reopening the conversation
+recovers its draft. For a chat with no saved history, the next **New session**
+in its project recovers the draft. The window restores its open chats in
+order, with their drafts, when restarted.
 
 Run `npm run test:desktop -- test/desktop/split-view.test.ts` on an interactive
 desktop to exercise both chats with the fake ACP CLI. The driver writes light

@@ -5,6 +5,7 @@ import { webviewHtmlText, webviewLang, webviewStringsScript, webviewText } from 
 import { parseContextWindowSize, type ContextWindowSelection } from "./context-selection";
 import { remoteHandoffUrl, remoteHandoffQr, type HandoffSession } from "./remote-handoff";
 import type { RemoteHandoffSource } from "./protocol";
+import type { DesktopChatDraftSnapshot, DesktopMainCloseSnapshot, DesktopPaneCloseSnapshot } from "./desktop/conversation-layout";
 import { CloudHostUpdate, cloudHostIsIdle, cloudHostBootSupportsUpdate, cloudLiveWorkflowRuns, installedCloudHostVersion, parseCloudHostUpdateAttempt, removeCloudHostUpdateStamps, CLOUD_UPDATE_REFUSAL } from "./cloud-host-update";
 import { MuseBackend, withMuseCredentialBackend } from "./muse-backend";
 import { locateMuseCli, parseMuseVersionOutput } from "./muse-cli-locator";
@@ -747,6 +748,8 @@ interface EditorChatTab {
   restoreKey?: string;
   restoring?: "pending" | "loading";
   restoreError?: string;
+  promoted?: boolean;
+  desktopDraftRevision?: number;
   listeners?: HostDisposable;
 }
 
@@ -772,6 +775,7 @@ const EDITOR_CHAT_STATE = "grok.editorChatPanel.";
 const PARKED_EDITOR_DRAFT = "grok.editorChatDraft.";
 const DESKTOP_CONVERSATION_LAYOUT = "grok.desktopConversationLayout";
 const DESKTOP_MAIN_DRAFT = "grok.desktopMainDraft";
+const DESKTOP_CLOSED_NEW_DRAFTS = "grok.desktopClosedNewDrafts";
 
 interface DesktopConversationLayout {
   panes: string[];
@@ -4337,6 +4341,62 @@ export class GrokSidebar {
     return [...this.editorChats].find(tab => tab.panel.webview === webview)?.session;
   }
 
+  saveDesktopPaneDraft(webview: HostWebview, snapshot: DesktopPaneCloseSnapshot): boolean {
+    const tab = [...this.editorChats].find(chat => chat.panel.webview === webview);
+    if (!tab?.ready || tab.binding !== snapshot.binding || snapshot.revision !== (tab.desktopDraftRevision ?? 0) ||
+        this.desktopPaneLayoutFrozen) return false;
+    if (snapshot.text !== null) {
+      const draft = this.desktopDraftFromSnapshot(tab.session, snapshot);
+      if (draft) this.editorDrafts.set(tab.session, draft);
+      else this.editorDrafts.delete(tab.session);
+    }
+    return true;
+  }
+
+  closeDesktopMainChat(webview: HostWebview, snapshot: DesktopMainCloseSnapshot, promoted: DesktopPaneCloseSnapshot): boolean {
+    const view = this.view;
+    const leaving = this.focused;
+    const tab = [...this.editorChats].find(chat => chat.panel.webview === webview);
+    if (!view || !this.chatReadyForHandoff || !tab || tab.session === leaving ||
+        (leaving.activeSessionId ?? null) !== snapshot.sessionId || snapshot.revision !== (this.desktopDraftRevision ?? 0) ||
+        !this.saveDesktopPaneDraft(webview, promoted)) return false;
+
+    const saved = this.context.workspaceState?.get<DesktopMainDraft>(DESKTOP_MAIN_DRAFT);
+    const confirmed = saved && saved.sessionId === (leaving.hasHistory ? leaving.activeSessionId : undefined)
+      && pathsEqual(saved.cwd, this.sessionCwd(leaving)) ? saved : undefined;
+    const closingDraft = snapshot.text === null ? confirmed : this.desktopDraftFromSnapshot(leaving, snapshot);
+    if (closingDraft) this.parkClosedDesktopDraft(leaving, closingDraft);
+    if (leaving.client) this.pool.add(leaving);
+
+    const session = tab.session;
+    const draft = this.editorDrafts.get(session);
+    this.editorDrafts.delete(session);
+    this.desktopMainDraftPending = false;
+    tab.promoted = true;
+    const sessionId = session.activeSessionId ?? null;
+    this.stopSplitSidebarVoice();
+    this.closeEditorChat(tab);
+    void view.webview.postMessage({ type: "desktopChatAdopted", sessionId });
+    this.focusSession(session, true);
+    this.postLocal({ type: "setBusy", ...rehydrateBusyChrome(session) });
+    if (draft) this.restoreComposerFor(session, undefined, draft.text, draft.chips, true);
+    this.writeDesktopMainDraft(session, draft);
+    this.postDesktopMainDraftScope();
+    void view.webview.postMessage({ type: "desktopChatScroll", sessionId, top: promoted.scrollTop });
+    for (const pending of this.pendingConfirms?.values() ?? []) {
+      if (pending.session === session) this.postLocal(pending.request);
+    }
+    if (tab.restoreError) this.postLocal({ type: "error", text: tab.restoreError });
+    else if (tab.restoring) {
+      this.postLocal({ type: "setBusy", value: true, locked: true });
+      void this.startRestoredEditor(tab);
+    }
+    this.rememberLocalConversation(true);
+    this.postSessionsList();
+    this.postProjectsRailChatTarget();
+    return true;
+  }
+
   revealDesktopPane(webview: HostWebview): void {
     const tab = [...this.editorChats].find(chat => chat.panel.webview === webview);
     if (tab) this.revealEditorComposer(tab);
@@ -4387,6 +4447,7 @@ export class GrokSidebar {
   private restoringDesktopPanes = false;
   private desktopPaneLayoutFrozen = false;
   private desktopMainDraftPending = false;
+  private desktopDraftRevision = 0;
 
   private desktopConversationLayout(): DesktopConversationLayout {
     const saved = this.context?.workspaceState?.get<DesktopConversationLayout>(DESKTOP_CONVERSATION_LAYOUT);
@@ -4442,22 +4503,27 @@ export class GrokSidebar {
     if (panes.length === previous.panes.length && panes.every((key, i) => key === previous.panes[i])
         && lastUsed === previous.lastUsed) return;
     this.writeEditorWorkspaceState(DESKTOP_CONVERSATION_LAYOUT, panes.length ? { panes, lastUsed } : undefined);
-    if (!panes.length) this.writeEditorWorkspaceState(DESKTOP_MAIN_DRAFT, undefined);
   }
 
   saveDesktopMainDraft(id: string | null, text: string, chipIds: string[]): void {
-    if (!this.context.workspaceState || !this.editorChats.size || this.desktopPaneLayoutFrozen
+    if (!this.context.workspaceState || this.desktopPaneLayoutFrozen
         || (this.focused.activeSessionId ?? null) !== id) return;
-    const chips = this.focused.restoredChips.filter(chip => chipIds.includes(chip.id));
-    const snapshot: DesktopMainDraft = {
-      cwd: this.sessionCwd(this.focused), sessionId: this.focused.hasHistory ? this.focused.activeSessionId : undefined,
-      text, chips,
-    };
-    this.writeEditorWorkspaceState(DESKTOP_MAIN_DRAFT, text || chips.length ? snapshot : undefined);
+    this.writeDesktopMainDraft(this.focused, this.desktopDraftFromSnapshot(this.focused, { text, chipIds }));
+  }
+
+  private desktopDraftFromSnapshot(session: Session, { text, chipIds }: Pick<DesktopChatDraftSnapshot, "text" | "chipIds">): EditorChatDraft | undefined {
+    const chips = session.restoredChips.filter(chip => chipIds.includes(chip.id));
+    return text || chips.length ? { text: text ?? "", chips } : undefined;
+  }
+
+  private writeDesktopMainDraft(session: Session, draft: EditorChatDraft | undefined): void {
+    this.writeEditorWorkspaceState(DESKTOP_MAIN_DRAFT, draft && {
+      ...draft, cwd: this.sessionCwd(session), sessionId: session.hasHistory ? session.activeSessionId : undefined,
+    });
   }
 
   private postDesktopMainDraftScope(): void {
-    if (!this.host?.canSwitchWorkspaceFolder || !this.context?.workspaceState || !this.editorChats?.size
+    if (!this.host?.canSwitchWorkspaceFolder || !this.host.canOpenConversationEditor || !this.context?.workspaceState
         || !this.chatReadyForHandoff) return;
     const session = this.focused;
     if (this.desktopMainDraftPending) {
@@ -4509,10 +4575,14 @@ export class GrokSidebar {
   }
 
   private async startRestoredEditor(tab: EditorChatTab): Promise<void> {
-    if (tab.restoring !== "pending" || !tab.ready || !tab.panel.visible) return;
+    if (tab.restoring !== "pending" || !tab.ready || (!tab.promoted && !tab.panel.visible)) return;
     tab.restoring = "loading";
     const { session, targetId: id } = tab;
-    const current = () => this.editorChats.has(tab) && tab.session === session && tab.restoring === "loading";
+    const current = () => (tab.promoted || this.editorChats.has(tab)) && tab.session === session && tab.restoring === "loading";
+    const postChrome = (message: HostMsg) => {
+      if (!tab.promoted) this.emitEditorSession(session, message);
+      else if (this.focused === session) this.postLocal(message);
+    };
     let claim: Awaited<ReturnType<GrokSidebar["reserveBehindInFlightLoad"]>>;
     let started = false;
     let failure: unknown;
@@ -4533,17 +4603,19 @@ export class GrokSidebar {
         tab.restoring = undefined;
         tab.targetId = undefined;
         if (started || !id) {
-          void tab.panel.webview.postMessage({ type: "editorChatRestoreBlocked", value: false });
-          this.emitEditorSession(session, { type: "setBusy", ...(started ? rehydrateBusyChrome(session) : { value: false }) });
-          if (tab.panel.visible) this.markRead(session);
-          this.persistEditorChat(tab);
-          if (failure) this.reportEditorChatFailure(tab);
+          if (!tab.promoted) {
+            void tab.panel.webview.postMessage({ type: "editorChatRestoreBlocked", value: false });
+            this.persistEditorChat(tab);
+          }
+          postChrome({ type: "setBusy", ...(started ? rehydrateBusyChrome(session) : { value: false }) });
+          if (tab.panel.visible || (tab.promoted && this.focused === session)) this.markRead(session);
+          if (failure) postChrome({ type: "error", text: this.l10n("Could not complete the conversation action.") });
         } else {
           this.pool.delete(session);
-          session.activeSessionId = undefined;
-          tab.restoreError = this.editorRestoreError(this.editorDrafts.has(session));
-          this.emitEditorSession(session, { type: "setBusy", value: false });
-          this.emitEditorSession(session, { type: "error", text: tab.restoreError });
+          if (!tab.promoted) session.activeSessionId = undefined;
+          tab.restoreError = this.editorRestoreError(tab.promoted || this.editorDrafts.has(session));
+          postChrome({ type: "setBusy", value: false });
+          postChrome({ type: "error", text: tab.restoreError });
         }
         this.postProjectsRailChatTarget();
       }
@@ -4606,7 +4678,11 @@ export class GrokSidebar {
   private forgetEditorChat(tab: EditorChatTab): void {
     if (!this.editorChats.delete(tab)) return;
     if (this.localVoiceOwner?.tab === tab) this.stopLocalVoiceInput();
-    this.parkBoundEditorDraft(tab);
+    const draft = this.editorDrafts?.get(tab.session);
+    if (this.host.canSwitchWorkspaceFolder && draft) {
+      this.parkClosedDesktopDraft(tab.session, draft, tab.targetId);
+      this.editorDrafts.delete(tab.session);
+    } else this.parkBoundEditorDraft(tab);
     if (tab.restoreKey) this.writeEditorWorkspaceState(EDITOR_CHAT_STATE + tab.restoreKey, undefined);
     if (this.lastEditorChat === tab) this.setLastEditorChat(undefined);
     else this.postProjectsRailChatTarget();
@@ -4675,6 +4751,7 @@ export class GrokSidebar {
     if (!tab) return;
     await this.startSession(undefined, session, "replace", undefined, spawn?.modelId ? { modelId: spawn.modelId } : undefined);
     if (spawn?.draft) this.restoreComposerFor(session, undefined, spawn.draft, undefined, true, tab);
+    if (!spawn && tab.ready && this.editorChatFor(session) === tab) this.restoreClosedDesktopDraft(session, tab);
     this.sweepEmptySessions(this.sessionCwd(session));
     this.postSessionsList();
   }
@@ -4767,6 +4844,7 @@ export class GrokSidebar {
     if (frame.type === "ready") {
       if (this.localVoiceOwner?.tab === tab) this.stopLocalVoiceInput();
       tab.ready = true;
+      tab.desktopDraftRevision = 0;
       this.replayEditorChat(tab);
       this.focusEditorComposer(tab);
       void this.postRemoteStatus();
@@ -7451,6 +7529,10 @@ Only continue if you trust this code.`,
           this.persistEditorChat(tab);
         }
         this.emitEditorSession(session, message);
+        if (this.host.canSwitchWorkspaceFolder) {
+          tab.desktopDraftRevision = (tab.desktopDraftRevision ?? 0) + 1;
+          void tab.panel.webview.postMessage({ type: "desktopDraftRevision", value: tab.desktopDraftRevision });
+        }
         return;
       }
     } else if (requester) {
@@ -7469,6 +7551,10 @@ Only continue if you trust this code.`,
       // whatever it is displaying.
       retainChips();
       this.postLocal(this.view ? this.localizeHistoryMessage(message, this.view.webview) : message);
+      if (this.host.canSwitchWorkspaceFolder && this.host.canOpenConversationEditor) {
+        this.desktopDraftRevision = (this.desktopDraftRevision ?? 0) + 1;
+        void this.view?.webview.postMessage({ type: "desktopDraftRevision", value: this.desktopDraftRevision });
+      }
       return;
     }
     // The asking surface has moved to another conversation. Refusing to deliver
@@ -10926,8 +11012,35 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     this.editorDrafts.delete(session);
     const id = session.activeSessionId ?? tab.targetId;
     if (!id) return;
+    this.parkEditorDraftForId(id, draft, !!tab.targetId || session.hasHistory);
+  }
+
+  private parkEditorDraftForId(id: string, draft: EditorChatDraft, durable: boolean): void {
     this.editorDrafts.set(id, draft);
-    if (tab.targetId || session.hasHistory) this.writeEditorWorkspaceState(PARKED_EDITOR_DRAFT + id, draft);
+    if (durable) this.writeEditorWorkspaceState(PARKED_EDITOR_DRAFT + id, draft);
+  }
+
+  private parkClosedDesktopDraft(session: Session, draft: EditorChatDraft, targetId?: string): void {
+    const id = targetId ?? (session.hasHistory ? session.activeSessionId : undefined);
+    if (id) {
+      this.parkEditorDraftForId(id, draft, true);
+      return;
+    }
+    // An unsent chat may have no history entry to reopen, even if its agent
+    // minted an ID. The next explicit New in this project can recover it.
+    const drafts = this.context.workspaceState?.get<DesktopMainDraft[]>(DESKTOP_CLOSED_NEW_DRAFTS) ?? [];
+    this.writeEditorWorkspaceState(DESKTOP_CLOSED_NEW_DRAFTS, [...drafts, { ...draft, cwd: this.sessionCwd(session) }]);
+  }
+
+  private restoreClosedDesktopDraft(session: Session, tab?: EditorChatTab): void {
+    if (!this.host?.canSwitchWorkspaceFolder || !session.activeSessionId || session.hasHistory) return;
+    const drafts = this.context.workspaceState?.get<DesktopMainDraft[]>(DESKTOP_CLOSED_NEW_DRAFTS) ?? [];
+    const index = drafts.findIndex(draft => pathsEqual(draft.cwd, this.sessionCwd(session)));
+    if (index < 0) return;
+    const draft = drafts[index];
+    if (!tab) this.writeDesktopMainDraft(session, draft);
+    this.restoreComposerFor(session, undefined, draft.text, draft.chips, true, tab);
+    this.writeEditorWorkspaceState(DESKTOP_CLOSED_NEW_DRAFTS, drafts.filter((_, i) => i !== index));
   }
 
   private takeParkedEditorDraft(tab: EditorChatTab): void {
@@ -14738,7 +14851,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       case "ready": {
         if (origin === "local") {
           this.cancelStarPrompt();
-          this.desktopMainDraftPending = !!(this.host.canSwitchWorkspaceFolder && this.editorChats?.size);
+          this.desktopDraftRevision = 0;
+          this.desktopMainDraftPending = !!(this.host.canSwitchWorkspaceFolder && this.host.canOpenConversationEditor);
         }
         // Decide BEFORE postInitialState runs: its cold-start branch calls
         // startSession(), which can create this.focused.client before this
@@ -21929,7 +22043,12 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // or write A. Every other entry point sets this (newFocusedSession, resume,
     // the delete replacement); the one that starts by itself did not.
     if (!this.focused.cwd) {
-      this.setSessionCwd(this.focused, this.historyCwdFor("local"), this.workspaceRoot());
+      const desktopDraft = this.desktopMainDraftPending
+        ? this.context.workspaceState?.get<DesktopMainDraft>(DESKTOP_MAIN_DRAFT)
+        : undefined;
+      const cwd = desktopDraft && !desktopDraft.sessionId && this.isAuthorizedCwd(desktopDraft.cwd)
+        ? desktopDraft.cwd : this.historyCwdFor("local");
+      this.setSessionCwd(this.focused, cwd, this.workspaceRoot());
     }
     if (!this.focused.hasHistory && !this.focused.client) {
       this.focused.provider = this.defaultProviderForProject(this.sessionCwd(this.focused));
@@ -21964,12 +22083,12 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
    * state before an agent runs, or the gap while an open is still loading,
    * leaves the entry alone.
    */
-  private rememberLocalConversation(): void {
+  private rememberLocalConversation(commitBlank = false): void {
     const root = this.workspaceRoot();
     if (!root) return;
     const session = this.focused;
     const id = session.hasHistory && !session.deleted ? session.activeSessionId : undefined;
-    if (!id && (session.hasHistory || !session.client)) return;
+    if (!id && !commitBlank && (session.hasHistory || !session.client)) return;
     const key = normalizeRepoPath(root);
     const remembered = this.state.get<Record<string, string>>(LAST_CONVERSATION_KEY, {});
     if (remembered[key] === id) return;
@@ -23222,7 +23341,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     }
   }
 
-  private focusSession(session: Session): void {
+  private focusSession(session: Session, localOnly = false): void {
     if (session === this.focused) return;
     this.stopSplitSidebarVoice();
     this.focused = session;
@@ -23254,7 +23373,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // emit()/post(), which already mirror; this path deliberately bypasses them.
     // The targeted send applies the normal remote transform; the calls below
     // refresh current mode, repository, and history chrome independently.
-    if (this.uplink) {
+    if (this.uplink && !localOnly) {
       const goal = sessionGoalMessage(session);
       const replay: HostMsg[] = [
         { type: "clearMessages" },
@@ -24450,6 +24569,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // not that chat.
     const unused = spawn ? undefined : this.findUnusedEmptySession(targetCwd, "local", leavingId);
     if (unused) onCreated?.(unused.id);
+    let opened = unused?.session;
     if (unused?.session?.client) {
       this.focusSession(unused.session);
     } else if (unused?.session) {
@@ -24459,6 +24579,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       await this.startSession(unused.id, this.focused, "ensure");
     } else if (unused) {
       await this.openSession(unused.id, unused.cwd);
+      if (this.focused.activeSessionId === unused.id) opened = this.focused;
     } else {
       this.focused = this.newLocalSession();
       this.setSessionCwd(this.focused, targetCwd, this.workspaceRoot());
@@ -24469,10 +24590,12 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       // path just clears twice, a no-op.)
       this.emit(this.focused, { type: "clearMessages" });
       const created = this.focused;
+      opened = created;
       await this.startSession(undefined, created, "replace", undefined, spawn?.modelId ? { modelId: spawn.modelId } : {});
       if (created.activeSessionId) onCreated?.(created.activeSessionId);
       if (spawn) await this.handSpawnDraft(created, spawn, "local");
     }
+    if (!spawn && origin === "local" && opened === this.focused) this.restoreClosedDesktopDraft(opened);
     await this.persistWorktreeBinding(this.focused);
     this.sweepEmptySessions(this.sessionCwd(this.focused));
     this.postRepoCatalog();
@@ -26594,6 +26717,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // Chrome mirrors AFK Pilot: brand + panel toggle, search, scroll, footer
     // theme toggle (no account avatar). chat.js only empties #rail-scroll.
     const desktopChrome = this.host.canSwitchWorkspaceFolder && !editorChat;
+    const desktopChat = this.host.canSwitchWorkspaceFolder;
+    const splitChat = desktopChat && this.host.canOpenConversationEditor;
     const railMark = desktopChrome
       ? resourceUri("grok-icon.svg")
       : "";
@@ -26634,7 +26759,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       ? `<div id="desk-ft-shell" class="desk-ft-shell"><div class="desk-ft-chat">`
       : "";
     const fileShellClose = desktopChrome ? `</div></div>` : "";
-    const deskLayoutClass = desktopChrome ? " has-rail desk-with-ft" : "";
+    const deskLayoutClass = desktopChrome ? " has-rail desk-with-ft" : desktopChat ? " desk-with-ft" : "";
     const firstFrameLayout = desktopChrome
       ? `
   body.desk.has-rail { display: flex; flex-direction: row; align-items: stretch; }
@@ -26681,7 +26806,7 @@ ${filePanelStyle}
 ${desktopChrome ? `<script nonce="${nonce}">try{if(localStorage.getItem("desk-rail-open")==="0")document.body.classList.add("desk-rail-collapsed")}catch(e){}</script>` : ""}
 ${railMount}
 ${openMain}
-  <header class="top-bar">
+  <header class="top-bar"${splitChat && !editorChat ? ` data-first-chat-label="${l10n("Show first chat only")}"` : ""}>
     <div id="session-name-chip" class="session-name-chip" hidden>
       <button id="session-name-label" class="session-name-label" type="button"></button>
       <!-- Which project this conversation belongs to. History went
@@ -26695,8 +26820,12 @@ ${openMain}
     <button id="remote-btn" class="icon-btn remote-btn" title="${l10n("Remote control")}" hidden></button>
     <button id="history-btn" class="icon-btn" title="${l10n("Session history")}"></button>
     <button id="new-btn" class="icon-btn" title="${l10n("New session")}"></button>
-    ${desktopChrome ? `<div id="session-head-actions"></div>` : ""}
-    ${desktopChrome ? "" : `<div id="vscode-session-actions"></div>`}
+    ${desktopChat ? `<div id="session-head-actions"></div>` : `<div id="vscode-session-actions"></div>`}
+    ${desktopChat && editorChat ? `<span id="desk-ft-top-sep" class="desk-ft-top-sep" aria-hidden="true"></span>
+    <button id="desk-ft-top-toggle" class="gfp-toggle desk-ft-top-toggle" type="button" aria-label="${l10n("Toggle file panel")}" aria-expanded="false">
+      <span class="gfp-toggle-count" aria-hidden="true" hidden></span>
+    </button>` : ""}
+    ${splitChat ? `<button id="desk-conversation-close" class="icon-btn" type="button" title="${l10n("Close chat pane")}" aria-label="${l10n("Close chat pane")}" hidden></button>` : ""}
     <div id="repo-popover" class="toolbar-popover repo-popover" hidden></div>
     <div id="history-popover" class="toolbar-popover history-popover" hidden></div>
   </header>

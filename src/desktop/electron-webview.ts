@@ -383,10 +383,7 @@ body.desk-split-compact #desk-ft-panel {
 body.desk-split-compact #projects-rail { inset-inline-start: 0; }
 body.desk-split-compact #desk-ft-panel { inset-inline-end: 0; }
 body.desk-split-compact #desk-ft-maximize { display: none; }
-#desk-conversation-close {
-  margin-inline-start: auto;
-  font-size: 1.25em;
-}
+#desk-conversation-close[hidden] { display: none; }
 
 /* Scroll-edge fades — port of AFK Pilot web/chat.html (not shared chat.css). */
 #messages-wrap {

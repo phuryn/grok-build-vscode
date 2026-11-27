@@ -23,6 +23,7 @@ export const DESKTOP_CONVERSATION_LAYOUT_BOOT = `
   let showBelow = false;
   let observer;
   let layers;
+  let filesObserver;
   let covered;
   let frame;
   let measuredZoom;
@@ -114,7 +115,7 @@ export const DESKTOP_CONVERSATION_LAYOUT_BOOT = `
     picker.options[0].disabled = true;
     picker.value = "";
     picker.dataset.unread = String(unread > 0);
-    if (stacked) picker.append(option("Show main chat only", "0"));
+    if (stacked) picker.append(option(picker.dataset.firstChatLabel, "0"));
   };
   window.__grokOpenCompactFiles = () => {
     if (body().classList.contains("desk-split-compact")) setDrawer("files");
@@ -129,6 +130,7 @@ export const DESKTOP_CONVERSATION_LAYOUT_BOOT = `
       if (!columns) return;
       observer?.disconnect();
       layers?.disconnect();
+      filesObserver?.disconnect();
       window.removeEventListener("afkpilot-layers", syncCoverage);
       window.removeEventListener("resize", measure);
       document.removeEventListener("click", drawerClick, true);
@@ -166,6 +168,7 @@ export const DESKTOP_CONVERSATION_LAYOUT_BOOT = `
       window.__grokRefreshDesktopTheme?.();
       picker = document.createElement("select");
       picker.id = "desk-conversation-picker";
+      picker.dataset.firstChatLabel = header?.dataset.firstChatLabel || "";
       picker.setAttribute("aria-label", "Switch to an open chat");
       picker.hidden = true;
       picker.addEventListener("change", () => {
@@ -176,6 +179,16 @@ export const DESKTOP_CONVERSATION_LAYOUT_BOOT = `
         picker.value = "";
       });
       header?.after(picker);
+      const files = document.getElementById("desk-ft-top-toggle");
+      if (files) {
+        const publish = () => {
+          const badge = files.querySelector(".gfp-toggle-count:not([hidden])");
+          bridge()?.publishFiles(files.getAttribute("aria-expanded") === "true", files.title, badge?.textContent || "");
+        };
+        filesObserver = new MutationObserver(publish);
+        filesObserver.observe(files, { attributes: true, childList: true, subtree: true, characterData: true });
+        publish();
+      }
       observer?.disconnect();
       observer = new ResizeObserver(measure);
       observer.observe(columns);
@@ -199,16 +212,33 @@ export const DESKTOP_CONVERSATION_LAYOUT_BOOT = `
 
 export const DESKTOP_CONVERSATION_PANE_BOOT = String.raw`
 document.addEventListener("DOMContentLoaded", () => {
-  const bar = document.querySelector(".top-bar");
-  if (!bar) return;
-  const close = document.createElement("button");
-  close.type = "button";
-  close.id = "desk-conversation-close";
-  close.className = "icon-btn";
-  close.title = "Close chat pane";
-  close.setAttribute("aria-label", close.title);
-  close.textContent = "×";
-  close.onclick = () => window.grokDesktopConversations?.close();
-  bar.append(close);
+  const files = document.getElementById("desk-ft-top-toggle");
+  if (!files) return;
+  files.insertAdjacentHTML("afterbegin", window.GrokFilePanel.panelIcon("right"));
+  files.addEventListener("click", () => window.grokDesktopConversations?.toggleFiles());
 });
+window.__grokConversationFiles = (expanded, title, count) => {
+  const files = document.getElementById("desk-ft-top-toggle");
+  const badge = files?.querySelector(".gfp-toggle-count");
+  if (!badge) return;
+  files.setAttribute("aria-expanded", expanded);
+  files.title = title;
+  badge.textContent = count;
+  badge.hidden = !count;
+};
 `;
+
+export interface DesktopChatDraftSnapshot {
+  text: string | null;
+  chipIds: string[];
+  revision: number;
+}
+
+export interface DesktopMainCloseSnapshot extends DesktopChatDraftSnapshot {
+  sessionId: string | null;
+}
+
+export interface DesktopPaneCloseSnapshot extends DesktopChatDraftSnapshot {
+  binding: number;
+  scrollTop: number | null;
+}

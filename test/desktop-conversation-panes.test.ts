@@ -308,13 +308,31 @@ describe("desktop conversation pane host", () => {
     const receive = vi.fn();
     panel.onDidDispose(dispose);
     panel.webview.onDidReceiveMessage(receive);
-    expect(panes.close(event())).toBe(true);
+    expect(panes.close(event(), () => true)).toBe(true);
     panel.dispose();
     expect(dispose).toHaveBeenCalledOnce();
     expect(contents.close).toHaveBeenCalledOnce();
     expect(window.contentView.removeChildView).toHaveBeenCalledOnce();
     expect(panes.documentHtml(contents.mainFrame.url)).toBeUndefined();
     expect(receive).not.toHaveBeenCalled();
+  });
+
+  it("publishes one close state to the window and panes as the number of chats changes", () => {
+    const { contents, window, panes, open, event } = fixture();
+    panes.refreshLayout();
+    expect(window.webContents.executeJavaScript).toHaveBeenCalledWith(
+      expect.stringContaining("__grokConversationClose?.(false)"));
+    const panel = open();
+    panel.webview.html = "<html></html>";
+    contents.emit("did-finish-load");
+    expect(window.webContents.executeJavaScript).toHaveBeenCalledWith(
+      expect.stringContaining("__grokConversationClose?.(true)"));
+    expect(contents.executeJavaScript).toHaveBeenCalledWith(
+      expect.stringContaining("__grokConversationClose?.(true)"));
+    vi.mocked(window.webContents.executeJavaScript).mockClear();
+    expect(panes.close(event(), () => true)).toBe(true);
+    expect(window.webContents.executeJavaScript).toHaveBeenCalledWith(
+      expect.stringContaining("__grokConversationClose?.(false)"));
   });
   it("reserves the main column at the minimum width and counts only columns that fit at a scaled size", () => {
     expect(conversationColumnCapacity(400)).toBe(0);

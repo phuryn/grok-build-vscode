@@ -249,6 +249,17 @@ it("routes desktop chats and keeps them usable through Files, overlays, resizing
     }, { timeout: 30_000 });
     expect(await page.locator("#session-name-label").innerText()).toContain(mainSession.title);
     expect(await paneEval(app, 'document.querySelectorAll("#projects-rail, #desk-ft-panel").length')).toBe(0);
+    const headerControls = () => [...document.querySelectorAll(".top-bar button, .top-bar #desk-ft-top-sep")]
+      .filter(el => el.getBoundingClientRect().width > 0)
+      .map(el => el.closest("#session-head-actions")?.id || el.id)
+      .filter(id => ["session-name-label", "remote-btn", "history-btn", "new-btn", "session-head-actions",
+        "desk-ft-top-sep", "desk-ft-top-toggle", "desk-conversation-close"].includes(id));
+    const orderedControls = ["session-name-label", "remote-btn", "history-btn", "new-btn", "session-head-actions",
+      "desk-ft-top-sep", "desk-ft-top-toggle", "desk-conversation-close"];
+    await vi.waitFor(async () => {
+      expect(await page.evaluate(headerControls)).toEqual(orderedControls);
+      expect(await paneEval(app!, `(${headerControls.toString()})()`)).toEqual(orderedControls);
+    });
     const [mainWidth, paneWidth] = await page.locator(".desk-ft-chat, #desk-conversation-slot").evaluateAll(
       elements => elements.map(element => element.getBoundingClientRect().width),
     );
@@ -265,8 +276,11 @@ it("routes desktop chats and keeps them usable through Files, overlays, resizing
     expect(Math.abs(headers.headerTop - (headers.slotTop + childHeaderTop))).toBeLessThanOrEqual(2);
     const nativeWidth = async () => (await nativeChats(app!))[0]?.bounds.width ?? 0;
     await vi.waitFor(async () => expect(Math.abs(await nativeWidth() - paneWidth)).toBeLessThanOrEqual(3));
-    await page.locator("#desk-ft-top-toggle").click();
+    await paneEval(app, 'document.querySelector("#desk-ft-top-toggle").click()');
     await vi.waitFor(async () => expect(await nativeWidth()).toBeLessThan(paneWidth - 50));
+    await vi.waitFor(async () => {
+      expect(await paneEval(app!, 'document.querySelector("#desk-ft-top-toggle").getAttribute("aria-expanded")')).toBe("true");
+    });
     await page.locator("#desk-ft-top-toggle").click();
     await vi.waitFor(async () => expect(Math.abs(await nativeWidth() - paneWidth)).toBeLessThanOrEqual(3));
     const resizeWindow = (delta: number) => app!.evaluate(({ BrowserWindow }, dx) => {
@@ -830,6 +844,40 @@ it("restores the split profile, starts only visible conversations, and keeps dic
     await beside(second.id);
     const reopenedId = await expectPane(1, second.title, true);
     expect(await paneDraft(reopenedId)).toBe(drafts[2]);
+
+    // Close the original window chat. The next chat occupies its column and
+    // keeps its own transcript and draft. The third chat stays put.
+    const close = page.getByRole("button", { name: "Close chat pane", exact: true });
+    await close.click();
+    await page.locator("#session-name-label").filter({ hasText: first.title }).waitFor();
+    await vi.waitFor(async () => {
+      expect((await nativeChats(app!)).map(pane => pane.id)).toEqual([reopenedId]);
+      expect(await page.locator("#input").inputValue()).toBe(paneResult);
+      expect(await paneDraft(reopenedId)).toBe(drafts[2]);
+    });
+    expect(await page.locator("#messages").innerText()).toContain("Acknowledged.");
+    expect((await loads()).filter(id => id === first.id)).toHaveLength(1);
+    await paneEval(app, 'requestAnimationFrame(() => document.querySelector("#desk-conversation-close").click())', reopenedId);
+    await close.waitFor({ state: "hidden" });
+    await vi.waitFor(async () => expect(await nativeChats(app!)).toEqual([]));
+
+    await app.close();
+    app = undefined;
+    const finalConfig = JSON.parse(await readFile(path.join(profile, "config.json"), "utf8"));
+    await writeFile(path.join(profile, "config.json"), JSON.stringify({ ...finalConfig, ...overrides }));
+    const single = path.join(temp, "single");
+    await mkdir(single);
+    traceFile = path.join(single, "desktop-wire.jsonl");
+    app = await start(single);
+    page = await app.firstWindow();
+    await page.locator("#session-name-label").filter({ hasText: first.title }).waitFor();
+    await vi.waitFor(async () => expect(await page.locator("#input").inputValue()).toBe(paneResult));
+    expect(await page.getByRole("button", { name: "Close chat pane", exact: true }).count()).toBe(0);
+    expect(await nativeChats(app)).toEqual([]);
+    if (!(await page.locator("#projects-rail").isVisible())) await page.locator("#desk-rail-open-btn").click();
+    await beside(main.id);
+    const restoredFormerMain = await expectPane(0, main.title, true);
+    await vi.waitFor(async () => expect(await paneDraft(restoredFormerMain)).toBe(mainResult));
   } catch (error) {
     await reportSplitFailure(app, traceFile);
     throw error;
@@ -837,4 +885,4 @@ it("restores the split profile, starts only visible conversations, and keeps dic
     try { await app?.close(); }
     finally { await rm(temp, { recursive: true, force: true }); }
   }
-}, 120_000);
+}, 180_000);
