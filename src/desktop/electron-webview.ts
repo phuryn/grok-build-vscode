@@ -335,16 +335,17 @@ body.desk[data-editor-chat] .top-bar,
 #desk-conversation-columns .desk-ft-chat > .top-bar {
   min-height: 44px;
 }
-/* Keep the send row in view when an autosized draft fills a short split. */
+/* A long draft in a short grid tile must leave room for the transcript and for
+   Files over the chat. A quarter of the tile keeps a full-height tile at about
+   the composer's usual 10 lines; never less than 2 lines. */
 body.desk[data-editor-chat] .desk-ft-shell,
 #desk-conversation-columns > .desk-ft-shell {
   container: desk-conversation / size;
 }
-@container desk-conversation (max-height: 330px) {
-  textarea#input {
-    max-block-size: calc(2lh + 2 * var(--pad));
-    overflow-y: auto !important;
-  }
+body.desk[data-editor-chat] textarea#input,
+#desk-conversation-columns textarea#input {
+  max-block-size: max(calc(2lh + 2 * var(--pad)), 25cqh);
+  overflow-y: auto !important;
 }
 body.desk-split-compact #desk-rail-open-btn { display: inline-flex; }
 body.desk-split-compact #rail-resizer,

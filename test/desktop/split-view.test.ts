@@ -869,18 +869,32 @@ it("shows every chat in the desktop grid and aligns split headers", async () => 
     const fourChats = await nativeChats(app);
     const overlayId = fourChats[2].id;
     await vi.waitFor(async () => expect(await paneEval(app!, 'document.querySelector("#input").disabled', overlayId)).toBe(false));
+    // A long draft in a short tile scrolls inside a quarter of the tile, so Files over the chat keeps its room.
+    const longDraft = ["Draft beside Files", ...Array.from({ length: 13 }, (_, i) => `line ${i + 2}`)].join("\n");
     await paneEval(app, `(() => {
       document.querySelector("#input").focus();
-      document.execCommand("insertText", false, "Draft beside Files");
+      document.execCommand("insertText", false, ${JSON.stringify(longDraft)});
     })()`, overlayId);
     await openFiles(overlayId);
     await inThemes(async theme => {
       await expectOverlay(overlayId);
+      const room = await paneEval<{ tile: number; input: number; scrolls: boolean; files: number }>(app!, `(() => {
+        const input = document.querySelector("#input");
+        return {
+          tile: document.querySelector("#desk-ft-shell").getBoundingClientRect().height,
+          input: input.getBoundingClientRect().height,
+          scrolls: input.scrollHeight > input.clientHeight + 1,
+          files: document.querySelector("#desk-ft-panel").getBoundingClientRect().height,
+        };
+      })()`, overlayId);
+      expect(room.input).toBeLessThanOrEqual(room.tile * 0.25 + 1);
+      expect(room.scrolls).toBe(true);
+      expect(room.files).toBeGreaterThan(room.tile / 3);
       expect(await nativeChats(app!)).toEqual(fourChats);
       await capture(`files-over-chat-1280x800-${theme}`);
     });
     expect(await closePaneFiles(overlayId)).toEqual({ open: false, focus: "input" });
-    expect(await paneEval(app, 'document.querySelector("#input").value', overlayId)).toBe("Draft beside Files");
+    expect(await paneEval(app, 'document.querySelector("#input").value', overlayId)).toBe(longDraft);
     expect(await nativeChats(app)).toEqual(fourChats);
     await setRailWidth(originalRailWidth);
 
