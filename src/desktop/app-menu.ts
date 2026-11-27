@@ -4,7 +4,7 @@
  * Built into a real Electron Menu in main.ts. Kept pure so the packaged-gate
  * on Developer Tools can be unit-tested without spawning Electron.
  */
-import type { MenuItemConstructorOptions } from "electron";
+import type { BaseWindow, MenuItemConstructorOptions } from "electron";
 import { DESKTOP_APP_FULL_NAME } from "./host-dialogs";
 
 /** Env var set by `scripts/run-desktop.cjs --open-devtools` (desktop-dev). */
@@ -43,6 +43,7 @@ export interface DesktopAppMenuActions {
   zoomIn?: () => void;
   zoomOut?: () => void;
   resetZoom?: () => void;
+  reloadFocused?: (force: boolean, focusedWindow: BaseWindow | undefined) => void;
 }
 
 /** Accelerator for Toggle Developer Tools (works with autoHideMenuBar). */
@@ -115,8 +116,18 @@ export function desktopAppMenuTemplate(opts: {
   const allowDevTools = desktopDevToolsAllowed(opts.isPackaged);
 
   const viewSubmenu: MenuItemConstructorOptions[] = [
-    { role: "reload" },
-    { role: "forceReload" },
+    ...(actions?.reloadFocused ? [
+      {
+        id: "desktop-reload", label: "Reload", accelerator: "CmdOrCtrl+R",
+        click: (_item, win) => actions.reloadFocused?.(false, win),
+      },
+      {
+        id: "desktop-force-reload", label: "Force Reload", accelerator: "CmdOrCtrl+Shift+R",
+        click: (_item, win) => actions.reloadFocused?.(true, win),
+      },
+    ] satisfies MenuItemConstructorOptions[] : [
+      { role: "reload" as const }, { role: "forceReload" as const },
+    ]),
     ...(allowDevTools
       ? [
           {
@@ -133,6 +144,7 @@ export function desktopAppMenuTemplate(opts: {
     // menu accelerator cannot double-step. No roles here.
     {
       label: "Actual Size",
+      id: "desktop-zoom-reset",
       click: () => {
         try {
           actions?.resetZoom?.();
@@ -143,6 +155,7 @@ export function desktopAppMenuTemplate(opts: {
     },
     {
       label: "Zoom In",
+      id: "desktop-zoom-in",
       click: () => {
         try {
           actions?.zoomIn?.();
@@ -153,6 +166,7 @@ export function desktopAppMenuTemplate(opts: {
     },
     {
       label: "Zoom Out",
+      id: "desktop-zoom-out",
       click: () => {
         try {
           actions?.zoomOut?.();

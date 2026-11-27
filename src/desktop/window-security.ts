@@ -98,10 +98,11 @@ export function isTrustedMainFrameIpc(
  * `openExternal` is injected so tests need not import electron.shell.
  */
 export function installWindowSecurityLocks(
-  win: BrowserWindow,
+  win: Pick<BrowserWindow, "webContents">,
   opts: {
     log: (line: string) => void;
     openExternal: (url: string) => void | Promise<void>;
+    allowNavigation?: (url: string) => boolean;
   },
 ): void {
   win.webContents.setWindowOpenHandler((details) => {
@@ -117,7 +118,7 @@ export function installWindowSecurityLocks(
   });
 
   win.webContents.on("will-navigate", (event, url) => {
-    if (shouldBlockNavigation(url)) {
+    if (opts.allowNavigation ? !opts.allowNavigation(url) : shouldBlockNavigation(url)) {
       event.preventDefault();
       opts.log(`blocked navigation to ${url}`);
     }

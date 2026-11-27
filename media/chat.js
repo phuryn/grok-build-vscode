@@ -7,6 +7,8 @@
   let editorChatBinding;
   let editorChatRestoreBlocked = false;
   let editorDraftSignature;
+  let desktopMainDraftScope;
+  let desktopMainDraftSignature;
   let museAdvertised = false;
   let museAvailable = false;
   // Provider advertisements keep this client compatible with older hosts.
@@ -176,6 +178,13 @@
   // — not the VS Code sidebar, which stays on host `grok.chatFontScale`.
   // Do not key off the file-tree bridge — that API is panel-only; chat.js must not call it.
   const IS_DESKTOP_CLIENT = !!window.grokDesktopShell;
+  const desktopChatPane = IS_DESKTOP_CLIENT && editorChat;
+  const desktopConversations = IS_DESKTOP_CLIENT && !IS_REMOTE && !editorChat ? window.grokDesktopConversations : undefined;
+  function openDesktopRailChat(id, cwd, beside) {
+    window.__grokCloseCompactProjects?.();
+    if (beside) desktopConversations.openBeside(id, cwd);
+    else desktopConversations.open(id, cwd);
+  }
   const CLIENT_OWNS_FONT_SCALE = IS_REMOTE || IS_DESKTOP_CLIENT;
   const REMOTE_FONT_SCALE_KEY = "grok.remote.fontScale";
   const DESKTOP_FONT_SCALE_KEY = "grok.desktop.fontScale";
@@ -3255,8 +3264,12 @@
   // Absent / remote / VS Code keep the host editor or inline-expand path.
   // Its z-index (110) is below Settings (120), so it does not set modalAbove:
   // Settings must keep its existing Escape path when it is over this preview.
+  function desktopSplitFileViews() {
+    return desktopChatPane || !!(desktopConversations && document.getElementById("desk-conversation-slot"));
+  }
+
   function hostPreviewsInApp() {
-    return !IS_REMOTE && state.hostCaps && state.hostCaps.previewInApp === true;
+    return !IS_REMOTE && !desktopSplitFileViews() && state.hostCaps && state.hostCaps.previewInApp === true;
   }
 
   const PREVIEW_EXT_BY_LANG = {
@@ -3734,7 +3747,7 @@
   let settingsSurface = null;
 
   function hostOpensSettingsEditor() {
-    return !IS_REMOTE && state.hostCaps && state.hostCaps.settingsEditor === true;
+    return desktopChatPane || (!IS_REMOTE && state.hostCaps && state.hostCaps.settingsEditor === true);
   }
 
   function settingsEnv() {
@@ -5288,7 +5301,8 @@
       !rail.hidden &&
       !document.body.classList.contains("desk-rail-collapsed")
     );
-    const total = window.innerWidth || 1200;
+    const zoom = desktopConversations && document.getElementById("desk-conversation-columns") ? chatZoomFactor() : 1;
+    const total = (window.innerWidth || 1200) / zoom;
     const railMax = Math.max(RAIL_WIDTH_MIN, Math.floor(total * 0.5));
     let preferredRail = preferredWidthFromStorage(
       RAIL_WIDTH_KEY,
@@ -9854,22 +9868,19 @@
     return body;
   }
 
+  let desktopRailTarget;
+  let desktopRailResume;
+
   function renderRailSessionRow(s, repo, opts) {
     const row = document.createElement("div");
-    // Two different questions, and they must not share one boolean.
-    //
-    // `active` = what to PAINT: the display target, so an optimistic click
-    // highlights immediately. A pending cross-repo id is deliberately not in
-    // activeSessionId, so this cannot read that field alone.
-    //
-    // `hostActive` = may this row offer the id-less session actions. While a
-    // transition is in flight the answer is no for EVERY row — see
-    // railIdlessActionsAllowed. With no transition the display target IS the
-    // confirmed one, so `active` is already the right answer.
+    // The desktop may paint an editor's selection. Row actions still act on
+    // the main chat and use its own target plus railIdlessActionsAllowed().
     const target = railDisplayTarget();
-    const active = !!(target && s.id === target.id && railRepoOwnsTarget(repo, s, target));
-    const hostActive = railIdlessActionsAllowed() && active;
-    row.className = "rail-session" + (active ? " active" : "");
+    const mainActive = !!(target && s.id === target.id && railRepoOwnsTarget(repo, s, target));
+    const active = desktopRailTarget?.editor ? s.id === desktopRailTarget.sessionId : mainActive;
+    const open = !active && (desktopRailTarget?.hasPanes || desktopRailTarget?.editor)
+      && desktopRailTarget.openSessionIds.has(s.id);
+    row.className = "rail-session" + (active ? " active" : open ? " open" : "");
     row.dataset.sessionId = s.id || "";
     row.title = sessionRowName(s);
     // The row is the primary control, so it has to behave like one: reachable by
@@ -9879,6 +9890,7 @@
     row.setAttribute("role", "button");
     row.tabIndex = 0;
     if (active) row.setAttribute("aria-current", "true");
+    if (open) row.setAttribute("aria-description", l10n("Open in another chat"));
     row.onkeydown = (e) => {
       if (e.key !== "Enter" && e.key !== " ") return;
       // Only when the ROW itself has focus. The pin button lives inside it and
@@ -9916,7 +9928,7 @@
     row.appendChild(label);
     // The click is waiting for a load another view started (sessionOpening).
     const opening = state.railTransition;
-    if (active && opening && opening.kind === "resume" && opening.queued && opening.sessionId === s.id) {
+    if (mainActive && opening && opening.kind === "resume" && opening.queued && opening.sessionId === s.id) {
       row.classList.add("opening");
       const note = document.createElement("span");
       note.className = "rail-session-opening";
@@ -9965,21 +9977,34 @@
         actions.appendChild(pinBtn);
       }
       const menuKey = "session:" + (s.id || cwdKey(s.cwd || repo.cwd));
+      const menuItems = () => {
+        const items = railSessionMenuItems(s, repo, mainActive);
+        if (desktopConversations?.openBeside && s.id && s.id !== railConfirmedTarget()?.id) {
+          items.unshift({
+            label: l10n("Open to the side"),
+            onSelect: () => openDesktopRailChat(s.id, s.cwd || repo.cwd, true),
+          });
+        }
+        return items;
+      };
       const menuBtn = railMenuButton(
         l10n("Session actions"),
-        // `active` (the painted target) decides WHICH row owns the id-less
-        // actions; railSessionMenuItems disables them while the host has not
-        // confirmed it is on that conversation yet.
-        () => railSessionMenuItems(s, repo, active),
+        menuItems,
         menuKey,
       );
       actions.appendChild(menuBtn);
       row.appendChild(actions);
       // Right-click is the second way in, same menu — matching the desktop file
       // tree, where both triggers already share one menu.
-      wireRailRowContextMenu(row, () => menuBtn, () => railSessionMenuItems(s, repo, active), menuKey);
+      wireRailRowContextMenu(row, () => menuBtn, menuItems, menuKey);
     }
-    row.onclick = railSessionOpener(s, repo, active);
+    row.onclick = railSessionOpener(s, repo, mainActive);
+    row.addEventListener("auxclick", (event) => {
+      if (desktopConversations?.openBeside && event.button === 1 && !event.target.closest("button") && !isRailPendingRow(s)) {
+        event.preventDefault();
+        openDesktopRailChat(s.id, s.cwd || repo.cwd, true);
+      }
+    });
     return row;
   }
 
@@ -10174,22 +10199,60 @@
   /** Opening a rail row is the same act wherever the row is drawn, so both the
    *  full row and the capability-stripped one share it. */
   function railSessionOpener(s, repo, active) {
-    return () => {
+    return (event) => {
+      if (isRailPendingRow(s)) return;
+      if (desktopConversations?.openBeside && (event?.ctrlKey || event?.metaKey) && !event.target?.closest?.("button")) {
+        event.preventDefault();
+        openDesktopRailChat(s.id, s.cwd || repo.cwd, true);
+        return;
+      }
+      if (desktopConversations?.open) {
+        const split = desktopRailTarget?.editor || desktopRailTarget?.hasPanes;
+        if (!split && active) return;
+        desktopRailResume = { s, repo };
+        if (!split) prepareRailSessionResume(s, repo);
+        openDesktopRailChat(s.id, s.cwd || repo.cwd, false);
+        return;
+      }
       // Already the display target (confirmed or this pending click) — no-op.
       // Deliberately NOT gated on repoSwitcherLocked: a new click supersedes any
       // in-flight rail transition, and stacking resumeSession is the host's job
       // to serialise. Locking here is what made a second click during load feel
       // dropped.
-      if (active || isRailPendingRow(s)) return;
-      // Optimistic highlight + veil before the host answers. activeSessionId is
-      // left alone until sessionName / sessions.activeId confirm this id.
-      startRailResumeTransition(s.id, s.cwd || repo.cwd, repo.cwd, s.displayName);
+      if (active) return;
+      prepareRailSessionResume(s, repo);
       // `cwd` rides along so a session in another repo reopens in ITS checkout —
       // the host resolves sessions by cwd, and omitting it would look the id up
       // under the repo we happen to be in.
-      if (!sameCwd(repo.cwd, state.selectedRepoCwd)) forgetRememberedSessionByChoice();
       postResumeSession(s.id, s.cwd || repo.cwd, { claim: true });
     };
+  }
+
+  function prepareRailSessionResume(s, repo) {
+    startRailResumeTransition(s.id, s.cwd || repo.cwd, repo.cwd, s.displayName);
+    if (!sameCwd(repo.cwd, state.selectedRepoCwd)) forgetRememberedSessionByChoice();
+  }
+
+  function noteDesktopRailOpenDestination(msg) {
+    if (desktopRailResume?.s.id !== msg.sessionId) return;
+    const { s, repo } = desktopRailResume;
+    desktopRailResume = undefined;
+    const alreadyOpening = state.railTransition?.kind === "resume" && state.railTransition.sessionId === s.id;
+    if (msg.editor) {
+      if (alreadyOpening) abortRailTransition();
+    } else if (!alreadyOpening && railConfirmedTarget()?.id !== s.id) {
+      prepareRailSessionResume(s, repo);
+    }
+  }
+
+  function noteDesktopRailChatTarget(msg) {
+    const previous = desktopRailTarget;
+    const openSessionIds = new Set(msg.openSessionIds);
+    if (previous && previous.editor === msg.editor && previous.hasPanes === msg.hasPanes
+      && previous.sessionId === msg.sessionId && previous.openSessionIds.size === openSessionIds.size
+      && [...openSessionIds].every(id => previous.openSessionIds.has(id))) return;
+    desktopRailTarget = { editor: msg.editor, hasPanes: msg.hasPanes, sessionId: msg.sessionId, openSessionIds };
+    if (previous?.editor || previous?.hasPanes || msg.editor || msg.hasPanes) renderRail();
   }
 
   function railNote(text) {
@@ -17093,6 +17156,13 @@ ${fullText}`
       stepSize: CLIENT_FONT_SCALE_STEP,
       key: CLIENT_FONT_SCALE_KEY,
     };
+    if (IS_DESKTOP_CLIENT) {
+      window.addEventListener("storage", (event) => {
+        if (event.key === DESKTOP_FONT_SCALE_KEY) {
+          setClientFontScale(storedNumber(DESKTOP_FONT_SCALE_KEY, 1));
+        }
+      });
+    }
     window.addEventListener("keydown", (e) => {
       if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
       // Allow zoom over inputs, as before #155.
@@ -18150,7 +18220,7 @@ ${fullText}`
       // the reader had closed — on top of the files they were actually working
       // in (#132). A new edit is a new request id and still opens, which is the
       // behaviour that was wanted.
-      if (!IS_REMOTE && !hostPreviewsInApp() && !state.autoOpenedDiffRequests.has(req.id)) {
+      if (!IS_REMOTE && !desktopSplitFileViews() && !hostPreviewsInApp() && !state.autoOpenedDiffRequests.has(req.id)) {
         rememberAutoOpenedDiff(req.id);
         openDiff();
       }
@@ -20214,7 +20284,8 @@ ${fullText}`
     // sites are exactly those.
     updateSendButton();
     autosizeInput();
-    if (editorChat && editorChatBinding !== undefined) {
+    postDesktopMainDraft();
+    if (editorChat && editorChatBinding !== undefined && !(desktopChatPane && state.voiceLive && state.voiceInsertionActive)) {
       const chipIds = composerRestoredChips.map(chip => chip.id);
       const signature = JSON.stringify([input.value, chipIds]);
       if (signature !== editorDraftSignature) {
@@ -20257,6 +20328,17 @@ ${fullText}`
     }
     inputHighlight.scrollTop = input.scrollTop;
     inputHighlight.scrollLeft = input.scrollLeft;
+  }
+
+  function postDesktopMainDraft() {
+    if (!desktopConversations?.saveMainDraft || desktopMainDraftScope === undefined ||
+        composerSessionId !== desktopMainDraftScope || composerExpectedSessionId ||
+        pendingComposerDrafts.has(composerSessionId) || (state.voiceLive && state.voiceInsertionActive)) return;
+    const chipIds = composerRestoredChips.map(chip => chip.id);
+    const signature = JSON.stringify([composerSessionId, input.value, chipIds]);
+    if (signature === desktopMainDraftSignature) return;
+    desktopMainDraftSignature = signature;
+    desktopConversations.saveMainDraft(composerSessionId, input.value, chipIds);
   }
 
   // Submit a message with explicit text — the send half of sendOrStop without
@@ -21372,6 +21454,25 @@ ${fullText}`
       case "trackLocalChatFocus":
         if (canTrackLocalChatFocus) tracksLocalChatFocus = true;
         break;
+      case "projectsRailChatTarget":
+        if (desktopConversations?.open) noteDesktopRailChatTarget(msg);
+        if (!msg.hasPanes) {
+          desktopMainDraftScope = undefined;
+          desktopMainDraftSignature = undefined;
+        }
+        break;
+      case "desktopMainDraftScope":
+        if (desktopConversations?.saveMainDraft) {
+          desktopMainDraftScope = msg.sessionId;
+          postDesktopMainDraft();
+        }
+        break;
+      case "desktopOpenSettings":
+        if (desktopConversations) openSettingsCategory(msg.category);
+        break;
+      case "desktopRailOpenDestination":
+        if (desktopConversations?.open) noteDesktopRailOpenDestination(msg);
+        break;
       case "editorChatBinding":
         if (!editorChat) break;
         editorChatRestoreBlocked = msg.restoreBlocked === true;
@@ -22054,7 +22155,7 @@ ${fullText}`
           for (const chip of msg.chips) merged.set(chip.id, chip);
           setComposerRestoredChips([...merged.values()]);
         }
-        input.focus();
+        if (!(msg.draft && (desktopChatPane || (desktopConversations && desktopRailTarget?.hasPanes)))) input.focus();
         updateSlash();
         updateMention();
         renderInputHighlight();
@@ -23873,10 +23974,13 @@ ${fullText}`
 
   window.addEventListener("message", (e) => handleHostMessage(e.data));
   if (editorChat || canTrackLocalChatFocus) {
-    const tellHostFocused = () => {
-      if (tracksLocalChatFocus) hostApi.postMessage({ type: "localChatFocus" });
+    const desktopMain = !!desktopConversations?.open;
+    const tellHostFocused = (event) => {
+      if (!tracksLocalChatFocus) return;
+      if (desktopMain && !event.target?.closest?.(".top-bar, #messages, .composer")) return;
+      hostApi.postMessage({ type: "localChatFocus" });
     };
-    window.addEventListener("focus", tellHostFocused);
+    if (!desktopMain) window.addEventListener("focus", tellHostFocused);
     document.addEventListener("pointerdown", tellHostFocused, true);
     document.addEventListener("keydown", tellHostFocused, true);
   }

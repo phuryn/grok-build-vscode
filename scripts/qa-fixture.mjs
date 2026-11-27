@@ -17,6 +17,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 
 /**
@@ -62,16 +63,7 @@ const SESSIONS = [
   { id: "0000qa04-0000-4000-8000-00000000cafe", title: "Edit a file from the panel", messages: 7, at: minutes(120) },
 ];
 
-/**
- * The product's own encoder, imported rather than mirrored.
- *
- * I wrote a mirror of it first and got it wrong — it is `encodeURIComponent`,
- * not a path-separator substitution — and the failure mode is silent: the host
- * finds no store, the rail comes up empty, and the check "passes" against a
- * fixture it never saw. Requires `npm run compile`, which every caller already
- * does.
- */
-const { encodeSessionCatalogLeaf } = await import("../out/sessions.js");
+const require = createRequire(import.meta.url);
 
 function write(file, body, at) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -83,8 +75,12 @@ function write(file, body, at) {
  * Build the fixture. Returns the paths a host needs.
  *
  * @param root where to build; defaults to a fresh temp directory
+ * @param {(cwd: string) => string} encodeCatalogLeaf the product encoder. Unit tests can pass the source import.
  */
-export function buildQaFixture(root = fs.mkdtempSync(path.join(os.tmpdir(), "grok-qa-"))) {
+export function buildQaFixture(
+  root = fs.mkdtempSync(path.join(os.tmpdir(), "grok-qa-")),
+  encodeCatalogLeaf = require("../out/sessions.js").encodeSessionCatalogLeaf,
+) {
   const project = path.join(root, QA_PROJECT_NAME);
   const grokHome = path.join(root, "grok-home");
 
@@ -94,7 +90,7 @@ export function buildQaFixture(root = fs.mkdtempSync(path.join(os.tmpdir(), "gro
   // Refused by the preview classifier — the panel must say so, not render it.
   write(path.join(project, "payload.bin"), Buffer.from([0, 1, 2, 0, 9, 0]));
 
-  const sessionsDir = path.join(grokHome, "sessions", encodeSessionCatalogLeaf(project));
+  const sessionsDir = path.join(grokHome, "sessions", encodeCatalogLeaf(project));
   for (const session of SESSIONS) {
     const dir = path.join(sessionsDir, session.id);
     write(path.join(dir, "summary.json"), JSON.stringify({
@@ -110,11 +106,15 @@ export function buildQaFixture(root = fs.mkdtempSync(path.join(os.tmpdir(), "gro
     // when a conversation is merely opened, which is why ordering stopped
     // trusting it. Stamped explicitly so the order is a property of the
     // fixture rather than of the order the files happened to be written in.
-    write(path.join(dir, "events.jsonl"), [
-      JSON.stringify({ type: "user", text: session.title }),
-      JSON.stringify({ type: "agent", text: "Acknowledged." }),
-      "",
-    ].join("\n"), session.at);
+    const transcript = [
+      { type: "user", text: session.title },
+      { type: "agent", text: "Acknowledged." },
+    ];
+    write(path.join(dir, "events.jsonl"), transcript.map(message => JSON.stringify(message)).join("\n") + "\n", session.at);
+    // The rail fixture alone is not replayable. The fake ACP CLI reads this
+    // file on session/load and streams its messages before acknowledging the id.
+    write(path.join(dir, "chat_history.jsonl"), transcript.map(({ type, text }) =>
+      JSON.stringify({ type, content: text })).join("\n") + "\n", session.at);
   }
 
   return {
@@ -132,7 +132,7 @@ export function buildQaFixture(root = fs.mkdtempSync(path.join(os.tmpdir(), "gro
 // `pathToFileURL`, not string surgery: on Windows a drive path becomes
 // `file:///C:/…` (three slashes) and a hand-built `file://${argv[1]}` never
 // matches, so the CLI branch silently did nothing.
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const built = buildQaFixture(process.argv[2]);
   console.log(JSON.stringify({ project: built.project, grokHome: built.grokHome, order: built.expectedOrder }, null, 2));
 }

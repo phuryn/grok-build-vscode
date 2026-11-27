@@ -3244,3 +3244,52 @@ describe("folded project lists", () => {
     expect(projects).toContain("zeta");
   });
 });
+
+describe("desktop Projects rail", () => {
+  function desktop() {
+    const open = vi.fn();
+    const openBeside = vi.fn();
+    const h = bootWebview({ vscode: true, beforeScripts(window) {
+      withRail(window);
+      Object.assign(window, { grokDesktopShell: true, grokDesktopConversations: { open, openBeside } });
+      window.document.body.dataset.localChatFocus = "true";
+    } });
+    dispatch(h.window, { type: "repos", entries: repos.slice(0, 1), selectedCwd: "/work/alpha", activeCwd: "/work/alpha" });
+    dispatch(h.window, { ...sessionsFrame([row("main", "/work/alpha", "Main chat"), row("pane", "/work/alpha", "Pane chat")]), activeId: "main" });
+    const session = (id: string) => h.doc.querySelector<HTMLElement>(`.rail-session[data-session-id="${id}"]`)!;
+    return { ...h, open, openBeside, session };
+  }
+
+  it("opens beside on Ctrl or Cmd click and middle-click, and routes Enter as a plain click", () => {
+    const { window, session, open, openBeside } = desktop();
+    for (const event of [
+      new window.MouseEvent("click", { ctrlKey: true, bubbles: true, cancelable: true }),
+      new window.MouseEvent("click", { metaKey: true, bubbles: true, cancelable: true }),
+      new window.MouseEvent("auxclick", { button: 1, bubbles: true, cancelable: true }),
+    ]) session("pane").dispatchEvent(event);
+    expect(openBeside.mock.calls).toEqual(Array(3).fill(["pane", "/work/alpha"]));
+    expect(open).not.toHaveBeenCalled();
+    session("pane").dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    expect(open).toHaveBeenCalledWith("pane", "/work/alpha");
+  });
+
+  it("paints the host's target and leaves rail input out of main-chat focus tracking", () => {
+    const { window, doc, session, posted } = desktop();
+    dispatch(window, { type: "trackLocalChatFocus" });
+    dispatch(window, { type: "projectsRailChatTarget", editor: true, sessionId: "pane", hasPanes: true,
+      openSessionIds: ["main", "pane"] });
+    expect(session("pane").classList.contains("active")).toBe(true);
+    expect(session("main").classList.contains("open")).toBe(true);
+    expect(!!menuItem(openMenu(window, session("pane")), "Find in conversation")).toBe(false);
+    expect(!!menuItem(openMenu(window, session("main")), "Find in conversation")).toBe(true);
+    session("pane").dispatchEvent(new window.Event("pointerdown", { bubbles: true }));
+    session("pane").dispatchEvent(new window.KeyboardEvent("keydown", { key: "Tab", bubbles: true }));
+    expect(posted.some(frame => frame.type === "localChatFocus")).toBe(false);
+    doc.getElementById("input")!.dispatchEvent(new window.KeyboardEvent("keydown", { key: "a", bubbles: true }));
+    expect(posted.some(frame => frame.type === "localChatFocus")).toBe(true);
+    dispatch(window, { type: "projectsRailChatTarget", editor: false, sessionId: "main", hasPanes: true,
+      openSessionIds: ["main", "pane"] });
+    expect(session("main").classList.contains("active")).toBe(true);
+    expect(session("pane").classList.contains("open")).toBe(true);
+  });
+});

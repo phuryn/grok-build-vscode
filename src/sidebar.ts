@@ -765,10 +765,23 @@ interface EditorChatState {
   provider: AcpProvider;
   sessionId?: string;
   draft?: EditorChatDraft;
+  title?: string;
 }
 
 const EDITOR_CHAT_STATE = "grok.editorChatPanel.";
 const PARKED_EDITOR_DRAFT = "grok.editorChatDraft.";
+const DESKTOP_CONVERSATION_LAYOUT = "grok.desktopConversationLayout";
+const DESKTOP_MAIN_DRAFT = "grok.desktopMainDraft";
+
+interface DesktopConversationLayout {
+  panes: string[];
+  lastUsed?: string;
+}
+
+interface DesktopMainDraft extends EditorChatDraft {
+  cwd: string;
+  sessionId?: string;
+}
 
 type ProjectsRailMessage = WebviewMsg
   | { type: "openConversationBeside"; id: string; cwd?: string }
@@ -3855,6 +3868,9 @@ export class GrokSidebar {
     // change, so the mic button's "needs setup" hint updates without a reload.
     this.configWatcher?.dispose();
     const configChanges = this.host.onDidChangeConfiguration((e) => {
+      if (this.host.canSwitchWorkspaceFolder && e.affectsConfiguration("grok.openConversationIn")) {
+        this.postProjectsRailChatTarget();
+      }
       if (VOICE_CONFIGURATION_KEYS.some(key => e.affectsConfiguration(key))) {
         this.postVoiceConfigured();
       }
@@ -4153,6 +4169,7 @@ export class GrokSidebar {
     this.lastEditorChat = tab;
     // Keep the most recently used editor available after the sidebar takes focus.
     if (tab && this.editorChats.delete(tab)) this.editorChats.add(tab);
+    this.persistDesktopConversationLayout();
     this.postProjectsRailChatTarget();
   }
 
@@ -4171,7 +4188,8 @@ export class GrokSidebar {
   }
 
   private postProjectsRailChatTarget(): void {
-    if (!this.projectsRail || !this.host.canOpenConversationEditor) return;
+    const rail = this.projectsRail ?? (this.host.canSwitchWorkspaceFolder ? this.view : undefined);
+    if (!rail || !this.host.canOpenConversationEditor) return;
     const { editor, tab, revealActive } = this.projectsRailChatDestination();
     const sidebarId = this.focused.activeSessionId;
     const openSessionIds = new Set<string>();
@@ -4180,12 +4198,13 @@ export class GrokSidebar {
       const id = chat.targetId ?? chat.session.activeSessionId;
       if (id) openSessionIds.add(id);
     }
-    void this.projectsRail.webview.postMessage({
+    void rail.webview.postMessage({
       type: "projectsRailChatTarget",
       editor,
       sessionId: editor ? tab?.targetId ?? tab?.session.activeSessionId : sidebarId,
       openSessionIds: [...openSessionIds],
       revealActive,
+      ...(this.host.canSwitchWorkspaceFolder ? { hasPanes: this.editorChats.size > 0 } : {}),
     });
   }
 
@@ -4215,10 +4234,15 @@ export class GrokSidebar {
 
   private async openEditorConversation(id: string, cwd?: string, reuse?: EditorChatTab): Promise<void> {
     if (!this.host.canOpenConversationEditor || typeof id !== "string" || !id) return;
-    const existing = [...this.editorChats].find(tab => (tab.targetId ?? tab.session.activeSessionId) === id);
+    const existing = this.editorChatById(id);
     if (existing) {
-      this.setLastEditorChat(existing);
-      existing.panel.reveal();
+      this.revealConversationEditor(existing);
+      return;
+    }
+    // On desktop the main column is a chat too: one conversation is shown in
+    // one column, so picking the main chat's conversation goes there.
+    if (this.host.canSwitchWorkspaceFolder && id === this.focused.activeSessionId) {
+      this.focusDesktopMainChat();
       return;
     }
 
@@ -4230,10 +4254,9 @@ export class GrokSidebar {
     let failure: unknown;
     try {
       if (!current()) return;
-      const opened = [...this.editorChats].find(tab => (tab.targetId ?? tab.session.activeSessionId) === id);
+      const opened = this.editorChatById(id);
       if (opened) {
-        this.setLastEditorChat(opened);
-        opened.panel.reveal();
+        this.revealConversationEditor(opened);
         return;
       }
       const held = this.liveSessionById(id) ?? this.remoteClients.clients()
@@ -4259,6 +4282,7 @@ export class GrokSidebar {
         tab.targetId = undefined;
         if (tab.panel.visible) this.markRead(session);
         this.postProjectsRailChatTarget();
+        if (this.host.canSwitchWorkspaceFolder && this.lastEditorChat === tab) this.revealEditorComposer(tab);
       }
       this.touch(session);
       if (session.activeSessionId === id && session.client) void this.noteSessionOpened(id);
@@ -4270,17 +4294,85 @@ export class GrokSidebar {
     }
   }
 
-  private createEditorChat(session: Session, targetId?: string): EditorChatTab | undefined {
-    // Capture the text editor before VS Code focuses the webview.
-    if (!this.editorWatcher) this.watchActiveEditor();
-    this.activeEditorForContext();
-    const panel = this.host.openEditorWebview({
+  /** Desktop's embedded Projects rail enters the same conversation editor flow. */
+  openDesktopConversationBeside(id: string, cwd?: string): Promise<void> {
+    if (id === this.focused.activeSessionId) return Promise.resolve();
+    return this.openEditorConversation(id, cwd);
+  }
+
+  async openDesktopConversationFromRail(id: string, cwd?: string): Promise<void> {
+    if (!this.host.canSwitchWorkspaceFolder || !this.host.canOpenConversationEditor) return;
+    const destination = this.projectsRailChatDestination();
+    const inMain = this.focused.activeSessionId === id;
+    const editor = !!this.editorChatById(id) || (!inMain && destination.editor);
+    void this.view?.webview.postMessage({ type: "desktopRailOpenDestination", sessionId: id, editor });
+    if (editor) {
+      await this.openEditorConversation(id, cwd, destination.tab);
+      return;
+    }
+    this.setLastEditorChat(undefined);
+    if (!inMain) await this.onMessage({ type: "resumeSession", id, cwd, claim: true }, "local");
+    if (!this.lastEditorChat && this.focused.activeSessionId === id) {
+      this.postProjectsRailChatTarget();
+      if (this.editorChats.size) {
+        await this.host.revealChatView();
+        this.postLocal({ type: "focusInput" });
+      }
+    }
+  }
+
+  private editorChatById(id: string): EditorChatTab | undefined {
+    return [...this.editorChats].find(tab => (tab.targetId ?? tab.session.activeSessionId) === id);
+  }
+
+  private revealConversationEditor(tab: EditorChatTab): void {
+    if (this.host.canSwitchWorkspaceFolder) this.revealEditorComposer(tab);
+    else {
+      this.setLastEditorChat(tab);
+      tab.panel.reveal();
+    }
+  }
+
+  desktopEditorSession(webview: HostWebview): Session | undefined {
+    return [...this.editorChats].find(tab => tab.panel.webview === webview)?.session;
+  }
+
+  revealDesktopPane(webview: HostWebview): void {
+    const tab = [...this.editorChats].find(chat => chat.panel.webview === webview);
+    if (tab) this.revealEditorComposer(tab);
+  }
+
+  desktopFileSession(webview: HostWebview): Session | undefined {
+    return this.view?.webview === webview ? this.focused : this.desktopEditorSession(webview);
+  }
+
+  private desktopFileSource(tab?: EditorChatTab): HostWebview | undefined {
+    if (!this.host.canSwitchWorkspaceFolder) return;
+    return tab?.panel.webview ?? (this.editorChats?.size ? this.view?.webview : undefined);
+  }
+
+  focusDesktopMainChat(): void {
+    this.setLastEditorChat(undefined);
+    // Keyboard focus too, so Reload and Zoom act on the main chat.
+    void this.host.revealChatView?.();
+    this.postLocal({ type: "focusInput" });
+  }
+
+  private openConversationPanel(title: string): HostEditorWebview | undefined {
+    return this.host.openEditorWebview({
       viewType: GrokSidebar.conversationViewType,
-      title: this.editorChatTitle(session),
+      title,
       column: "beside",
       icon: Uri.joinPath(this.context.extensionUri, "resources", "grok-icon.png"),
       localResourceRoots: this.chatLocalResourceRoots(),
     });
+  }
+
+  private createEditorChat(session: Session, targetId?: string): EditorChatTab | undefined {
+    // Capture the text editor before VS Code focuses the webview.
+    if (!this.editorWatcher) this.watchActiveEditor();
+    this.activeEditorForContext();
+    const panel = this.openConversationPanel(this.editorChatTitle(session));
     if (!panel) return;
     const tab: EditorChatTab = {
       panel, session, targetId, binding: 0, openSeq: 0, ready: false,
@@ -4288,10 +4380,99 @@ export class GrokSidebar {
     };
     this.attachEditorChat(tab);
     this.persistEditorChat(tab);
+    this.persistDesktopConversationLayout();
     return tab;
   }
 
-  /** VS Code supplies the native panel in its original editor group. */
+  private restoringDesktopPanes = false;
+  private desktopPaneLayoutFrozen = false;
+  private desktopMainDraftPending = false;
+
+  private desktopConversationLayout(): DesktopConversationLayout {
+    const saved = this.context?.workspaceState?.get<DesktopConversationLayout>(DESKTOP_CONVERSATION_LAYOUT);
+    const panes = Array.isArray(saved?.panes)
+      ? [...new Set(saved.panes.filter(key => typeof key === "string" && /^[a-f0-9-]{36}$/i.test(key)))]
+      : [];
+    return { panes, lastUsed: saved?.lastUsed && panes.includes(saved.lastUsed) ? saved.lastUsed : undefined };
+  }
+
+  hasSavedDesktopPanes(): boolean {
+    return this.desktopConversationLayout().panes.length > 0;
+  }
+
+  restoreDesktopConversationLayout(): HostWebview | undefined {
+    const saved = this.desktopConversationLayout();
+    this.restoringDesktopPanes = true;
+    try {
+      for (const key of saved.panes) {
+        const record = this.context.workspaceState?.get<EditorChatState>(EDITOR_CHAT_STATE + key);
+        const panel = this.openConversationPanel(record?.title ?? this.l10n("New session"));
+        if (panel) this.restoreEditorConversation(panel, { editorChatRestoreKey: key });
+      }
+      const last = [...this.editorChats].find(tab => tab.restoreKey === saved.lastUsed);
+      this.setLastEditorChat(last);
+      return last?.panel.webview;
+    } finally {
+      this.restoringDesktopPanes = false;
+    }
+  }
+
+  preserveDesktopConversationLayout(): void {
+    if (this.editorChats.size && !this.desktopPaneLayoutFrozen) {
+      this.rememberLocalConversation();
+      this.persistDesktopConversationLayout();
+    }
+    this.desktopPaneLayoutFrozen = true;
+  }
+
+  /** A close the page vetoed (unsaved Files edits) did not happen. */
+  resumeDesktopConversationLayout(): void {
+    this.desktopPaneLayoutFrozen = false;
+  }
+
+  private persistDesktopConversationLayout(): void {
+    if (!this.host?.canSwitchWorkspaceFolder || !this.context?.workspaceState
+        || this.restoringDesktopPanes || this.desktopPaneLayoutFrozen) return;
+    const live = new Set([...this.editorChats].flatMap(tab => tab.restoreKey ?? []));
+    const previous = this.desktopConversationLayout();
+    // The editor set is MRU-ordered. Keep the native insertion order that was
+    // recorded when each pane first appeared.
+    const panes = [...previous.panes.filter(key => live.delete(key)), ...live];
+    const lastUsed = this.lastEditorChat?.restoreKey;
+    if (panes.length === previous.panes.length && panes.every((key, i) => key === previous.panes[i])
+        && lastUsed === previous.lastUsed) return;
+    this.writeEditorWorkspaceState(DESKTOP_CONVERSATION_LAYOUT, panes.length ? { panes, lastUsed } : undefined);
+    if (!panes.length) this.writeEditorWorkspaceState(DESKTOP_MAIN_DRAFT, undefined);
+  }
+
+  saveDesktopMainDraft(id: string | null, text: string, chipIds: string[]): void {
+    if (!this.context.workspaceState || !this.editorChats.size || this.desktopPaneLayoutFrozen
+        || (this.focused.activeSessionId ?? null) !== id) return;
+    const chips = this.focused.restoredChips.filter(chip => chipIds.includes(chip.id));
+    const snapshot: DesktopMainDraft = {
+      cwd: this.sessionCwd(this.focused), sessionId: this.focused.hasHistory ? this.focused.activeSessionId : undefined,
+      text, chips,
+    };
+    this.writeEditorWorkspaceState(DESKTOP_MAIN_DRAFT, text || chips.length ? snapshot : undefined);
+  }
+
+  private postDesktopMainDraftScope(): void {
+    if (!this.host?.canSwitchWorkspaceFolder || !this.context?.workspaceState || !this.editorChats?.size
+        || !this.chatReadyForHandoff) return;
+    const session = this.focused;
+    if (this.desktopMainDraftPending) {
+      const saved = this.context.workspaceState.get<DesktopMainDraft>(DESKTOP_MAIN_DRAFT);
+      if (saved && !session.activeSessionId && (saved.sessionId || this.conversationToReopen())) return;
+      this.desktopMainDraftPending = false;
+      if (saved && pathsEqual(saved.cwd, this.sessionCwd(session))
+          && saved.sessionId === (session.hasHistory ? session.activeSessionId : undefined)) {
+        this.restoreComposerFor(session, undefined, saved.text, saved.chips, true);
+      }
+    }
+    void this.view?.webview.postMessage({ type: "desktopMainDraftScope", sessionId: session.activeSessionId ?? null });
+  }
+
+  /** Rebind a native panel using host-owned state. */
   restoreEditorConversation(panel: HostEditorWebview, state: unknown): void {
     const key = (state as { editorChatRestoreKey?: unknown } | null)?.editorChatRestoreKey;
     const restoreKey = typeof key === "string" && /^[a-f0-9-]{36}$/i.test(key) ? key : undefined;
@@ -4318,6 +4499,7 @@ export class GrokSidebar {
       restoreError: valid ? undefined : this.editorRestoreError(!!saved && !!saved.draft),
     };
     if (saved && saved.draft) this.editorDrafts.set(session, saved.draft);
+    if (this.host.canSwitchWorkspaceFolder && valid) panel.title = this.editorChatTitle(session);
     if (!this.editorWatcher) this.watchActiveEditor();
     panel.webview.options = { enableScripts: true, localResourceRoots: this.chatLocalResourceRoots() };
     this.attachEditorChat(tab);
@@ -4378,7 +4560,10 @@ export class GrokSidebar {
     const { panel } = tab;
     this.editorChats.add(tab);
     this.takeParkedEditorDraft(tab);
-    if (this.editorChats.size === 1) void this.view?.webview.postMessage({ type: "trackLocalChatFocus" });
+    if (this.editorChats.size === 1) {
+      void this.view?.webview.postMessage({ type: "trackLocalChatFocus" });
+      this.postDesktopMainDraftScope();
+    }
     const viewState = panel.onDidChangeViewState?.(() => {
       if (panel.visible) this.markRead(tab.session);
       if (panel.active) {
@@ -4407,7 +4592,7 @@ export class GrokSidebar {
     });
     const closed = panel.onDidDispose(() => {
       tab.listeners?.dispose();
-      this.forgetEditorChat(tab);
+      if (!this.desktopPaneLayoutFrozen) this.forgetEditorChat(tab);
     });
     tab.listeners = disposeAll(messages, config, ...(viewState ? [viewState] : []), ...(closed ? [closed] : []));
     panel.webview.html = this.getHtml(panel.webview, true);
@@ -4425,6 +4610,7 @@ export class GrokSidebar {
     if (tab.restoreKey) this.writeEditorWorkspaceState(EDITOR_CHAT_STATE + tab.restoreKey, undefined);
     if (this.lastEditorChat === tab) this.setLastEditorChat(undefined);
     else this.postProjectsRailChatTarget();
+    this.persistDesktopConversationLayout();
   }
 
   private closeEditorChat(tab: EditorChatTab): void {
@@ -4545,7 +4731,13 @@ export class GrokSidebar {
       this.persistEditorChat(tab);
       this.postProjectsRailChatTarget();
     }
-    if (message.type === "sessionName") tab.panel.title = this.editorChatTitle(session);
+    if (message.type === "sessionName") {
+      const title = this.editorChatTitle(session);
+      if (title !== tab.panel.title) {
+        tab.panel.title = title;
+        if (this.host.canSwitchWorkspaceFolder) this.persistEditorChat(tab);
+      }
+    }
     if (tab.ready) {
       const webview = tab.panel.webview;
       void webview.postMessage(this.localizeHistoryMessage(message, webview));
@@ -4601,7 +4793,8 @@ export class GrokSidebar {
         && frame.message.type !== "openSettingsSurface" && frame.message.type !== "showLogs") return;
     if (GrokSidebar.EDITOR_CHAT_PROVIDER_SETUP_TYPES.has(frame.message.type)) {
       await this.openSettingsEditor("providers");
-    } else if (GrokSidebar.EDITOR_CHAT_TYPES.has(frame.message.type)) {
+    } else if (GrokSidebar.EDITOR_CHAT_TYPES.has(frame.message.type)
+        || (this.host.canSwitchWorkspaceFolder && frame.message.type === "readProjectFile")) {
       await this.onMessage(frame.message, "local", undefined, tab);
     }
   }
@@ -9388,6 +9581,15 @@ Only continue if you trust this code.`,
     return roots;
   }
 
+  desktopPaneAuthRoots(session: Session): string[] {
+    return sessionScopedRoots({
+      sessionCwd: session.cwd,
+      worktreePath: session.worktree?.path,
+      worktreeSourceRoot: session.worktree?.sourceGitRoot,
+      isAuthorized: (cwd) => this.isAuthorizedCwd(cwd),
+    });
+  }
+
   /**
    * Grok home + on-disk session directory + project session catalogs for desktop
    * openFile authorization of trusted session-generated media
@@ -10698,7 +10900,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   }
 
   private persistEditorChat(tab: EditorChatTab): void {
-    if (!tab.restoreKey) return;
+    if (!tab.restoreKey || this.desktopPaneLayoutFrozen) return;
     const key = EDITOR_CHAT_STATE + tab.restoreKey;
     const previous = this.context.workspaceState?.get<EditorChatState>(key);
     const { session } = tab;
@@ -10712,6 +10914,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       provider: session.provider,
       sessionId: tab.targetId ?? (session.hasHistory ? session.activeSessionId ?? previous?.sessionId : undefined),
       draft,
+      ...(this.host.canSwitchWorkspaceFolder ? { title: tab.panel.title } : {}),
     };
     this.writeEditorWorkspaceState(key, snapshot);
   }
@@ -14533,7 +14736,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       : tab ? this.sessionCwd(session) : this.workspaceRoot();
     switch (msg.type) {
       case "ready": {
-        if (origin === "local") this.cancelStarPrompt();
+        if (origin === "local") {
+          this.cancelStarPrompt();
+          this.desktopMainDraftPending = !!(this.host.canSwitchWorkspaceFolder && this.editorChats?.size);
+        }
         // Decide BEFORE postInitialState runs: its cold-start branch calls
         // startSession(), which can create this.focused.client before this
         // handler resumes (synchronously for Codex; Grok assigns behind
@@ -14548,12 +14754,18 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           !!this.focused.client,
         );
         this.chatReadyForHandoff = true;
+        if (origin === "local" && this.host.canSwitchWorkspaceFolder && this.host.canOpenConversationEditor) {
+          this.postProjectsRailChatTarget();
+        }
         if (this.editorChats?.size) {
           void this.view?.webview.postMessage({ type: "trackLocalChatFocus" });
           this.postLocalVoiceBusy();
         }
         this.postInitialState();
         if (origin === "local" && this.context?.workspaceState) this.restorePersistedDraft(this.focused, "local");
+        if (origin === "local" && this.desktopMainDraftPending && !this.focused.activeSessionId) {
+          this.postDesktopMainDraftScope();
+        }
         if (this.pendingRemoteHandoff) {
           this.postLocal(this.pendingRemoteHandoff);
           this.pendingRemoteHandoff = undefined;
@@ -14959,7 +15171,11 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       }
       case "openFile": {
         const { ref, path: p } = this.resolveChatOpenPath(session, msg.path);
-        const placement = tab ? { besideConversation: true } : undefined;
+        const sourceWebview = origin === "local" ? this.desktopFileSource(tab) : undefined;
+        const placement = tab || sourceWebview ? {
+          ...(tab ? { besideConversation: true } : {}),
+          ...(sourceWebview ? { sourceWebview } : {}),
+        } : undefined;
         if (ref.startLine != null) {
           const startLine = Math.max(0, ref.startLine - 1);
           const endLine = ref.endLine != null ? Math.max(startLine, ref.endLine - 1) : startLine;
@@ -14984,7 +15200,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       case "showInFolder": {
         if (!this.host.canShowInFolder) break;
         const { path: p } = this.resolveChatOpenPath(session, msg.path);
-        await this.host.showInFolder(p);
+        if (tab && this.host.canSwitchWorkspaceFolder) await this.host.showInFolder(p, tab.panel.webview);
+        else await this.host.showInFolder(p);
         break;
       }
       case "openUrl":
@@ -15011,6 +15228,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           msg.requestId,
           msg.replaceAll,
           msg.sites,
+          origin === "local" ? this.desktopFileSource(tab) : undefined,
         );
         break;
       case "exportExpr":
@@ -16201,22 +16419,29 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         // advertises edit, text kinds also carry stamp + absPath for a save
         // round-trip (see writeProjectFile).
         const correlation = typeof msg.requestId === "string" ? { requestId: msg.requestId } : {};
+        const pane = tab && this.host.canSwitchWorkspaceFolder;
         const selectedCwd = origin === "remote" && clientId
           ? this.remoteClients.cwd(clientId)
           : this.workspaceRoot();
-        const rootResult = resolveRemoteFileRoot({
-          origin,
-          claimedCwd: msg.cwd,
-          selectedCwd,
-          workspaceRoot: this.workspaceRoot(),
-          isKnownCwd: (cwd) =>
-            origin === "remote"
-              ? this.remoteTargetableCwd(cwd)
-              : pathsEqual(cwd, this.workspaceRoot()),
-          sameCwd: pathsEqual,
-        });
+        const paneRoot = pane && this.desktopPaneAuthRoots(session).find(root => pathsEqual(root, msg.cwd));
+        const rootResult = pane
+          ? paneRoot
+            ? { ok: true as const, root: paneRoot }
+            : { ok: false as const, reason: "cwd is outside this conversation's roots" }
+          : resolveRemoteFileRoot({
+              origin,
+              claimedCwd: msg.cwd,
+              selectedCwd,
+              workspaceRoot: this.workspaceRoot(),
+              isKnownCwd: (cwd) =>
+                origin === "remote"
+                  ? this.remoteTargetableCwd(cwd)
+                  : pathsEqual(cwd, this.workspaceRoot()),
+              sameCwd: pathsEqual,
+            });
         const replyFile = (body: Extract<HostMsg, { type: "projectFileContent" }>) => {
           if (requester) this.sendRemoteRequester(requester, body);
+          else if (pane) replyLocal(body);
           else this.post(body);
         };
         if (!rootResult.ok) {
@@ -16235,7 +16460,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         // includeEditMeta only when we advertise the write path — otherwise a
         // browse-only host must not leak absPath/stamp to the phone.
         const wire = projectFileContentForWire(read, {
-          includeEditMeta: !!HOST_CAPABILITIES.editProjectFiles,
+          includeEditMeta: !pane && !!HOST_CAPABILITIES.editProjectFiles,
         });
         if (wire.ok) {
           replyFile({
@@ -16459,6 +16684,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         break;
       }
       case "turnFileOpenDiff": {
+        const sourceWebview = origin === "local" ? this.desktopFileSource(tab) : undefined;
         const fail = (text: string) => {
           if (tab) replyLocal({ type: "error", text });
           else this.post({ type: "error", text });
@@ -16483,7 +16709,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         }
         const before = await readGitTurnFileBefore(rootResult.root, msg.path, { sha: baseline.sha, untracked: baseline.untracked });
         if (!before.ok) { fail(before.reason); break; }
-        const after = this.readTurnAfterSide(path.join(rootResult.root, msg.path));
+        const currentPath = path.join(rootResult.root, msg.path);
+        const after = tab && this.host.canSwitchWorkspaceFolder
+          ? this.readTurnAfterSide(currentPath, session)
+          : this.readTurnAfterSide(currentPath);
         if (after === undefined) {
           // There is no region fallback here. A file we may not read, or one
           // too big to hold twice, must not masquerade as a whole-file
@@ -16496,8 +16725,9 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         // filename out of the visible width -- losing the one word that says
         // which tab this is. The price is that two tabs from different turns on
         // one file look alike in the tab bar; their contents do not.
-        await this.openDiffTexts(session, msg.path, before.text, after,
-          `Turn diff: ${path.basename(msg.path)}`);
+        if (sourceWebview && (tab ? this.editorChatFor(session) !== tab : session !== this.focused)) break;
+        await this.openDiffTexts(session, sourceWebview ? currentPath : msg.path, before.text, after,
+          `Turn diff: ${path.basename(msg.path)}`, 0, undefined, sourceWebview);
         break;
       }
       case "gitRun": {
@@ -17997,7 +18227,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       ...(session.provider === "agy" || session.client?.supportsTurnFork?.() ? { turnForkSupported: true } : {}),
       ...(owner && !pathsEqual(owner, cwd) ? { repoCwd: owner } : {}),
     };
-    if (session === this.focused) this.postLocal(message);
+    if (session === this.focused) {
+      this.postLocal(message);
+      this.postDesktopMainDraftScope();
+    }
     this.emitEditorSession(session, message);
     this.sendRemoteSession(session, message);
   }
@@ -20041,13 +20274,16 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     requestId?: number | string,
     replaceAll?: boolean,
     sites?: { oldText: string; newText: string; oldLine?: number; newLine?: number }[],
+    sourceWebview?: HostWebview,
   ): Promise<void> {
     // grok's diff block carries only the replaced region, which opens as a
     // context-free two-line tab. Expand it against the file on disk so the tab
     // shows the whole file and lands on the change (#66); a pending permission
     // hasn't been written yet, so there the file on disk is the "before".
     const sides = expandDiffToWholeFile({
-      diskText: this.readFileForDiff(filePath),
+      diskText: this.host.canSwitchWorkspaceFolder && this.editorChatFor(session)
+        ? this.readFileForDiff(filePath, session)
+        : this.readFileForDiff(filePath),
       oldRegion: oldText,
       newRegion: newText,
       diskIsBefore: requestId !== undefined,
@@ -20055,7 +20291,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       sites,
     });
     await this.openDiffTexts(session, filePath, sides.oldText, sides.newText,
-      `${providerDisplayName(session.provider)} proposed: ${path.basename(filePath)}`, sides.firstChangedLine, requestId);
+      `${providerDisplayName(session.provider)} proposed: ${path.basename(filePath)}`,
+      sides.firstChangedLine, requestId, sourceWebview);
   }
 
   // Both callers own complete sides at this point. Turn diffs must bypass
@@ -20069,8 +20306,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     title: string,
     at = 0,
     requestId?: number | string,
+    sourceWebview?: HostWebview,
   ): Promise<void> {
     const base = path.basename(filePath);
+    const tab = this.editorChatFor(session);
     // Unique key per diff so sequential edits to the same file don't collide on
     // the content map. The trailing real filename gives VS Code the language.
     const key = String(this.diffSeq++);
@@ -20111,7 +20350,11 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // immediately clickable. `selection` opens a whole-file diff on the edit
     // instead of at line 1 (#66) — harmless at 0 when expansion fell back.
     await this.host.openDiff(left, right, title, {
-      ...(this.editorChatFor(session) ? { besideConversation: true } : {}),
+      ...(tab ? { besideConversation: true } : {}),
+      ...(sourceWebview ? {
+        sourceWebview,
+        sourcePath: path.resolve(this.sessionCwd(session), parseFileRef(filePath).path),
+      } : {}),
       preview: false,
       preserveFocus: true,
       selection: {
@@ -20134,9 +20377,9 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
    * read must still refuse, which is why the existence test comes first and the
    * policy check stays inside the read.
    */
-  private readTurnAfterSide(filePath: string): string | undefined {
+  private readTurnAfterSide(filePath: string, session?: Session): string | undefined {
     if (!fs.existsSync(filePath)) return "";
-    return this.readFileForDiff(filePath);
+    return session ? this.readFileForDiff(filePath, session) : this.readFileForDiff(filePath);
   }
 
   /**
@@ -20147,9 +20390,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
    * to: it answers a deletion through {@link readTurnAfterSide} and reports
    * only a genuinely failed read.
    */
-  private readFileForDiff(filePath: string): string | undefined {
+  private readFileForDiff(filePath: string, session: Session = this.focused): string | undefined {
     try {
-      const session = this.focused;
       let abs = path.isAbsolute(filePath)
         ? filePath
         : path.join(this.sessionCwd(session), filePath);
@@ -20159,7 +20401,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       // VS Code keeps the plain read (v3.1.0 behaviour).
       if (this.host.canSwitchWorkspaceFolder) {
         const check = revalidateOpenFileForUse(abs, {
-          allowedRoots: this.desktopAuthRoots(session),
+          allowedRoots: this.editorChatFor(session) ? this.desktopPaneAuthRoots(session) : this.desktopAuthRoots(session),
         });
         if (!check.ok) return undefined;
         abs = check.absPath;
@@ -22002,13 +22244,13 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
    * resolved is simply skipped — no parallel data path, no throw.
    */
   private mirrorToProjectsRail(message: HostMsg): void {
-    if (!this.projectsRail) return;
+    if (!this.projectsRail && !this.host?.canSwitchWorkspaceFolder) return;
     if (!GrokSidebar.PROJECTS_RAIL_HOST_TYPES.has(message.type)) return;
     // A warm switch announces itself with "sessionName" only, so it retargets the rail too.
     if (message.type === "sessions" || message.type === "session" || message.type === "sessionName") {
       this.postProjectsRailChatTarget();
     }
-    void this.projectsRail.webview.postMessage(message);
+    void this.projectsRail?.webview.postMessage(message);
   }
 
   /**
@@ -26092,6 +26334,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
    * chat webview stay in sync through the same handlers the gear uses.
    */
   async openSettingsEditor(category?: string): Promise<void> {
+    if (this.host.canSwitchWorkspaceFolder && this.host.canOpenConversationEditor) {
+      void this.view?.webview.postMessage({ type: "desktopOpenSettings", category });
+      return;
+    }
     if (this.settingsEditor) {
       this.settingsEditor.reveal();
       if (category) {
@@ -26347,10 +26593,11 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // primary-side-bar webview). A `repos` frame still arrives for clear-all.
     // Chrome mirrors AFK Pilot: brand + panel toggle, search, scroll, footer
     // theme toggle (no account avatar). chat.js only empties #rail-scroll.
-    const railMark = this.host.canSwitchWorkspaceFolder
+    const desktopChrome = this.host.canSwitchWorkspaceFolder && !editorChat;
+    const railMark = desktopChrome
       ? resourceUri("grok-icon.svg")
       : "";
-    const railMount = this.host.canSwitchWorkspaceFolder
+    const railMount = desktopChrome
       ? `
   <aside id="projects-rail" class="projects-rail" aria-label="Projects">
     <div class="rail-top">
@@ -26379,16 +26626,16 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     </div>
   </aside>`
       : "";
-    const openMain = this.host.canSwitchWorkspaceFolder ? `<div class="app-main">` : "";
-    const closeMain = this.host.canSwitchWorkspaceFolder ? `</div>` : "";
+    const openMain = desktopChrome ? `<div class="app-main">` : "";
+    const closeMain = desktopChrome ? `</div>` : "";
     // Files shell is in the first HTML frame so desktop never paints the
     // panel-less column and then upgrades. Inject reuses this node.
-    const fileShellOpen = this.host.canSwitchWorkspaceFolder
+    const fileShellOpen = desktopChrome
       ? `<div id="desk-ft-shell" class="desk-ft-shell"><div class="desk-ft-chat">`
       : "";
-    const fileShellClose = this.host.canSwitchWorkspaceFolder ? `</div></div>` : "";
-    const deskLayoutClass = this.host.canSwitchWorkspaceFolder ? " has-rail desk-with-ft" : "";
-    const firstFrameLayout = this.host.canSwitchWorkspaceFolder
+    const fileShellClose = desktopChrome ? `</div></div>` : "";
+    const deskLayoutClass = desktopChrome ? " has-rail desk-with-ft" : "";
+    const firstFrameLayout = desktopChrome
       ? `
   body.desk.has-rail { display: flex; flex-direction: row; align-items: stretch; }
   body.desk.has-rail #projects-rail { width: var(--rail-width, 260px); flex-shrink: 0; height: 100%; display: flex; flex-direction: column; }
@@ -26431,7 +26678,7 @@ ${firstFrameLayout}
 ${filePanelStyle}
 </head>
 <body class="desk${deskLayoutClass}${this.showThinking() ? "" : " thinking-hidden"}" ${editorChat ? 'data-editor-chat="true"' : this.host.canOpenConversationEditor ? 'data-local-chat-focus="true"' : ""} style="--chat-zoom: ${this.chatFontScale()}">
-${this.host.canSwitchWorkspaceFolder ? `<script nonce="${nonce}">try{if(localStorage.getItem("desk-rail-open")==="0")document.body.classList.add("desk-rail-collapsed")}catch(e){}</script>` : ""}
+${desktopChrome ? `<script nonce="${nonce}">try{if(localStorage.getItem("desk-rail-open")==="0")document.body.classList.add("desk-rail-collapsed")}catch(e){}</script>` : ""}
 ${railMount}
 ${openMain}
   <header class="top-bar">
@@ -26448,8 +26695,8 @@ ${openMain}
     <button id="remote-btn" class="icon-btn remote-btn" title="${l10n("Remote control")}" hidden></button>
     <button id="history-btn" class="icon-btn" title="${l10n("Session history")}"></button>
     <button id="new-btn" class="icon-btn" title="${l10n("New session")}"></button>
-    ${this.host.canSwitchWorkspaceFolder ? `<div id="session-head-actions"></div>` : ""}
-    ${this.host.canSwitchWorkspaceFolder ? "" : `<div id="vscode-session-actions"></div>`}
+    ${desktopChrome ? `<div id="session-head-actions"></div>` : ""}
+    ${desktopChrome ? "" : `<div id="vscode-session-actions"></div>`}
     <div id="repo-popover" class="toolbar-popover repo-popover" hidden></div>
     <div id="history-popover" class="toolbar-popover history-popover" hidden></div>
   </header>

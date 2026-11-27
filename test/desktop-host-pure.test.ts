@@ -2212,7 +2212,7 @@ describe("desktop branding and menu", () => {
       "utf8",
     );
     expect(webview).toContain("APP_DOCUMENT_URL");
-    expect(webview).toMatch(/loadURL\(\s*APP_DOCUMENT_URL\s*\)/);
+    expect(webview).toMatch(/documentUrl = APP_DOCUMENT_URL[\s\S]*loadURL\(this\.documentUrl\)/);
     expect(webview).not.toMatch(/loadURL\(`data:text\/html/);
     expect(webview).toContain("getDocumentHtml");
     const main = fs.readFileSync(

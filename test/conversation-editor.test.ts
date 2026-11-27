@@ -2,10 +2,17 @@ import { describe, expect, it, vi } from "vitest";
 import { GrokSidebar } from "../src/sidebar";
 import { Session } from "../src/session";
 import { Uri } from "../src/host";
+import { createFileMemento } from "../src/desktop/memento";
+import { encodeSessionCatalogLeaf } from "../src/sessions";
 import type { DeskAlert } from "../src/desk-alerts";
-import { mkdtempSync, rmSync, rmdirSync, writeFileSync } from "node:fs";
+import { EventEmitter } from "node:events";
+import { mkdtempSync, readFileSync, rmSync, rmdirSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { runInNewContext } from "node:vm";
+// @ts-expect-error Standalone QA fixture builder has no declarations.
+import { buildQaFixture } from "../scripts/qa-fixture.mjs";
 import { bootWebview, click, dispatch, type Posted } from "./webview-harness";
 
 function makeSession(id: string) {
@@ -574,6 +581,59 @@ describe("VS Code conversation editor", () => {
     expect(messages.textContent).not.toContain("Transcript one");
   });
 
+  it("binds the desktop pane on ready during a cold load and keeps the loaded fixture's title", async () => {
+    const qa = buildQaFixture(mkdtempSync(join(tmpdir(), "grok-pane-replay-")), encodeSessionCatalogLeaf);
+    const picked = qa.sessions[2];
+    const { controller, panels, second, sidebar } = setup();
+    Object.assign(second, { activeSessionId: picked.id, cwd: qa.project, client: undefined, buffer: [] });
+    const fakeCli = new URL("./fixtures/fake-grok-acp.cjs", import.meta.url);
+    const fakeRequire = createRequire(fakeCli);
+    const stdin = new EventEmitter();
+    const replies: { id?: number; result?: { sessionId: string }; method?: string; params?: { sessionId: string } }[] = [];
+    const previousGrokHome = process.env.GROK_HOME;
+    try {
+      process.env.GROK_HOME = qa.grokHome;
+      runInNewContext(readFileSync(fakeCli, "utf8"), {
+        require: (id: string) => id === "readline" ? { createInterface: () => stdin } : fakeRequire(id),
+        process: {
+          argv: ["node", "fake-grok-acp.cjs", "agent", "stdio"],
+          env: { GROK_HOME: qa.grokHome },
+          stdout: { write: (line: string) => replies.push(JSON.parse(line)) },
+        },
+      });
+      controller.sessionDisplayName = (GrokSidebar.prototype as any).sessionDisplayName;
+      controller.sessionCwd = (session: Session) => session.cwd;
+      controller.bindSessionLoad = vi.fn();
+      controller.sendRemoteHistorySnapshot = vi.fn();
+      controller.startSession = vi.fn(async (id: string, session: Session) => {
+        // A cold startup clears the live id while the panel already exists.
+        session.activeSessionId = undefined;
+        await controller.replayLoadedHistory(session, async () => {
+          stdin.emit("line", JSON.stringify({ jsonrpc: "2.0", id: 1, method: "session/load", params: {
+            cwd: qa.project, sessionId: id,
+          } }));
+          // Deliver the queued ACP replay after the pane announces ready.
+          panels[0].receive({ type: "ready" });
+          expect(panels[0].webview.postMessage).toHaveBeenCalledWith({ type: "editorChatBound", binding: 0 });
+          expect(replies.find(reply => reply.id === 1)?.result?.sessionId).toBe(id);
+          session.historyEventCount = replies.filter(reply => reply.method === "session/update" && reply.params?.sessionId === id).length;
+        }, id);
+        session.activeSessionId = id;
+        controller.postSessionName(session);
+      });
+      await controller.openDesktopConversationBeside(picked.id, qa.project);
+      expect(controller.startSession).toHaveBeenCalledOnce();
+      expect(controller.focused).toBe(sidebar);
+      expect(panels[0].webview.postMessage).toHaveBeenLastCalledWith(expect.objectContaining({
+        type: "sessionName", sessionId: picked.id, name: picked.title,
+      }));
+    } finally {
+      if (previousGrokHome === undefined) delete process.env.GROK_HOME;
+      else process.env.GROK_HOME = previousGrokHome;
+      qa.cleanup();
+    }
+  });
+
   it("binds the chat and replays its transcript without moving the sidebar", async () => {
     const { beside, panels, host, controller, sidebar } = setup();
     await beside("one");
@@ -774,10 +834,13 @@ describe("VS Code conversation editor", () => {
     expect(controller.handleSend.mock.calls.some((args: unknown[]) => args[2] === sidebar)).toBe(false);
   });
 
-  it("leaves a running session in the pool and restores its draft on reopen", async () => {
+  it.each(["Projects view", "desktop rail"])("keeps the session running after a pane opened by the %s closes", async entry => {
     const { beside, panels, controller, first, pool, binding } = setup();
+    const open = entry === "desktop rail"
+      ? (id: string) => controller.openDesktopConversationBeside(id, "/repo")
+      : beside;
     first.status = "working";
-    await beside("one");
+    await open("one");
     panels[0].receive({ type: "ready" });
     panels[0].receive({ type: "editorChatDraft", binding: binding(panels[0]), text: "Unsent text" });
     panels[0].dispose();
@@ -785,7 +848,7 @@ describe("VS Code conversation editor", () => {
     expect(pool.has(first)).toBe(true);
     expect(first.status).toBe("working");
     expect(first.client.cancel).not.toHaveBeenCalled();
-    await beside("one");
+    await open("one");
     panels[1].receive({ type: "ready" });
     expect(panels[1].webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "restoreComposer", text: "Unsent text" }));
   });
@@ -819,5 +882,303 @@ describe("VS Code conversation editor", () => {
     expect(host.openEditorWebview).not.toHaveBeenCalled();
     await plain("one");
     expect(controller.openSession).toHaveBeenCalledWith("one", "/repo");
+  });
+});
+
+describe("desktop Projects routing", () => {
+  function desktop() {
+    const h = setup();
+    const main = vi.fn();
+    h.controller.projectsRail = undefined;
+    h.controller.view = { webview: { postMessage: main }, visible: true };
+    Object.assign(h.host, { canSwitchWorkspaceFolder: true });
+    return { ...h, main };
+  }
+
+  it("restores saved panes in creation order with independent drafts and the last-used target after quit", async () => {
+    const profile = mkdtempSync(join(tmpdir(), "afk-split-restore-"));
+    const file = join(profile, "workspaceState.json");
+    try {
+      const old = desktop();
+      old.controller.context.workspaceState = createFileMemento(file);
+      await old.controller.openDesktopConversationBeside("one", "/repo");
+      await old.controller.openDesktopConversationBeside("two", "/repo");
+      for (const [i, pane] of old.panels.entries()) {
+        pane.receive({ type: "ready" });
+        pane.receive({ type: "editorChatDraft", binding: old.binding(pane), text: `Unsent in pane ${i + 1}` });
+      }
+      old.controller.revealDesktopPane(old.panels[0].webview);
+      old.controller.saveDesktopMainDraft("sidebar", "Unsent in main", []);
+      old.controller.preserveDesktopConversationLayout();
+      for (const pane of old.panels) pane.dispose();
+
+      const next = desktop();
+      next.controller.context.workspaceState = createFileMemento(file);
+      next.pool.delete(next.first);
+      next.pool.delete(next.second);
+      next.controller.newLocalSession = () => new Session();
+      next.controller.configureLocalResumeSession = (session: Session, _id: string, cwd: string) => {
+        session.cwd = cwd;
+        return true;
+      };
+      next.controller.bindSessionLoad = vi.fn();
+      next.controller.startSession = vi.fn(async () => true);
+      expect(next.controller.restoreDesktopConversationLayout()).toBe(next.panels[0].webview);
+      expect(next.panels.map(pane => next.controller.desktopEditorSession(pane.webview).activeSessionId)).toEqual(["one", "two"]);
+      expect(next.main).toHaveBeenLastCalledWith(expect.objectContaining({
+        type: "projectsRailChatTarget", editor: true, sessionId: "one",
+      }));
+      for (const [i, pane] of next.panels.entries()) {
+        pane.visible = pane.active = false;
+        pane.receive({ type: "ready" });
+        expect(pane.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+          type: "restoreComposer", text: `Unsent in pane ${i + 1}`,
+        }));
+      }
+      expect(next.controller.startSession).not.toHaveBeenCalled();
+      next.panels[1].visible = true;
+      next.panels[1].changeViewState();
+      await vi.waitFor(() => expect(next.controller.startSession).toHaveBeenCalledOnce());
+      expect(next.controller.startSession.mock.calls[0][0]).toBe("two");
+
+      next.controller.chatReadyForHandoff = true;
+      next.controller.desktopMainDraftPending = true;
+      next.sidebar.activeSessionId = undefined;
+      next.controller.postDesktopMainDraftScope();
+      expect(next.main).not.toHaveBeenCalledWith(expect.objectContaining({ type: "desktopMainDraftScope" }));
+      next.sidebar.activeSessionId = "sidebar";
+      next.controller.postDesktopMainDraftScope();
+      next.controller.postDesktopMainDraftScope();
+      expect(next.main.mock.calls.filter(([msg]) => msg.type === "restoreComposer")).toEqual([
+        [expect.objectContaining({ text: "Unsent in main", sessionId: "sidebar" })],
+      ]);
+    } finally {
+      rmSync(profile, { recursive: true, force: true });
+    }
+  });
+
+  it("sends a pane's History pick of the main chat's conversation to the main column", async () => {
+    const { controller, panels, first, main, host, sidebar, binding } = desktop();
+    await controller.openDesktopConversationBeside("one", "/repo");
+    panels[0].receive({ type: "ready" });
+    panels[0].receive({ type: "editorChatAction", binding: binding(panels[0]),
+      message: { type: "resumeSession", id: sidebar.activeSessionId, cwd: "/repo" } });
+    await vi.waitFor(() => expect(main).toHaveBeenCalledWith({ type: "focusInput" }));
+    // Keyboard focus leaves the pane too, so Reload acts on the main chat.
+    expect(host.revealChatView).toHaveBeenCalled();
+    expect(controller.desktopEditorSession(panels[0].webview)).toBe(first);
+    expect(host.openEditorWebview).toHaveBeenCalledOnce();
+  });
+
+  it("keeps saving split state after a close the page vetoed", async () => {
+    const { controller, panels } = desktop();
+    controller.context.workspaceState = editorWorkspaceState();
+    await controller.openDesktopConversationBeside("one", "/repo");
+    controller.preserveDesktopConversationLayout();
+    controller.resumeDesktopConversationLayout();
+    panels[0].dispose();
+    expect(controller.hasSavedDesktopPanes()).toBe(false);
+  });
+
+  it("forgets an explicitly closed pane but keeps the missing conversation visible and closeable", async () => {
+    const stored = editorWorkspaceState();
+    const old = desktop();
+    old.controller.context.workspaceState = stored;
+    await old.controller.openDesktopConversationBeside("one", "/repo");
+    await old.controller.openDesktopConversationBeside("two", "/repo");
+    old.panels[0].dispose();
+    const next = desktop();
+    next.controller.context.workspaceState = stored;
+    next.pool.delete(next.second);
+    next.controller.newLocalSession = () => new Session();
+    next.controller.configureLocalResumeSession = () => false;
+    next.controller.startSession = vi.fn();
+    next.controller.restoreDesktopConversationLayout();
+    expect(next.panels).toHaveLength(1);
+    const missing = next.panels[0];
+    missing.receive({ type: "ready" });
+    expect(missing.title).toBe("two");
+    expect(missing.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      type: "error", text: "Could not open this conversation.",
+    }));
+    expect(next.controller.startSession).not.toHaveBeenCalled();
+    missing.dispose();
+    expect(next.controller.hasSavedDesktopPanes()).toBe(false);
+  });
+
+  it("sends the main desktop draft only for its confirmed split composer", () => {
+    const saveMainDraft = vi.fn();
+    const ui = bootWebview({ beforeScripts(w) {
+      Object.assign(w, { grokDesktopShell: true, grokDesktopConversations: { open: vi.fn(), saveMainDraft } });
+    } });
+    const input = ui.doc.querySelector<HTMLTextAreaElement>("#input")!;
+    const type = (text: string) => {
+      input.value = text;
+      dispatch(ui.window, { type: "voiceConfigured", value: true });
+    };
+    dispatch(ui.window, { type: "sessionName", sessionId: "one", name: "One" });
+    type("Already typed");
+    expect(saveMainDraft).not.toHaveBeenCalled();
+    dispatch(ui.window, { type: "desktopMainDraftScope", sessionId: "two" });
+    expect(saveMainDraft).not.toHaveBeenCalled();
+    dispatch(ui.window, { type: "desktopMainDraftScope", sessionId: "one" });
+    expect(saveMainDraft).toHaveBeenLastCalledWith("one", "Already typed", []);
+    type("Updated");
+    expect(saveMainDraft).toHaveBeenLastCalledWith("one", "Updated", []);
+    dispatch(ui.window, { type: "projectsRailChatTarget", editor: false, openSessionIds: ["one"], hasPanes: false });
+    type("Unsplit again");
+    expect(saveMainDraft).toHaveBeenCalledTimes(2);
+  });
+
+  it("reveals an overflow pane by its existing webview without changing its session or draft", async () => {
+    const { controller, panels, binding, first, second, host } = desktop();
+    await controller.openDesktopConversationBeside("one", "/repo");
+    await controller.openDesktopConversationBeside("two", "/repo");
+    const [hidden, shown] = panels;
+    hidden.visible = hidden.active = false;
+    hidden.receive({ type: "ready" });
+    hidden.receive({ type: "editorChatDraft", binding: binding(hidden), text: "Keep this unsent draft" });
+    controller.revealDesktopPane(hidden.webview);
+    expect(hidden.reveal).toHaveBeenCalled();
+    expect(controller.desktopEditorSession(hidden.webview)).toBe(first);
+    expect(controller.desktopEditorSession(shown.webview)).toBe(second);
+    expect(controller.editorDrafts.get(first)?.text).toBe("Keep this unsent draft");
+    expect(host.openEditorWebview).toHaveBeenCalledTimes(2);
+    expect(controller.openSession).not.toHaveBeenCalled();
+  });
+
+  it("returns focus to main after a running pane closes and replays the unread reply when reopened", async () => {
+    const { controller, panels, first, host, main, pool } = desktop();
+    controller.remoteClients.isActiveValueVisible = () => false;
+    controller.refreshKeepAwake = vi.fn();
+    controller.refreshSessionOrderAfterTurn = vi.fn();
+    controller.markRead = GrokSidebar.prototype["markRead"];
+    await controller.openDesktopConversationBeside("one", "/repo");
+    panels[0].receive({ type: "ready" });
+    controller.setStatus(first, "working");
+    controller.emit(first, { type: "agentStart" });
+    panels[0].dispose();
+    controller.focusDesktopMainChat();
+    expect(main).toHaveBeenLastCalledWith({ type: "focusInput" });
+    expect(pool.has(first)).toBe(true);
+    expect(first.client!.cancel).not.toHaveBeenCalled();
+
+    controller.emit(first, { type: "messageChunk", text: "Reply after close" });
+    controller.emit(first, { type: "agentEnd" });
+    controller.setStatus(first, "done");
+    expect(main).toHaveBeenCalledWith(expect.objectContaining({ type: "sessionDot", id: "one", dot: "unread" }));
+    expect(main).not.toHaveBeenCalledWith({ type: "messageChunk", text: "Reply after close" });
+
+    await controller.openDesktopConversationBeside("one", "/repo");
+    panels[1].receive({ type: "ready" });
+    expect(panels[1].webview.postMessage).toHaveBeenCalledWith({ type: "messageChunk", text: "Reply after close" });
+    expect(controller.desktopEditorSession(panels[1].webview)).toBe(first);
+    expect(main).toHaveBeenCalledWith(expect.objectContaining({ type: "sessionDot", id: "one", dot: "none" }));
+    expect(host.openEditorWebview).toHaveBeenCalledTimes(2);
+  });
+
+  it("reaps an idle background session while keeping an idle visible desktop pane", async () => {
+    const { controller, panels, first, second } = desktop();
+    await controller.openDesktopConversationBeside("one", "/repo");
+    expect(panels[0].visible).toBe(true);
+    first.lastActiveAt = second.lastActiveAt = 0;
+    controller.remoteClients.isActiveValueVisible = () => false;
+    controller.remoteClients.clientsForActiveValue = () => [];
+    controller.disposeSession = vi.fn();
+    controller.reapPool();
+    expect(controller.disposeSession.mock.calls).toEqual([[second]]);
+  });
+
+  it("authorizes a quick preview against the pane roots and sends its reply only there", async () => {
+    const { controller, panels, main, first, second, binding } = desktop();
+    const repo = mkdtempSync(join(tmpdir(), "afk-pane-preview-"));
+    try {
+      first.cwd = repo;
+      controller.isAuthorizedCwd = (cwd: string) => cwd === repo || cwd === "/repo";
+      writeFileSync(join(repo, "notes.md"), "# Pane project");
+      await controller.openDesktopConversationBeside("one", repo);
+      await controller.openDesktopConversationBeside("two", second.cwd);
+      for (const pane of panels) pane.receive({ type: "ready" });
+      const [pane, other] = panels;
+      const request = (requestId: string, cwd: string, relPath: string) => pane.receive({
+        type: "editorChatAction", binding: binding(pane),
+        message: { type: "readProjectFile", requestId, cwd, relPath },
+      });
+      request("mine", repo, "notes.md");
+      request("main-root", "/repo", "notes.md");
+      request("escape", repo, "../notes.md");
+      controller.isAuthorizedCwd = (cwd: string) => cwd === "/repo";
+      request("revoked", "/repo", "notes.md");
+      await vi.waitFor(() => {
+        const replies = pane.webview.postMessage.mock.calls.map(([msg]) => msg as Posted)
+          .filter(msg => msg.type === "projectFileContent");
+        expect(replies).toEqual([
+          expect.objectContaining({ requestId: "mine", ok: true, text: "# Pane project" }),
+          expect.objectContaining({ requestId: "main-root", ok: false }),
+          expect.objectContaining({ requestId: "escape", ok: false }),
+          expect.objectContaining({ requestId: "revoked", ok: false }),
+        ]);
+        expect(replies[0]).not.toHaveProperty("absPath");
+      });
+      for (const target of [main, other.webview.postMessage]) {
+        expect(target).not.toHaveBeenCalledWith(expect.objectContaining({ type: "projectFileContent" }));
+      }
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("opens Providers in the main desktop Settings when a pane asks for setup", async () => {
+    const { controller, panels, main, binding, host } = desktop();
+    await controller.openDesktopConversationBeside("one", "/repo");
+    const pane = panels[0];
+    pane.receive({ type: "ready" });
+    pane.receive({ type: "editorChatAction", binding: binding(pane), message: { type: "runGrokLogin" } });
+    await vi.waitFor(() => expect(main).toHaveBeenCalledWith({ type: "desktopOpenSettings", category: "providers" }));
+    expect(host.openEditorWebview).toHaveBeenCalledTimes(1);
+  });
+
+  it("reuses the last-used pane and reveals an open conversation with the main-chat preference", async () => {
+    const { controller, panels, first, second, sidebar, main, settings } = desktop();
+    await controller.openDesktopConversationBeside("one", "/repo");
+    const pane = panels[0];
+    pane.receive({ type: "ready" });
+    await controller.openDesktopConversationFromRail("two", "/repo");
+    expect(panels).toHaveLength(1);
+    expect(controller.desktopEditorSession(pane.webview)).toBe(second);
+    expect(controller.focused).toBe(sidebar);
+    expect(pane.webview.postMessage).toHaveBeenCalledWith({ type: "focusInput", closeSettings: true });
+    expect(main).toHaveBeenCalledWith(expect.objectContaining({
+      type: "projectsRailChatTarget", sessionId: "two", openSessionIds: ["sidebar", "two"],
+    }));
+    controller.setLastEditorChat(undefined);
+    pane.receive({ type: "localChatFocus" });
+    expect(main).toHaveBeenLastCalledWith(expect.objectContaining({
+      type: "projectsRailChatTarget", editor: true, sessionId: "two",
+    }));
+
+    settings.openConversationIn = "sidebar";
+    pane.reveal.mockClear();
+    await controller.openDesktopConversationFromRail("two", "/repo");
+    expect(pane.reveal).toHaveBeenCalledOnce();
+    expect(controller.openSession).not.toHaveBeenCalled();
+    await controller.openDesktopConversationFromRail("one", "/repo");
+    expect(controller.focused).toBe(first);
+    expect(controller.desktopEditorSession(pane.webview)).toBe(second);
+  });
+
+  it("uses the main chat after it was used and honors editor placement from a single chat", async () => {
+    const { controller, panels, sidebar, second, main, settings } = desktop();
+    settings.openConversationIn = "editor";
+    await controller.openDesktopConversationFromRail("one", "/repo");
+    expect(panels).toHaveLength(1);
+    expect(controller.focused).toBe(sidebar);
+    settings.openConversationIn = "lastUsed";
+    controller.setLastEditorChat(undefined);
+    await controller.openDesktopConversationFromRail("two", "/repo");
+    expect(controller.focused).toBe(second);
+    expect(main).toHaveBeenCalledWith(expect.objectContaining({
+      type: "projectsRailChatTarget", editor: false, sessionId: "two", openSessionIds: ["two", "one"],
+    }));
   });
 });

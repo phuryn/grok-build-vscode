@@ -22,6 +22,7 @@ import {
   Notification,
   protocol,
   safeStorage,
+  screen,
   shell,
   Tray,
   type Menu as ElectronMenu,
@@ -38,7 +39,7 @@ import {
 } from "./log-file";
 import { GrokSidebar } from "../sidebar";
 import { Uri } from "../host";
-import type { HostContext, HostDisposable } from "../host";
+import type { HostContext, HostDisposable, HostWebview } from "../host";
 import { ConfigStore, SensitiveConfigStore } from "./config-store";
 import {
   shouldHideWindowOnClose,
@@ -53,6 +54,8 @@ import {
   TRAY_NOTICE_CONFIG_KEY,
 } from "./tray";
 import { createAppResourceHandler } from "./app-resource-handler";
+import { DESKTOP_CONVERSATIONS_ARG } from "./conversation-layout";
+import { DesktopConversationPanes } from "./conversation-panes";
 import type { DesktopOpenFileContext } from "./desktop-policy";
 import { createElectronHost, ensureWorkspaceRoot, type ElectronRemoteActions } from "./electron-host";
 import {
@@ -93,6 +96,7 @@ import {
   isTrustedMainFrameIpc,
 } from "./window-security";
 import { installDesktopZoomHandlers } from "./window-zoom";
+import { isValidSessionId } from "../sessions";
 import { autoUpdater } from "electron-updater";
 import {
   DESKTOP_RELEASES_API_URL,
@@ -568,6 +572,7 @@ async function createApp(): Promise<void> {
       ? "using the device token this cloud environment was handed"
       : "using injected development device token (relay URL override active)");
   }
+  const workspaceState = !isCloudEnvironment() ? createFileMemento(path.join(userData, "workspaceState.json")) : undefined;
   const hostContext: HostContext = {
     secrets: {
       get: withInjectedSecret(
@@ -585,6 +590,7 @@ async function createApp(): Promise<void> {
     isProduction: app.isPackaged,
     isCloudBuild: pkg.cloudBuild,
     globalState: createFileMemento(path.join(userData, "globalState.json")),
+    workspaceState,
     subscriptions: {
       push(...items: HostDisposable[]) {
         subscriptions.push(...items);
@@ -592,7 +598,7 @@ async function createApp(): Promise<void> {
     },
   };
 
-  webview = new ElectronWebview(() => mainWindow);
+  webview = new ElectronWebview(() => mainWindow?.webContents ?? null);
   webview.getWorkspaceRoot = () => config.getWorkspaceRoot();
   webview.onDroppedMessage = (reason, raw) => {
     const t =
@@ -602,11 +608,18 @@ async function createApp(): Promise<void> {
     log(`dropped renderer message (${reason}): ${t}`);
   };
 
+  const authContext: { get?: (sourceWebview?: HostWebview) => DesktopOpenFileContext | undefined } = {};
+  const conversationPanes = !isCloudEnvironment()
+    ? new DesktopConversationPanes(() => mainWindow, log, pane => authContext.get?.(pane),
+        applyDesktopCssZoom, () => sidebar?.focusDesktopMainChat())
+    : undefined;
+
   // Registry + canonical static roots — never free-form ~/.grok path serve.
   // Narrow extra lane: exact APP_DOCUMENT_URL → in-memory HTML (real origin for
   // localStorage). Not a path serve; does not widen static/registry policy.
   const serveAppResource = createAppResourceHandler({
-    resolveResourceUrl: (resourceUrl) => webview?.resolveResourceUrl(resourceUrl) ?? null,
+    resolveResourceUrl: (resourceUrl) =>
+      webview?.resolveResourceUrl(resourceUrl) ?? conversationPanes?.resolveResourceUrl(resourceUrl) ?? null,
     fetchFile: (fileUrl) => net.fetch(fileUrl),
     log,
   });
@@ -615,8 +628,10 @@ async function createApp(): Promise<void> {
     if (!webview) {
       return new Response("Forbidden", { status: 403 });
     }
-    if (isAppDocumentUrl(url)) {
-      const html = webview.getDocumentHtml();
+    const mainDocument = isAppDocumentUrl(url);
+    const paneHtml = conversationPanes?.documentHtml(url);
+    if (mainDocument || paneHtml !== undefined) {
+      const html = mainDocument ? webview.getDocumentHtml() : paneHtml;
       if (!html) {
         return new Response("Document not ready", { status: 404 });
       }
@@ -634,7 +649,6 @@ async function createApp(): Promise<void> {
   // Bound after GrokSidebar exists so link/unlink reuse the extension flow.
   const remoteActions: { current?: ElectronRemoteActions } = {};
   // Same auth context for message-gate (webview) and use-time openFsPath (host).
-  const authContext: { get?: () => DesktopOpenFileContext } = {};
   const updateActions: { install?: () => void } = {};
   const host = createElectronHost({
     config,
@@ -643,7 +657,8 @@ async function createApp(): Promise<void> {
     getLogFile: () => desktopLogFile,
     log,
     remoteActions,
-    getAuthContext: () => authContext.get?.(),
+    getAuthContext: (sourceWebview) => authContext.get?.(sourceWebview),
+    conversationPanes,
     installAppUpdate: () => updateActions.install?.(),
     exitCloudHost: () => app.quit(),
     onWorkspaceRootChanged: (root) => {
@@ -665,17 +680,20 @@ async function createApp(): Promise<void> {
   // Media fields are lazy: sessionDirFor / sessionCatalogDirs readdirSync, and
   // most webview messages are not path-bearing — only openFile/openDiff
   // consumers read these fields after a workspace candidate has already missed.
-  authContext.get = () => {
+  authContext.get = (sourceWebview) => {
+    const session = sourceWebview ? sidebar!.desktopFileSession(sourceWebview) : undefined;
+    if (sourceWebview && !session) return undefined;
     let mediaCache:
       | { grokHome?: string; sessionDir?: string; sessionCatalogDirs?: string[] }
       | undefined;
     const media = () => {
-      if (!mediaCache) mediaCache = sidebar!.desktopOpenMediaContext();
+      if (!mediaCache) mediaCache = sidebar!.desktopOpenMediaContext(session);
       return mediaCache;
     };
     return {
-      workspaceRoot: config.getWorkspaceRoot(),
-      allowedRoots: sidebar!.desktopAuthRoots(),
+      workspaceRoot: sourceWebview ? undefined : config.getWorkspaceRoot(),
+      allowedRoots: session ? sidebar!.desktopPaneAuthRoots(session) : sidebar!.desktopAuthRoots(),
+      sessionCwd: session?.cwd,
       get grokHome() {
         return media().grokHome;
       },
@@ -687,16 +705,16 @@ async function createApp(): Promise<void> {
       },
       // Path derivation is cheap, but keep it on the same path-bearing lazy seam.
       get planReviewSessionRoot() {
-        return sidebar!.desktopPlanReviewSessionRoot();
+        return sidebar!.desktopPlanReviewSessionRoot(session);
       },
       // Where Claude Code writes the plans it then links to. Same narrow
       // provenance rule as above — a direct .md child, never a read root.
       get claudePlansRoot() {
-        return path.join(os.homedir(), ".claude", "plans");
+        return sourceWebview && sourceWebview !== webview ? undefined : path.join(os.homedir(), ".claude", "plans");
       },
     } satisfies DesktopOpenFileContext;
   };
-  webview.getAuthContext = () => authContext.get!();
+  webview.getAuthContext = () => authContext.get?.() ?? {};
   remoteActions.current = {
     link: () => sidebar!.linkRemoteDevice(),
     unlink: () => sidebar!.unlinkRemoteDevice(),
@@ -738,6 +756,13 @@ async function createApp(): Promise<void> {
         zoomIn: () => applyDesktopCssZoom("in"),
         zoomOut: () => applyDesktopCssZoom("out"),
         resetZoom: () => applyDesktopCssZoom("reset"),
+        reloadFocused: (force, focusedWindow) => {
+          const win = focusedWindow instanceof BrowserWindow ? focusedWindow : BrowserWindow.getFocusedWindow();
+          if (!win) return;
+          const contents = (win === mainWindow ? conversationPanes?.focusedContents() : undefined) ?? win.webContents;
+          if (force) contents.reloadIgnoringCache();
+          else contents.reload();
+        },
       },
       { isPackaged },
     ),
@@ -757,10 +782,13 @@ async function createApp(): Promise<void> {
   // menu-only gating would leave openDevTools() / F12-style hooks reachable.
   const allowDevTools = desktopDevToolsAllowed(isPackaged);
 
+  const sizeKey = "grok.desktopSplitWindowSize";
+  const savedSize = sidebar.hasSavedDesktopPanes() ? workspaceState?.get<{ width: number; height: number }>(sizeKey) : undefined;
+  const workArea = savedSize ? screen.getPrimaryDisplay().workAreaSize : undefined;
   mainWindow = new BrowserWindow({
     // Wider default so chat + file tree both have room; collapse shrinks the panel.
-    width: 720,
-    height: 800,
+    width: savedSize && workArea && Number.isSafeInteger(savedSize.width) ? Math.max(400, Math.min(savedSize.width, workArea.width)) : 720,
+    height: savedSize && workArea && Number.isSafeInteger(savedSize.height) ? Math.max(480, Math.min(savedSize.height, workArea.height)) : 800,
     minWidth: 400,
     minHeight: 480,
     title: DESKTOP_APP_DISPLAY_NAME,
@@ -776,6 +804,7 @@ async function createApp(): Promise<void> {
     icon: iconOpt,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
+      additionalArguments: conversationPanes ? [DESKTOP_CONVERSATIONS_ARG] : [],
       contextIsolation: true,
       nodeIntegration: false,
       // Required: without an explicit false, some Electron builds fail with
@@ -787,6 +816,13 @@ async function createApp(): Promise<void> {
   });
 
   pinAppDocumentZoom(mainWindow);
+  // Unsaved Files edits veto a window close; the window stays, so split state
+  // keeps saving. A vetoed Quit has already disposed the controller: leave it.
+  mainWindow.webContents.on("will-prevent-unload", () => {
+    if (!appIsQuitting) sidebar?.resumeDesktopConversationLayout();
+  });
+  mainWindow.on("show", () => conversationPanes?.windowVisibilityChanged());
+  mainWindow.on("restore", () => conversationPanes?.windowVisibilityChanged());
   mainWindow.once("ready-to-show", () => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
     // Re-pin right before first show: a leftover per-origin zoom applied
@@ -840,13 +876,23 @@ async function createApp(): Promise<void> {
    * each one is a way this could strand the app: a real quit must pass through,
    * and a tray that failed to appear must not swallow the window.
    */
+  const preserveSplit = () => {
+    sidebar?.preserveDesktopConversationLayout();
+    if (!mainWindow || mainWindow.isDestroyed() || !sidebar?.hasSavedDesktopPanes()) return;
+    const { width, height } = mainWindow.isMinimized() ? mainWindow.getNormalBounds() : mainWindow.getBounds();
+    void Promise.resolve(workspaceState?.update(sizeKey, { width, height }))
+      .catch(error => log(`[desk-pane] save window size: ${error}`));
+  };
   mainWindow.on("close", (event) => {
     if (!shouldHideWindowOnClose({
       platform: process.platform,
       configured: trayConfigured(),
       quitting: appIsQuitting,
       trayPresent: !!tray && !tray.isDestroyed(),
-    })) return;
+    })) {
+      preserveSplit();
+      return;
+    }
     event.preventDefault();
     mainWindow?.hide();
     announceTrayOnce();
@@ -868,11 +914,13 @@ async function createApp(): Promise<void> {
    */
   mainWindow.on("session-end", () => {
     appIsQuitting = true;
+    preserveSplit();
     destroyTray();
   });
 
   mainWindow.on("closed", () => {
     mainWindow = null;
+    conversationPanes?.dispose();
   });
 
   syncTray();
@@ -881,13 +929,52 @@ async function createApp(): Promise<void> {
   });
 
   ipcMain.on("webview-to-host", (event, message: unknown) => {
-    // Ambient authority: only the main BrowserWindow main frame may post.
-    if (!isTrustedMainFrameIpc(event, () => mainWindow)) {
-      log("refused webview-to-host from non-main sender/frame");
+    if (isTrustedMainFrameIpc(event, () => mainWindow)) {
+      webview?.dispatchMessage(message);
       return;
     }
-    webview?.dispatchMessage(message);
+    if (!conversationPanes?.dispatch(event, message)) {
+      log("refused webview-to-host from non-main sender/frame or invalid pane message");
+    }
   });
+  if (conversationPanes) {
+    ipcMain.on("desk-conversations:open", (event, id: unknown, cwd: unknown, beside: unknown) => {
+      if (!isTrustedMainFrameIpc(event, () => mainWindow) || !isValidSessionId(id) ||
+          (cwd !== undefined && typeof cwd !== "string") || typeof beside !== "boolean") return;
+      const opening = beside
+        ? sidebar?.openDesktopConversationBeside(id, cwd)
+        : sidebar?.openDesktopConversationFromRail(id, cwd);
+      void opening?.catch(error => {
+        log(`[desk-pane] open failed: ${String(error)}`);
+      });
+    });
+    ipcMain.on("desk-conversations:bounds", (event, bounds: unknown, slots: unknown, stacked: unknown) => {
+      if (isTrustedMainFrameIpc(event, () => mainWindow)) conversationPanes.layout(bounds, slots, stacked);
+    });
+    ipcMain.on("desk-conversations:pick", (event, id: unknown) => {
+      if (typeof id !== "number" || !Number.isSafeInteger(id) || !isTrustedMainFrameIpc(event, () => mainWindow)) return;
+      if (id === 0) conversationPanes.showMainOnly();
+      else {
+        const chosen = conversationPanes.webviewForPicker(id);
+        if (chosen) sidebar?.revealDesktopPane(chosen);
+      }
+    });
+    ipcMain.on("desk-conversations:covered", (event, covered: unknown) => {
+      if (typeof covered === "boolean" && isTrustedMainFrameIpc(event, () => mainWindow)) {
+        conversationPanes.setCovered(covered);
+      }
+    });
+    ipcMain.on("desk-conversations:close", (event) => {
+      if (!conversationPanes.close(event)) log("[desk-pane] refused close from non-pane sender/frame");
+      else sidebar?.focusDesktopMainChat();
+    });
+    ipcMain.on("desk-conversations:main-draft", (event, id: unknown, text: unknown, chips: unknown) => {
+      if (isTrustedMainFrameIpc(event, () => mainWindow) && (id === null || isValidSessionId(id))
+          && typeof text === "string" && Array.isArray(chips) && chips.every(chip => typeof chip === "string")) {
+        sidebar?.saveDesktopMainDraft(id, text, chips);
+      }
+    });
+  }
 
   log(`extension root: ${extensionRoot}`);
   log(`cliPath config: ${String(config.getValue("grok.cliPath") || "(auto)")}`);
@@ -900,9 +987,10 @@ async function createApp(): Promise<void> {
     openSinkPath: process.env.GROK_DESKTOP_OPEN_SINK,
   });
 
-  // Inject after every document load (initial + renderer reload) so the panel
-  // remounts without touching getHtml() / chat.js. Chrome fades run after the
-  // panel so #messages is in its final parent.
+  mainWindow.webContents.on("did-start-navigation", (_event, url, inPlace, isMainFrame) => {
+    if (!inPlace && isMainFrame && isAppDocumentUrl(url)) conversationPanes?.setCovered(true);
+  });
+  // Remount Files before the chrome fades and native columns after a reload.
   mainWindow.webContents.on("did-finish-load", () => {
     pinAppDocumentZoom(mainWindow);
     void (async () => {
@@ -910,6 +998,7 @@ async function createApp(): Promise<void> {
       if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
       try {
         await mainWindow.webContents.executeJavaScript(desktopChromeBootSource(), true);
+        conversationPanes?.refreshLayout();
       } catch (e) {
         log(`[desk-chrome] inject failed: ${(e as Error).message}`);
       }
@@ -923,6 +1012,10 @@ async function createApp(): Promise<void> {
       mainWindow?.show();
     },
   });
+  if (conversationPanes) {
+    const preferred = sidebar.restoreDesktopConversationLayout();
+    if (preferred) conversationPanes.preferRestoredPane(preferred);
+  }
 
   // Windows/macOS/AppImage update in-app. Debian installs get a direct .deb
   // download notice; apt handles elevation, dependencies and maintainer scripts.
@@ -1039,6 +1132,7 @@ if (gotSingleInstanceLock) {
     appIsQuitting = true;
     destroyTray();
     try {
+      sidebar?.preserveDesktopConversationLayout();
       sidebar?.dispose();
     } catch {
       /* best-effort */

@@ -10,7 +10,7 @@
  * Renderer → host messages are schema-validated ({@link parseWebviewMsg})
  * before any sidebar listener runs.
  */
-import type { BrowserWindow } from "electron";
+import type { WebContents } from "electron";
 import * as path from "node:path";
 import type { HostDisposable, HostWebview, Uri } from "../host";
 import {
@@ -28,6 +28,7 @@ import {
   ResourceRegistry,
 } from "./resource-registry";
 import { parseWebviewMsg } from "./webview-msg-validate";
+import { DESKTOP_CONVERSATION_LAYOUT_BOOT, DESKTOP_CONVERSATION_PANE_BOOT } from "./conversation-layout";
 
 const SCHEME = "app-resource";
 const AUTHORITY = "vsc-resource";
@@ -76,12 +77,13 @@ export const DESKTOP_THEME_STORAGE_KEY = "grok-desktop-theme";
 /** Early head boot: localStorage → OS matchMedia fallback; body.vscode-light sync. */
 const DESKTOP_THEME_BOOT = `(function(){
   var root=document.documentElement;
+  var system=window.matchMedia&&matchMedia("(prefers-color-scheme: light)");
   function readTheme(){
     try{
       var saved=localStorage.getItem(${JSON.stringify(DESKTOP_THEME_STORAGE_KEY)});
       if(saved==="light"||saved==="dark")return saved;
     }catch(e){}
-    return (window.matchMedia&&matchMedia("(prefers-color-scheme: light)").matches)?"light":"dark";
+    return system&&system.matches?"light":"dark";
   }
   var initial=readTheme();
   root.setAttribute("data-theme",initial);
@@ -95,6 +97,17 @@ const DESKTOP_THEME_BOOT = `(function(){
     btn.addEventListener("click",function(){window.__toggleDesktopTheme();});
   }
   document.addEventListener("DOMContentLoaded",function(){syncBodyTheme();wireThemeToggle();});
+  function refreshTheme(){
+    root.setAttribute("data-theme",readTheme());
+    syncBodyTheme();
+  }
+  window.__grokRefreshDesktopTheme=refreshTheme;
+  system?.addEventListener?.("change",function(){
+    if(document.body?.dataset.editorChat||document.getElementById("desk-conversation-columns"))refreshTheme();
+  });
+  window.addEventListener("storage",function(event){
+    if(event.key===${JSON.stringify(DESKTOP_THEME_STORAGE_KEY)})refreshTheme();
+  });
   syncBodyTheme();
   window.__toggleDesktopTheme=function(){
     var next=root.getAttribute("data-theme")==="dark"?"light":"dark";
@@ -231,6 +244,19 @@ html { background: #1a1a1a; }
 html, body { margin: 0; height: 100%; overflow: hidden; }
 body { background: #1a1a1a; color: var(--vscode-foreground); }
 :root[data-theme="light"] body { background: #fbfbfc; }
+:root:has(> body[data-editor-chat]),
+:root[data-theme] > body[data-editor-chat] { background: var(--vscode-sideBar-background); }
+body.desk #projects-rail .rail-session.open {
+  --rail-selection-bg: color-mix(in srgb,
+    var(--vscode-list-inactiveSelectionBackground, var(--rail-hover-bg)),
+    var(--vscode-sideBar-background) 40%);
+  background: var(--rail-selection-bg);
+  --provider-badge-ring: var(--rail-selection-bg);
+  color: var(--vscode-list-inactiveSelectionForeground, var(--vscode-foreground));
+}
+body.desk #projects-rail .rail-session.open .rail-session-actions {
+  background: linear-gradient(to right, transparent 0%, var(--rail-selection-bg) 28%);
+}
 /* Theme toggle sun/moon (rail footer) — same as AFK Pilot */
 :root[data-theme="dark"] .i-sun { display: block; }
 :root[data-theme="dark"] .i-moon { display: none; }
@@ -265,7 +291,8 @@ body.desk #messages-wrap {
 }
 /* Top bar: full width of the chat column (not the reading measure). */
 body.desk > .top-bar,
-body.desk .app-main > .top-bar {
+body.desk .app-main > .top-bar,
+body.desk .desk-ft-chat > .top-bar {
   max-width: none;
   width: 100%;
   margin-left: 0;
@@ -289,6 +316,76 @@ body.desk .input-highlight {
 body.desk > .composer,
 body.desk .desk-ft-chat > .composer {
   padding-bottom: max(12px, var(--pad));
+}
+
+#desk-conversation-columns {
+  display: flex;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+}
+#desk-conversation-columns > .desk-ft-chat, #desk-conversation-slot {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+}
+#desk-conversation-slot {
+  border-inline-start: 1px solid var(--vscode-editorWidget-border);
+  background: var(--vscode-editorWidget-border);
+}
+#desk-conversation-columns.desk-chat-stacked { flex-direction: column; }
+.desk-chat-stacked #desk-conversation-slot {
+  border-inline-start: 0;
+  border-block-start: 1px solid var(--vscode-editorWidget-border);
+}
+/* Keep the send row in view when an autosized draft fills a short split. */
+.desk-chat-stacked textarea#input {
+  max-block-size: calc(2lh + 2 * var(--pad));
+  overflow-y: auto !important;
+}
+@media (max-height: 330px) {
+  body[data-editor-chat] textarea#input {
+    max-block-size: calc(2lh + 2 * var(--pad));
+    overflow-y: auto !important;
+  }
+}
+body.desk-ft-maximized #desk-conversation-columns { display: none; }
+#desk-conversation-picker {
+  align-self: start;
+  flex: none;
+  field-sizing: content;
+  max-inline-size: min(calc(100% - 2 * var(--pad)), 28ch);
+  margin: 4px var(--pad) 0;
+  padding: 3px 6px;
+  font: inherit;
+  color: var(--vscode-dropdown-foreground);
+  background: var(--vscode-dropdown-background);
+  border: 1px solid var(--vscode-dropdown-border);
+  border-radius: 8px;
+}
+#desk-conversation-picker[data-unread="true"] { border-color: var(--vscode-charts-green); }
+#desk-conversation-picker:focus-visible { outline: 2px solid var(--vscode-focusBorder); }
+body.desk-split-compact #desk-rail-open-btn { display: inline-flex; }
+body.desk-split-compact #rail-resizer,
+body.desk-split-compact #desk-ft-resizer,
+body.desk-split-compact:not([data-split-drawer="projects"]) #projects-rail,
+body.desk-split-compact:not([data-split-drawer="files"]) #desk-ft-panel { display: none !important; }
+body.desk-split-compact[data-split-drawer="projects"] #projects-rail { display: flex !important; }
+body.desk-split-compact #projects-rail,
+body.desk-split-compact #desk-ft-panel {
+  position: fixed;
+  inset-block: var(--desk-drawer-top, 40px) 0;
+  height: auto;
+  max-inline-size: calc(100% - 2 * var(--pad));
+  z-index: 40;
+  box-shadow: 0 0 12px var(--vscode-widget-shadow);
+}
+body.desk-split-compact #projects-rail { inset-inline-start: 0; }
+body.desk-split-compact #desk-ft-panel { inset-inline-end: 0; }
+body.desk-split-compact #desk-ft-maximize { display: none; }
+#desk-conversation-close {
+  margin-inline-start: auto;
+  font-size: 1.25em;
 }
 
 /* Scroll-edge fades — port of AFK Pilot web/chat.html (not shared chat.css). */
@@ -390,6 +487,7 @@ export class ElectronWebview implements HostWebview {
   readonly fileSelection = new FileSelectionRegistry();
   /** Optional log for dropped IPC (wired from main). */
   onDroppedMessage?: (reason: string, raw: unknown) => void;
+  onHostMessage?: (message: unknown) => void;
   /**
    * Workspace root for desktop openFile policy. Wired from main after the
    * folder is chosen; when unset, openFile is refused.
@@ -402,7 +500,10 @@ export class ElectronWebview implements HostWebview {
    */
   getAuthContext?: () => DesktopOpenFileContext;
 
-  constructor(private readonly getWindow: () => BrowserWindow | null) {}
+  constructor(
+    private readonly getContents: () => WebContents | null,
+    private readonly documentUrl = APP_DOCUMENT_URL,
+  ) {}
 
   get html(): string {
     return this._html;
@@ -411,10 +512,10 @@ export class ElectronWebview implements HostWebview {
   set html(value: string) {
     // Store the served document (theme-injected). Reload re-fetches APP_DOCUMENT_URL
     // from this buffer — raw getHtml alone would drop desktop chrome on reload.
-    this._html = injectTheme(value);
-    const win = this.getWindow();
-    if (!win || win.isDestroyed()) return;
-    void win.loadURL(APP_DOCUMENT_URL);
+    this._html = injectTheme(value, this.documentUrl !== APP_DOCUMENT_URL);
+    const contents = this.getContents();
+    if (!contents || contents.isDestroyed()) return;
+    void contents.loadURL(this.documentUrl).catch(() => {});
   }
 
   /**
@@ -470,11 +571,12 @@ export class ElectronWebview implements HostWebview {
   }
 
   postMessage(message: unknown): Thenable<boolean> {
-    const win = this.getWindow();
-    if (!win || win.isDestroyed() || win.webContents.isDestroyed()) {
+    const contents = this.getContents();
+    if (!contents || contents.isDestroyed()) {
       return Promise.resolve(false);
     }
-    win.webContents.send("host-to-webview", message);
+    contents.send("host-to-webview", message);
+    this.onHostMessage?.(message);
     return Promise.resolve(true);
   }
 
@@ -494,6 +596,46 @@ export class ElectronWebview implements HostWebview {
    * active session's roots (not merely the selected project folder).
    */
   dispatchMessage(message: unknown): void {
+    if (message && typeof message === "object" && (message as { type?: unknown }).type === "localChatFocus") {
+      this.deliver({ type: "localChatFocus" });
+      return;
+    }
+    const parsed = this.validateMessage(message);
+    if (parsed) this.deliver(parsed);
+  }
+
+  /** Editor envelopes are local to the pane transport. Their actions still
+   * pass through the same desktop validator as the main chat. */
+  dispatchConversationMessage(raw: unknown): boolean {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return false;
+    const frame = raw as Record<string, unknown>;
+    if (frame.type === "ready") {
+      const ready = this.validateMessage(raw);
+      if (!ready) return false;
+      this.deliver(ready);
+      return true;
+    }
+    if (frame.type === "localChatFocus") {
+      this.deliver({ type: "localChatFocus" });
+      return true;
+    }
+    const { binding } = frame;
+    if (typeof binding !== "number" || !Number.isSafeInteger(binding) || binding < 0) return false;
+    if (frame.type === "editorChatDraft") {
+      const { text, chipIds } = frame;
+      if (typeof text !== "string" ||
+          (chipIds !== undefined && (!Array.isArray(chipIds) || !chipIds.every(id => typeof id === "string")))) return false;
+      this.deliver({ type: frame.type, binding, text, chipIds });
+      return true;
+    }
+    if (frame.type !== "editorChatAction") return false;
+    const message = this.validateMessage(frame.message);
+    if (!message) return false;
+    this.deliver({ type: frame.type, binding, message });
+    return true;
+  }
+
+  private validateMessage(message: unknown) {
     const parsed = parseWebviewMsg(message);
     if (!parsed) {
       this.onDroppedMessage?.("invalid WebviewMsg", message);
@@ -514,9 +656,13 @@ export class ElectronWebview implements HostWebview {
       );
       return;
     }
+    return auth.msg;
+  }
+
+  private deliver(message: unknown): void {
     for (const listener of this.listeners) {
       try {
-        void listener(auth.msg);
+        void listener(message);
       } catch {
         /* best-effort — sidebar wraps handlers itself */
       }
@@ -552,13 +698,14 @@ export class ElectronWebview implements HostWebview {
   }
 }
 
-function injectTheme(html: string): string {
+function injectTheme(html: string, conversationPane: boolean): string {
   const styleTag = `<style id="grok-desktop-theme">${DESKTOP_THEME_CSS}</style>`;
   // Match getHtml's CSP nonce so the early theme boot is allowed under script-src.
   const nonceMatch = html.match(/script-src 'nonce-([^']+)'/);
   const nonce = nonceMatch?.[1];
   const scriptTag = nonce
-    ? `<script nonce="${nonce}" id="grok-desktop-theme-boot">${DESKTOP_THEME_BOOT}</script>`
+    ? `<script nonce="${nonce}" id="grok-desktop-theme-boot">${DESKTOP_THEME_BOOT}</script>
+<script nonce="${nonce}">${conversationPane ? DESKTOP_CONVERSATION_PANE_BOOT : DESKTOP_CONVERSATION_LAYOUT_BOOT}</script>`
     : "";
   const tags = styleTag + scriptTag;
   if (html.includes("</head>")) {

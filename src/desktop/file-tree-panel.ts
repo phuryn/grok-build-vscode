@@ -117,9 +117,7 @@ export function fileTreePanelBootSource(_iconsDir?: string): string {
       list: async (scopeId, relPath) => (await requireScope(scopeId))
         ? api.list(relPath)
         : { ok: false, reason: "workspace changed" },
-      read: async (scopeId, relPath) => (await requireScope(scopeId))
-        ? api.read(relPath)
-        : { ok: false, reason: "workspace changed" },
+      read: (scopeId, relPath) => api.read(relPath, scopeId),
       write: async (scopeId, request) => (await requireScope(scopeId))
         ? api.save({
             relPath: request.relPath,
@@ -284,7 +282,17 @@ export function fileTreePanelBootSource(_iconsDir?: string): string {
     }
     window.__grokDeskFilePanel = panel;
     window.__grokDeskFtBeforeClose = () => panel.confirmClose();
-    window.__grokDeskFtOpen = (relPath) => panel.openPath(relPath);
+    window.__grokDeskFtOpen = async (relPath, root) => {
+      const result = await panel.openPath(relPath, false, root);
+      if (result?.ok || result?.openExternal) window.__grokOpenCompactFiles?.();
+      return root && result?.openExternal ? { ok: true } : result;
+    };
+    window.__grokDeskFtOpenDiff = async (diff, root) => {
+      if (!await requireScope(root)) return { ok: false, reason: "workspace changed" };
+      const result = panel.openDiff(diff, root);
+      if (result.ok) window.__grokOpenCompactFiles?.();
+      return result;
+    };
     try { window.__grokResetDocumentScroll?.(); } catch (_) { /* chat.js hook */ }
     return { ok: true };
   })()`;

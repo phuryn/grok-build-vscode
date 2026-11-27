@@ -14,6 +14,7 @@
  * globally to every module.
  */
 import { contextBridge, ipcRenderer, webUtils } from "electron";
+import { DESKTOP_CONVERSATIONS_ARG, DESKTOP_CONVERSATION_PANE_ARG } from "./conversation-layout";
 
 declare const window: {
   dispatchEvent(event: { type: string; data?: unknown }): boolean;
@@ -61,15 +62,32 @@ contextBridge.exposeInMainWorld("acquireVsCodeApi", () => api);
  */
 contextBridge.exposeInMainWorld("grokDesktopShell", true);
 
+const isConversationPane = process.argv.includes(DESKTOP_CONVERSATION_PANE_ARG);
+if (isConversationPane) {
+  contextBridge.exposeInMainWorld("grokDesktopConversations", {
+    close: () => ipcRenderer.send("desk-conversations:close"),
+  });
+} else if (process.argv.includes(DESKTOP_CONVERSATIONS_ARG)) {
+  contextBridge.exposeInMainWorld("grokDesktopConversations", {
+    openBeside: (id: string, cwd?: string) => ipcRenderer.send("desk-conversations:open", id, cwd, true),
+    open: (id: string, cwd?: string) => ipcRenderer.send("desk-conversations:open", id, cwd, false),
+    setBounds: (bounds: unknown, slots: number, stacked: boolean) => ipcRenderer.send("desk-conversations:bounds", bounds, slots, stacked),
+    showPane: (id: number) => ipcRenderer.send("desk-conversations:pick", id),
+    setCovered: (covered: boolean) => ipcRenderer.send("desk-conversations:covered", covered),
+    saveMainDraft: (id: string | null, text: string, chipIds: string[]) =>
+      ipcRenderer.send("desk-conversations:main-draft", id, text, chipIds),
+  });
+}
+
 /**
  * Desktop-only file-tree bridge (not used by chat.js). Paths are re-validated
  * in the main process — the renderer is not trusted for containment.
  */
-contextBridge.exposeInMainWorld("grokDesktopFileTree", {
+if (!isConversationPane) contextBridge.exposeInMainWorld("grokDesktopFileTree", {
   list: (relPath: string) => ipcRenderer.invoke("desk-ft:list", relPath),
   open: (relPath: string) => ipcRenderer.invoke("desk-ft:open", relPath),
   reveal: (relPath: string) => ipcRenderer.invoke("desk-ft:reveal", relPath),
-  read: (relPath: string) => ipcRenderer.invoke("desk-ft:read", relPath),
+  read: (relPath: string, expectedRoot?: string) => ipcRenderer.invoke("desk-ft:read", relPath, expectedRoot),
   save: (request: { relPath: string; text: string; stamp: { mtimeMs: number; size: number }; absPath: string }) =>
     ipcRenderer.invoke("desk-ft:save", request),
   root: () => ipcRenderer.invoke("desk-ft:root"),
@@ -197,17 +215,19 @@ function wireDesktopFileDrop(): void {
   doc.addEventListener("drop", onDrop, true);
 }
 
-// DOM may not exist yet when preload evaluates — defer until ready.
-try {
-  const g = globalThis as {
-    document?: { readyState?: string };
-    addEventListener?: (type: string, fn: () => void) => void;
-  };
-  if (g.document?.readyState === "loading") {
-    g.addEventListener?.("DOMContentLoaded", () => wireDesktopFileDrop());
-  } else {
-    wireDesktopFileDrop();
+// The main-window drop bridge has no editor binding.
+if (!isConversationPane) {
+  try {
+    const g = globalThis as {
+      document?: { readyState?: string };
+      addEventListener?: (type: string, fn: () => void) => void;
+    };
+    if (g.document?.readyState === "loading") {
+      g.addEventListener?.("DOMContentLoaded", wireDesktopFileDrop);
+    } else {
+      wireDesktopFileDrop();
+    }
+  } catch {
+    /* best-effort */
   }
-} catch {
-  /* best-effort */
 }

@@ -93,6 +93,8 @@ export type DesktopOpenPathResult =
  * remains for call sites that only know the active project folder.
  */
 export interface DesktopOpenFileContext {
+  /** Bound conversation cwd, when a native chat pane initiated the open. */
+  sessionCwd?: string;
   /** Absolute workspace / project root; used when allowedRoots is empty. */
   workspaceRoot?: string | undefined;
   /**

@@ -2067,8 +2067,9 @@
       visit(tree);
     }
 
-    async function openFile(relPath, force) {
+    async function openFile(relPath, force, expectedRoot) {
       if (!currentScope || !currentState || !relPath) return { ok: false, reason: "no repository scope" };
+      if (expectedRoot && currentScope.id !== expectedRoot) return { ok: false, reason: "workspace changed" };
       const state = currentState;
       const scopeId = state.scope.id;
       let tab = state.tabs.get(relPath);
@@ -2125,6 +2126,38 @@
         renderTabs(); renderViewer();
       }
       return { ok: true, kind: result.kind };
+    }
+
+    function openDiff(snapshot, expectedRoot) {
+      if (!currentState || currentScope?.id !== expectedRoot) return { ok: false, reason: "workspace changed" };
+      const compute = (win.GrokWebviewHelpers || root.GrokWebviewHelpers || {}).computeLineDiff;
+      if (!compute) return { ok: false, reason: "diff renderer unavailable" };
+      const { id, title, before, after, line, truncated } = snapshot;
+      // Bound DOM growth even when the snapshot has many short lines. Keep
+      // the changed line in view when the caller has identified it.
+      const start = Math.max(0, (line || 0) - 300);
+      const end = start + 1600;
+      const oldLines = before.split("\n");
+      const newLines = after.split("\n");
+      const diff = compute(oldLines.slice(start, end).join("\n"), newLines.slice(start, end).join("\n"));
+      let oldNo = start;
+      let newNo = start;
+      const rows = diff.lines.map(({ type, text }) => ({
+        kind: type, text,
+        oldNo: type === "add" ? null : ++oldNo,
+        newNo: type === "del" ? null : ++newNo,
+      }));
+      const tab = makeTab(expectedRoot, { relPath: id, kind: "diff" });
+      tab.diff = { title, rows };
+      if (truncated || start || oldLines.length > end || newLines.length > end || diff.truncated) {
+        tab.notice = "Showing part of this diff.";
+      }
+      currentState.tabs.set(id, tab);
+      if (!currentState.order.includes(id)) currentState.order.push(id);
+      activateTab(id);
+      setOpen(true);
+      viewer.querySelector(".tdl-add, .tdl-del")?.scrollIntoView({ block: "nearest" });
+      return { ok: true };
     }
 
     function activateTab(relPath) {
@@ -2206,14 +2239,14 @@
         item.className = "gfp-tab desk-ft-tab" + (isActive ? " gfp-tab-active desk-ft-tab-active" : "");
         item.setAttribute("role", "tab");
         item.dataset.rel = relPath;
-        item.title = relPath;
+        item.title = tab.diff?.title || relPath;
         item.tabIndex = 0;
         const icon = doc.createElement("span");
         icon.className = "gfp-tab-icon";
         renderFileIcon(icon, fileName(relPath), tab.kind === "dir" ? "dir" : "file");
         const name = doc.createElement("span");
         name.className = "gfp-tab-name desk-ft-tab-name";
-        name.textContent = fileName(relPath);
+        name.textContent = tab.diff?.title || fileName(relPath);
         const dirty = doc.createElement("span");
         dirty.className = "gfp-tab-dirty desk-ft-tab-dirty";
         dirty.textContent = tab.dirty ? "•" : "";
@@ -2237,7 +2270,7 @@
         close.className = "gfp-tab-close desk-ft-tab-close";
         close.innerHTML = ICON.close;
         close.title = "Close";
-        close.setAttribute("aria-label", "Close " + fileName(relPath));
+        close.setAttribute("aria-label", "Close " + name.textContent);
         close.addEventListener("click", (event) => {
           event.stopPropagation();
           void closeTab(relPath);
@@ -3334,7 +3367,14 @@
       viewer.hidden = false;
       viewer.textContent = "";
       const head = viewerHead();
-      renderViewerActions(head, tab);
+      if (tab.diff) {
+        const title = doc.createElement("span");
+        title.className = "gfp-changes-diff-name";
+        title.textContent = tab.diff.title;
+        head.appendChild(title);
+      } else {
+        renderViewerActions(head, tab);
+      }
       viewer.appendChild(head);
       if (typeof ui.fileNotice === "function") {
         const slot = doc.createElement("div");
@@ -3352,7 +3392,9 @@
       const body = doc.createElement("div");
       body.className = "gfp-viewer-body desk-ft-viewer-body files-browse-viewer-body";
       if (elementIds.viewerBody) body.id = elementIds.viewerBody;
-      if (tab.loading) {
+      if (tab.diff) {
+        body.appendChild(tab.diff.rows.length ? diffRegion(tab.diff.rows) : changesEmpty("No line changes to show."));
+      } else if (tab.loading) {
         body.setAttribute("aria-busy", "true");
         appendStatus(body, "Opening " + pathLabel(tab.relPath) + "…", false);
       } else if (tab.error) {
@@ -4114,6 +4156,7 @@
       setMaximized,
       isMaximized: () => maximized,
       openPath: openFile,
+      openDiff,
       hasDirty: () => anyDirty(scopes),
       /**
        * Re-read git status. The host calls this when a turn ends, because that

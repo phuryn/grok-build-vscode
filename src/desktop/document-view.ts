@@ -95,6 +95,7 @@ export function buildTextViewerHtml(
   content: string,
   language?: string,
   maxChars: number = MAX_DOCUMENT_VIEW_CHARS,
+  imageDataUrl?: string,
 ): string {
   const prepared = prepareDocumentViewText(content, maxChars);
   const lang = language ? escapeHtml(language) : "plaintext";
@@ -113,12 +114,13 @@ export function buildTextViewerHtml(
   ${VIEWER_CHROME_CSS}
   pre { margin: 0; padding: 12px; white-space: pre-wrap; word-break: break-word;
     overflow: auto; height: calc(100% - 32px); box-sizing: border-box; }
+  img { display: block; max-width: 100%; max-height: calc(100% - 32px); margin: auto; }
 </style>
 </head>
 <body>
   <div class="bar">${escapeHtml(title)}${language ? ` · ${lang}` : ""} · read-only${barExtra}</div>
   ${truncBar}
-  <pre>${escapeHtml(prepared.text)}</pre>
+  ${imageDataUrl ? `<img alt="${escapeHtml(title)}" src="${escapeHtml(imageDataUrl)}">` : `<pre>${escapeHtml(prepared.text)}</pre>`}
 </body>
 </html>`;
 }

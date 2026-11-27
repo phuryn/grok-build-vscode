@@ -48,6 +48,7 @@ import type {
   HostTextDocumentContentProvider,
   HostTextEditor,
   HostTextShowOptions,
+  HostWebview,
   Uri,
 } from "../host";
 import { isFsPathInWorkspace } from "../host";
@@ -80,20 +81,26 @@ import {
   authorizeOpenUrl,
   desktopAuthRoots,
   resolveAuthorizedFileForOpen,
+  revalidateOpenFileForUse,
   type DesktopOpenFileContext,
 } from "./desktop-policy";
 import {
   buildDiffViewerHtml,
   buildTextViewerHtml,
   interpretOpenPathResult,
+  prepareDocumentViewText,
   resolveDocumentText,
 } from "./document-view";
 import {
   classifyFilePreview,
   isCanonicallyInsideRoot,
   nearestExistingAncestor,
+  readTreeFile,
+  resolveTreePath,
 } from "./file-tree";
-import { openPathInFilePanel } from "./file-tree-ipc";
+import { openDiffInFilePanel, openPathInFilePanel } from "./file-tree-ipc";
+import { pathsEqual } from "../worktree";
+import type { DesktopConversationPanes } from "./conversation-panes";
 import {
   planOpenCliInTerminal,
   planRunCommandInTerminal,
@@ -196,6 +203,7 @@ export interface ElectronHostOptions {
   getWindow: () => BrowserWindow | null;
   showWindow?: () => void;
   log: (line: string) => void;
+  conversationPanes?: Pick<DesktopConversationPanes, "open">;
   /**
    * AFK Pilot link/unlink — filled after GrokSidebar is constructed so the host
    * reuses the extension's uplink flow (no protocol reimplementation).
@@ -206,7 +214,7 @@ export interface ElectronHostOptions {
    * exists; when missing, openFsPath refuses (fail closed). Same context the
    * message gate uses via ElectronWebview.getAuthContext.
    */
-  getAuthContext?: () => DesktopOpenFileContext | undefined;
+  getAuthContext?: (sourceWebview?: HostWebview) => DesktopOpenFileContext | undefined;
   /** Called when the active workspace folder changes (switch / add-as-active). */
   onWorkspaceRootChanged?: (root: string) => void;
   /** Called when the open-folder list changes (add / remove / first open). */
@@ -222,6 +230,16 @@ export interface ElectronHostOptions {
    * in permanently.
    */
   getLogFile?: () => string | undefined;
+}
+
+/** The 0-based index of the first line that differs; 0 when the texts match.
+ *  Line endings don't count: a CRLF checkout of an LF file differs nowhere. */
+export function firstChangedLine(before: string, after: string): number {
+  const a = before.split(/\r?\n/);
+  const b = after.split(/\r?\n/);
+  let i = 0;
+  while (i < a.length && i < b.length && a[i] === b[i]) i++;
+  return i < a.length || i < b.length ? i : 0;
 }
 
 function openHtmlDocumentWindow(
@@ -635,8 +653,8 @@ export function createElectronHost(opts: ElectronHostOptions): Host {
    *   - OS default handler only for non-renderable types;
    *   - in-app error when the file is missing (never shell.openPath on a miss).
    */
-  async function openFsPath(fsPath: string): Promise<void> {
-    const ctx = getAuthContext?.();
+  async function openFsPath(fsPath: string, sourceWebview?: HostWebview): Promise<void> {
+    const ctx = getAuthContext?.(sourceWebview);
     if (!ctx || (!ctx.workspaceRoot && !(ctx.allowedRoots && ctx.allowedRoots.length))) {
       log(`[desktop] open refused: no auth context for ${fsPath}`);
       await messageBox(
@@ -664,12 +682,12 @@ export function createElectronHost(opts: ElectronHostOptions): Host {
     // Use only the path from the final check — never the pre-authorize string.
     const openPath = check.absPath;
 
-    // Prefer the in-panel viewer for types the panel can render (same set as
-    // tree clicks). Outside the panel's workspace root, or non-renderable
-    // types, hand off to the OS.
+    // A chat pane in a different project (including a nested worktree) gets
+    // a read-only window without changing the selected project's dock.
     const kind = classifyFilePreview(openPath);
     if (kind !== "external") {
-      const panelRoot = ctx.workspaceRoot || desktopAuthRoots(ctx)[0];
+      const panelRoot = sourceWebview
+        ? paneDockRoot(ctx, openPath) : ctx.workspaceRoot || desktopAuthRoots(ctx)[0];
       if (
         panelRoot &&
         isCanonicallyInsideRoot(panelRoot, openPath, ctx.platform ?? process.platform, ctx.pathFs)
@@ -679,16 +697,36 @@ export function createElectronHost(opts: ElectronHostOptions): Host {
           .split(path.sep)
           .join("/");
         if (rel && !rel.startsWith("..") && !path.isAbsolute(rel)) {
-          const opened = await openPathInFilePanel(getWindow(), rel);
+          const opened = await openPathInFilePanel(getWindow(), rel, sourceWebview ? panelRoot : undefined);
           if (opened) {
             log(`[desktop] opened in panel: ${rel}`);
             return;
           }
-          log(`[desktop] panel open failed; falling back to OS for ${rel}`);
+          log(`[desktop] panel open failed for ${rel}`);
         }
       }
     }
 
+    // Types no viewer renders (PDF, spreadsheets) go to the OS app from every
+    // chat, as the main chat always did; the open was authorized above.
+    if (sourceWebview && kind !== "external") {
+      const current = getAuthContext?.(sourceWebview);
+      if (!current) return;
+      const final = revalidateOpenFileForUse(openPath, current);
+      if (!final.ok) return;
+      const title = path.basename(final.absPath);
+      const root = desktopAuthRoots(current).find(candidate =>
+        resolveTreePath(candidate, final.absPath, current.platform, current.pathFs).ok);
+      // The per-session media and plan exceptions have already passed the
+      // open policy. Read only that exact file if it is outside the tree.
+      const preview = readTreeFile(root ?? { filePath: final.absPath },
+        root ? path.relative(root, final.absPath) : title, current.platform, current.pathFs);
+      const html = preview.ok && preview.kind === "image"
+        ? buildTextViewerHtml(title, "", undefined, undefined, preview.dataUrl)
+        : buildTextViewerHtml(title, preview.ok ? preview.text ?? "" : `Preview unavailable: ${preview.reason}`);
+      openHtmlDocumentWindow(getWindow, title, html);
+      return;
+    }
     const err = await shell.openPath(openPath);
     const result = interpretOpenPathResult(err);
     if (!result.ok) {
@@ -700,6 +738,12 @@ export function createElectronHost(opts: ElectronHostOptions): Host {
         ["OK"],
       );
     }
+  }
+
+  function paneDockRoot(ctx: DesktopOpenFileContext, absPath: string): string | undefined {
+    const root = config.getWorkspaceRoot();
+    if (root && ctx.sessionCwd && pathsEqual(ctx.sessionCwd, root)
+        && isCanonicallyInsideRoot(root, absPath, ctx.platform, ctx.pathFs)) return root;
   }
 
   const windowIsAway = (win: BrowserWindow) => !win.isVisible() || win.isMinimized() || !win.isFocused();
@@ -1100,16 +1144,16 @@ export function createElectronHost(opts: ElectronHostOptions): Host {
           `[desktop] openTextFile: line selection not supported; opening ${path.basename(fsPath)} in the OS default app`,
         );
       }
-      await openFsPath(fsPath);
+      await openFsPath(fsPath, options?.sourceWebview);
     },
-    async openResource(target: string | Uri, _options?: HostTextShowOptions) {
+    async openResource(target: string | Uri, options?: HostTextShowOptions) {
       const fsPath = typeof target === "string"
         ? target
         : target.scheme === "file"
           ? target.fsPath
           : undefined;
       if (fsPath) {
-        await openFsPath(fsPath);
+        await openFsPath(fsPath, options?.sourceWebview);
         return;
       }
       // Virtual URI (e.g. content provider): show read-only text window.
@@ -1133,8 +1177,8 @@ export function createElectronHost(opts: ElectronHostOptions): Host {
       }
       await messageBox(getWindow, "error", `Could not open resource:\n${String(target)}`, ["OK"]);
     },
-    async showInFolder(fsPath: string) {
-      const ctx = getAuthContext?.();
+    async showInFolder(fsPath: string, sourceWebview?: HostWebview) {
+      const ctx = getAuthContext?.(sourceWebview);
       if (!ctx || (!ctx.workspaceRoot && !(ctx.allowedRoots && ctx.allowedRoots.length))) {
         log(`[desktop] reveal refused: no auth context for ${fsPath}`);
         return;
@@ -1208,12 +1252,34 @@ export function createElectronHost(opts: ElectronHostOptions): Host {
     },
     async openDiff(left: Uri, right: Uri, title: string, options?: HostTextShowOptions) {
       try {
+        let panelRoot: string | undefined;
+        if (options?.sourceWebview) {
+          const ctx = getAuthContext?.(options.sourceWebview);
+          if (!ctx || !options.sourcePath) return;
+          const check = revalidateOpenFileForUse(options.sourcePath, ctx);
+          if (!check.ok) {
+            log(`[desktop] pane diff refused: ${check.reason}`);
+            return;
+          }
+          panelRoot = paneDockRoot(ctx, check.absPath);
+        }
         const read = (p: string) => fs.readFileSync(p, "utf8");
         const leftText = resolveDocumentText(left, contentProviders, read);
         const rightText = resolveDocumentText(right, contentProviders, read);
         const leftLabel = path.basename(left.path) || "before";
         const rightLabel = path.basename(right.path) || "after";
         const scrollTo = options?.selection?.start?.line;
+        if (panelRoot) {
+          const before = prepareDocumentViewText(leftText, 256 * 1024);
+          const after = prepareDocumentViewText(rightText, 256 * 1024);
+          // The dock compares a 1,600-line window from just above `line`. The
+          // turn diff names line 0, so start a long file at its first change.
+          if (await openDiffInFilePanel(getWindow(), panelRoot, {
+            id: left.path, title, before: before.text, after: after.text,
+            line: scrollTo || firstChangedLine(before.text, after.text),
+            truncated: before.truncated || after.truncated,
+          })) return;
+        }
         openHtmlDocumentWindow(
           getWindow,
           title,
@@ -1250,9 +1316,8 @@ export function createElectronHost(opts: ElectronHostOptions): Host {
     },
 
     async revealChatView() {
-      // One window, chat always on screen — nothing to reveal. Deliberately NOT
-      // `notYet`: the rail calls this on every open, and a "not supported"
-      // notice on an ordinary click would be pure noise.
+      const win = getWindow();
+      if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.focus();
     },
 
     onDidChangeConfiguration(listener) {
@@ -1311,7 +1376,7 @@ export function createElectronHost(opts: ElectronHostOptions): Host {
       return !app.isPackaged;
     },
     canShowMcpSettings: true,
-    // No editor tabs — a generated-image click must use the in-app lightbox,
+    // A generated-image click must use the in-app lightbox,
     // not openFile (which would hand the file to the OS image viewer).
     canOpenInEditor: false,
     canSwitchWorkspaceFolder: true,
@@ -1320,12 +1385,13 @@ export function createElectronHost(opts: ElectronHostOptions): Host {
     // byte ranges — see app-resource-handler.ts. No other host may claim this.
     canServeMediaRanges: true,
     canShowInFolder: true,
-    // No editor tabs — View all / proposed diffs use the in-app overlay.
+    // View all / proposed diffs use the in-app overlay.
     canPreviewInApp: true,
     // Settings stay in the chat overlay — there is no editor-area tab here.
     canOpenSettingsEditor: false,
-    openEditorWebview() {
-      return undefined;
+    canOpenConversationEditor: !!opts.conversationPanes,
+    openEditorWebview(options) {
+      return opts.conversationPanes?.open(options);
     },
   };
 }

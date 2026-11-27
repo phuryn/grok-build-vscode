@@ -29,6 +29,7 @@ export const CONFIG_DEFAULTS: Readonly<Record<string, unknown>> = {
   "grok.museTrustWorkspaces": false,
   "grok.defaultModel": "",
   "grok.defaultMode": "",
+  "grok.openConversationIn": "lastUsed",
   "grok.includeActiveFileByDefault": true,
   "grok.mentionIndexLimit": 5000,
   "grok.acp.promptIdleTimeoutMs": 1_800_000,

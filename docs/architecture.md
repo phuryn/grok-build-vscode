@@ -433,8 +433,9 @@ arrives.
 
 ## The session pool (Agent Dashboard)
 
-The sidebar shows one conversation at a time, with optional editor tabs beside it
-in VS Code. It keeps a **pool of live sessions** with one spawned backend process
+The main chat shows one conversation at a time. VS Code can open conversation
+editor tabs, and interactive Electron desktop can open native conversation panes.
+The host keeps a **pool of live sessions** with one spawned backend process
 each. `focused` names the sidebar's conversation. All the per-session state
 lives in a [`Session`](../src/session.ts) object. The sidebar holds a `Set` of
 every live `Session` (`pool`). The point is **lossless re-focus**: a backgrounded
@@ -507,6 +508,16 @@ Local dictation has one owner, bound to the chat surface and its session.
 renderer. A separate local busy frame disables the other local microphones.
 Closing or rebinding the owning tab cancels capture and invalidates late results.
 Phone and browser capture use the existing per-client PCM streams.
+
+Desktop Projects uses the same preferred destination and open-session state
+as VS Code. Its row menu, Ctrl/Cmd-click, and middle-click open beside, and
+plain clicks or keyboard activation reuse the preferred chat or reveal an
+already-open conversation. The embedded rail leaves chat focus tracking to
+the chats themselves. Each added pane hosts the conversation-only renderer
+in a `WebContentsView` and uses the same bindings as an editor tab. The main
+renderer reserves equal columns between Projects and Files and keeps the
+main header inside its column while split. IPC binds to the registered pane
+and its main frame. Closing a pane removes its view and registration.
 
 Two details make the pool safe:
 

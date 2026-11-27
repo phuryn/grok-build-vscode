@@ -224,7 +224,7 @@ describe("plan-review path fence", () => {
     const main = fs.readFileSync(path.join(repoRoot, "src", "desktop", "main.ts"), "utf8");
     const sidebar = fs.readFileSync(path.join(repoRoot, "src", "sidebar.ts"), "utf8");
     expect(main).toContain("get planReviewSessionRoot()");
-    expect(main).toContain("sidebar!.desktopPlanReviewSessionRoot()");
+    expect(main).toContain("sidebar!.desktopPlanReviewSessionRoot(session)");
     expect(main).not.toContain('planReviewsRoot: path.join(globalStorageDir, "plan-reviews")');
     expect(sidebar).toContain("desktopPlanReviewSessionRoot(session: Session = this.focused)");
     expect(sidebar).toContain("planReviewSessionDirectoryName(sessionId)");

@@ -439,6 +439,33 @@ async function runScenario(promptId, text, params) {
       return;
     }
 
+    if (process.env.FAKE_DESKTOP_SPLIT_REPLY === "1") {
+      const gate = process.env.FAKE_DESKTOP_SPLIT_TURN_GATE;
+      const held = gate && text.includes("Wait for the pane to close.");
+      const send = (chunk) => {
+        notify("session/update", {
+          sessionId: sessions.id,
+          update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: chunk } },
+        });
+      };
+      if (held) {
+        send("Started the held turn.");
+        const deadline = Date.now() + 30_000;
+        while (!fs.existsSync(gate)) {
+          if (Date.now() >= deadline) throw new Error("Desktop split driver never released the turn");
+          await new Promise(resolve => setTimeout(resolve, 50));
+        }
+        send(" Finished after the pane closed.");
+      } else if (text.includes("Link the fixture notes.")) {
+        send("[Open fixture notes](docs/notes.md)");
+      } else {
+        send("Reply to ");
+        send(text);
+      }
+      respondOk(promptId, { stopReason: "end_turn", _meta: { totalTokens: 10 } });
+      return;
+    }
+
     // Default: just emit one chunk and end.
     notify("session/update", { sessionId: sessions.id, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "ok" } } });
     respondOk(promptId, { stopReason: "end_turn", _meta: { totalTokens: 10 } });

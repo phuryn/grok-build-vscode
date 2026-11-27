@@ -19,7 +19,7 @@ import {
   scopeCwd,
   joinHostPath,
 } from "../media/file-panel.js";
-import { chatZoomFactor, unzoomClientPx } from "../media/webview-helpers.js";
+import { chatZoomFactor, computeLineDiff, unzoomClientPx } from "../media/webview-helpers.js";
 
 const filePanelCss = fs.readFileSync(
   path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "media", "file-panel.css"),
@@ -156,6 +156,29 @@ function harness(options?: {
     },
   };
 }
+
+it("shows a pane diff in a read-only Files tab without reopening or dropping the other tabs", async () => {
+  const h = harness();
+  try {
+    Object.assign(h.window, { GrokWebviewHelpers: { computeLineDiff } });
+    await settle();
+    await h.panel.openPath("notes.md");
+    const snapshot = { id: "/1/before/notes.md", title: "Proposed notes.md", before: "old note", after: "new note" };
+    expect(h.panel.openDiff(snapshot, h.scopes.b.id)).toMatchObject({ ok: false });
+    expect(h.panel.openDiff(snapshot, h.scopes.a.id)).toEqual({ ok: true });
+    expect(h.document.querySelector(".gfp-tab-active")?.textContent).toContain(snapshot.title);
+    expect(h.document.querySelector(".gfp-viewer-body .tdl-del")?.textContent).toContain("old note");
+    expect(h.document.querySelector(".gfp-viewer-body .tdl-add")?.textContent).toContain("new note");
+    expect(h.document.querySelector(".gfp-viewer-head button")).toBeNull();
+    expect(h.document.querySelector('.gfp-tab[data-rel="notes.md"]')).toBeTruthy();
+    expect(h.reads).toEqual([{ scopeId: h.scopes.a.id, relPath: "notes.md" }]);
+    await h.switchScope(h.scopes.b);
+    expect(h.document.querySelector(".gfp-tab-active")?.textContent).toBeUndefined();
+  } finally {
+    h.panel.destroy();
+    await h.window.happyDOM.close();
+  }
+});
 
 function click(window: Window, target: Element | null) {
   expect(target).toBeTruthy();

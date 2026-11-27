@@ -257,10 +257,13 @@ export function registerFileTreeIpc(opts: FileTreeIpcOptions): void {
   });
 
   /** In-panel read for markdown/json/image/text preview (containment-checked). */
-  ipcMain.handle(CH_READ, (e, relPath: unknown) => {
+  ipcMain.handle(CH_READ, (e, relPath: unknown, expectedRoot?: unknown) => {
     if (!isIpcFromMainWindow(e, opts.getMainWindow)) return deny(CH_READ);
     const root = opts.getWorkspaceRoot();
     if (!root) return { ok: false as const, reason: "no workspace root" };
+    if (expectedRoot !== undefined && expectedRoot !== root) {
+      return { ok: false as const, reason: "workspace changed" };
+    }
     if (typeof relPath !== "string") {
       return { ok: false as const, reason: "invalid path" };
     }
@@ -489,18 +492,32 @@ export async function injectFileTreePanel(win: BrowserWindow | null): Promise<vo
 export async function openPathInFilePanel(
   win: BrowserWindow | null,
   relPath: string,
+  expectedRoot?: string,
+): Promise<boolean> {
+  if (typeof relPath !== "string" || !relPath || relPath.includes("\0")) return false;
+  return openInFilePanel(win, "__grokDeskFtOpen", [relPath, expectedRoot ?? null]);
+}
+
+export function openDiffInFilePanel(
+  win: BrowserWindow | null,
+  root: string,
+  diff: { id: string; title: string; before: string; after: string; line?: number; truncated: boolean },
+): Promise<boolean> {
+  return openInFilePanel(win, "__grokDeskFtOpenDiff", [diff, root]);
+}
+
+async function openInFilePanel(
+  win: BrowserWindow | null,
+  action: "__grokDeskFtOpen" | "__grokDeskFtOpenDiff",
+  args: unknown[],
 ): Promise<boolean> {
   if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return false;
-  if (typeof relPath !== "string" || !relPath || relPath.includes("\0")) return false;
-  // Escape for a single-quoted JS string literal.
-  const lit = relPath.replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/\r|\n/g, "");
   try {
     const result = await win.webContents.executeJavaScript(
-      `(function(){try{var fn=window.__grokDeskFtOpen;if(typeof fn!=="function")return{ok:false,reason:"no panel"};return Promise.resolve(fn('${lit}')).then(function(r){return r&&r.ok!==false?{ok:true}:r||{ok:true};});}catch(e){return{ok:false,reason:String(e&&e.message||e)};}})()`,
+      `window.${action}?.(...${JSON.stringify(args)})`,
       true,
     );
-    if (result && result.ok === false) return false;
-    return true;
+    return result?.ok === true;
   } catch {
     return false;
   }

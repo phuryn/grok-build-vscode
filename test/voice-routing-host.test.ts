@@ -237,7 +237,7 @@ describe("local recording backend", () => {
   });
 });
 
-function splitVoiceHost(streaming = true) {
+function splitVoiceHost(streaming = true, desktop = false) {
   const s = host();
   const sidebar = bootWebview({ vscode: true });
   s.postLocal.mockImplementation((message: Posted) => dispatch(sidebar.window, message));
@@ -256,6 +256,7 @@ function splitVoiceHost(streaming = true) {
   const editor = (name: string) => {
     const ui = bootWebview({ vscode: true, beforeScripts: window => {
       window.document.body.dataset.editorChat = "true";
+      if (desktop) Object.assign(window, { grokDesktopShell: true });
     } });
     let close!: () => void;
     const post = vi.fn((message: Posted) => dispatch(ui.window, message));
@@ -282,6 +283,25 @@ function splitVoiceHost(streaming = true) {
 }
 
 describe("dictation across local chat surfaces", () => {
+  it("keeps a desktop pane's confirmed draft and cancels its stream when closed mid-capture", async () => {
+    const { sidebar, first, second, mic, composer } = splitVoiceHost(true, true);
+    composer(first.ui).value = "Typed draft";
+    dispatch(first.ui.window, { type: "voiceConfigured", value: true });
+    await first.action("voiceStart");
+    expect(mic(sidebar).disabled).toBe(true);
+    expect(mic(second.ui).disabled).toBe(true);
+    const stream = mock.streams[0];
+    stream.emit("partial", { text: "provisional voice", speechFinal: false });
+    expect(composer(first.ui).value).toContain("provisional voice");
+    expect(first.ui.posted.filter(frame => frame.type === "editorChatDraft").at(-1)).toMatchObject({ text: "Typed draft" });
+    first.close();
+    expect(stream.cancel).toHaveBeenCalledOnce();
+    expect(mic(sidebar).disabled || mic(second.ui).disabled).toBe(false);
+    stream.emit("partial", { text: "late voice", speechFinal: true });
+    expect(composer(sidebar).value).toBe("");
+    expect(composer(second.ui).value).toBe("");
+  });
+
   it("inserts partial and final text only in the owning tab and rejects other local controls", async () => {
     const { s, sidebar, first, second, mic, composer } = splitVoiceHost();
     composer(sidebar).value = "sidebar draft";

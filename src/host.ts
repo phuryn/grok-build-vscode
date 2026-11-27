@@ -255,6 +255,10 @@ export interface HostTextShowOptions {
   preserveFocus?: boolean;
   selection?: HostRange;
   besideConversation?: boolean;
+  /** Host-owned caller identity for session-scoped file access. */
+  sourceWebview?: HostWebview;
+  /** Real file behind a pair of virtual diff documents. */
+  sourcePath?: string;
 }
 
 export interface HostDisposable {
@@ -643,7 +647,7 @@ export interface Host {
    */
   openResource(target: string | Uri, options?: HostTextShowOptions): Thenable<void>;
   /** Reveal a host-resolved filesystem path in the host's file manager. */
-  showInFolder(fsPath: string): Thenable<void>;
+  showInFolder(fsPath: string, sourceWebview?: HostWebview): Thenable<void>;
   /**
    * Open the user's global Grok config.toml (`~/.grok/config.toml` / GROK_HOME).
    * Host resolves and may create a stub; no renderer path is involved.

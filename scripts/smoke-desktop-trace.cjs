@@ -75,9 +75,21 @@ function installTrace({ AcpClient, ElectronWebview }, record) {
       return result;
     };
   }
+  const target = webview => {
+    const contents = webview.getContents?.();
+    return contents && !contents.isDestroyed() ? { contentsId: contents.id, documentUrl: contents.getURL() } : {};
+  };
+  for (const [dispatch, route] of [["dispatchMessage", "main"], ["dispatchConversationMessage", "pane"]]) {
+    const original = ElectronWebview.prototype[dispatch];
+    if (!original) continue;
+    ElectronWebview.prototype[dispatch] = function (message) {
+      if (message?.type === "ready") record("webview-ready", { route }, target(this));
+      return original.call(this, message);
+    };
+  }
   const post = ElectronWebview.prototype.postMessage;
   ElectronWebview.prototype.postMessage = function (message) {
-    record("host-to-webview", message);
+    record("host-to-webview", message, target(this));
     return post.call(this, message);
   };
 }
@@ -91,7 +103,14 @@ if (process.type === "browser" && process.env.ACP_SMOKE_RENDER_OUTPUT) {
   const record = (direction, message, extra = {}) => fs.appendFileSync(trace,
     JSON.stringify({ at: new Date().toISOString(), direction, message, ...extra }) + "\n");
   installTrace({ ...require(path.join(root, "out/acp.js")), ...require(path.join(root, "out/desktop/electron-webview.js")) }, record);
-  require("electron").app.on("web-contents-created", (_, contents) => {
+  const { app, ipcMain } = require("electron");
+  ipcMain.on("webview-to-host", (event, message) => {
+    if (message?.type === "ready") {
+      record("ipc-ready", { frameUrl: event.senderFrame?.url },
+        { contentsId: event.sender.id, documentUrl: event.sender.getURL() });
+    }
+  });
+  app.on("web-contents-created", (_, contents) => {
     contents.on("console-message", (_, level, message) => {
       if (level >= 2 && /^Uncaught\b/.test(message)) record("page-error", { text: message });
     });

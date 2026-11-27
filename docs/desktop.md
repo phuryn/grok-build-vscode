@@ -73,6 +73,25 @@ window still quits the app. The answer on macOS is its own convention — the ap
 outliving its last window, with the dock icon bringing it back — rather than a
 menu-bar item, and that is a separate change this release does not make.
 
+## Conversation panes
+
+Use **Open to the side** in a Projects row menu, Ctrl/Cmd-click the row, or
+middle-click it. A plain click or Enter on a row opens it in the chat you used
+last. If the conversation is already open, Projects focuses that chat. The
+destination for new opens has the stronger highlight. Other open chats have
+the lighter highlight. Desktop `config.json` supports `grok.openConversationIn`
+with `lastUsed` (the default), `sidebar` (the main chat), or `editor` (an added
+pane).
+
+Each chat has its own header, transcript, and composer, with a shared theme
+and text zoom. **Close chat pane** removes the added chat from the window.
+Its running turn stays in the session pool.
+
+Run `npm run test:desktop -- test/desktop/split-view.test.ts` on an interactive
+desktop to exercise both chats with the fake ACP CLI. The driver writes light
+and dark PNGs under `.screens/desktop-split/` and checks that each capture
+contains the native pane's reply.
+
 ## Build commands
 
 ```bash
