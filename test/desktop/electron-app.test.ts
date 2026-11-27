@@ -711,9 +711,9 @@ describe("desktop Electron app (real window + fake CLI)", () => {
     expect(clamped).toBeTruthy();
     expect(clamped!.width).toBeLessThan(clamped!.shellW * 0.75);
     expect(clamped!.width).toBeGreaterThanOrEqual(200);
-    // Stored value after apply is the clamped width, not 99999.
-    expect(Number(clamped!.stored)).toBeLessThan(99999);
-    expect(Number(clamped!.stored)).toBeGreaterThanOrEqual(200);
+    // The desktop clamps only what it paints and keeps the stored drag preference,
+    // so a narrow grid tile at mount never shrinks the width the person chose.
+    expect(clamped!.stored).toBe("99999");
   });
 
   it("file-tree IPC rejects path traversal from the renderer", async () => {
