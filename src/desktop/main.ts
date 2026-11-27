@@ -92,6 +92,7 @@ import {
   registerFileTreeIpc,
   confirmDesktopFilesClose,
   desktopFilesCloseConfirmed,
+  desktopFilesDiscardApproved,
 } from "./file-tree-ipc";
 import {
   installWindowSecurityLocks,
@@ -821,8 +822,13 @@ async function createApp(): Promise<void> {
 
   pinAppDocumentZoom(mainWindow);
   // Unsaved Files edits veto a window close; the window stays, so split state
-  // keeps saving. A vetoed Quit has already disposed the controller: leave it.
-  mainWindow.webContents.on("will-prevent-unload", () => {
+  // keeps saving. Once the person chose Discard, the still-dirty buffer's veto
+  // is overruled: otherwise Quit stopped the agents and left the window open.
+  mainWindow.webContents.on("will-prevent-unload", (event) => {
+    if (desktopFilesDiscardApproved()) {
+      event.preventDefault();
+      return;
+    }
     if (!appIsQuitting) sidebar?.resumeDesktopConversationLayout();
   });
   mainWindow.on("show", () => conversationPanes?.windowVisibilityChanged());

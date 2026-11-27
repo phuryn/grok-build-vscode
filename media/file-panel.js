@@ -1448,6 +1448,13 @@
             applyPlanToDom(forceTighterPlan(plan));
           }
         }
+        // A project name cut to a letter or two ("g.") reads as a fault, not
+        // a name: show the folder alone; the full name stays in its tooltip.
+        const titleLabel = title.querySelector(".gfp-title-label");
+        if (titleLabel && !title.classList.contains("gfp-title-icon-only")
+            && titleLabel.scrollWidth > titleLabel.clientWidth + 1 && titleLabel.clientWidth < 40) {
+          title.classList.add("gfp-title-icon-only");
+        }
       } finally {
         stripBusy = false;
       }

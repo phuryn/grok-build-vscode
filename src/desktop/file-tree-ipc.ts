@@ -83,6 +83,12 @@ export function desktopFilesCloseConfirmed(): boolean {
   return filesCloseConfirmed || !askFilesClose;
 }
 
+/** True only once the person has answered Discard (or had nothing unsaved):
+ *  the panel's buffers stay dirty, so its beforeunload veto must be overruled. */
+export function desktopFilesDiscardApproved(): boolean {
+  return filesCloseConfirmed;
+}
+
 /** True when the IPC event came from the desktop app's main window main frame. */
 export function isIpcFromMainWindow(
   event: Pick<IpcMainInvokeEvent, "sender"> & {
