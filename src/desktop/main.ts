@@ -661,13 +661,15 @@ async function createApp(): Promise<void> {
     conversationPanes,
     installAppUpdate: () => updateActions.install?.(),
     exitCloudHost: () => app.quit(),
-    onWorkspaceRootChanged: (root) => {
-      // File-tree panel boots once against api.root(); rebind so the visible
-      // tree matches the active project (otherwise reads resolve against B
-      // while rows still show A's layout).
+    onWorkspaceFoldersChanged: () => {
       if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
-        mainWindow.webContents.send("desk-ft:root-changed", { root });
+        mainWindow.webContents.send("desk-ft:root-changed");
       }
+      conversationPanes?.fileRootsChanged();
+    },
+    getFilePanelRoot: source => {
+      const renderer = source ?? webview;
+      return renderer ? sidebar?.desktopFilePanelScope(renderer)?.root : undefined;
     },
   });
 
@@ -948,8 +950,8 @@ async function createApp(): Promise<void> {
         log(`[desk-pane] open failed: ${String(error)}`);
       });
     });
-    ipcMain.on("desk-conversations:bounds", (event, bounds: unknown, slots: unknown, stacked: unknown) => {
-      if (isTrustedMainFrameIpc(event, () => mainWindow)) conversationPanes.layout(bounds, slots, stacked);
+    ipcMain.on("desk-conversations:bounds", (event, bounds: unknown, zoom: unknown, filesOpen: unknown) => {
+      if (isTrustedMainFrameIpc(event, () => mainWindow)) conversationPanes.layout(bounds, zoom, filesOpen);
     });
     ipcMain.on("desk-conversations:pick", (event, id: unknown) => {
       if (typeof id !== "number" || !Number.isSafeInteger(id) || !isTrustedMainFrameIpc(event, () => mainWindow)) return;
@@ -981,14 +983,8 @@ async function createApp(): Promise<void> {
         log(`[desk-pane] close failed: ${String(error)}`);
       }
     });
-    ipcMain.on("desk-conversations:toggle-files", event => {
-      conversationPanes.toggleFiles(event);
-    });
-    ipcMain.on("desk-conversations:files-state", (event, expanded: unknown, title: unknown, count: unknown) => {
-      if (isTrustedMainFrameIpc(event, () => mainWindow) &&
-          typeof expanded === "boolean" && typeof title === "string" && typeof count === "string") {
-        conversationPanes.publishFiles(expanded, title, count);
-      }
+    ipcMain.on("desk-conversations:files-open", (event, open: unknown) => {
+      if (typeof open === "boolean") conversationPanes.filePanelChanged(event, open);
     });
     ipcMain.on("desk-conversations:main-draft", (event, id: unknown, text: unknown, chips: unknown) => {
       if (isTrustedMainFrameIpc(event, () => mainWindow) && (id === null || isValidSessionId(id))
@@ -1003,7 +999,11 @@ async function createApp(): Promise<void> {
 
   // Desktop-only file tree — dedicated IPC, not Host / chat.js.
   registerFileTreeIpc({
-    getWorkspaceRoot: () => config.getWorkspaceRoot(),
+    getPanelScope: event => {
+      const source = isTrustedMainFrameIpc(event, () => mainWindow) ? webview : conversationPanes?.webviewFromEvent(event);
+      return source ? sidebar?.desktopFilePanelScope(source) : undefined;
+    },
+    confirmPaneFilesClose: () => conversationPanes?.confirmFilesClose() ?? Promise.resolve(true),
     getMainWindow: () => mainWindow,
     log,
     openSinkPath: process.env.GROK_DESKTOP_OPEN_SINK,
@@ -1016,7 +1016,7 @@ async function createApp(): Promise<void> {
   mainWindow.webContents.on("did-finish-load", () => {
     pinAppDocumentZoom(mainWindow);
     void (async () => {
-      await injectFileTreePanelLogged(mainWindow, log);
+      await injectFileTreePanelLogged(mainWindow?.webContents ?? null, log);
       if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
       try {
         await mainWindow.webContents.executeJavaScript(desktopChromeBootSource(), true);

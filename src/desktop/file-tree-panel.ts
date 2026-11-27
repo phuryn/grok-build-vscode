@@ -6,6 +6,8 @@
  * media component used by the remote browser too. Desktop keeps responsibility
  * only for preparing its chat/file dock and adapting preload IPC promises.
  */
+import { CHAT_MIN_WIDTH, FILES_MIN_WIDTH, FILES_RESIZER_WIDTH } from "./conversation-layout";
+
 /** Minimal open-tab fields retained for callers/tests of the old pure surface. */
 export interface DeskFtTabLike {
   dirty: boolean;
@@ -48,13 +50,14 @@ export const FILE_TREE_PANEL_CSS = "";
  */
 export function fileTreePanelBootSource(_iconsDir?: string): string {
   const revealLabel = revealInFolderLabel();
-  return `(() => {
+  return `(async () => {
     const api = window.grokDesktopFileTree;
     const shared = window.GrokFilePanel;
     if (!api || !shared || typeof shared.createFilePanel !== "function") {
       return { ok: false, reason: !api ? "no bridge" : "no shared component" };
     }
 
+    window.__grokDisposeDesktopFiles?.();
     try { window.__grokDeskFilePanel?.destroy?.(); } catch (_) { /* reload */ }
     document.getElementById("desk-ft-top-sep")?.remove();
     document.body.classList.remove("desk-ft-closed", "desk-ft-resizing", "desk-ft-maximized");
@@ -93,6 +96,8 @@ export function fileTreePanelBootSource(_iconsDir?: string): string {
       }
     }
     const topBar = layoutHost.querySelector(":scope > .top-bar") || layoutHost.querySelector(".top-bar");
+    const pane = document.body.dataset.editorChat === "true";
+    if (pane && topBar) chat.prepend(topBar);
     const closeChat = document.getElementById("desk-conversation-close");
     document.body.classList.add("desk-with-ft");
 
@@ -108,55 +113,69 @@ export function fileTreePanelBootSource(_iconsDir?: string): string {
     const normalizeRoot = (value) => value && value.ok !== false && value.root
       ? { id: value.root, label: value.name || value.root, title: value.root }
       : null;
-    const requireScope = async (scopeId) => {
-      const current = normalizeRoot(await api.root());
-      return current && current.id === scopeId ? current : null;
+    const initial = await api.root();
+    let preference = initial?.preferencesKey;
+    let root = normalizeRoot(initial);
+    const preferenceKey = name => preference ? name + "." + preference : name;
+    const preferredWidth = () => {
+      try { return Number(localStorage.getItem(preferenceKey("desk-ft-width"))) || (preference ? 290 : 280); }
+      catch (_) { return 280; }
+    };
+    const preferredOpen = () => {
+      try { return localStorage.getItem(preferenceKey("desk-ft-open")) === "1"; }
+      catch (_) { return false; }
     };
     const adapter = {
-      currentScope: async () => normalizeRoot(await api.root()),
-      onScopeChanged: (listener) => api.onRootChanged(async () => listener(normalizeRoot(await api.root()))),
-      list: async (scopeId, relPath) => (await requireScope(scopeId))
-        ? api.list(relPath)
-        : { ok: false, reason: "workspace changed" },
+      currentScope: () => root,
+      list: (scopeId, relPath) => api.list(relPath, scopeId),
       read: (scopeId, relPath) => api.read(relPath, scopeId),
-      write: async (scopeId, request) => (await requireScope(scopeId))
-        ? api.save({
-            relPath: request.relPath,
-            text: request.text,
-            stamp: request.stamp,
-            absPath: request.expectedAbsPath,
-          })
-        : { ok: false, reason: "workspace changed" },
-      openExternal: async (scopeId, relPath) => (await requireScope(scopeId))
-        ? api.open(relPath)
-        : { ok: false, reason: "workspace changed" },
-      reveal: async (scopeId, relPath) => (await requireScope(scopeId))
-        ? api.reveal(relPath)
-        : { ok: false, reason: "workspace changed" },
-      // The Changes view. Present on the desktop shell and absent on a remote
-      // built against an older host, which is exactly how the panel decides
-      // whether to draw the button: the affordance exists if the call does.
-      gitStatus: async (scopeId) => (await requireScope(scopeId))
-        ? api.gitStatus()
-        : { ok: false, kind: "failed", reason: "workspace changed" },
-      gitDiff: async (scopeId, relPath) => (await requireScope(scopeId))
-        ? api.gitDiff(relPath)
-        : { ok: false, reason: "workspace changed" },
-      gitRun: async (scopeId, request) => (await requireScope(scopeId))
-        ? api.gitRun(request)
-        : { ok: false, reason: "workspace changed" },
+      write: (scopeId, request) => api.save({
+        relPath: request.relPath,
+        text: request.text,
+        stamp: request.stamp,
+        absPath: request.expectedAbsPath,
+      }, scopeId),
+      openExternal: (scopeId, relPath) => api.open(relPath, scopeId),
+      reveal: (scopeId, relPath) => api.reveal(relPath, scopeId),
+      gitStatus: scopeId => api.gitStatus(scopeId),
+      gitDiff: (scopeId, relPath) => api.gitDiff(relPath, scopeId),
+      gitRun: (scopeId, request) => api.gitRun(request, scopeId),
     };
 
     const componentScript = document.querySelector('script[src*="file-panel.js"]');
     const iconBase = componentScript && componentScript.src
       ? new URL("file-icons/", componentScript.src).href
       : "";
+    const split = () => pane || !!document.getElementById("desk-conversation-columns");
+    const fit = () => {
+      const zoom = Number(getComputedStyle(document.body).zoom) || 1;
+      const bounds = shell.getBoundingClientRect();
+      const width = Math.floor(bounds.width / zoom);
+      const max = width - ${CHAT_MIN_WIDTH + FILES_RESIZER_WIDTH};
+      const compact = split() && max < ${FILES_MIN_WIDTH};
+      shell.classList.toggle("desk-ft-pair-compact", compact);
+      if (compact && topBar) {
+        const top = Math.max(0, Math.ceil((topBar.getBoundingClientRect().bottom - bounds.top) / zoom));
+        shell.style.setProperty("--desk-ft-pair-top", top + "px");
+      }
+      if (split()) panel.setWidth(Math.max(${FILES_MIN_WIDTH}, Math.min(preferredWidth(), compact ? width : max)), false);
+    };
+    const onOpen = open => {
+      document.body.classList.toggle("desk-ft-closed", !open);
+      try { localStorage.setItem(preferenceKey("desk-ft-open"), open ? "1" : "0"); } catch (_) { /* private mode */ }
+      window.grokDesktopConversations?.filePanelChanged?.(open);
+      window.__grokMeasureConversationLayout?.();
+      queueMicrotask(fit);
+    };
     const panel = shared.createFilePanel({
       access: adapter,
+      clearScopeOnMissing: true,
         mount: {
           panelHost: shell,
           toggleHost: topBar,
           presentation: "dock",
+          availableWidth: () => split() ? shell.getBoundingClientRect().width /
+            (Number(getComputedStyle(document.body).zoom) || 1) : undefined,
           id: "desk-ft-panel",
           viewingBodyClass: "desk-ft-viewing",
           // Content-area maximize. Not persisted. The shared panel hides the
@@ -211,22 +230,17 @@ export function fileTreePanelBootSource(_iconsDir?: string): string {
       //
       // (No backticks in this comment: the whole block is a template literal.)
       preferences: {
-        getWidth: () => {
-          try { return Number(localStorage.getItem("desk-ft-width")) || 280; } catch (_) { return 280; }
-        },
+        getWidth: preferredWidth,
         setWidth: (width) => {
-          try { localStorage.setItem("desk-ft-width", String(width)); } catch (_) { /* private mode */ }
+          try { localStorage.setItem(preferenceKey("desk-ft-width"), String(width)); } catch (_) { /* private mode */ }
+          queueMicrotask(fit);
         },
       },
-      initialOpen: (() => {
-        try { return localStorage.getItem("desk-ft-open") === "1"; } catch (_) { return false; }
-      })(),
-      onOpenChanged: (open) => {
-        document.body.classList.toggle("desk-ft-closed", !open);
-        try { localStorage.setItem("desk-ft-open", open ? "1" : "0"); } catch (_) { /* private mode */ }
-      },
+      initialOpen: preferredOpen(),
+      onOpenChanged: onOpen,
     });
     panel.toggleElement.id = "desk-ft-top-toggle";
+    if (topBar?.dataset.filesLabel) panel.toggleElement.setAttribute("aria-label", topBar.dataset.filesLabel);
     if (topBar && closeChat?.parentElement === topBar) topBar.insertBefore(panel.toggleElement, closeChat);
 
     // The project rail is desktop chrome, not part of the file component, but
@@ -274,27 +288,69 @@ export function fileTreePanelBootSource(_iconsDir?: string): string {
         id: "panel",
         min: 200,
         maxFrac: 0.7,
-        isOpen: () => panel.isOpen(),
-        preferredWidth: () => {
-          try { return Number(localStorage.getItem("desk-ft-width")) || 280; } catch (_) { return 280; }
-        },
-        applyWidth: (width) => panel.setWidth(width, false),
+        isOpen: () => !split() && panel.isOpen(),
+        preferredWidth,
+        applyWidth: (width) => { if (!split()) panel.setWidth(width, false); },
       });
       window.__grokReclampSidePanels();
     }
+    const observer = new ResizeObserver(fit);
+    observer.observe(shell);
+    if (topBar) observer.observe(topBar);
+    window.__grokFitDesktopFiles = fit;
+    let request = 0;
+    let adoptedTabs;
+    let adopting = false;
+    const applyScope = async (expectedRoot) => {
+      const sequence = ++request;
+      const value = await api.root();
+      if (sequence !== request) return false;
+      const next = normalizeRoot(value);
+      const changed = adopting || preference !== value?.preferencesKey;
+      if (changed) {
+        preference = value?.preferencesKey;
+        panel.restoreTabs(adoptedTabs);
+        adoptedTabs = undefined;
+        adopting = false;
+        panel.setMaximized(false);
+        panel.setOpen(preferredOpen());
+        fit();
+        window.__grokReclampSidePanels?.();
+      }
+      if (changed || root?.id !== next?.id) {
+        root = next;
+        void panel.setScope(root);
+      }
+      return !expectedRoot || expectedRoot === root?.id;
+    };
+    const refresh = () => { void applyScope().catch(() => {}); };
+    const off = api.onRootChanged(refresh);
+    const receive = ({ data }) => {
+      if (data?.type === "desktopChatAdopted") {
+        adopting = true;
+        adoptedTabs = data.files;
+      }
+      if (["desktopChatAdopted", "editorChatBinding", "initialState", "sessionName", "repos"].includes(data?.type)) refresh();
+    };
+    window.addEventListener("message", receive);
+    window.__grokDisposeDesktopFiles = () => {
+      request++;
+      off();
+      observer.disconnect();
+      window.removeEventListener("message", receive);
+    };
     window.__grokDeskFilePanel = panel;
-    window.__grokDeskFtBeforeClose = () => panel.confirmClose();
+    window.__grokDeskFtBeforeClose = (anotherPanelIsDirty) => panel.confirmClose(anotherPanelIsDirty === true);
     window.__grokDeskFtOpen = async (relPath, root) => {
+      if (!await applyScope(root)) return { ok: false, reason: "workspace changed" };
       const result = await panel.openPath(relPath, false, root);
-      if (result?.ok || result?.openExternal) window.__grokOpenCompactFiles?.();
       return root && result?.openExternal ? { ok: true } : result;
     };
     window.__grokDeskFtOpenDiff = async (diff, root) => {
-      if (!await requireScope(root)) return { ok: false, reason: "workspace changed" };
-      const result = panel.openDiff(diff, root);
-      if (result.ok) window.__grokOpenCompactFiles?.();
-      return result;
+      if (!await applyScope(root)) return { ok: false, reason: "workspace changed" };
+      return panel.openDiff(diff, root);
     };
+    refresh();
     try { window.__grokResetDocumentScroll?.(); } catch (_) { /* chat.js hook */ }
     return { ok: true };
   })()`;

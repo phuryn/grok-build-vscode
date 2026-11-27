@@ -1340,7 +1340,7 @@ describe("Changes actions in the chat mounts", () => {
         gitStatus: async () => ({ ok: true, snapshot: current }),
         gitRun,
       } });
-      h.window.eval(fileTreePanelBootSource());
+      await h.window.eval(fileTreePanelBootSource());
     }
     await settle();
     const q = (selector: string) => h.doc.querySelector(selector) as HTMLElement;

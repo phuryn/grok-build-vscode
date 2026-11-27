@@ -1,10 +1,9 @@
 /**
  * Main-process IPC for the desktop file-tree panel.
  * Renderer is less trusted: every path is re-resolved and containment-checked
- * (canonical / realpath — see file-tree.ts), and only the main BrowserWindow
- * may invoke these channels.
+ * (canonical / realpath — see file-tree.ts) against the invoking chat's root.
  */
-import { ipcMain, shell, type BrowserWindow, type IpcMainInvokeEvent, type Event as ElectronEvent } from "electron";
+import { ipcMain, shell, type BrowserWindow, type IpcMainInvokeEvent, type Event as ElectronEvent, type WebContents } from "electron";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { isExecutableOpenTarget } from "./desktop-policy";
@@ -35,10 +34,10 @@ const CH_GIT_RUN = "desk-ft:git-run";
 const gitRunGate = new GitRunGate();
 
 export interface FileTreeIpcOptions {
-  getWorkspaceRoot: () => string | undefined;
+  getPanelScope: (event: IpcMainInvokeEvent) => { root?: string; preferencesKey?: string } | undefined;
   log: (line: string) => void;
-  /** Main window — handlers refuse invokes from any other webContents. */
   getMainWindow: () => BrowserWindow | null;
+  confirmPaneFilesClose?: () => Promise<boolean>;
   /**
    * When set (tests), open writes the absolute path as a line instead of
    * calling the OS handler — so e2e can assert the open path without a GUI app.
@@ -74,6 +73,18 @@ export function isIpcFromMainWindow(
   getMainWindow: () => BrowserWindow | null,
 ): boolean {
   return isTrustedMainFrameIpc(event, getMainWindow);
+}
+
+/** The renderer's expected root is a freshness check. It is never a selector. */
+export function resolveFilePanelRoot(
+  scope: { root?: string } | undefined,
+  expectedRoot: unknown,
+): { ok: true; root: string } | { ok: false; reason: string; error: string } {
+  const reject = (reason: string) => ({ ok: false as const, reason, error: reason });
+  if (!scope) return reject("forbidden");
+  if (!scope.root) return reject("no workspace root");
+  if (expectedRoot !== undefined && expectedRoot !== scope.root) return reject("workspace changed");
+  return { ok: true, root: scope.root };
 }
 
 /** Options for {@link resolveTreeOpenTarget}. */
@@ -148,34 +159,32 @@ export function registerFileTreeIpc(opts: FileTreeIpcOptions): void {
   }
   handlersRegistered = true;
 
-  const deny = (channel: string) => {
-    opts.log(`[desk-ft] refused ${channel}: sender is not the main window`);
-    return { ok: false as const, reason: "forbidden", error: "forbidden" };
-  };
+  const rootFor = (event: IpcMainInvokeEvent, expectedRoot?: unknown) =>
+    resolveFilePanelRoot(opts.getPanelScope(event), expectedRoot);
 
   ipcMain.handle(CH_ROOT, (e) => {
-    if (!isIpcFromMainWindow(e, opts.getMainWindow)) return deny(CH_ROOT);
-    const root = opts.getWorkspaceRoot();
-    if (!root) return { ok: false as const, reason: "no workspace root" };
+    const scope = opts.getPanelScope(e);
+    if (!scope?.root) return { ...resolveFilePanelRoot(scope, undefined), preferencesKey: scope?.preferencesKey };
+    const { root, preferencesKey } = scope;
     return {
       ok: true as const,
       root,
+      preferencesKey,
       name: path.basename(root) || root,
     };
   });
 
-  ipcMain.handle(CH_LIST, (e, relPath: unknown) => {
-    if (!isIpcFromMainWindow(e, opts.getMainWindow)) return deny(CH_LIST);
-    const root = opts.getWorkspaceRoot();
-    if (!root) return { ok: false as const, reason: "no workspace root" };
+  ipcMain.handle(CH_LIST, (e, relPath: unknown, expectedRoot?: unknown) => {
+    const scope = rootFor(e, expectedRoot);
+    if (!scope.ok) return scope;
     const rel = typeof relPath === "string" ? relPath : "";
-    return listTreeDir(root, rel);
+    return listTreeDir(scope.root, rel);
   });
 
-  ipcMain.handle(CH_OPEN, async (e, relPath: unknown) => {
-    if (!isIpcFromMainWindow(e, opts.getMainWindow)) return deny(CH_OPEN);
-    const root = opts.getWorkspaceRoot();
-    if (!root) return { ok: false as const, error: "no workspace root" };
+  ipcMain.handle(CH_OPEN, async (e, relPath: unknown, expectedRoot?: unknown) => {
+    const scope = rootFor(e, expectedRoot);
+    if (!scope.ok) return scope;
+    const { root } = scope;
     const target = resolveTreeOpenTarget(root, relPath, opts.log, "open");
     if (!target.ok) return { ok: false as const, error: target.error };
 
@@ -215,10 +224,10 @@ export function registerFileTreeIpc(opts: FileTreeIpcOptions): void {
    * (Finder / Explorer / …). Same trust gates as open, plus allowDirectory
    * so tree folders can be revealed without opening them.
    */
-  ipcMain.handle(CH_REVEAL, (e, relPath: unknown) => {
-    if (!isIpcFromMainWindow(e, opts.getMainWindow)) return deny(CH_REVEAL);
-    const root = opts.getWorkspaceRoot();
-    if (!root) return { ok: false as const, error: "no workspace root" };
+  ipcMain.handle(CH_REVEAL, (e, relPath: unknown, expectedRoot?: unknown) => {
+    const scope = rootFor(e, expectedRoot);
+    if (!scope.ok) return scope;
+    const { root } = scope;
     const target = resolveTreeOpenTarget(root, relPath, opts.log, "reveal", {
       allowDirectory: true,
     });
@@ -258,27 +267,25 @@ export function registerFileTreeIpc(opts: FileTreeIpcOptions): void {
 
   /** In-panel read for markdown/json/image/text preview (containment-checked). */
   ipcMain.handle(CH_READ, (e, relPath: unknown, expectedRoot?: unknown) => {
-    if (!isIpcFromMainWindow(e, opts.getMainWindow)) return deny(CH_READ);
-    const root = opts.getWorkspaceRoot();
-    if (!root) return { ok: false as const, reason: "no workspace root" };
-    if (expectedRoot !== undefined && expectedRoot !== root) {
-      return { ok: false as const, reason: "workspace changed" };
-    }
+    const scope = rootFor(e, expectedRoot);
+    if (!scope.ok) return scope;
     if (typeof relPath !== "string") {
       return { ok: false as const, reason: "invalid path" };
     }
-    return readTreeFile(root, relPath);
+    return readTreeFile(scope.root, relPath);
   });
 
   /**
    * The Changes view's read. The renderer names no path at all here — the root
    * is the desktop's own workspace root, exactly as for list and read above.
    */
-  ipcMain.handle(CH_GIT_STATUS, async (e) => {
-    if (!isIpcFromMainWindow(e, opts.getMainWindow)) return deny(CH_GIT_STATUS);
-    const root = opts.getWorkspaceRoot();
-    if (!root) return { ok: false as const, kind: "failed" as const, reason: "no workspace root" };
+  ipcMain.handle(CH_GIT_STATUS, async (e, expectedRoot?: unknown) => {
+    const scope = rootFor(e, expectedRoot);
+    if (!scope.ok) return { ...scope, kind: "failed" as const };
+    const { root } = scope;
     const read = await readGitStatus(root);
+    const current = rootFor(e, root);
+    if (!current.ok) return { ...current, kind: "failed" as const };
     if (!read.ok) return { ok: false as const, kind: read.kind, reason: read.reason };
     return { ok: true as const, snapshot: read.snapshot, busy: gitRunGate.isBusy(root) };
   });
@@ -288,18 +295,22 @@ export function registerFileTreeIpc(opts: FileTreeIpcOptions): void {
    * a path the repository is reporting as changed right now is diffable, which
    * cannot name a file outside the repository and goes stale safely.
    */
-  ipcMain.handle(CH_GIT_DIFF, async (e, relPath: unknown) => {
-    if (!isIpcFromMainWindow(e, opts.getMainWindow)) return deny(CH_GIT_DIFF);
-    const root = opts.getWorkspaceRoot();
-    if (!root) return { ok: false as const, reason: "no workspace root" };
+  ipcMain.handle(CH_GIT_DIFF, async (e, relPath: unknown, expectedRoot?: unknown) => {
+    const scope = rootFor(e, expectedRoot);
+    if (!scope.ok) return scope;
+    const { root } = scope;
     if (typeof relPath !== "string" || !relPath) return { ok: false as const, reason: "invalid path" };
     const status = await readGitStatus(root);
+    const stillCurrent = rootFor(e, root);
+    if (!stillCurrent.ok) return stillCurrent;
     if (!status.ok) return { ok: false as const, reason: status.reason };
     if (!isKnownChangedPath(status.snapshot, relPath)) {
       return { ok: false as const, reason: "That file is no longer changed. Refresh and try again." };
     }
     const entry = status.snapshot.files.find((file) => file.path === relPath);
     const diff = await readGitFileDiff(root, relPath, { untracked: entry?.status === "?" });
+    const current = rootFor(e, root);
+    if (!current.ok) return current;
     if (!diff.ok) return { ok: false as const, reason: diff.reason };
     return { ok: true as const, patch: diff.patch, truncated: diff.truncated, untracked: diff.untracked };
   });
@@ -311,10 +322,10 @@ export function registerFileTreeIpc(opts: FileTreeIpcOptions): void {
    * stopped being changed, and the argv that runs is produced by the same
    * function that produced the text the person confirmed.
    */
-  ipcMain.handle(CH_GIT_RUN, async (e, payload: unknown) => {
-    if (!isIpcFromMainWindow(e, opts.getMainWindow)) return deny(CH_GIT_RUN);
-    const root = opts.getWorkspaceRoot();
-    if (!root) return { ok: false as const, reason: "no workspace root" };
+  ipcMain.handle(CH_GIT_RUN, async (e, payload: unknown, expectedRoot?: unknown) => {
+    const scope = rootFor(e, expectedRoot);
+    if (!scope.ok) return scope;
+    const { root } = scope;
     if (!payload || typeof payload !== "object") return { ok: false as const, reason: "invalid request" };
     const request = payload as {
       op?: unknown;
@@ -333,6 +344,8 @@ export function registerFileTreeIpc(opts: FileTreeIpcOptions): void {
     }
     try {
       const status = await readGitStatus(root);
+      const current = rootFor(e, root);
+      if (!current.ok) return current;
       if (!status.ok) return { ok: false as const, reason: status.reason };
       const plan = planGitOp(
         {
@@ -351,6 +364,8 @@ export function registerFileTreeIpc(opts: FileTreeIpcOptions): void {
       opts.log(`[desk-ft] git: ${plan.display.split("\n").join(" ; ")}`);
       const outcome = await runGitPlan(root, plan);
       const after = await readGitStatus(root);
+      const replyScope = rootFor(e, root);
+      if (!replyScope.ok) return replyScope;
       const snapshot = after.ok ? after.snapshot : undefined;
       if (!outcome.ok) {
         return {
@@ -372,10 +387,10 @@ export function registerFileTreeIpc(opts: FileTreeIpcOptions): void {
     }
   });
 
-  ipcMain.handle(CH_SAVE, (e, payload: unknown) => {
-    if (!isIpcFromMainWindow(e, opts.getMainWindow)) return deny(CH_SAVE);
-    const root = opts.getWorkspaceRoot();
-    if (!root) return { ok: false as const, reason: "no workspace root" };
+  ipcMain.handle(CH_SAVE, (e, payload: unknown, expectedRoot?: unknown) => {
+    const scope = rootFor(e, expectedRoot);
+    if (!scope.ok) return scope;
+    const { root } = scope;
     if (!payload || typeof payload !== "object") {
       return { ok: false as const, reason: "invalid save request" };
     }
@@ -423,6 +438,7 @@ export function registerFileTreeIpc(opts: FileTreeIpcOptions): void {
   if (win && !win.isDestroyed()) {
     let closePending = false;
     const onClose = (event: ElectronEvent) => {
+      if (event.defaultPrevented) return;
       if (closePending) {
         event.preventDefault();
         return;
@@ -434,7 +450,8 @@ export function registerFileTreeIpc(opts: FileTreeIpcOptions): void {
           `(function(){try{var f=window.__grokDeskFtBeforeClose;if(typeof f!=="function")return Promise.resolve(true);return Promise.resolve(f()).then(Boolean);}catch(_){return false;}})()`,
           true,
         )
-        .then((ok) => {
+        .then(async (ok) => {
+          if (ok && opts.confirmPaneFilesClose) ok = await opts.confirmPaneFilesClose();
           closePending = false;
           if (!ok || win.isDestroyed()) return;
           if (closeBoundWindow === win && closeBoundHandler) {
@@ -471,18 +488,6 @@ export function unregisterFileTreeIpc(): void {
  * Inject (or re-inject) the file-tree panel into the chat document.
  * Safe to call on every did-finish-load.
  */
-export async function injectFileTreePanel(win: BrowserWindow | null): Promise<void> {
-  if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return;
-  const src = fileTreePanelBootSource();
-  try {
-    await win.webContents.executeJavaScript(src, true);
-  } catch (e) {
-    // Log-only: chat still works without the panel.
-    // Callers pass log separately; swallow here if injection races dispose.
-    void e;
-  }
-}
-
 /**
  * Open a workspace-relative path in the in-panel file viewer (chat openFile
  * for renderable types). Returns true when the renderer accepted the path.
@@ -490,30 +495,30 @@ export async function injectFileTreePanel(win: BrowserWindow | null): Promise<vo
  * relative path string.
  */
 export async function openPathInFilePanel(
-  win: BrowserWindow | null,
+  contents: WebContents | null,
   relPath: string,
   expectedRoot?: string,
 ): Promise<boolean> {
   if (typeof relPath !== "string" || !relPath || relPath.includes("\0")) return false;
-  return openInFilePanel(win, "__grokDeskFtOpen", [relPath, expectedRoot ?? null]);
+  return openInFilePanel(contents, "__grokDeskFtOpen", [relPath, expectedRoot ?? null]);
 }
 
 export function openDiffInFilePanel(
-  win: BrowserWindow | null,
+  contents: WebContents | null,
   root: string,
   diff: { id: string; title: string; before: string; after: string; line?: number; truncated: boolean },
 ): Promise<boolean> {
-  return openInFilePanel(win, "__grokDeskFtOpenDiff", [diff, root]);
+  return openInFilePanel(contents, "__grokDeskFtOpenDiff", [diff, root]);
 }
 
 async function openInFilePanel(
-  win: BrowserWindow | null,
+  contents: WebContents | null,
   action: "__grokDeskFtOpen" | "__grokDeskFtOpenDiff",
   args: unknown[],
 ): Promise<boolean> {
-  if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return false;
+  if (!contents || contents.isDestroyed()) return false;
   try {
-    const result = await win.webContents.executeJavaScript(
+    const result = await contents.executeJavaScript(
       `window.${action}?.(...${JSON.stringify(args)})`,
       true,
     );
@@ -524,12 +529,12 @@ async function openInFilePanel(
 }
 
 export async function injectFileTreePanelLogged(
-  win: BrowserWindow | null,
+  contents: WebContents | null,
   log: (line: string) => void,
 ): Promise<void> {
-  if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return;
+  if (!contents || contents.isDestroyed()) return;
   try {
-    const result = await win.webContents.executeJavaScript(fileTreePanelBootSource(), true);
+    const result = await contents.executeJavaScript(fileTreePanelBootSource(), true);
     if (result && result.ok === false) {
       log(`[desk-ft] inject: ${result.reason || "failed"}`);
     }

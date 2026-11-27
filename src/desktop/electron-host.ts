@@ -99,7 +99,7 @@ import {
   resolveTreePath,
 } from "./file-tree";
 import { openDiffInFilePanel, openPathInFilePanel } from "./file-tree-ipc";
-import { pathsEqual } from "../worktree";
+import { ElectronWebview } from "./electron-webview";
 import type { DesktopConversationPanes } from "./conversation-panes";
 import {
   planOpenCliInTerminal,
@@ -215,6 +215,7 @@ export interface ElectronHostOptions {
    * message gate uses via ElectronWebview.getAuthContext.
    */
   getAuthContext?: (sourceWebview?: HostWebview) => DesktopOpenFileContext | undefined;
+  getFilePanelRoot?: (sourceWebview?: HostWebview) => string | undefined;
   /** Called when the active workspace folder changes (switch / add-as-active). */
   onWorkspaceRootChanged?: (root: string) => void;
   /** Called when the open-folder list changes (add / remove / first open). */
@@ -591,6 +592,7 @@ export function createElectronHost(opts: ElectronHostOptions): Host {
     log,
     remoteActions,
     getAuthContext,
+    getFilePanelRoot,
     onWorkspaceRootChanged,
     onWorkspaceFoldersChanged,
     installAppUpdate,
@@ -682,12 +684,10 @@ export function createElectronHost(opts: ElectronHostOptions): Host {
     // Use only the path from the final check — never the pre-authorize string.
     const openPath = check.absPath;
 
-    // A chat pane in a different project (including a nested worktree) gets
-    // a read-only window without changing the selected project's dock.
     const kind = classifyFilePreview(openPath);
     if (kind !== "external") {
-      const panelRoot = sourceWebview
-        ? paneDockRoot(ctx, openPath) : ctx.workspaceRoot || desktopAuthRoots(ctx)[0];
+      const panelRoot = getFilePanelRoot ? getFilePanelRoot(sourceWebview)
+        : sourceWebview ? ctx.sessionCwd : ctx.workspaceRoot || desktopAuthRoots(ctx)[0];
       if (
         panelRoot &&
         isCanonicallyInsideRoot(panelRoot, openPath, ctx.platform ?? process.platform, ctx.pathFs)
@@ -697,7 +697,7 @@ export function createElectronHost(opts: ElectronHostOptions): Host {
           .split(path.sep)
           .join("/");
         if (rel && !rel.startsWith("..") && !path.isAbsolute(rel)) {
-          const opened = await openPathInFilePanel(getWindow(), rel, sourceWebview ? panelRoot : undefined);
+          const opened = await openPathInFilePanel(filePanelContents(sourceWebview), rel, panelRoot);
           if (opened) {
             log(`[desktop] opened in panel: ${rel}`);
             return;
@@ -740,10 +740,9 @@ export function createElectronHost(opts: ElectronHostOptions): Host {
     }
   }
 
-  function paneDockRoot(ctx: DesktopOpenFileContext, absPath: string): string | undefined {
-    const root = config.getWorkspaceRoot();
-    if (root && ctx.sessionCwd && pathsEqual(ctx.sessionCwd, root)
-        && isCanonicallyInsideRoot(root, absPath, ctx.platform, ctx.pathFs)) return root;
+  function filePanelContents(source?: HostWebview) {
+    if (source) return source instanceof ElectronWebview ? source.filePanelContents() : null;
+    return getWindow()?.webContents ?? null;
   }
 
   const windowIsAway = (win: BrowserWindow) => !win.isVisible() || win.isMinimized() || !win.isFocused();
@@ -1261,7 +1260,8 @@ export function createElectronHost(opts: ElectronHostOptions): Host {
             log(`[desktop] pane diff refused: ${check.reason}`);
             return;
           }
-          panelRoot = paneDockRoot(ctx, check.absPath);
+          const root = getFilePanelRoot ? getFilePanelRoot(options.sourceWebview) : ctx.sessionCwd;
+          if (root && isCanonicallyInsideRoot(root, check.absPath, ctx.platform, ctx.pathFs)) panelRoot = root;
         }
         const read = (p: string) => fs.readFileSync(p, "utf8");
         const leftText = resolveDocumentText(left, contentProviders, read);
@@ -1274,7 +1274,7 @@ export function createElectronHost(opts: ElectronHostOptions): Host {
           const after = prepareDocumentViewText(rightText, 256 * 1024);
           // The dock compares a 1,600-line window from just above `line`. The
           // turn diff names line 0, so start a long file at its first change.
-          if (await openDiffInFilePanel(getWindow(), panelRoot, {
+          if (await openDiffInFilePanel(filePanelContents(options?.sourceWebview), panelRoot, {
             id: left.path, title, before: before.text, after: after.text,
             line: scrollTo || firstChangedLine(before.text, after.text),
             truncated: before.truncated || after.truncated,

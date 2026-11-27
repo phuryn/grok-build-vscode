@@ -1,4 +1,5 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
@@ -248,7 +249,8 @@ it("routes desktop chats and keeps them usable through Files, overlays, resizing
       expect(await paneEval(app!, 'document.querySelector("#messages .msg.user")?.textContent')).toContain(paneSession.title);
     }, { timeout: 30_000 });
     expect(await page.locator("#session-name-label").innerText()).toContain(mainSession.title);
-    expect(await paneEval(app, 'document.querySelectorAll("#projects-rail, #desk-ft-panel").length')).toBe(0);
+    expect(await paneEval(app, 'document.querySelectorAll("#projects-rail").length')).toBe(0);
+    await vi.waitFor(async () => expect(await paneEval(app!, 'document.querySelectorAll("#desk-ft-panel").length')).toBe(1));
     const headerControls = () => [...document.querySelectorAll(".top-bar button, .top-bar #desk-ft-top-sep")]
       .filter(el => el.getBoundingClientRect().width > 0)
       .map(el => el.closest("#session-head-actions")?.id || el.id)
@@ -276,12 +278,14 @@ it("routes desktop chats and keeps them usable through Files, overlays, resizing
     expect(Math.abs(headers.headerTop - (headers.slotTop + childHeaderTop))).toBeLessThanOrEqual(2);
     const nativeWidth = async () => (await nativeChats(app!))[0]?.bounds.width ?? 0;
     await vi.waitFor(async () => expect(Math.abs(await nativeWidth() - paneWidth)).toBeLessThanOrEqual(3));
+    const paneChatWidth = () => paneEval<number>(app!, 'document.querySelector(".desk-ft-chat").getBoundingClientRect().width');
     await paneEval(app, 'document.querySelector("#desk-ft-top-toggle").click()');
-    await vi.waitFor(async () => expect(await nativeWidth()).toBeLessThan(paneWidth - 50));
+    await vi.waitFor(async () => expect(await paneChatWidth()).toBeLessThan(paneWidth - 50));
     await vi.waitFor(async () => {
       expect(await paneEval(app!, 'document.querySelector("#desk-ft-top-toggle").getAttribute("aria-expanded")')).toBe("true");
     });
-    await page.locator("#desk-ft-top-toggle").click();
+    await page.locator("#desk-ft-panel").waitFor({ state: "hidden" });
+    await paneEval(app, 'document.querySelector("#desk-ft-top-toggle").click()');
     await vi.waitFor(async () => expect(Math.abs(await nativeWidth() - paneWidth)).toBeLessThanOrEqual(3));
     const resizeWindow = (delta: number) => app!.evaluate(({ BrowserWindow }, dx) => {
       const win = BrowserWindow.getAllWindows()[0];
@@ -396,8 +400,12 @@ it("routes desktop chats and keeps them usable through Files, overlays, resizing
     const notesLink = '.msg.agent a[href="docs/notes.md"]';
     await vi.waitFor(async () => expect(await paneEval(app!, `!!document.querySelector(${JSON.stringify(notesLink)})`)).toBe(true));
     await paneEval(app, `document.querySelector(${JSON.stringify(notesLink)}).click()`);
-    const notes = page.locator(".desk-ft-viewer-body");
-    await notes.getByText("A second Markdown file", { exact: false }).waitFor();
+    await vi.waitFor(async () => expect(await paneEval(app!, 'document.querySelector(".desk-ft-viewer-body")?.textContent'))
+      .toContain("A second Markdown file"));
+    // The first chat's panel never opened a file, so it may have no viewer at all.
+    expect(await page.evaluate(() => document.querySelector(".desk-ft-viewer-body")?.textContent ?? ""))
+      .not.toContain("A second Markdown file");
+    await page.locator("#desk-ft-top-toggle").click();
     const mainDraft = "Unsent main draft";
     const paneDraft = "Unsent pane draft";
     await page.locator("#input").fill(mainDraft);
@@ -424,9 +432,8 @@ it("routes desktop chats and keeps them usable through Files, overlays, resizing
       expect(await paneEval(app!, 'document.querySelector("#input").value')).toBe(paneDraft);
     };
     await page.getByRole("button", { name: "Maximize file panel" }).click();
-    await expectPaneVisible(false);
+    expect(await nativeWidth()).toBeGreaterThan(0);
     await page.getByRole("button", { name: "Restore file panel" }).click();
-    await expectPaneVisible(true);
     await expectDrafts();
     for (const theme of ["light", "dark"]) {
       if (await page.locator("html").getAttribute("data-theme") !== theme) {
@@ -466,8 +473,7 @@ it("routes desktop chats and keeps them usable through Files, overlays, resizing
     await page.locator("#messages").getByText("Finished after the pane closed.", { exact: false }).waitFor();
     expect(await paneCount()).toBe(0);
 
-    // Deliberately leave the Files dock and Projects open while reducing the
-    // outer window. Stage 5 must leave these preferences intact.
+    // Leave Files and Projects open while reducing the outer window.
     const width = () => app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getSize()[0]);
     const setWidth = (next: number) => app!.evaluate(({ BrowserWindow }, w) => {
       const win = BrowserWindow.getAllWindows()[0];
@@ -573,6 +579,9 @@ it("routes desktop chats and keeps them usable through Files, overlays, resizing
     await picker.waitFor();
     expect(await paneCount()).toBe(2);
     await rail.waitFor({ state: "hidden" });
+    const filesToggle = page.locator("#desk-ft-top-toggle");
+    await files.waitFor();
+    await filesToggle.click();
     await files.waitFor({ state: "hidden" });
     const composerFits = `(() => {
       const input = document.querySelector("#input").getBoundingClientRect();
@@ -593,12 +602,6 @@ it("routes desktop chats and keeps them usable through Files, overlays, resizing
     expect(await width()).toBe(400);
     await picker.selectOption("0");
     await vi.waitFor(async () => expect(await visibleIds()).toEqual([]));
-    const filesToggle = page.locator("#desk-ft-top-toggle");
-    await filesToggle.click();
-    await files.waitFor();
-    await filesToggle.click();
-    await files.waitFor({ state: "hidden" });
-
     for (const theme of ["light", "dark"]) {
       if (await page.locator("html").getAttribute("data-theme") !== theme) {
         await page.locator("#desk-rail-open-btn").click();
@@ -612,10 +615,10 @@ it("routes desktop chats and keeps them usable through Files, overlays, resizing
     }
     await setWidth(wide);
     await rail.waitFor();
+    await filesToggle.click();
     await files.waitFor();
-    // Screen resolution can limit how many columns fit with both docks open.
-    // Make room within the same window to prove both original children return.
-    if (await page.locator("#desk-conversation-columns").evaluate(el => el.getBoundingClientRect().width) < 1082) {
+    // Make room for all three chats on displays with less work area.
+    if (await page.locator("#desk-conversation-columns").evaluate(el => el.getBoundingClientRect().width) < 1288) {
       await page.locator("#desk-ft-top-toggle").click();
     }
     if (await page.locator("#desk-conversation-columns").evaluate(el => el.getBoundingClientRect().width) < 1082) {
@@ -641,6 +644,199 @@ it("routes desktop chats and keeps them usable through Files, overlays, resizing
     }
   } catch (error) {
     await reportSplitFailure(app, traceFile);
+    throw error;
+  } finally {
+    try { await app?.close(); }
+    finally { await rm(temp, { recursive: true, force: true }); }
+  }
+}, 180_000);
+
+it("docks each chat's project and restores each Files toggle independently", async () => {
+  const temp = await mkdtemp(path.join(tmpdir(), "afk-desktop-files-per-chat-"));
+  const profile = path.join(temp, "profile");
+  let app: ElectronApplication | undefined;
+  let traceDir = temp;
+  try {
+    const qa = buildQaFixture(temp);
+    const [mainSession, paneSession] = [qa.sessions[3], qa.sessions[2]];
+    const second = path.join(temp, "notes-project");
+    await mkdir(path.join(second, "docs"), { recursive: true });
+    const encode = require("../../out/sessions.js").encodeSessionCatalogLeaf as (cwd: string) => string;
+    const catalog = (cwd: string) => path.join(qa.grokHome, "sessions", encode(cwd));
+    const conversation = path.join(catalog(second), paneSession.id);
+    await mkdir(catalog(second), { recursive: true });
+    await rename(path.join(catalog(qa.project), paneSession.id), conversation);
+    const summaryPath = path.join(conversation, "summary.json");
+    const summary = JSON.parse(await readFile(summaryPath, "utf8"));
+    summary.info.cwd = second;
+    await writeFile(summaryPath, JSON.stringify(summary));
+    await writeFile(path.join(second, "docs", "notes.md"), "# Original notes\n");
+
+    for (const cwd of [qa.project, second]) {
+      execFileSync("git", ["init", "-q"], { cwd });
+      execFileSync("git", ["add", "."], { cwd });
+      execFileSync("git", ["-c", "user.name=QA", "-c", "user.email=qa@example.test",
+        "-c", "commit.gpgsign=false", "commit", "-qm", "Fixture"], { cwd, env: { ...process.env, GIT_CONFIG_NOSYSTEM: "1" } });
+    }
+    await writeFile(path.join(qa.project, "main-only.txt"), "First project's only change.");
+    await writeFile(path.join(second, "docs", "notes.md"), "# Notes from the second project\n");
+    await writeFile(path.join(second, "peer-only.txt"), "Second project's change.");
+
+    const fake = path.join(root, "test", "fixtures", process.platform === "win32" ? "fake-grok-acp.cmd" : "fake-grok-acp.sh");
+    await mkdir(profile);
+    const configPath = path.join(profile, "config.json");
+    const overrides = {
+      "grok.cliPath": fake, "grok.desktop.tray": false, workspaceRoot: qa.project, workspaceRoots: [qa.project, second],
+    };
+    await writeFile(configPath, JSON.stringify(overrides));
+    await writeFile(path.join(profile, "globalState.json"), JSON.stringify({ "grok.providerConnections.v2": { grok: true } }));
+    const start = () => {
+      const launch = desktopLaunch(root, require("electron"), qa.project, profile, traceDir, {
+        ...process.env, GROK_HOME: qa.grokHome, CODEX_HOME: path.join(temp, "codex"),
+        FAKE_DESKTOP_SPLIT_REPLY: "1", FAKE_SESSION_ID_FROM_PID: "1",
+      });
+      delete launch.env.GROK_RELAY_DEVICE_TOKEN;
+      delete launch.env.GROK_RELAY_URL;
+      delete launch.env.GROK_CLOUD_ENVIRONMENT;
+      launch.env.NODE_ENV = "test";
+      launch.env.GROK_DESKTOP_TEST_ALLOW_MULTIPLE = "1";
+      return electron.launch({ ...launch, timeout: 45_000 });
+    };
+    app = await start();
+    let page = await app.firstWindow();
+    const setWindowWidth = (target: number) => app!.evaluate(({ BrowserWindow, screen }, target) => {
+      const win = BrowserWindow.getAllWindows()[0];
+      const area = screen.getDisplayMatching(win.getBounds()).workArea;
+      const width = Math.min(area.width, target);
+      win.setBounds({ x: area.x, y: area.y, width, height: Math.min(area.height, 900) });
+      win.focus();
+      return width;
+    }, target);
+    await setWindowWidth(1920);
+    await page.evaluate(() => {
+      localStorage.setItem("rail-width", "300");
+      document.documentElement.style.setProperty("--rail-width", "300px");
+      localStorage.setItem("desk-ft-width", "290");
+    });
+    const row = (id: string) => page.locator(`#projects-rail .rail-session[data-session-id="${id}"]:visible`).first();
+    await row(mainSession.id).click();
+    await page.locator("#session-name-label").filter({ hasText: mainSession.title }).waitFor();
+    await row(paneSession.id).click({ modifiers: [process.platform === "darwin" ? "Meta" : "Control"] });
+    const paneToggle = () => paneEval(app!, 'document.querySelector("#desk-ft-top-toggle")?.click()');
+    const paneOpen = () => paneEval(app!, 'document.querySelector("#desk-ft-panel")?.hidden === false');
+    const mainFiles = () => page.locator("#desk-ft-panel");
+    const title = 'document.querySelector("#desk-ft-title .gfp-title-label")?.textContent';
+    await vi.waitFor(async () => expect(await paneEval(app!, title)).toBe("notes-project"), { timeout: 15_000 });
+    await page.locator("#desk-ft-top-toggle").click();
+    await paneToggle();
+    await mainFiles().getByText("main-only.txt", { exact: true }).waitFor();
+    await vi.waitFor(async () => {
+      expect(await paneEval(app!, 'document.querySelector("#desk-ft-body").textContent')).toContain("peer-only.txt");
+      expect(await page.locator("#desk-ft-title .gfp-title-label").textContent()).toBe(qa.projectName);
+      expect(await page.locator("#desk-ft-top-toggle .gfp-toggle-count").textContent()).toBe("1");
+      expect(await paneEval(app!, 'document.querySelector("#desk-ft-top-toggle .gfp-toggle-count").textContent')).toBe("2");
+    }, { timeout: 15_000 });
+    const wrongRoot = await paneEval(app, `window.grokDesktopFileTree.read("main-only.txt", ${JSON.stringify(qa.project)})`);
+    expect(wrongRoot).toMatchObject({ ok: false, reason: "workspace changed" });
+
+    const send = async (text: string) => {
+      await vi.waitFor(async () => expect(await paneEval(app!, 'document.querySelector("#input")?.disabled')).toBe(false),
+        { timeout: 15_000 });
+      await paneEval(app!, `(() => {
+        const input = document.querySelector("#input");
+        input.focus();
+        input.select();
+        document.execCommand("insertText", false, ${JSON.stringify(text)});
+        document.querySelector("#send-btn").click();
+      })()`);
+    };
+    await send(panePrompt);
+    await vi.waitFor(async () => expect(await paneEval(app!, 'document.querySelector("#messages").textContent')).toContain(paneReply),
+      { timeout: 15_000 });
+    await send("Link the fixture notes.");
+    const link = '.msg.agent a[href="docs/notes.md"]';
+    await vi.waitFor(async () => expect(await paneEval(app!, `!!document.querySelector(${JSON.stringify(link)})`)).toBe(true),
+      { timeout: 15_000 });
+    await paneEval(app, `document.querySelector(${JSON.stringify(link)}).click()`);
+    await vi.waitFor(async () => expect(await paneEval(app!, 'document.querySelector(".desk-ft-viewer-body")?.textContent'))
+      .toContain("Notes from the second project"));
+    expect(await mainFiles().locator(".gfp-tab").count()).toBe(0);
+    await paneEval(app, "window.__grokDeskFilePanel.showChanges()");
+    const changedNote = '.gfp-change-row[data-path="docs/notes.md"]';
+    await vi.waitFor(async () => expect(await paneEval(app!, `!!document.querySelector(${JSON.stringify(changedNote)})`)).toBe(true));
+    await paneEval(app, `document.querySelector(${JSON.stringify(changedNote)}).click()`);
+    await vi.waitFor(async () => {
+      expect(await paneEval(app!, 'document.querySelector(".gfp-changes-mode")?.textContent'))
+        .toContain("Notes from the second project");
+      expect(await mainFiles().locator(".gfp-changes-diff-name").count()).toBe(0);
+    }, { timeout: 15_000 });
+
+    const measure = `(() => {
+      const zoom = Number(getComputedStyle(document.body).zoom) || 1;
+      const rect = sel => document.querySelector(sel).getBoundingClientRect();
+      const chat = rect(".desk-ft-chat");
+      const files = rect("#desk-ft-panel");
+      return { chat: chat.width / zoom, files: files.width / zoom, next: files.left >= chat.right - 2 };
+    })()`;
+    await mkdir(screenshots, { recursive: true });
+    for (const target of [1920, 1440]) {
+      const actual = await setWindowWidth(target);
+      const columns = () => page.locator("#desk-conversation-columns").evaluate(el => el.getBoundingClientRect().width);
+      if (await columns() < 1123) {
+        const zoom = Math.floor(await columns() / 1123 * 20) / 20;
+        await page.evaluate(zoom => (window as any).__grokFontScale.set(Math.max(0.8, zoom)), zoom);
+      }
+      await vi.waitFor(async () => {
+        for (const measured of [await page.evaluate<{ chat: number; files: number; next: boolean }>(measure),
+          await paneEval<{ chat: number; files: number; next: boolean }>(app!, measure)]) {
+          expect(measured.chat).toBeGreaterThanOrEqual(359);
+          expect(measured.files).toBeGreaterThanOrEqual(199.9);
+          expect(measured.next).toBe(true);
+        }
+        expect(await page.getByLabel("Switch to an open chat").isVisible()).toBe(false);
+      });
+      for (const theme of ["light", "dark"]) {
+        if (await page.locator("html").getAttribute("data-theme") !== theme) {
+          await page.locator("#desk-theme-toggle").click();
+        }
+        await vi.waitFor(async () => expect(await paneEval(app!, 'document.documentElement.dataset.theme')).toBe(theme));
+        await paneEval(app, `[...document.querySelectorAll(".msg.agent .body")].find(
+          el => el.textContent === ${JSON.stringify(paneReply)}).scrollIntoView({ block: "center" })`);
+        const file = path.join(screenshots, `files-per-chat-${target}-at-${actual}-${theme}.png`);
+        console.log(`${file} (${await captureWindow(app, file)})`);
+      }
+    }
+
+    const mainBefore = await page.evaluate(measure);
+    const secondBefore = await paneEval<{ chat: number; files: number }>(app, measure);
+    await paneToggle();
+    await vi.waitFor(async () => {
+      expect(await paneOpen()).toBe(false);
+      expect(await page.evaluate(measure)).toEqual(mainBefore);
+      expect((await paneEval<{ chat: number }>(app!, measure)).chat).toBeGreaterThan(secondBefore.chat + 190);
+    });
+    await app.close();
+    app = undefined;
+    await writeFile(configPath, JSON.stringify({ ...JSON.parse(await readFile(configPath, "utf8")), ...overrides }));
+    traceDir = path.join(temp, "restart");
+    await mkdir(traceDir);
+    app = await start();
+    await app.firstWindow();
+    page = await vi.waitFor(() => {
+      const window = app!.windows().find(win => !win.url().includes("/__app__/conversation-"));
+      expect(window).toBeDefined();
+      return window!;
+    });
+    await page.locator("#session-name-label").filter({ hasText: mainSession.title }).waitFor();
+    await mainFiles().waitFor();
+    await vi.waitFor(async () => {
+      expect(await paneEval(app!, title)).toBe("notes-project");
+      expect(await paneOpen()).toBe(false);
+    });
+    await paneToggle();
+    await vi.waitFor(async () => expect(await paneOpen()).toBe(true));
+  } catch (error) {
+    await reportSplitFailure(app, path.join(traceDir, "desktop-wire.jsonl"));
     throw error;
   } finally {
     try { await app?.close(); }

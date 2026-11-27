@@ -69,18 +69,16 @@ const isConversationPane = process.argv.includes(DESKTOP_CONVERSATION_PANE_ARG);
 if (isConversationPane) {
   contextBridge.exposeInMainWorld("grokDesktopConversations", {
     close: (draft: DesktopPaneCloseSnapshot) => ipcRenderer.invoke("desk-conversations:close", draft),
-    toggleFiles: () => ipcRenderer.send("desk-conversations:toggle-files"),
+    filePanelChanged: (open: boolean) => ipcRenderer.send("desk-conversations:files-open", open),
   });
 } else if (process.argv.includes(DESKTOP_CONVERSATIONS_ARG)) {
   contextBridge.exposeInMainWorld("grokDesktopConversations", {
     openBeside: (id: string, cwd?: string) => ipcRenderer.send("desk-conversations:open", id, cwd, true),
     open: (id: string, cwd?: string) => ipcRenderer.send("desk-conversations:open", id, cwd, false),
-    setBounds: (bounds: unknown, slots: number, stacked: boolean) => ipcRenderer.send("desk-conversations:bounds", bounds, slots, stacked),
+    setBounds: (bounds: unknown, zoom: number, filesOpen: boolean) => ipcRenderer.send("desk-conversations:bounds", bounds, zoom, filesOpen),
     showPane: (id: number) => ipcRenderer.send("desk-conversations:pick", id),
     setCovered: (covered: boolean) => ipcRenderer.send("desk-conversations:covered", covered),
     close: (draft: DesktopMainCloseSnapshot) => ipcRenderer.invoke("desk-conversations:close-main", draft),
-    publishFiles: (expanded: boolean, title: string, count: string) =>
-      ipcRenderer.send("desk-conversations:files-state", expanded, title, count),
     saveMainDraft: (id: string | null, text: string, chipIds: string[]) =>
       ipcRenderer.send("desk-conversations:main-draft", id, text, chipIds),
   });
@@ -90,21 +88,21 @@ if (isConversationPane) {
  * Desktop-only file-tree bridge (not used by chat.js). Paths are re-validated
  * in the main process — the renderer is not trusted for containment.
  */
-if (!isConversationPane) contextBridge.exposeInMainWorld("grokDesktopFileTree", {
-  list: (relPath: string) => ipcRenderer.invoke("desk-ft:list", relPath),
-  open: (relPath: string) => ipcRenderer.invoke("desk-ft:open", relPath),
-  reveal: (relPath: string) => ipcRenderer.invoke("desk-ft:reveal", relPath),
+contextBridge.exposeInMainWorld("grokDesktopFileTree", {
+  list: (relPath: string, root?: string) => ipcRenderer.invoke("desk-ft:list", relPath, root),
+  open: (relPath: string, root?: string) => ipcRenderer.invoke("desk-ft:open", relPath, root),
+  reveal: (relPath: string, root?: string) => ipcRenderer.invoke("desk-ft:reveal", relPath, root),
   read: (relPath: string, expectedRoot?: string) => ipcRenderer.invoke("desk-ft:read", relPath, expectedRoot),
-  save: (request: { relPath: string; text: string; stamp: { mtimeMs: number; size: number }; absPath: string }) =>
-    ipcRenderer.invoke("desk-ft:save", request),
+  save: (request: { relPath: string; text: string; stamp: { mtimeMs: number; size: number }; absPath: string }, root?: string) =>
+    ipcRenderer.invoke("desk-ft:save", request, root),
   root: () => ipcRenderer.invoke("desk-ft:root"),
   /**
    * The Changes view. `gitRun` names an operation, never an argv — the main
    * process rebuilds the command from its own fresh snapshot, so nothing the
    * renderer sends becomes a git argument without passing a validator there.
    */
-  gitStatus: () => ipcRenderer.invoke("desk-ft:git-status"),
-  gitDiff: (relPath: string) => ipcRenderer.invoke("desk-ft:git-diff", relPath),
+  gitStatus: (root?: string) => ipcRenderer.invoke("desk-ft:git-status", root),
+  gitDiff: (relPath: string, root?: string) => ipcRenderer.invoke("desk-ft:git-diff", relPath, root),
   gitRun: (request: {
     op: "commit" | "push" | "newBranch" | "revertFile";
     message?: string;
@@ -112,7 +110,7 @@ if (!isConversationPane) contextBridge.exposeInMainWorld("grokDesktopFileTree", 
     paths?: string[];
     branch?: string;
     path?: string;
-  }) => ipcRenderer.invoke("desk-ft:git-run", request),
+  }, root?: string) => ipcRenderer.invoke("desk-ft:git-run", request, root),
   /** Subscribe to active-project changes so the panel can rebind its tree. */
   onRootChanged: (cb: () => void) => {
     const handler = () => {

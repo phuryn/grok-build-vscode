@@ -1477,7 +1477,7 @@
       // MIN_CHAT_WIDTH from the row let a drag squeeze the chat to ~150px on a
       // 1366px window and persist it.
       const peer = mount.widthPeer && mount.widthPeer.getBoundingClientRect().width;
-      const hostWidth = (peer ? peer + rootEl.getBoundingClientRect().width : 0)
+      const hostWidth = mount.availableWidth?.() || (peer ? peer + rootEl.getBoundingClientRect().width : 0)
         || (mount.widthBasis && mount.widthBasis.getBoundingClientRect().width)
         || (rootEl.parentElement && rootEl.parentElement.getBoundingClientRect().width)
         || win.innerWidth || 800;
@@ -1597,7 +1597,7 @@
       // nothing better to show, and the cwd arrives a frame later. The price,
       // stated plainly: close the last project and the panel keeps listing it
       // until a real scope replaces it or the page is refreshed.
-      if (!scope && currentScope) return;
+      if (!scope && currentScope && !options.clearScopeOnMissing) return;
       const nextState = scope ? scopeState(scope) : null;
       const switched = currentState !== nextState;
       if (switched) { cancelOperations(); abortPending(); }
@@ -4009,8 +4009,8 @@
       host.appendChild(statusLine(message, error));
     }
 
-    function confirmClose() {
-      if (!anyDirty(scopes)) return Promise.resolve(true);
+    function confirmClose(anotherPanelIsDirty) {
+      if (anotherPanelIsDirty !== true && !anyDirty(scopes)) return Promise.resolve(true);
       return confirmChoice({
         title: "Discard changes?",
         body: "Your edits have not been saved.",
@@ -4028,6 +4028,42 @@
       renderTabs();
       showTree();
       if (open && currentState) void loadRootTree();
+    }
+
+    // A desktop chat can move to the window renderer when the first chat
+    // closes. Copy editor state, leaving requests and directory caches behind.
+    function snapshotTabs() {
+      return [...scopes.values()].map(state => ({
+        scope: state.scope,
+        tabs: state.order.map(key => state.tabs.get(key)).filter(tab => tab && tab.kind !== "pending"),
+        activeRelPath: state.activeRelPath,
+        filter: state.filter,
+        message: state.changes.message,
+        branchDraft: state.changes.branchDraft,
+      }));
+    }
+
+    function restoreTabs(records) {
+      cancelOperations();
+      abortPending();
+      leaveChanges();
+      scopes.clear();
+      currentScope = currentState = renderedTreeState = null;
+      treeMode = true;
+      viewer.textContent = "";
+      for (const record of Array.isArray(records) ? records : []) {
+        if (typeof record?.scope?.id !== "string" || !Array.isArray(record.tabs)) continue;
+        const state = scopeState(record.scope);
+        for (const tab of record.tabs) {
+          if (typeof tab?.relPath !== "string" || tab.scopeId !== state.scope.id) continue;
+          state.tabs.set(tab.relPath, { ...tab, saving: false, sentText: null, readSeq: 0, saveSeq: 0 });
+        }
+        state.order = [...state.tabs.keys()];
+        state.activeRelPath = state.tabs.has(record.activeRelPath) ? record.activeRelPath : null;
+        state.filter = typeof record.filter === "string" ? record.filter : "";
+        if (typeof record.message === "string") state.changes.message = record.message;
+        if (typeof record.branchDraft === "string") state.changes.branchDraft = record.branchDraft;
+      }
     }
 
     function destroy() {
@@ -4181,6 +4217,8 @@
         return true;
       },
       confirmClose,
+      snapshotTabs,
+      restoreTabs,
       clearMemory,
       destroy,
       _scopes: scopes,

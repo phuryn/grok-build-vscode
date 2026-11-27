@@ -35,7 +35,8 @@ vi.mock("electron", () => ({
 import { DesktopConversationPanes } from "../src/desktop/conversation-panes";
 import { createElectronHost, firstChangedLine, type ElectronHostOptions } from "../src/desktop/electron-host";
 import type { ConfigStore } from "../src/desktop/config-store";
-import { conversationColumnCapacity, DESKTOP_CONVERSATION_LAYOUT_BOOT } from "../src/desktop/conversation-layout";
+import { DESKTOP_CONVERSATION_LAYOUT_BOOT, planConversationColumns } from "../src/desktop/conversation-layout";
+import { resolveFilePanelRoot } from "../src/desktop/file-tree-ipc";
 import { ElectronWebview } from "../src/desktop/electron-webview";
 import { Uri } from "../src/host";
 
@@ -45,10 +46,11 @@ function makePaneContents(id: number) {
     mainFrame: { processId: 4, routingId: 7, parent: null, url: "" },
     isDestroyed: vi.fn(() => false),
     isFocused: vi.fn(() => false),
+    getURL: () => contents.mainFrame.url,
     focus: vi.fn(),
     send: vi.fn(),
     loadURL: vi.fn(async (url: string) => { contents.mainFrame.url = url; }),
-    executeJavaScript: vi.fn(async () => {}),
+    executeJavaScript: vi.fn(async (_source: string, _userGesture?: boolean): Promise<unknown> => undefined),
     setWindowOpenHandler: vi.fn(),
     setVisualZoomLevelLimits: vi.fn(async () => {}),
     setZoomFactor: vi.fn(),
@@ -143,18 +145,22 @@ describe("desktop conversation pane host", () => {
       { ...event(), senderFrame: { ...contents.mainFrame, url: "about:blank" } },
     ]) {
       expect(panes.dispatch(invalid as IpcMainEvent, { type: "ready" })).toBe(false);
+      expect(panes.webviewFromEvent(invalid as IpcMainEvent)).toBeUndefined();
     }
+    expect(panes.webviewFromEvent(event())).toBe(panel.webview);
     expect(receive).not.toHaveBeenCalled();
   });
 
-  it("opens the selected project's files and diffs in the dock, including when the other project is nested", async () => {
+  it("opens a pane's authorized files and diffs only in that pane's dock", async () => {
     const root = process.cwd();
     const docs = path.join(root, "docs");
     let cwd = root;
-    const { host, window, open } = fixture(() => ({ allowedRoots: [cwd], sessionCwd: cwd }));
+    const { host, window, contents, open } = fixture(() => ({ allowedRoots: [cwd], sessionCwd: cwd }));
     const { webview } = open();
+    webview.html = "<html></html>";
     const file = path.join(docs, "desktop.md");
-    const execute = vi.mocked(window.webContents.executeJavaScript);
+    const execute = contents.executeJavaScript;
+    execute.mockResolvedValue({ ok: true });
     const before = Uri.from({ scheme: "test-diff", path: "/before/desktop.md" });
     const after = Uri.from({ scheme: "test-diff", path: "/after/desktop.md" });
     host.registerTextDocumentContentProvider("test-diff", {
@@ -166,27 +172,27 @@ describe("desktop conversation pane host", () => {
     expect(execute).toHaveBeenCalledWith(expect.stringContaining("__grokDeskFtOpen?.("), true);
     expect(execute).toHaveBeenCalledWith(expect.stringContaining("__grokDeskFtOpenDiff?.("), true);
     expect(loadDocument).not.toHaveBeenCalled();
+    expect(window.webContents.executeJavaScript).not.toHaveBeenCalledWith(expect.stringContaining("__grokDeskFtOpen"), true);
 
     cwd = docs;
     execute.mockClear();
     await host.openResource(file, { sourceWebview: webview });
     await openDiff(file);
-    expect(execute).not.toHaveBeenCalled();
-    const viewerHtml = loadDocument.mock.calls.map(([url]) => Buffer.from(url.split(",")[1], "base64").toString());
-    expect(viewerHtml).toHaveLength(2);
-    expect(viewerHtml[0]).toContain("read-only");
-    expect(viewerHtml[1]).toContain("After");
+    expect(execute).toHaveBeenCalledWith(expect.stringContaining(JSON.stringify(docs)), true);
+    expect(loadDocument).not.toHaveBeenCalled();
 
     await host.openResource(path.join(root, "CLAUDE.md"), { sourceWebview: webview });
     await openDiff(path.join(root, "CLAUDE.md"));
-    expect(loadDocument).toHaveBeenCalledTimes(2);
+    expect(loadDocument).not.toHaveBeenCalled();
     expect(showMessageBox).toHaveBeenCalledOnce();
   });
 
   it("starts a long turn diff's dock window at its first change", async () => {
     const root = process.cwd();
-    const { host, window, open } = fixture(() => ({ allowedRoots: [root], sessionCwd: root }));
+    const { host, contents, open } = fixture(() => ({ allowedRoots: [root], sessionCwd: root }));
     const { webview } = open();
+    webview.html = "<html></html>";
+    contents.executeJavaScript.mockResolvedValue({ ok: true });
     const lines = Array.from({ length: 2000 }, (_, i) => `line ${i + 1}`);
     const before = Uri.from({ scheme: "long-diff", path: "/before/README.md" });
     const after = Uri.from({ scheme: "long-diff", path: "/after/README.md" });
@@ -198,7 +204,7 @@ describe("desktop conversation pane host", () => {
       sourceWebview: webview, sourcePath: path.join(root, "README.md"),
       selection: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
     });
-    expect(window.webContents.executeJavaScript).toHaveBeenCalledWith(expect.stringContaining('"line":1999'), true);
+    expect(contents.executeJavaScript).toHaveBeenCalledWith(expect.stringContaining('"line":1999'), true);
     expect(loadDocument).not.toHaveBeenCalled();
   });
 
@@ -209,6 +215,14 @@ describe("desktop conversation pane host", () => {
     expect(firstChangedLine("a\nb", "a\nb\nc")).toBe(2);
     // An LF blob against a CRLF working file (Windows autocrlf).
     expect(firstChangedLine("a\nb\nc", "a\r\nb\r\nC")).toBe(2);
+  });
+
+  it("treats the renderer's expected root as a freshness check only", () => {
+    expect(resolveFilePanelRoot(undefined, "/project/second")).toMatchObject({ ok: false, reason: "forbidden" });
+    expect(resolveFilePanelRoot({ root: "/project/first" }, "/project/second"))
+      .toMatchObject({ ok: false, reason: "workspace changed" });
+    expect(resolveFilePanelRoot({ root: "/project/first" }, "/project/first"))
+      .toEqual({ ok: true, root: "/project/first" });
   });
 
   it("hands a pane's PDF to the OS app like the main chat, never to the text viewer", async () => {
@@ -234,7 +248,7 @@ describe("desktop conversation pane host", () => {
     };
     const stateChanged = vi.fn();
     panel.onDidChangeViewState?.(stateChanged);
-    panes.layout({ x: 500, y: 0, width: 400, height: 700 }, 1, false);
+    panes.layout({ x: 0, y: 0, width: 800, height: 700 }, 1, false);
     expect(panel.visible).toBe(true);
     stateChanged.mockClear();
     contents.isFocused.mockReturnValue(true);
@@ -269,7 +283,7 @@ describe("desktop conversation pane host", () => {
       expect(native.setVisible).toHaveBeenLastCalledWith(false);
       expect(panel.visible).toBe(false);
       expect(window.webContents.focus).toHaveBeenCalledOnce();
-      panes.layout({ x: 530, y: 0, width: 350, height: 690 }, 1, false);
+      panes.layout({ x: 0, y: 0, width: 790, height: 690 }, 1, false);
       expect(native.setVisible).toHaveBeenLastCalledWith(false);
 
       const image = doc.createElement("div");
@@ -286,12 +300,12 @@ describe("desktop conversation pane host", () => {
 
       doc.body.classList.add("desk-ft-maximized");
       notifyMutation();
-      expect(panel.visible).toBe(false);
+      expect(panel.visible).toBe(true);
       doc.body.classList.remove("desk-ft-maximized");
       notifyMutation();
       expect(panel.visible).toBe(true);
-      expect(setCovered.mock.calls).toEqual([[false], [true], [false], [true], [false]]);
-      expect(stateChanged).toHaveBeenCalledTimes(4);
+      expect(setCovered.mock.calls).toEqual([[false], [true], [false]]);
+      expect(stateChanged).toHaveBeenCalledTimes(2);
       expect(contents.close).not.toHaveBeenCalled();
     } finally {
       await dom.happyDOM.close();
@@ -335,12 +349,13 @@ describe("desktop conversation pane host", () => {
       expect.stringContaining("__grokConversationClose?.(false)"));
   });
   it("reserves the main column at the minimum width and counts only columns that fit at a scaled size", () => {
-    expect(conversationColumnCapacity(400)).toBe(0);
-    expect(conversationColumnCapacity(720)).toBe(0);
-    expect(conversationColumnCapacity(721)).toBe(1);
-    expect(conversationColumnCapacity(1081)).toBe(1);
-    expect(conversationColumnCapacity(1082)).toBe(2);
-    expect(conversationColumnCapacity(1082 / 1.15)).toBe(1);
+    const count = (width: number, zoom = 1) => planConversationColumns(width, [false, false, false], -1, zoom).length;
+    expect(count(400)).toBe(1);
+    expect(count(720)).toBe(1);
+    expect(count(721)).toBe(2);
+    expect(count(1081)).toBe(2);
+    expect(count(1082)).toBe(3);
+    expect(count(1082, 1.15)).toBe(2);
   });
 
   it("offers the picker at the window floor and only stacks a child when explicitly revealed", async () => {
@@ -352,7 +367,8 @@ describe("desktop conversation pane host", () => {
       const bridge = { setBounds: vi.fn(), setCovered: vi.fn(), showPane: vi.fn() };
       const page = Object.assign(dom, {
         grokDesktopConversations: bridge,
-        __grokConversationLayout: (_count: number, _below: boolean) => {},
+        __grokConversationLayout: (_count: number) => {},
+        __grokConversationGeometry: (_width: number, _stacked: boolean, _count: number) => {},
         __grokConversationPicker: (_hidden: { title: string; id: number; unread: boolean }[], _stacked: boolean) => {},
       });
       let measure = () => {};
@@ -361,13 +377,13 @@ describe("desktop conversation pane host", () => {
         getComputedStyle: () => ({ zoom: "1" }), cancelAnimationFrame: () => {},
         requestAnimationFrame: (callback: () => void) => { measure = callback; },
       });
-      page.__grokConversationLayout(2, false);
+      page.__grokConversationLayout(2);
       const columns = document.getElementById("desk-conversation-columns")!;
       vi.spyOn(columns, "getBoundingClientRect").mockImplementation(() =>
         new dom.DOMRect(0, 0, dom.innerWidth, 600));
       measure();
       expect(document.body.classList.contains("desk-split-compact")).toBe(true);
-      expect(bridge.setBounds.mock.lastCall?.slice(1)).toEqual([0, false]);
+      expect(bridge.setBounds).toHaveBeenLastCalledWith({ x: 0, y: 0, width: 400, height: 600 }, 1, false);
 
       page.__grokConversationPicker([{ title: "Draft", id: 22, unread: true }, { title: "Review", id: 23, unread: false }], false);
       const picker = document.querySelector("select")!;
@@ -375,19 +391,18 @@ describe("desktop conversation pane host", () => {
       picker.value = "22";
       picker.dispatchEvent(new dom.Event("change"));
       expect(bridge.showPane).toHaveBeenCalledWith(22);
-      page.__grokConversationLayout(2, true);
-      measure();
-      expect(bridge.setBounds.mock.lastCall?.slice(1)).toEqual([1, true]);
+      page.__grokConversationGeometry(400, true, 1);
+      expect(columns.classList.contains("desk-chat-stacked")).toBe(true);
 
       dom.innerWidth = 1100;
       page.dispatchEvent(new dom.Event("resize"));
       measure();
       expect(document.body.classList.contains("desk-split-compact")).toBe(false);
-      expect(bridge.setBounds.mock.lastCall?.slice(1)).toEqual([2, false]);
+      expect(bridge.setBounds).toHaveBeenLastCalledWith({ x: 0, y: 0, width: 1100, height: 600 }, 1, false);
       dom.innerWidth = 400;
       page.dispatchEvent(new dom.Event("resize"));
       measure();
-      expect(bridge.setBounds.mock.lastCall?.slice(1)).toEqual([0, false]);
+      expect(bridge.setBounds).toHaveBeenLastCalledWith({ x: 0, y: 0, width: 400, height: 600 }, 1, false);
     } finally {
       await dom.happyDOM.close();
     }
@@ -401,7 +416,7 @@ describe("desktop conversation pane host", () => {
     const second = open();
     second.title = "A hidden conversation";
     await second.webview.postMessage({ type: "editorChatBinding", sessionId: "hidden-id" });
-    const side = { x: 400, y: 0, width: 400, height: 660 };
+    const side = { x: 0, y: 0, width: 800, height: 660 };
     panes.layout(side, 1, false);
     expect(first.visible).toBe(true);
     expect(second.visible).toBe(false);
@@ -416,12 +431,12 @@ describe("desktop conversation pane host", () => {
     expect(second.visible).toBe(true);
     expect(first.visible).toBe(false);
     expect(another.focus).toHaveBeenCalledOnce();
-    panes.layout(side, 0, false);
+    panes.layout({ ...side, width: 400 }, 1, false);
     expect(second.visible).toBe(false);
     second.reveal();
-    panes.layout({ x: 0, y: 335, width: 385, height: 335 }, 1, true);
+    panes.layout({ ...side, width: 400 }, 1, false);
     expect(second.visible).toBe(true);
-    panes.layout({ ...side, width: 790 }, 2, false);
+    panes.layout({ ...side, width: 1100 }, 1, false);
     expect(first.visible && second.visible).toBe(true);
     for (const child of [contents, another]) {
       expect(child.loadURL).not.toHaveBeenCalled();
@@ -447,7 +462,7 @@ describe("desktop conversation pane host", () => {
     const panel = open();
     const visibility = vi.fn(() => panel.visible);
     panel.onDidChangeViewState?.(visibility);
-    panes.layout({ x: 400, y: 0, width: 400, height: 650 }, 1, false);
+    panes.layout({ x: 0, y: 0, width: 800, height: 650 }, 1, false);
     expect(visibility).toHaveLastReturnedWith(false);
     windowVisible.mockReturnValue(true);
     panes.windowVisibilityChanged();
@@ -486,3 +501,19 @@ describe("desktop conversation pane host", () => {
     }
   });
 });
+  it("budgets two open panels at laptop width and keeps each chat's share when one panel closes", () => {
+    expect(planConversationColumns(1620, [true, true])).toEqual([
+      { index: 0, width: 810 }, { index: 1, width: 809 },
+    ]);
+    expect(planConversationColumns(1140, [true, true])).toEqual([
+      { index: 0, width: 570 }, { index: 1, width: 569 },
+    ]);
+    expect(planConversationColumns(1140, [true, false])).toEqual(planConversationColumns(1140, [true, true]));
+    expect(planConversationColumns(1100, [true, true])).toEqual([{ index: 0, width: 1100 }]);
+  });
+
+  it("includes the preferred overflow chat when its panel fits and preserves open order", () => {
+    expect(planConversationColumns(1000, [false, false, true], 2)).toEqual([
+      { index: 0, width: 438 }, { index: 2, width: 561 },
+    ]);
+  });

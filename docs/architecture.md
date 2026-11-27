@@ -515,13 +515,16 @@ plain clicks or keyboard activation reuse the preferred chat or reveal an
 already-open conversation. The embedded rail leaves chat focus tracking to
 the chats themselves. Each added pane hosts the conversation-only renderer
 in a `WebContentsView` and uses the same bindings as an editor tab. The window
-renderer reserves equal columns between Projects and the shared Files dock.
-It places its chat header inside the first column while split. Every header
-can toggle Files and close its chat while multiple chats are open. The IPC
-handler checks the sender and its main frame. When the first chat closes,
-`closeDesktopMainChat` parks its draft, adopts the next view's live `Session`,
-and disposes the redundant view. The open order and drafts survive restart
-through desktop workspace state.
+renderer measures the space after Projects. `planConversationColumns` assigns
+chat and Files pairs, with a 360 px chat floor and a 200 px dock floor. Each
+renderer mounts the shared Files component and invokes the same desktop file
+IPC. The registered sender and main frame resolve to a host-owned chat root,
+and a root named by the renderer only checks freshness. Chat file and diff opens
+return to their originating renderer. When the first chat closes,
+`closeDesktopMainChat` parks its draft, adopts the next view's live `Session`
+and Files state, and disposes the redundant view. Desktop workspace state
+restores the open order and drafts, with Files preferences keyed to the
+restored chat slots.
 
 Two details make the pool safe:
 

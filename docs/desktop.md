@@ -83,12 +83,18 @@ the lighter highlight. Desktop `config.json` supports `grok.openConversationIn`
 with `lastUsed` (the default), `sidebar` (the first chat), or `editor` (an added
 pane).
 
-Every chat has the same header controls, including access to the shared
-Files dock. While multiple chats are open, **Close chat pane** removes any
-chat from the window. Its agent keeps running, and reopening the conversation
-recovers its draft. For a chat with no saved history, the next **New session**
-in its project recovers the draft. The window restores its open chats in
-order, with their drafts, when restarted.
+Every chat has a Files dock to its right. The dock shows the chat's project
+tree and Changes, and opens files and diffs requested from that chat. Each
+Files button controls its own dock. If the window runs out of room,
+**More chats** lists the other open chats. Closing a Files dock gives its
+space back to its chat.
+
+While multiple chats are open, **Close chat pane** removes any chat from
+the window. Its agent keeps running, and reopening the conversation recovers
+its draft. For a chat with no saved history, the next **New session** in its
+project recovers the draft. The window restores open chats in order, with
+their drafts and Files dock preferences. File tabs and their edit buffers
+live in memory while the app is running.
 
 Run `npm run test:desktop -- test/desktop/split-view.test.ts` on an interactive
 desktop to exercise both chats with the fake ACP CLI. The driver writes light

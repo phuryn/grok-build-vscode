@@ -20364,11 +20364,20 @@ ${fullText}`
       window.__grokLockPaneForPromotion = () => {
         if (document.body.inert || state.composingIME || editorChatBinding === undefined) return;
         document.body.inert = true;
-        return takePaneSnapshot();
+        return { ...takePaneSnapshot(), files: window.__grokDeskFilePanel?.snapshotTabs() };
       };
     }
+    let checkingFilesBeforeClose = false;
     closeDesktopChat.addEventListener("click", async () => {
-      if (closeDesktopChat.hidden || document.body.inert || state.composingIME) return;
+      if (checkingFilesBeforeClose || closeDesktopChat.hidden || document.body.inert || state.composingIME) return;
+      if (window.__grokDeskFilePanel?.hasDirty()) {
+        checkingFilesBeforeClose = true;
+        try {
+          if (!await window.__grokDeskFtBeforeClose?.()) return;
+        } finally {
+          checkingFilesBeforeClose = false;
+        }
+      }
       if (desktopChatPane && editorChatBinding === undefined) return;
       if (!desktopChatPane && (composerExpectedSessionId || pendingComposerDrafts.has(composerSessionId))) return;
       document.body.inert = true;

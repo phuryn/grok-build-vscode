@@ -293,6 +293,21 @@ describe("shared file-panel component", () => {
     expect(h.panel.hasDirty()).toBe(true);
   });
 
+  it("moves dirty tabs to a replacement renderer behind their original project scope", async () => {
+    const source = harness();
+    const replacement = harness();
+    await settle();
+    await openAndEdit(source, "notes.md", "Unsaved edits from the surviving chat.");
+    await openAndEdit(replacement, "notes.md", "Draft from the closed chat.");
+    replacement.panel.restoreTabs(structuredClone(source.panel.snapshotTabs()));
+    await replacement.panel.setScope(replacement.scopes.b);
+    expect(replacement.document.querySelector(".gfp-editor")).toBeNull();
+    await replacement.panel.setScope(replacement.scopes.a);
+    expect((replacement.document.querySelector(".gfp-editor") as HTMLTextAreaElement).value)
+      .toBe("Unsaved edits from the surviving chat.");
+    expect(replacement.panel.hasDirty()).toBe(true);
+  });
+
   it("a Discard dialog left open across a scope switch closes its OWN scope's tab", async () => {
     // closeTab awaits the confirm; switching projects meanwhile swaps
     // currentState, and the same relPath exists in both scopes. Confirming

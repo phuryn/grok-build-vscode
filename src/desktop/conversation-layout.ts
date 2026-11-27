@@ -1,29 +1,50 @@
 export const DESKTOP_CONVERSATIONS_ARG = "--grok-desktop-conversations";
 export const DESKTOP_CONVERSATION_PANE_ARG = "--grok-desktop-conversation-pane";
 
-const CHAT_MIN_WIDTH = 360;
+export const CHAT_MIN_WIDTH = 360;
+export const FILES_MIN_WIDTH = 200;
+// The 5px grab area overlaps its neighbours by 2px on each side.
+export const FILES_RESIZER_WIDTH = 1;
 
-/** Width in CSS pixels after the rail, dock, and text scale are accounted for. */
-export function conversationColumnCapacity(width: number): number {
-  // Leave a pixel for the rule between each pair of columns.
-  return Math.max(0, Math.floor((width + 1) / (CHAT_MIN_WIDTH + 1)) - 1);
+/** Keep chat/panel pairs together. Size the pairs evenly unless one needs more room. */
+export function planConversationColumns(width: number, filesOpen: readonly boolean[], preferred = -1, zoom = 1) {
+  const minimum = (index: number) => Math.ceil(zoom * (CHAT_MIN_WIDTH +
+    (filesOpen[index] ? FILES_MIN_WIDTH + FILES_RESIZER_WIDTH : 0)));
+  const visible = [0];
+  let remaining = width - minimum(0);
+  const tryFit = (index: number) => {
+    const cost = minimum(index) + 1;
+    if (remaining < cost) return;
+    visible.push(index);
+    remaining -= cost;
+  };
+  if (preferred > 0 && preferred < filesOpen.length) tryFit(preferred);
+  for (let index = 1; index < filesOpen.length; index++) {
+    if (index !== preferred) tryFit(index);
+  }
+  visible.sort((a, b) => a - b);
+  let space = width - (visible.length - 1);
+  const widths = new Map<number, number>();
+  for (const index of [...visible].sort((a, b) => minimum(b) - minimum(a))) {
+    const share = Math.ceil(space / (visible.length - widths.size));
+    const size = visible.length === 1 ? space : Math.max(minimum(index), share);
+    widths.set(index, size);
+    space -= size;
+  }
+  return visible.map(index => ({ index, width: widths.get(index)! }));
 }
 
-// The DOM owns the space between Projects and Files. Native views occupy
-// that space in window DIPs, including when CSS chat zoom scales the document.
+// The DOM measures the space after Projects. The host assigns the first pair
+// and the native views within that rectangle in window DIPs.
 export const DESKTOP_CONVERSATION_LAYOUT_BOOT = `
 (() => {
-  const capacityFor = ${conversationColumnCapacity.toString()};
   const CHAT_MIN_WIDTH = ${CHAT_MIN_WIDTH};
   const compactWidth = CHAT_MIN_WIDTH + 180 + 200 + 8;
   let columns;
   let slot;
   let picker;
-  let total = 0;
-  let showBelow = false;
   let observer;
   let layers;
-  let filesObserver;
   let covered;
   let frame;
   let measuredZoom;
@@ -31,7 +52,7 @@ export const DESKTOP_CONVERSATION_LAYOUT_BOOT = `
   const bridge = () => window.grokDesktopConversations;
   const syncCoverage = () => {
     const flags = body().classList;
-    const next = flags.contains("desk-ft-maximized") || !!body().dataset.modalAbove
+    const next = !!body().dataset.modalAbove
       || !!window.afkpilotLayers?.depth
       || !!body().querySelector(":scope > :is(#preview-overlay, .confirm-overlay)")
       || (flags.contains("desk-split-compact") && !!body().dataset.splitDrawer);
@@ -43,27 +64,21 @@ export const DESKTOP_CONVERSATION_LAYOUT_BOOT = `
     if (name) body().dataset.splitDrawer = name;
     else delete body().dataset.splitDrawer;
     const projects = document.getElementById("desk-rail-open-btn");
-    const files = document.getElementById("desk-ft-top-toggle");
     const compact = body().classList.contains("desk-split-compact");
     if (compact) {
       projects?.setAttribute("aria-expanded", String(name === "projects"));
     } else {
       projects?.removeAttribute("aria-expanded");
     }
-    const filesOpen = compact ? name === "files" : !!window.__grokDeskFilePanel?.isOpen();
-    files?.setAttribute("aria-expanded", String(filesOpen));
-    files?.setAttribute("title", filesOpen ? "Hide file panel" : "Show file panel");
     syncCoverage();
   };
   const drawerClick = event => {
     if (!body().classList.contains("desk-split-compact")) return;
-    const button = event.target.closest?.("#desk-rail-open-btn, #desk-rail-toggle, #desk-ft-top-toggle");
+    const button = event.target.closest?.("#desk-rail-open-btn, #desk-rail-toggle");
     if (!button) return;
     event.stopImmediatePropagation();
     if (button.id === "desk-rail-toggle") { setDrawer(""); return; }
-    const name = button.id === "desk-ft-top-toggle" ? "files" : "projects";
-    setDrawer(body().dataset.splitDrawer === name ? "" : name);
-    if (name === "files" && body().dataset.splitDrawer === name) window.__grokDeskFilePanel?.setOpen(true);
+    setDrawer(body().dataset.splitDrawer === "projects" ? "" : "projects");
   };
   const measure = () => {
     cancelAnimationFrame(frame);
@@ -83,19 +98,12 @@ export const DESKTOP_CONVERSATION_LAYOUT_BOOT = `
         const top = Math.ceil(header.getBoundingClientRect().bottom / zoom) + "px";
         if (body().style.getPropertyValue("--desk-drawer-top") !== top) body().style.setProperty("--desk-drawer-top", top);
       }
-      const capacity = capacityFor(columns.getBoundingClientRect().width / zoom);
-      if (capacity > 0) showBelow = false;
-      const stacked = capacity === 0 && showBelow;
-      columns.classList.toggle("desk-chat-stacked", stacked);
-      const count = stacked ? 1 : Math.min(total, capacity);
-      slot.hidden = count === 0;
-      slot.style.flexGrow = count;
-      const { left, top, right, bottom } = slot.getBoundingClientRect();
-      const x = Math.ceil(left) + (stacked ? 0 : 1);
-      const y = Math.ceil(top) + (stacked ? 1 : 0);
+      const { left, top, right, bottom } = columns.getBoundingClientRect();
+      const x = Math.ceil(left);
+      const y = Math.ceil(top);
       bridge()?.setBounds({
         x, y, width: Math.max(0, Math.floor(right) - x), height: Math.max(0, Math.floor(bottom) - y)
-      }, count, stacked);
+      }, zoom, !!window.__grokDeskFilePanel?.isOpen());
     });
   };
   window.__grokConversationPicker = (hidden, stacked) => {
@@ -117,29 +125,31 @@ export const DESKTOP_CONVERSATION_LAYOUT_BOOT = `
     picker.dataset.unread = String(unread > 0);
     if (stacked) picker.append(option(picker.dataset.firstChatLabel, "0"));
   };
-  window.__grokOpenCompactFiles = () => {
-    if (body().classList.contains("desk-split-compact")) setDrawer("files");
-  };
   window.__grokCloseCompactProjects = () => {
     if (body().dataset.splitDrawer === "projects") setDrawer("");
   };
-  window.__grokConversationLayout = (count, below) => {
-    total = count;
-    showBelow = !!below;
+  window.__grokConversationGeometry = (width, stacked, nativeCount) => {
+    if (!columns?.isConnected) return;
+    columns.classList.toggle("desk-chat-stacked", stacked);
+    columns.style.setProperty("--desk-first-column-width", width + "px");
+    slot.hidden = !nativeCount;
+  };
+  window.__grokMeasureConversationLayout = measure;
+  window.__grokConversationLayout = (count) => {
     if (count === 0) {
       if (!columns) return;
       observer?.disconnect();
       layers?.disconnect();
-      filesObserver?.disconnect();
       window.removeEventListener("afkpilot-layers", syncCoverage);
       window.removeEventListener("resize", measure);
       document.removeEventListener("click", drawerClick, true);
       covered = undefined;
       if (columns?.isConnected) {
-        const chat = columns.firstElementChild;
+        const shell = columns.firstElementChild;
+        const chat = shell?.querySelector(".desk-ft-chat");
         const header = chat?.querySelector(":scope > .top-bar");
-        if (header) columns.parentElement.before(header);
-        columns.before(chat);
+        if (header) columns.before(header);
+        columns.before(shell);
         columns.remove();
       }
       body().classList.remove("desk-split-compact");
@@ -150,6 +160,7 @@ export const DESKTOP_CONVERSATION_LAYOUT_BOOT = `
       slot = undefined;
       measuredZoom = undefined;
       window.__grokReclampSidePanels?.();
+      window.__grokFitDesktopFiles?.();
       return;
     }
     if (!columns?.isConnected) {
@@ -160,11 +171,13 @@ export const DESKTOP_CONVERSATION_LAYOUT_BOOT = `
       if (header) chat.prepend(header);
       columns = document.createElement("div");
       columns.id = "desk-conversation-columns";
-      chat.before(columns);
+      shell.before(columns);
       slot = document.createElement("div");
       slot.id = "desk-conversation-slot";
       slot.setAttribute("aria-hidden", "true");
-      columns.append(chat, slot);
+      columns.append(shell, slot);
+      window.__grokReclampSidePanels?.();
+      window.__grokFitDesktopFiles?.();
       window.__grokRefreshDesktopTheme?.();
       picker = document.createElement("select");
       picker.id = "desk-conversation-picker";
@@ -179,16 +192,6 @@ export const DESKTOP_CONVERSATION_LAYOUT_BOOT = `
         picker.value = "";
       });
       header?.after(picker);
-      const files = document.getElementById("desk-ft-top-toggle");
-      if (files) {
-        const publish = () => {
-          const badge = files.querySelector(".gfp-toggle-count:not([hidden])");
-          bridge()?.publishFiles(files.getAttribute("aria-expanded") === "true", files.title, badge?.textContent || "");
-        };
-        filesObserver = new MutationObserver(publish);
-        filesObserver.observe(files, { attributes: true, childList: true, subtree: true, characterData: true });
-        publish();
-      }
       observer?.disconnect();
       observer = new ResizeObserver(measure);
       observer.observe(columns);
@@ -210,24 +213,6 @@ export const DESKTOP_CONVERSATION_LAYOUT_BOOT = `
 })();
 `;
 
-export const DESKTOP_CONVERSATION_PANE_BOOT = String.raw`
-document.addEventListener("DOMContentLoaded", () => {
-  const files = document.getElementById("desk-ft-top-toggle");
-  if (!files) return;
-  files.insertAdjacentHTML("afterbegin", window.GrokFilePanel.panelIcon("right"));
-  files.addEventListener("click", () => window.grokDesktopConversations?.toggleFiles());
-});
-window.__grokConversationFiles = (expanded, title, count) => {
-  const files = document.getElementById("desk-ft-top-toggle");
-  const badge = files?.querySelector(".gfp-toggle-count");
-  if (!badge) return;
-  files.setAttribute("aria-expanded", expanded);
-  files.title = title;
-  badge.textContent = count;
-  badge.hidden = !count;
-};
-`;
-
 export interface DesktopChatDraftSnapshot {
   text: string | null;
   chipIds: string[];
@@ -241,4 +226,5 @@ export interface DesktopMainCloseSnapshot extends DesktopChatDraftSnapshot {
 export interface DesktopPaneCloseSnapshot extends DesktopChatDraftSnapshot {
   binding: number;
   scrollTop: number | null;
+  files?: unknown;
 }

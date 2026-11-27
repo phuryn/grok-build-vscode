@@ -2339,12 +2339,8 @@ describe("file-tree panel assets", () => {
     expect(history).toBeGreaterThan(remote);
     expect(newSession).toBeGreaterThan(history);
     expect(overflow).toBeGreaterThan(newSession);
-    const separator = topBar.indexOf('id="desk-ft-top-sep"');
-    const files = topBar.indexOf('id="desk-ft-top-toggle"');
     const close = topBar.indexOf('id="desk-conversation-close"');
-    expect(separator).toBeGreaterThan(overflow);
-    expect(files).toBeGreaterThan(separator);
-    expect(close).toBeGreaterThan(files);
+    expect(close).toBeGreaterThan(overflow);
     // Mutation: overflow before remote would fail.
     expect(overflow).toBeGreaterThan(remote);
 
@@ -2382,6 +2378,8 @@ describe("file-tree panel assets", () => {
     const boot = fileTreePanelBootSource();
     expect(boot).toContain('separator.id = "desk-ft-top-sep"');
     expect(boot).toContain('getElementById("desk-ft-top-sep")?.remove()');
+    expect(boot).toContain("topBar.insertBefore(separator, closeChat)");
+    expect(boot).toContain("topBar.insertBefore(panel.toggleElement, closeChat)");
   });
 
   it("keeps rendering in the shared asset and host concerns in the desktop adapter", () => {
@@ -3437,7 +3435,7 @@ describe("desktop openFile / openUrl policy (A1)", () => {
     expect(revealRefuse).toBeGreaterThan(0);
     expect(revealCall).toBeGreaterThan(0);
     expect(revealRefuse).toBeLessThan(revealCall);
-    expect(revealBody).toContain("isIpcFromMainWindow");
+    expect(revealBody).toContain("rootFor(e, expectedRoot)");
   });
 });
 
@@ -4151,7 +4149,7 @@ describe("file-tree editing panel contract", () => {
     const base = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
     const preload = fs.readFileSync(path.join(base, "src", "desktop", "preload.ts"), "utf8");
     const ipc = fs.readFileSync(path.join(base, "src", "desktop", "file-tree-ipc.ts"), "utf8");
-    expect(preload).toContain('ipcRenderer.invoke("desk-ft:save", request)');
+    expect(preload).toContain('ipcRenderer.invoke("desk-ft:save", request, root)');
     expect(ipc).toContain('const CH_SAVE = "desk-ft:save"');
     expect(ipc).toContain("writeTreeFile");
     expect(ipc).toContain("CH_SAVE");
@@ -4423,8 +4421,8 @@ describe("file tree rebind on project change (P2-3)", () => {
   it("panel boot source listens for root changes and switches isolated scopes", () => {
     const src = fileTreePanelBootSource();
     expect(src).toContain("onRootChanged");
-    expect(src).toContain("onScopeChanged");
-    expect(src).toContain("listener(normalizeRoot(await api.root()))");
+    expect(src).toContain("const value = await api.root()");
+    expect(src).toContain("panel.setScope(root)");
     expect(filePanelJs).toContain("function setScope(scope");
     expect(filePanelJs).toContain("state = makeScopeState(scope)");
     expect(filePanelJs).toContain("scopes.set(scope.id, state)");
@@ -4453,7 +4451,7 @@ describe("file tree rebind on project change (P2-3)", () => {
     );
     expect(preload).toContain("onRootChanged");
     expect(preload).toContain("desk-ft:root-changed");
-    expect(main).toContain("onWorkspaceRootChanged");
+    expect(main).toContain("onWorkspaceFoldersChanged");
     expect(main).toContain("desk-ft:root-changed");
   });
 

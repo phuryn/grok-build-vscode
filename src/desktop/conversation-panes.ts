@@ -5,11 +5,13 @@ import type { BrowserWindow, IpcMainInvokeEvent, Rectangle } from "electron";
 import type { Host, HostEditorWebview } from "../host";
 import {
   DESKTOP_CONVERSATION_PANE_ARG, type DesktopChatDraftSnapshot, type DesktopPaneCloseSnapshot,
+  planConversationColumns,
 } from "./conversation-layout";
 import type { DesktopOpenFileContext } from "./desktop-policy";
 import { APP_DOCUMENT_URL, desktopChromeBootSource, ElectronWebview } from "./electron-webview";
 import { installWindowSecurityLocks } from "./window-security";
 import { installDesktopZoomHandlers } from "./window-zoom";
+import { injectFileTreePanelLogged } from "./file-tree-ipc";
 
 type Pane = {
   view: WebContentsView;
@@ -20,6 +22,7 @@ type Pane = {
   shown: boolean;
   inLayout: boolean;
   unread: boolean;
+  filesOpen: boolean;
 };
 
 export class DesktopConversationPanes {
@@ -30,7 +33,7 @@ export class DesktopConversationPanes {
   private preferred?: number;
   private pendingFocus?: number;
   private pickerSnapshot?: string;
-  private filesState?: string;
+  private geometry?: string;
   private promoting = false;
 
   constructor(
@@ -108,7 +111,7 @@ export class DesktopConversationPanes {
       dispose,
     };
     const updatePicker = () => this.publishPicker();
-    const pane: Pane = { view, webview, url, panel, stateChanged, shown: false, inLayout: false, unread: false };
+    const pane: Pane = { view, webview, url, panel, stateChanged, shown: false, inLayout: false, unread: false, filesOpen: false };
     let sessionId: unknown;
     webview.onHostMessage = message => {
       if (!message || typeof message !== "object") return;
@@ -140,7 +143,7 @@ export class DesktopConversationPanes {
       pinZoom();
       void contents.executeJavaScript(desktopChromeBootSource()).catch(() => {});
       void contents.executeJavaScript("window.__grokConversationClose?.(true)").catch(() => {});
-      if (this.filesState) void contents.executeJavaScript(this.filesState).catch(() => {});
+      void injectFileTreePanelLogged(contents, this.log);
     });
     contents.on("focus", () => {
       if (pane.shown) this.preferred = id;
@@ -183,6 +186,33 @@ export class DesktopConversationPanes {
     return this.fromEvent(event)?.webview.dispatchConversationMessage(message) ?? false;
   }
 
+  webviewFromEvent(event: Pick<IpcMainInvokeEvent, "sender" | "senderFrame">): ElectronWebview | undefined {
+    return this.fromEvent(event)?.webview;
+  }
+
+  fileRootsChanged(): void {
+    for (const { view } of this.panes.values()) {
+      if (!view.webContents.isDestroyed()) view.webContents.send("desk-ft:root-changed");
+    }
+  }
+
+  filePanelChanged(event: Pick<IpcMainInvokeEvent, "sender" | "senderFrame">, open: boolean): void {
+    const pane = this.fromEvent(event);
+    if (!pane || pane.filesOpen === open) return;
+    pane.filesOpen = open;
+    this.runInMain("window.__grokMeasureConversationLayout?.()");
+  }
+
+  async confirmFilesClose(): Promise<boolean> {
+    const contents = this.getWindow()?.webContents;
+    if (!contents || contents.isDestroyed()) return false;
+    const dirty = await Promise.all([...this.panes.values()].map(({ view }) =>
+      view.webContents.executeJavaScript("window.__grokDeskFilePanel?.hasDirty()").catch(() => !view.webContents.isDestroyed())));
+    if (!dirty.some(Boolean)) return true;
+    // A chat may be in More chats. Confirm in the visible window.
+    return await contents.executeJavaScript("window.__grokDeskFtBeforeClose?.(true)") === true;
+  }
+
   close(event: Pick<IpcMainInvokeEvent, "sender" | "senderFrame">,
     saveDraft: (webview: ElectronWebview) => boolean): boolean {
     const pane = this.fromEvent(event);
@@ -208,20 +238,6 @@ export class DesktopConversationPanes {
     }
   }
 
-  toggleFiles(event: Pick<IpcMainInvokeEvent, "sender" | "senderFrame">): boolean {
-    if (!this.fromEvent(event)) return false;
-    this.runInMain('document.getElementById("desk-ft-top-toggle")?.click()');
-    return true;
-  }
-
-  publishFiles(expanded: boolean, title: string, count: string): void {
-    const source = `window.__grokConversationFiles?.(...${JSON.stringify([expanded, title, count])})`;
-    if (this.filesState === source) return;
-    this.filesState = source;
-    for (const { view } of this.panes.values()) {
-      if (!view.webContents.isDestroyed()) void view.webContents.executeJavaScript(source).catch(() => {});
-    }
-  }
 
   setCovered(covered: boolean): void {
     if (this.covered === covered || !this.panes.size) return;
@@ -257,7 +273,8 @@ export class DesktopConversationPanes {
   }
 
   refreshLayout(): void {
-    this.runInMain(`window.__grokConversationLayout?.(${this.panes.size}, ${this.showBelow}); window.__grokConversationClose?.(${this.panes.size > 0})`);
+    this.geometry = undefined;
+    this.runInMain(`window.__grokConversationLayout?.(${this.panes.size}); window.__grokConversationClose?.(${this.panes.size > 0})`);
     this.publishPicker(true);
   }
 
@@ -307,29 +324,41 @@ export class DesktopConversationPanes {
     return [...this.panes.values()].find(pane => pane.panel.active)?.view.webContents;
   }
 
-  layout(raw: unknown, count: unknown, stacked: unknown): void {
+  layout(raw: unknown, zoom: unknown, mainFilesOpen: unknown): void {
     const win = this.getWindow();
     if (!win || win.isDestroyed() || this.panes.size === 0 || !raw || typeof raw !== "object") return;
-    if (typeof count !== "number" || !Number.isSafeInteger(count) || count < 0 || typeof stacked !== "boolean") return;
+    if (typeof zoom !== "number" || !Number.isFinite(zoom) || zoom <= 0 || typeof mainFilesOpen !== "boolean") return;
     const { x, y, width, height } = raw as Rectangle;
     if (![x, y, width, height].every(Number.isSafeInteger) || x < 0 || y < 0 || width < 0 || height < 0) return;
     const content = win.getContentBounds();
     const usableWidth = Math.max(0, Math.min(width, content.width - x));
     const usableHeight = Math.max(0, Math.min(height, content.height - y));
-    const slots = Math.min(count, this.panes.size);
-    this.stacked = stacked && slots === 1;
-    if (slots && !this.stacked) this.showBelow = false;
-    const visible = [...this.panes.keys()].slice(0, slots);
-    if (slots && this.preferred !== undefined && !visible.includes(this.preferred)) visible[slots - 1] = this.preferred;
-    const columnWidth = Math.max(0, usableWidth - Math.max(0, slots - 1));
+    const entries = [...this.panes];
+    const preferred = entries.findIndex(([id]) => id === this.preferred) + 1;
+    let columns = planConversationColumns(usableWidth, [mainFilesOpen, ...entries.map(([, pane]) => pane.filesOpen)], preferred, zoom);
+    this.stacked = this.showBelow && preferred > 0 && !columns.some(column => column.index === preferred);
+    if (this.stacked) columns = [{ index: 0, width: usableWidth }, { index: preferred, width: usableWidth }];
+    else if (columns.length > 1) this.showBelow = false;
+    const geometry = JSON.stringify([columns[0].width / zoom, this.stacked, columns.length - 1]);
+    if (geometry !== this.geometry) {
+      this.geometry = geometry;
+      this.runInMain(`window.__grokConversationGeometry?.(...${geometry})`);
+    }
+    const bounds = new Map<number, Rectangle>();
+    let left = x;
+    for (const { index, width: pairWidth } of columns) {
+      if (index > 0) {
+        const top = this.stacked ? y + Math.ceil(usableHeight / 2) + 1 : y;
+        bounds.set(entries[index - 1][0], { x: this.stacked ? x : left, y: top, width: pairWidth,
+          height: Math.max(0, usableHeight - (top - y)) });
+      }
+      left += pairWidth + 1;
+    }
     for (const [id, pane] of this.panes) {
-      const column = visible.indexOf(id);
-      if (column < 0 && pane.inLayout) pane.view.setBounds({ x: 0, y: 0, width: 0, height: 0 });
-      pane.inLayout = column >= 0;
-      if (!pane.inLayout) continue;
-      const start = Math.round(column * columnWidth / slots) + column;
-      const end = Math.round((column + 1) * columnWidth / slots) + column;
-      pane.view.setBounds({ x: x + start, y, width: end - start, height: usableHeight });
+      const next = bounds.get(id);
+      if (next) pane.view.setBounds(next);
+      else if (pane.inLayout) pane.view.setBounds({ x: 0, y: 0, width: 0, height: 0 });
+      pane.inLayout = !!next;
     }
     this.applyVisibility();
     this.publishPicker();

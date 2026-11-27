@@ -28,7 +28,7 @@ import {
   ResourceRegistry,
 } from "./resource-registry";
 import { parseWebviewMsg } from "./webview-msg-validate";
-import { DESKTOP_CONVERSATION_LAYOUT_BOOT, DESKTOP_CONVERSATION_PANE_BOOT } from "./conversation-layout";
+import { DESKTOP_CONVERSATION_LAYOUT_BOOT } from "./conversation-layout";
 
 const SCHEME = "app-resource";
 const AUTHORITY = "vsc-resource";
@@ -324,16 +324,25 @@ body.desk .desk-ft-chat > .composer {
   min-width: 0;
   min-height: 0;
 }
-#desk-conversation-columns > .desk-ft-chat, #desk-conversation-slot {
+#desk-conversation-columns > .desk-ft-shell, #desk-conversation-slot {
   flex: 1 1 0;
   min-width: 0;
   min-height: 0;
 }
+body.desk #desk-conversation-columns > .desk-ft-shell {
+  flex: 0 0 var(--desk-first-column-width, 100%);
+  width: auto;
+}
+#desk-conversation-slot[hidden] { display: none; }
 #desk-conversation-slot {
   border-inline-start: 1px solid var(--vscode-editorWidget-border);
   background: var(--vscode-editorWidget-border);
 }
 #desk-conversation-columns.desk-chat-stacked { flex-direction: column; }
+body.desk #desk-conversation-columns.desk-chat-stacked > .desk-ft-shell {
+  flex: 1 1 0;
+  height: auto;
+}
 .desk-chat-stacked #desk-conversation-slot {
   border-inline-start: 0;
   border-block-start: 1px solid var(--vscode-editorWidget-border);
@@ -349,7 +358,6 @@ body.desk .desk-ft-chat > .composer {
     overflow-y: auto !important;
   }
 }
-body.desk-ft-maximized #desk-conversation-columns { display: none; }
 #desk-conversation-picker {
   align-self: start;
   flex: none;
@@ -367,12 +375,9 @@ body.desk-ft-maximized #desk-conversation-columns { display: none; }
 #desk-conversation-picker:focus-visible { outline: 2px solid var(--vscode-focusBorder); }
 body.desk-split-compact #desk-rail-open-btn { display: inline-flex; }
 body.desk-split-compact #rail-resizer,
-body.desk-split-compact #desk-ft-resizer,
-body.desk-split-compact:not([data-split-drawer="projects"]) #projects-rail,
-body.desk-split-compact:not([data-split-drawer="files"]) #desk-ft-panel { display: none !important; }
+body.desk-split-compact:not([data-split-drawer="projects"]) #projects-rail { display: none !important; }
 body.desk-split-compact[data-split-drawer="projects"] #projects-rail { display: flex !important; }
-body.desk-split-compact #projects-rail,
-body.desk-split-compact #desk-ft-panel {
+body.desk-split-compact #projects-rail {
   position: fixed;
   inset-block: var(--desk-drawer-top, 40px) 0;
   height: auto;
@@ -381,8 +386,17 @@ body.desk-split-compact #desk-ft-panel {
   box-shadow: 0 0 12px var(--vscode-widget-shadow);
 }
 body.desk-split-compact #projects-rail { inset-inline-start: 0; }
-body.desk-split-compact #desk-ft-panel { inset-inline-end: 0; }
-body.desk-split-compact #desk-ft-maximize { display: none; }
+.desk-ft-shell.desk-ft-pair-compact { position: relative; }
+.desk-ft-pair-compact > #desk-ft-panel {
+  position: absolute;
+  inset-block: var(--desk-ft-pair-top, 0) 0;
+  inset-inline-end: 0;
+  height: auto;
+  z-index: 35;
+  box-shadow: 0 0 12px var(--vscode-widget-shadow);
+}
+.desk-ft-pair-compact > #desk-ft-resizer,
+.desk-ft-pair-compact #desk-ft-maximize { display: none; }
 #desk-conversation-close[hidden] { display: none; }
 
 /* Scroll-edge fades — port of AFK Pilot web/chat.html (not shared chat.css). */
@@ -521,6 +535,11 @@ export class ElectronWebview implements HostWebview {
    */
   getDocumentHtml(): string {
     return this._html;
+  }
+
+  filePanelContents(): WebContents | null {
+    const contents = this.getContents();
+    return contents && !contents.isDestroyed() && contents.getURL() === this.documentUrl ? contents : null;
   }
 
   get options(): HostWebview["options"] {
@@ -702,7 +721,7 @@ function injectTheme(html: string, conversationPane: boolean): string {
   const nonce = nonceMatch?.[1];
   const scriptTag = nonce
     ? `<script nonce="${nonce}" id="grok-desktop-theme-boot">${DESKTOP_THEME_BOOT}</script>
-<script nonce="${nonce}">${conversationPane ? DESKTOP_CONVERSATION_PANE_BOOT : DESKTOP_CONVERSATION_LAYOUT_BOOT}</script>`
+${conversationPane ? "" : `<script nonce="${nonce}">${DESKTOP_CONVERSATION_LAYOUT_BOOT}</script>`}`
     : "";
   const tags = styleTag + scriptTag;
   if (html.includes("</head>")) {

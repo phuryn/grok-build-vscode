@@ -775,6 +775,7 @@ const EDITOR_CHAT_STATE = "grok.editorChatPanel.";
 const PARKED_EDITOR_DRAFT = "grok.editorChatDraft.";
 const DESKTOP_CONVERSATION_LAYOUT = "grok.desktopConversationLayout";
 const DESKTOP_MAIN_DRAFT = "grok.desktopMainDraft";
+const DESKTOP_MAIN_FILES = "grok.desktopMainFiles";
 const DESKTOP_CLOSED_NEW_DRAFTS = "grok.desktopClosedNewDrafts";
 
 interface DesktopConversationLayout {
@@ -4375,8 +4376,9 @@ export class GrokSidebar {
     tab.promoted = true;
     const sessionId = session.activeSessionId ?? null;
     this.stopSplitSidebarVoice();
+    this.writeEditorWorkspaceState(DESKTOP_MAIN_FILES, tab.restoreKey);
     this.closeEditorChat(tab);
-    void view.webview.postMessage({ type: "desktopChatAdopted", sessionId });
+    void view.webview.postMessage({ type: "desktopChatAdopted", sessionId, files: promoted.files });
     this.focusSession(session, true);
     this.postLocal({ type: "setBusy", ...rehydrateBusyChrome(session) });
     if (draft) this.restoreComposerFor(session, undefined, draft.text, draft.chips, true);
@@ -4406,9 +4408,19 @@ export class GrokSidebar {
     return this.view?.webview === webview ? this.focused : this.desktopEditorSession(webview);
   }
 
+  desktopFilePanelScope(webview: HostWebview): { root?: string; preferencesKey?: string } | undefined {
+    const main = this.view?.webview === webview;
+    const tab = main ? undefined : [...this.editorChats].find(chat => chat.panel.webview === webview);
+    const session = main ? this.focused : tab?.session;
+    if (!session) return;
+    const cwd = session.cwd ?? (main ? this.workspaceRoot() : undefined);
+    const root = cwd && this.isAuthorizedCwd(cwd) ? path.resolve(cwd) : undefined;
+    return { root, preferencesKey: main ? this.context.workspaceState?.get<string>(DESKTOP_MAIN_FILES) : tab?.restoreKey };
+  }
+
   private desktopFileSource(tab?: EditorChatTab): HostWebview | undefined {
     if (!this.host.canSwitchWorkspaceFolder) return;
-    return tab?.panel.webview ?? (this.editorChats?.size ? this.view?.webview : undefined);
+    return tab?.panel.webview ?? this.view?.webview;
   }
 
   focusDesktopMainChat(): void {
@@ -26755,10 +26767,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     const closeMain = desktopChrome ? `</div>` : "";
     // Files shell is in the first HTML frame so desktop never paints the
     // panel-less column and then upgrades. Inject reuses this node.
-    const fileShellOpen = desktopChrome
+    const fileShellOpen = desktopChat
       ? `<div id="desk-ft-shell" class="desk-ft-shell"><div class="desk-ft-chat">`
       : "";
-    const fileShellClose = desktopChrome ? `</div></div>` : "";
+    const fileShellClose = desktopChat ? `</div></div>` : "";
     const deskLayoutClass = desktopChrome ? " has-rail desk-with-ft" : desktopChat ? " desk-with-ft" : "";
     const firstFrameLayout = desktopChrome
       ? `
@@ -26806,7 +26818,7 @@ ${filePanelStyle}
 ${desktopChrome ? `<script nonce="${nonce}">try{if(localStorage.getItem("desk-rail-open")==="0")document.body.classList.add("desk-rail-collapsed")}catch(e){}</script>` : ""}
 ${railMount}
 ${openMain}
-  <header class="top-bar"${splitChat && !editorChat ? ` data-first-chat-label="${l10n("Show first chat only")}"` : ""}>
+  <header class="top-bar"${desktopChat ? ` data-files-label="${l10n("Toggle file panel")}"` : ""}${splitChat && !editorChat ? ` data-first-chat-label="${l10n("Show first chat only")}"` : ""}>
     <div id="session-name-chip" class="session-name-chip" hidden>
       <button id="session-name-label" class="session-name-label" type="button"></button>
       <!-- Which project this conversation belongs to. History went
@@ -26821,10 +26833,6 @@ ${openMain}
     <button id="history-btn" class="icon-btn" title="${l10n("Session history")}"></button>
     <button id="new-btn" class="icon-btn" title="${l10n("New session")}"></button>
     ${desktopChat ? `<div id="session-head-actions"></div>` : `<div id="vscode-session-actions"></div>`}
-    ${desktopChat && editorChat ? `<span id="desk-ft-top-sep" class="desk-ft-top-sep" aria-hidden="true"></span>
-    <button id="desk-ft-top-toggle" class="gfp-toggle desk-ft-top-toggle" type="button" aria-label="${l10n("Toggle file panel")}" aria-expanded="false">
-      <span class="gfp-toggle-count" aria-hidden="true" hidden></span>
-    </button>` : ""}
     ${splitChat ? `<button id="desk-conversation-close" class="icon-btn" type="button" title="${l10n("Close chat pane")}" aria-label="${l10n("Close chat pane")}" hidden></button>` : ""}
     <div id="repo-popover" class="toolbar-popover repo-popover" hidden></div>
     <div id="history-popover" class="toolbar-popover history-popover" hidden></div>
