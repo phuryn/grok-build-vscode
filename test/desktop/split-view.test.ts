@@ -104,19 +104,39 @@ async function captureWindow(app: ElectronApplication, file: string, reply = pan
     })()`);
     if ("missing" in rect) throw new Error("Child reply is missing; agent messages: " + JSON.stringify(rect.missing));
     const childBounds = pane.getBounds();
-    const childShot = await pane.webContents.capturePage(rect);
-    const reference = childShot.resize({ width: rect.width, height: rect.height }).toBitmap();
     const ink = (rgba: Buffer, offset: number, ground: number) =>
       Math.abs((rgba[offset] + rgba[offset + 1] + rgba[offset + 2]) / 3 - ground) > 45;
-    const referenceGround = (reference[0] + reference[1] + reference[2]) / 3;
-    const textPixels: { x: number; y: number; ink: boolean }[] = [];
-    for (let y = 0; y < rect.height; y++) {
-      for (let x = 0; x < rect.width; x++) {
-        textPixels.push({ x, y, ink: ink(reference, (y * rect.width + x) * 4, referenceGround) });
+    let referenceGround = 0;
+    let textPixels: { x: number; y: number; ink: boolean }[] = [];
+    let glyphPixels = 0;
+    // A view that has not painted since the last theme switch or scroll (or a
+    // window Windows treats as covered) captures without text: ask it to
+    // repaint and retry for a few seconds before calling it a failure.
+    for (let attempt = 0; attempt < 10 && glyphPixels < 20; attempt++) {
+      if (attempt > 0) {
+        pane.webContents.invalidate();
+        await new Promise(resolve => setTimeout(resolve, 300));
       }
+      const reference = (await pane.webContents.capturePage(rect))
+        .resize({ width: rect.width, height: rect.height }).toBitmap();
+      referenceGround = (reference[0] + reference[1] + reference[2]) / 3;
+      textPixels = [];
+      for (let y = 0; y < rect.height; y++) {
+        for (let x = 0; x < rect.width; x++) {
+          textPixels.push({ x, y, ink: ink(reference, (y * rect.width + x) * 4, referenceGround) });
+        }
+      }
+      glyphPixels = textPixels.filter(p => p.ink).length;
     }
-    const glyphPixels = textPixels.filter(p => p.ink).length;
-    if (glyphPixels < 20) throw new Error("Child renderer capture has no reply glyphs");
+    if (glyphPixels < 20) {
+      const where = await Promise.all(panes.map(async view => ({
+        url: view.webContents.getURL().replace(/^.*\/__app__\//, ""),
+        bounds: view.getBounds(),
+        viewport: await view.webContents.executeJavaScript("innerWidth + 'x' + innerHeight"),
+      })));
+      throw new Error("Child renderer capture has no reply glyphs; picked " + JSON.stringify(where[0])
+        + " rect " + JSON.stringify(rect) + "; panes " + JSON.stringify(where));
+    }
 
     // Compare the actual reply's glyph mask in the composited image at the
     // native view's location. A picture of the main webContents alone fails.
