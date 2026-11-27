@@ -398,6 +398,83 @@ describe("desktop conversation pane host", () => {
     }
   });
 
+  it("coalesces divider moves and clears a drag on every pointer interruption", async () => {
+    const dom = new Window();
+    try {
+      const { document } = dom;
+      document.body.innerHTML = '<main><div class="desk-ft-shell"><div class="desk-ft-chat"></div></div></main>';
+      const resizeGrid = vi.fn();
+      const divider = { axis: "column", column: 0, row: 0, x: 400, y: 0, width: 5, height: 600 };
+      const page = Object.assign(dom, {
+        grokDesktopConversations: { setBounds: vi.fn(), setCovered: vi.fn(), resizeGrid },
+        __grokConversationLayout: (_count: number) => {},
+        __grokConversationGeometry: (_width: number, _height: number, _grid: unknown) => {},
+      });
+      let frame = 0;
+      const frames = new Map<number, () => void>();
+      const flush = () => {
+        const queued = [...frames.values()];
+        frames.clear();
+        for (const callback of queued) callback();
+      };
+      runInNewContext(DESKTOP_CONVERSATION_LAYOUT_BOOT, {
+        window: page, document, ResizeObserver: dom.ResizeObserver, MutationObserver: dom.MutationObserver,
+        getComputedStyle: () => ({ zoom: "1" }),
+        cancelAnimationFrame: (id: number) => frames.delete(id),
+        requestAnimationFrame: (callback: () => void) => { frames.set(++frame, callback); return frame; },
+      });
+      page.__grokConversationLayout(1);
+      flush();
+      page.__grokConversationGeometry(400, 600, { width: 805, height: 600, zoom: 1, revision: 2, dividers: [divider] });
+      const handle = document.querySelector<HTMLElement>(".desk-grid-divider")!;
+      expect(handle.getAttribute("aria-label")).toBe("Resize chat columns");
+      let captured = false;
+      Object.assign(handle, {
+        setPointerCapture: () => { captured = true; },
+        hasPointerCapture: () => captured,
+        releasePointerCapture: () => { captured = false; },
+      });
+      const pointer = (type: string, x: number, buttons = 1) => handle.dispatchEvent(Object.assign(
+        new dom.MouseEvent(type, { bubbles: true, button: 0, buttons, clientX: x }),
+        { pointerId: 1, isPrimary: true },
+      ));
+      pointer("pointerdown", 402);
+      expect(document.body.dataset.deskGridDrag).toBe("column");
+      pointer("pointermove", 411);
+      pointer("pointermove", 422);
+      expect(resizeGrid).not.toHaveBeenCalled();
+      flush();
+      expect(resizeGrid.mock.calls).toEqual([[{ axis: "column", column: 0, row: 0, revision: 2, position: 420 }]]);
+      pointer("pointerup", 426, 0);
+      flush();
+      expect(resizeGrid.mock.lastCall?.[0].position).toBe(424);
+      expect(captured).toBe(false);
+      expect(handle.hasAttribute("data-dragging")).toBe(false);
+      expect(document.body.dataset.deskGridDrag).toBeUndefined();
+
+      for (const cancel of [
+        () => pointer("pointercancel", 420, 0),
+        () => pointer("lostpointercapture", 420, 0),
+        () => page.dispatchEvent(new dom.Event("blur")),
+        () => pointer("pointermove", 420, 0),
+      ]) {
+        resizeGrid.mockClear();
+        pointer("pointerdown", 402);
+        pointer("pointermove", 420);
+        expect(handle.hasAttribute("data-dragging")).toBe(true);
+        cancel();
+        pointer("pointermove", 430);
+        flush();
+        expect(resizeGrid).not.toHaveBeenCalled();
+        expect(captured).toBe(false);
+        expect(handle.hasAttribute("data-dragging")).toBe(false);
+        expect(document.body.dataset.deskGridDrag).toBeUndefined();
+      }
+    } finally {
+      await dom.happyDOM.close();
+    }
+  });
+
   it("places every pane and reveals it without moving or reloading any chat", () => {
     const { contents, window, panes, open } = fixture();
     const first = open();
@@ -408,10 +485,11 @@ describe("desktop conversation pane host", () => {
     panes.layout(side, 1, false);
     const views = vi.mocked(window.contentView.addChildView).mock.calls.map(([view]) => view);
     expect(views.map(view => view.getBounds())).toEqual([
-      { x: 10, y: 241, width: 400, height: 219 },
-      { x: 10, y: 461, width: 400, height: 219 },
+      { x: 10, y: 242, width: 400, height: 217 },
+      { x: 10, y: 464, width: 400, height: 216 },
     ]);
-    expect(window.webContents.executeJavaScript).toHaveBeenLastCalledWith("window.__grokConversationGeometry?.(...[400,220])");
+    expect(window.webContents.executeJavaScript).toHaveBeenLastCalledWith(
+      expect.stringContaining('window.__grokConversationGeometry?.(...[400,217,'));
     expect(first.visible && second.visible).toBe(true);
     vi.mocked(window.webContents.executeJavaScript).mockClear();
     second.reveal();
@@ -428,7 +506,7 @@ describe("desktop conversation pane host", () => {
     const panel = open();
     const [[view]] = vi.mocked(window.contentView.addChildView).mock.calls;
     panes.layout({ x: 200, y: 50, width: 9000, height: 9000 }, 1, false);
-    const expected = { x: 701, y: 50, width: 499, height: 750 };
+    const expected = { x: 703, y: 50, width: 497, height: 750 };
     expect(view.getBounds()).toEqual(expected);
     panes.layout({ x: -1, y: 0, width: 400, height: 600 }, 1, false);
     panes.layout({ x: 0, y: 0, width: 400, height: 600.5 }, 1, false);

@@ -54,7 +54,7 @@ import {
   TRAY_NOTICE_CONFIG_KEY,
 } from "./tray";
 import { createAppResourceHandler } from "./app-resource-handler";
-import { DESKTOP_CONVERSATIONS_ARG } from "./conversation-layout";
+import { DESKTOP_CONVERSATIONS_ARG, DESKTOP_GRID_SIZES_KEY } from "./conversation-layout";
 import { DesktopConversationPanes, isDesktopChatDraftSnapshot, parsePaneCloseSnapshot } from "./conversation-panes";
 import type { DesktopOpenFileContext } from "./desktop-policy";
 import { createElectronHost, ensureWorkspaceRoot, type ElectronRemoteActions } from "./electron-host";
@@ -335,6 +335,7 @@ let tray: Tray | null = null;
  * `session-end` handler next to the `close` one.
  */
 let appIsQuitting = false;
+let preserveDesktopSplit: (() => void) | undefined;
 /** Set in createApp; the tray's decisions and the one-shot notice read it. */
 let desktopConfig: ConfigStore | null = null;
 /** The app icon on disk, resized per platform when the Tray is built. */
@@ -614,7 +615,7 @@ async function createApp(): Promise<void> {
   const authContext: { get?: (sourceWebview?: HostWebview) => DesktopOpenFileContext | undefined } = {};
   const conversationPanes = !isCloudEnvironment()
     ? new DesktopConversationPanes(() => mainWindow, log, pane => authContext.get?.(pane),
-        applyDesktopCssZoom, () => sidebar?.focusDesktopMainChat())
+        applyDesktopCssZoom, () => sidebar?.focusDesktopMainChat(), workspaceState?.get(DESKTOP_GRID_SIZES_KEY))
     : undefined;
 
   // Registry + canonical static roots — never free-form ~/.grok path serve.
@@ -891,13 +892,23 @@ async function createApp(): Promise<void> {
    * each one is a way this could strand the app: a real quit must pass through,
    * and a tray that failed to appear must not swallow the window.
    */
+  let preservedWhileQuitting = false;
   const preserveSplit = () => {
+    if (preservedWhileQuitting || !mainWindow || mainWindow.isDestroyed()) return;
+    preservedWhileQuitting = appIsQuitting;
     sidebar?.preserveDesktopConversationLayout();
-    if (!mainWindow || mainWindow.isDestroyed() || !sidebar?.hasSavedDesktopPanes()) return;
+    const hasPanes = sidebar?.hasSavedDesktopPanes();
+    const sizes = hasPanes ? conversationPanes?.savedGridSizes : undefined;
+    if (sizes || workspaceState?.get(DESKTOP_GRID_SIZES_KEY) !== undefined) {
+      void Promise.resolve(workspaceState?.update(DESKTOP_GRID_SIZES_KEY, sizes))
+        .catch(error => log(`[desk-pane] save grid sizes: ${error}`));
+    }
+    if (!hasPanes) return;
     const { width, height } = mainWindow.isMinimized() ? mainWindow.getNormalBounds() : mainWindow.getBounds();
     void Promise.resolve(workspaceState?.update(sizeKey, { width, height }))
       .catch(error => log(`[desk-pane] save window size: ${error}`));
   };
+  preserveDesktopSplit = preserveSplit;
   mainWindow.on("close", (event) => {
     if (!shouldHideWindowOnClose({
       platform: process.platform,
@@ -939,6 +950,7 @@ async function createApp(): Promise<void> {
 
   mainWindow.on("closed", () => {
     mainWindow = null;
+    preserveDesktopSplit = undefined;
     conversationPanes?.dispose();
   });
 
@@ -969,6 +981,9 @@ async function createApp(): Promise<void> {
     });
     ipcMain.on("desk-conversations:bounds", (event, bounds: unknown, zoom: unknown, filesOpen: unknown) => {
       if (isTrustedMainFrameIpc(event, () => mainWindow)) conversationPanes.layout(bounds, zoom, filesOpen);
+    });
+    ipcMain.on("desk-conversations:resize-grid", (event, request: unknown) => {
+      if (isTrustedMainFrameIpc(event, () => mainWindow)) conversationPanes.resizeGrid(request);
     });
     ipcMain.on("desk-conversations:covered", (event, covered: unknown) => {
       if (typeof covered === "boolean" && isTrustedMainFrameIpc(event, () => mainWindow)) {
@@ -1173,7 +1188,7 @@ if (gotSingleInstanceLock) {
     }
     destroyTray();
     try {
-      sidebar?.preserveDesktopConversationLayout();
+      preserveDesktopSplit?.();
       sidebar?.dispose();
     } catch {
       /* best-effort */

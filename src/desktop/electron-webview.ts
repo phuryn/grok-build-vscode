@@ -319,11 +319,57 @@ body.desk .desk-ft-chat > .composer {
 }
 
 #desk-conversation-columns {
+  position: relative;
   display: flex;
   flex: 1 1 0;
   min-width: 0;
   min-height: 0;
-  background: var(--vscode-editorWidget-border);
+  background: var(--vscode-sideBar-background);
+}
+.desk-grid-dividers {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.desk-grid-divider {
+  position: absolute;
+  pointer-events: auto;
+  touch-action: none;
+  user-select: none;
+  --desk-grid-stroke: var(--desk-grid-pixel);
+  --desk-grid-stroke-color: var(--vscode-editorWidget-border);
+}
+.desk-grid-divider:hover,
+.desk-grid-divider[data-dragging] {
+  --desk-grid-stroke: calc(2 * var(--desk-grid-pixel));
+  --desk-grid-stroke-color: var(--vscode-focusBorder);
+}
+.desk-grid-divider::after {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+  background: var(--desk-grid-stroke-color);
+}
+.desk-grid-divider[aria-orientation="vertical"] { cursor: col-resize; }
+.desk-grid-divider[aria-orientation="horizontal"] { cursor: row-resize; }
+body[data-desk-grid-drag="column"] { --desk-grid-drag-cursor: col-resize; }
+body[data-desk-grid-drag="row"] { --desk-grid-drag-cursor: row-resize; }
+body[data-desk-grid-drag],
+body[data-desk-grid-drag] * { cursor: var(--desk-grid-drag-cursor) !important; }
+.desk-grid-divider[aria-orientation="vertical"]::after {
+  inset-block: 0;
+  left: round(down, max(0px, (100% - var(--desk-grid-stroke)) / 2), var(--desk-grid-pixel));
+  width: min(100%, var(--desk-grid-stroke));
+}
+.desk-grid-divider[aria-orientation="horizontal"]::after {
+  inset-inline: 0;
+  top: round(down, max(0px, (100% - var(--desk-grid-stroke)) / 2), var(--desk-grid-pixel));
+  height: min(100%, var(--desk-grid-stroke));
+}
+@media (forced-colors: active) {
+  .desk-grid-divider::after { forced-color-adjust: none; background: CanvasText; }
+  .desk-grid-divider:hover::after,
+  .desk-grid-divider[data-dragging]::after { background: Highlight; }
 }
 body.desk #desk-conversation-columns > .desk-ft-shell {
   flex: none;

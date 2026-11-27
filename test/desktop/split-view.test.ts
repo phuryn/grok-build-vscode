@@ -745,11 +745,15 @@ it("shows every chat in the desktop grid and aligns split headers", async () => 
     await closeFiles.click();
     await filesPanel.waitFor({ state: "hidden" });
 
-    const assertGrid = (expectedRows: number[]) => vi.waitFor(async () => {
+    const gridSnapshot = async () => {
       const area = (await page.locator("#desk-conversation-columns").boundingBox())!;
       const main = (await page.locator("#desk-ft-shell").boundingBox())!;
       const panes = await nativeChats(app!);
-      const cells = [main, ...panes.map(pane => pane.bounds)];
+      return { area, panes, cells: [main, ...panes.map(pane => pane.bounds)] };
+    };
+    const assertGrid = (expectedRows: number[]) => vi.waitFor(async () => {
+      const { area, panes, cells } = await gridSnapshot();
+      const [main] = cells;
       expect(cells).toHaveLength(expectedRows.reduce((sum, rows) => sum + rows, 0));
       expect(panes.every(pane => pane.visible)).toBe(true);
       expect(main.x).toBeCloseTo(area.x, 0);
@@ -765,15 +769,21 @@ it("shows every chat in the desktop grid and aligns split headers", async () => 
         const column = columns.at(-1);
         if (column && Math.abs(cell.x - column[0].x) < 0.5) {
           const above = column.at(-1)!;
-          expect(cell.y - (above.y + above.height)).toBeCloseTo(1, 0);
+          expect(cell.y - (above.y + above.height)).toBeCloseTo(5, 0);
           column.push(cell);
         } else {
           expect(cell.y).toBeCloseTo(area.y, 0);
-          if (column) expect(cell.x - (column[0].x + column[0].width)).toBeCloseTo(1, 0);
+          if (column) expect(cell.x - (column[0].x + column[0].width)).toBeCloseTo(5, 0);
           columns.push([cell]);
         }
       }
       expect(columns.map(column => column.length)).toEqual(expectedRows);
+      const rightmost = columns.at(-1)![0];
+      expect(rightmost.x + rightmost.width).toBeCloseTo(Math.floor(area.x + area.width), 0);
+      for (const column of columns) {
+        const bottom = column.at(-1)!;
+        expect(bottom.y + bottom.height).toBeCloseTo(Math.floor(area.y + area.height), 0);
+      }
       expect(await page.getByLabel("Switch to an open chat").count()).toBe(0);
     });
     const setRailWidth = (width: number) => page.evaluate(value => {
@@ -897,8 +907,38 @@ it("shows every chat in the desktop grid and aligns split headers", async () => 
     expect(await paneEval(app, 'document.querySelector("#input").value', overlayId)).toBe(longDraft);
     expect(await nativeChats(app)).toEqual(fourChats);
     await setRailWidth(originalRailWidth);
+    await assertGrid([2, 2]);
 
-    for (let i = 4; i < sessions.length; i++) await open(i);
+    const columnDivider = page.getByRole("separator", { name: "Resize chat columns" }).first();
+    const rowDivider = page.getByRole("separator", { name: "Resize chat rows" }).last();
+    const dividerPoint = async (divider: typeof columnDivider) => {
+      const box = (await divider.boundingBox())!;
+      return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+    };
+    const pressDivider = async (divider: typeof columnDivider) => {
+      const point = await dividerPoint(divider);
+      await page.mouse.move(point.x, point.y);
+      await page.mouse.down();
+      return point;
+    };
+    const expectFirstWidth = (width: number) => vi.waitFor(async () => {
+      expect((await gridSnapshot()).cells[0].width).toBeCloseTo(width, 0);
+    });
+    const expectDefaultColumns = () => vi.waitFor(async () => {
+      const widths = (await gridSnapshot()).cells.map(cell => cell.width);
+      expect(Math.max(...widths) - Math.min(...widths)).toBeLessThanOrEqual(1.01);
+    });
+
+    await expectDefaultColumns();
+    const four = await gridSnapshot();
+    const fourDivider = await pressDivider(columnDivider);
+    await page.mouse.move(fourDivider.x + 50, fourDivider.y);
+    await page.mouse.up();
+    await expectFirstWidth(four.cells[0].width + 50);
+    await open(4);
+    await assertGrid([2, 3]);
+    await expectDefaultColumns();
+    for (let i = 5; i < sessions.length; i++) await open(i);
     await assertGrid([2, 2, 3]);
     await inThemes(theme => capture(`grid-7-1280x800-${theme}`));
     const seven = await nativeChats(app);
@@ -910,6 +950,101 @@ it("shows every chat in the desktop grid and aligns split headers", async () => 
     await setWindowWidth(1280);
     await expectOverlay(portraitTile, 211);
     expect(await closePaneFiles(portraitTile)).toEqual({ open: false, focus: "input" });
+
+    await setWindowWidth(1536);
+    await assertGrid([2, 2, 3]);
+    await expectDefaultColumns();
+    const baseline = await gridSnapshot();
+    const expectColumnsMoved = (delta: number) => vi.waitFor(async () => {
+      const { cells } = await gridSnapshot();
+      for (const i of [0, 1]) expect(cells[i].width).toBeCloseTo(baseline.cells[i].width + delta, 0);
+      for (const i of [2, 3]) {
+        expect(cells[i].x).toBe(baseline.cells[i].x + delta);
+        expect(cells[i].width).toBe(baseline.cells[i].width - delta);
+      }
+      expect(cells.slice(4)).toEqual(baseline.cells.slice(4));
+      expect(cells.map(cell => [cell.y, cell.height])).toEqual(baseline.cells.map(cell => [cell.y, cell.height]));
+    });
+    const dividerLook = () => columnDivider.evaluate(el => {
+      const style = getComputedStyle(el);
+      return { grab: el.getBoundingClientRect().width, stroke: getComputedStyle(el, "::after").width, cursor: style.cursor,
+        color: style.getPropertyValue("--desk-grid-stroke-color").trim(),
+        border: style.getPropertyValue("--vscode-editorWidget-border").trim(),
+        accent: style.getPropertyValue("--vscode-focusBorder").trim() };
+    });
+    await inThemes(async theme => {
+      await page.mouse.move(1, 1);
+      const rest = await dividerLook();
+      expect(rest).toMatchObject({ grab: 5, stroke: "1px", color: rest.border });
+      await capture(`grid-divider-rest-${theme}`);
+      const point = await dividerPoint(columnDivider);
+      await page.mouse.move(point.x, point.y);
+      const hover = await dividerLook();
+      expect(hover).toMatchObject({ stroke: "2px", cursor: "col-resize", color: hover.accent });
+      await capture(`grid-divider-hover-${theme}`);
+      await page.mouse.down();
+      try {
+        await page.mouse.move(point.x + 32, point.y);
+        await expectColumnsMoved(32);
+        expect(await columnDivider.getAttribute("data-dragging")).toBe("");
+        expect(await dividerLook()).toMatchObject({ stroke: "2px", color: hover.accent });
+        await capture(`grid-divider-drag-${theme}`);
+      } finally {
+        await page.mouse.up();
+      }
+      await columnDivider.dblclick();
+      await expectColumnsMoved(0);
+    });
+
+    const clamp = await pressDivider(columnDivider);
+    await page.mouse.move(baseline.area.x + 10, clamp.y);
+    await page.mouse.up();
+    await expectColumnsMoved(360 - baseline.cells[0].width);
+    const otherClamp = await pressDivider(columnDivider);
+    await page.mouse.move(baseline.area.x + baseline.area.width - 10, otherClamp.y);
+    await page.mouse.up();
+    await expectColumnsMoved(baseline.cells[2].width - 360);
+    await columnDivider.dblclick();
+    await expectColumnsMoved(0);
+
+    const vertical = await pressDivider(rowDivider);
+    await page.mouse.move(vertical.x, vertical.y - 24);
+    await page.mouse.up();
+    await vi.waitFor(async () => {
+      const { cells } = await gridSnapshot();
+      expect(cells.slice(0, 5)).toEqual(baseline.cells.slice(0, 5));
+      expect(cells[5]).toEqual({ ...baseline.cells[5], height: baseline.cells[5].height - 24 });
+      expect(cells[6]).toEqual({ ...baseline.cells[6], y: baseline.cells[6].y - 24, height: baseline.cells[6].height + 24 });
+    });
+    await rowDivider.dblclick();
+    await vi.waitFor(async () => expect((await gridSnapshot()).cells).toEqual(baseline.cells));
+
+    // Measure the synchronous main-process work between IPC listeners, including
+    // planning and native setBounds. CDP bypasses native mouse hit testing.
+    await app.evaluate(({ ipcMain }) => {
+      const timings: number[] = [];
+      let start = 0;
+      Object.assign(globalThis, { gridDragTimings: timings });
+      ipcMain.prependListener("desk-conversations:resize-grid", () => { start = performance.now(); });
+      ipcMain.on("desk-conversations:resize-grid", () => { timings.push(performance.now() - start); });
+    });
+    const timed = await pressDivider(columnDivider);
+    try {
+      for (let i = 1; i <= 20; i++) {
+        await page.mouse.move(timed.x + i * 2, timed.y);
+        await expectColumnsMoved(i * 2);
+      }
+    } finally {
+      await page.mouse.up();
+    }
+    const timings = await app.evaluate(() =>
+      (globalThis as typeof globalThis & { gridDragTimings: number[] }).gridDragTimings);
+    expect(timings).toHaveLength(20);
+    const sorted = [...timings].sort((a, b) => a - b);
+    const p95 = sorted[Math.ceil(sorted.length * 0.95) - 1];
+    const average = timings.reduce((sum, time) => sum + time, 0) / timings.length;
+    console.log(`Seven chats, ${timings.length} drag layouts: mean ${average.toFixed(2)} ms, p95 ${p95.toFixed(2)} ms, max ${sorted.at(-1)!.toFixed(2)} ms`);
+    expect(p95).toBeLessThan(16.7);
 
     for (const { id } of await nativeChats(app)) {
       await paneEval(app, 'requestAnimationFrame(() => document.querySelector("#desk-conversation-close").click())', id);
@@ -1195,6 +1330,30 @@ it("restores all grid chats and keeps dictation with its owner", async () => {
     await vi.waitFor(async () => expect(await railRow(second.id).getAttribute("aria-current")).toBe("true"));
     await expectPane(0, first.title);
 
+    const gridBounds = async () => ({
+      main: await page.locator("#desk-ft-shell").boundingBox(),
+      panes: (await nativeChats(app!)).map(({ bounds }) => bounds),
+    });
+    const drag = async (name: string, dx: number, dy: number) => {
+      const divider = page.getByRole("separator", { name }).first();
+      await divider.waitFor();
+      const bounds = (await divider.boundingBox())!;
+      const x = bounds.x + bounds.width / 2;
+      const y = bounds.y + bounds.height / 2;
+      await page.mouse.move(x, y);
+      await page.mouse.down();
+      await page.mouse.move(x + dx, y + dy);
+      await page.mouse.up();
+    };
+    const originalGrid = await gridBounds();
+    await drag("Resize chat columns", 24, 0);
+    await vi.waitFor(async () => expect((await gridBounds()).main!.width).toBeGreaterThan(originalGrid.main!.width));
+    const columnsResized = await gridBounds();
+    await drag("Resize chat rows", 0, 25);
+    await vi.waitFor(async () => expect((await gridBounds()).panes.map(pane => pane.height))
+      .not.toEqual(columnsResized.panes.map(pane => pane.height)));
+    const resizedGrid = await gridBounds();
+
     const memento = path.join(profile, "workspaceState.json");
     const snapshot = () => readFile(memento, "utf8").then(JSON.parse);
     await vi.waitFor(async () => {
@@ -1208,6 +1367,9 @@ it("restores all grid chats and keeps dictation with its owner", async () => {
     await app.close();
     app = undefined;
     expect((await snapshot())["grok.desktopConversationLayout"].panes).toHaveLength(2);
+    const savedSizes = (await snapshot())["grok.desktopConversationGridSizes"];
+    expect(savedSizes.columns.fractions).toHaveLength(2);
+    expect(savedSizes.rows.filter(Boolean)).toHaveLength(1);
 
     // The overrides file is the profile's own config.json, which the app
     // rewrites from its persisted store on quit; put the test's keys back.
@@ -1228,6 +1390,7 @@ it("restores all grid chats and keeps dictation with its owner", async () => {
     const firstId = await expectPane(0, first.title);
     const secondId = await expectPane(1, second.title);
     expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getSize())).toEqual(size);
+    await vi.waitFor(async () => expect(await gridBounds()).toEqual(resizedGrid));
     await page.locator("#session-name-label").filter({ hasText: main.title }).waitFor();
     await vi.waitFor(async () => {
       expect(await page.locator("#input").inputValue()).toBe(drafts[0]);

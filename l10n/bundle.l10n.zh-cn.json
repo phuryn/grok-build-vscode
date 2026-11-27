@@ -501,6 +501,8 @@
   "Reset time not reported.": "未报告重置时间。",
   "Reset to the provider default": "重置为提供方默认值",
   "Resets {0}": "重置时间：{0}",
+  "Resize chat columns": "调整聊天列宽",
+  "Resize chat rows": "调整聊天行高",
   "Resolved": "已处理",
   "Restore": "恢复",
   "Restore defaults": "恢复默认值",

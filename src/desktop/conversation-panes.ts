@@ -5,7 +5,7 @@ import type { BrowserWindow, IpcMainInvokeEvent, Rectangle } from "electron";
 import type { Host, HostEditorWebview } from "../host";
 import {
   DESKTOP_CONVERSATION_PANE_ARG, type DesktopChatDraftSnapshot, type DesktopPaneCloseSnapshot,
-  planConversationGrid,
+  planResizableConversationGrid, resizeConversationGrid,
 } from "./conversation-layout";
 import type { DesktopOpenFileContext } from "./desktop-policy";
 import { APP_DOCUMENT_URL, desktopChromeBootSource, ElectronWebview } from "./electron-webview";
@@ -21,6 +21,7 @@ type Pane = {
   stateChanged: () => void;
   shown: boolean;
   filesOpen: boolean;
+  bounds?: Rectangle;
 };
 
 export class DesktopConversationPanes {
@@ -28,6 +29,9 @@ export class DesktopConversationPanes {
   private covered = false;
   private pendingFocus?: number;
   private geometry?: string;
+  private gridRevision = 0;
+  private grid?: ReturnType<typeof planResizableConversationGrid>;
+  private area?: Rectangle & { zoom: number; filesOpen: boolean };
   private promoting = false;
 
   constructor(
@@ -36,6 +40,7 @@ export class DesktopConversationPanes {
     private readonly getAuthContext: (webview: ElectronWebview) => DesktopOpenFileContext | undefined,
     private readonly applyCssZoom: (kind: "in" | "out" | "reset") => void = () => {},
     private readonly focusMain: () => void = () => {},
+    private gridSizes?: unknown,
   ) {}
 
   open(opts: Parameters<Host["openEditorWebview"]>[0]): HostEditorWebview | undefined {
@@ -72,7 +77,7 @@ export class DesktopConversationPanes {
       disposeListeners.clear();
       stateListeners.clear();
       if (!contents.isDestroyed()) contents.close({ waitForBeforeUnload: false });
-      this.refreshLayout();
+      this.refreshLayout(true);
     };
     const panes = this.panes;
     const reveal = () => {
@@ -125,7 +130,7 @@ export class DesktopConversationPanes {
     view.setVisible(false);
     win.contentView.addChildView(view);
     this.panes.set(id, pane);
-    this.refreshLayout();
+    this.refreshLayout(true);
     return panel;
   }
 
@@ -225,8 +230,7 @@ export class DesktopConversationPanes {
   private applyVisibility(): void {
     let lostFocus = false;
     for (const pane of this.panes.values()) {
-      const { width, height } = pane.view.getBounds();
-      const shown = !this.covered && width > 0 && height > 0;
+      const shown = !this.covered && !!pane.bounds && pane.bounds.width > 0 && pane.bounds.height > 0;
       if (shown === pane.shown) continue;
       lostFocus ||= !shown && pane.view.webContents.isFocused();
       pane.shown = shown;
@@ -243,7 +247,11 @@ export class DesktopConversationPanes {
     }
   }
 
-  refreshLayout(): void {
+  refreshLayout(panesChanged = false): void {
+    if (!this.panes.size || (panesChanged && this.grid)) this.gridSizes = undefined;
+    this.gridRevision++;
+    this.grid = undefined;
+    this.area = undefined;
     this.geometry = undefined;
     this.runInMain(`window.__grokConversationLayout?.(${this.panes.size}); window.__grokConversationClose?.(${this.panes.size > 0})`);
   }
@@ -277,17 +285,49 @@ export class DesktopConversationPanes {
     const usableWidth = Math.min(width, content.width - left);
     const usableHeight = Math.min(height, content.height - top);
     if (!Number.isFinite(Math.max(usableWidth, usableHeight) / zoom)) return;
+    const previous = this.area;
+    if (previous?.x !== left || previous.y !== top || previous.width !== usableWidth ||
+        previous.height !== usableHeight || previous.zoom !== zoom) this.gridRevision++;
+    this.area = { x: left, y: top, width: usableWidth, height: usableHeight, zoom, filesOpen: mainFilesOpen };
+    this.applyGrid();
+  }
+
+  get savedGridSizes(): unknown {
+    return this.gridSizes;
+  }
+
+  resizeGrid(request: unknown): void {
+    if (this.covered || !this.grid || !this.area?.width || !this.area.height) return;
+    const next = resizeConversationGrid(this.grid, this.gridRevision, request);
+    if (!next) return;
+    this.gridSizes = next.columns || next.rows.some(Boolean) ? next : undefined;
+    this.applyGrid();
+  }
+
+  private applyGrid(): void {
+    if (!this.area) return;
+    const { x, y, width, height, zoom, filesOpen } = this.area;
     const panes = [...this.panes.values()];
-    const [main, ...cells] = planConversationGrid(usableWidth, usableHeight,
-      [mainFilesOpen, ...panes.map(pane => pane.filesOpen)], zoom);
-    const geometry = JSON.stringify([main.width / zoom, main.height / zoom]);
+    const grid = planResizableConversationGrid(width, height, [filesOpen, ...panes.map(pane => pane.filesOpen)],
+      zoom, width && height ? this.gridSizes : undefined);
+    this.grid = grid;
+    if (width && height) this.gridSizes = grid.sizes;
+    const [main, ...cells] = grid.cells;
+    const geometry = JSON.stringify([main.width / zoom, main.height / zoom, {
+      revision: this.gridRevision, width, height, zoom, dividers: grid.dividers,
+    }]);
     if (geometry !== this.geometry) {
       this.geometry = geometry;
       this.runInMain(`window.__grokConversationGeometry?.(...${geometry})`);
     }
     for (const [i, pane] of panes.entries()) {
       const cell = cells[i];
-      pane.view.setBounds({ ...cell, x: left + cell.x, y: top + cell.y });
+      const left = x + cell.x;
+      const top = y + cell.y;
+      const before = pane.bounds;
+      if (before?.x === left && before.y === top && before.width === cell.width && before.height === cell.height) continue;
+      pane.bounds = { ...cell, x: left, y: top };
+      pane.view.setBounds(pane.bounds);
     }
     this.applyVisibility();
   }

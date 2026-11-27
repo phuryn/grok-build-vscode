@@ -21,6 +21,7 @@ const SOURCES = [
   "media/projects-rail.js",
   "media/repo-icon-picker.js",
   "src/sidebar.ts",
+  "src/desktop/conversation-layout.ts",
 ];
 const CALLS = new Set(["l10n", "l10nKey"]);
 
