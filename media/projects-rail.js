@@ -1860,12 +1860,16 @@
 
   function renderSession(s, repo, opts) {
     const row = document.createElement("div");
-    const active = s.id === (state.editorTarget ? state.editorSessionId : state.activeSessionId);
-    row.className = "rail-session" + (active ? " active" : "");
+    const targetId = state.editorTarget || (state.openSessionIds && !pendingResume)
+      ? state.chatTargetSessionId : state.activeSessionId;
+    const active = s.id === targetId;
+    const open = !active && state.openSessionIds?.has(s.id);
+    row.className = "rail-session" + (active ? " active" : open ? " open" : "");
     row.title = sessionRowName(s);
     row.setAttribute("role", "button");
     row.tabIndex = 0;
     if (active) row.setAttribute("aria-current", "true");
+    if (open) row.setAttribute("aria-description", l10n("Open in another chat"));
     row.dataset.sessionId = s.id || "";
 
     row.onkeydown = (e) => {
@@ -2006,8 +2010,8 @@
         openBeside();
         return;
       }
-      if (active && !state.editorTarget) return;
-      if (!state.editorTarget) markResuming(s.id);
+      if (active && !state.editorTarget && !state.revealActive) return;
+      if (!active && !state.editorTarget) markResuming(s.id);
       vscode.postMessage({
         type: "resumeSession",
         id: s.id,
@@ -2031,12 +2035,20 @@
       case "conversationEditorAvailable":
         state.conversationEditorAvailable = true;
         break;
-      case "projectsRailChatTarget":
-        if (state.editorTarget === msg.editor && state.editorSessionId === msg.sessionId) break;
+      case "projectsRailChatTarget": {
+        const openSessionIds = Array.isArray(msg.openSessionIds) ? new Set(msg.openSessionIds) : undefined;
+        const sameOpen = openSessionIds?.size === state.openSessionIds?.size
+          && (!openSessionIds || [...openSessionIds].every(id => state.openSessionIds?.has(id)));
+        const revealActive = msg.revealActive === true;
+        if (state.editorTarget === msg.editor && state.chatTargetSessionId === msg.sessionId
+          && state.revealActive === revealActive && sameOpen) break;
         state.editorTarget = msg.editor === true;
-        state.editorSessionId = msg.sessionId;
+        state.chatTargetSessionId = msg.sessionId;
+        state.openSessionIds = openSessionIds;
+        state.revealActive = revealActive;
         render();
         break;
+      }
       case "sessionOpening":
         noteSessionOpening(msg);
         break;

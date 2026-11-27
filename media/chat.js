@@ -5,6 +5,7 @@
   const canTrackLocalChatFocus = document.body.dataset.localChatFocus === "true";
   let tracksLocalChatFocus = editorChat;
   let editorChatBinding;
+  let editorChatRestoreBlocked = false;
   let editorDraftSignature;
   let museAdvertised = false;
   let museAvailable = false;
@@ -681,6 +682,7 @@
     // Whether the host found a voice API key. Optimistic until the host says
     // otherwise; remote clients cannot configure the host themselves.
     voiceConfigured: true,
+    localVoiceBusy: false,
     // Dictation insertion point: text before and after the selection that was
     // active when the mic started. Live partials replace only the text between
     // these anchors.
@@ -19383,7 +19385,11 @@ ${fullText}`
     modeBtn.disabled = state.busyLocked;
     modeBtn.classList.toggle("disabled", state.busyLocked);
     modeBtn.title = modeButtonTitle(state.currentModeId);
-    if (state.sessionSuperseded) {
+    if (editorChatRestoreBlocked && !state.busyLocked) {
+      sendBtn.innerHTML = ICON.arrowUp;
+      sendBtn.title = l10n("Could not open this conversation.");
+      sendBtn.disabled = true;
+    } else if (state.sessionSuperseded) {
       sendBtn.innerHTML = ICON.arrowUp;
       sendBtn.title = l10n("This conversation is open in another tab");
       sendBtn.disabled = true;
@@ -19442,7 +19448,7 @@ ${fullText}`
   // both Enter and the button click funnel through, so send-intent can never
   // turn into a cancel (#37). A composer holding only an attachment is send-intent.
   function queueFromComposer() {
-    if (editorChat && editorChatBinding === undefined) return true;
+    if (editorChat && (editorChatBinding === undefined || editorChatRestoreBlocked)) return true;
     if (state.sessionSuperseded) return true;
     if (state.pendingPaste > 0) return true;
     const t = input.value.trim();
@@ -19674,7 +19680,7 @@ ${fullText}`
   }
 
   function sendOrStop(event) {
-    if (editorChat && editorChatBinding === undefined) return;
+    if (editorChat && (editorChatBinding === undefined || editorChatRestoreBlocked)) return;
     // A model or effort the picker is still SHOWING belongs to this send. The
     // document's own click listener flushes on the way out, but it sits on the
     // bubble phase -- this button's handler runs first, so without this line
@@ -19784,9 +19790,10 @@ ${fullText}`
     if (state.voiceBackendState?.backends) {
       state.voiceConfigured = !!state.voiceBackendState.backends[state.activeProvider || "grok"];
     }
-    micBtn.classList.toggle("listening", state.mic === "listening");
-    micBtn.classList.toggle("transcribing", state.mic === "transcribing");
-    micBtn.classList.toggle("connecting", state.mic === "connecting");
+    micBtn.classList.toggle("listening", !state.localVoiceBusy && state.mic === "listening");
+    micBtn.classList.toggle("transcribing", !state.localVoiceBusy && state.mic === "transcribing");
+    micBtn.classList.toggle("connecting", !state.localVoiceBusy && state.mic === "connecting");
+    micBtn.classList.toggle("busy-elsewhere", state.localVoiceBusy);
     if (IS_REMOTE && (!navigator.mediaDevices?.getUserMedia || !window.AudioWorkletNode)) {
       micBtn.innerHTML = ICON.mic;
       micBtn.title = "Dictation is not supported by this browser";
@@ -19794,6 +19801,14 @@ ${fullText}`
     } else if (IS_REMOTE && state.mic === "listening" && !remoteMic) {
       micBtn.innerHTML = ICON.micWaves;
       micBtn.title = "Dictation is active in another tab on this repository";
+      micBtn.disabled = true;
+    } else if (state.localVoiceBusy) {
+      micBtn.innerHTML = ICON.micWaves;
+      micBtn.title = l10n("Dictation is active in another chat");
+      micBtn.disabled = true;
+    } else if (editorChat && (editorChatBinding === undefined || editorChatRestoreBlocked)) {
+      micBtn.innerHTML = ICON.mic;
+      micBtn.title = l10n("Voice control");
       micBtn.disabled = true;
     } else if (state.mic === "listening") {
       micBtn.innerHTML = ICON.micWaves;
@@ -19859,7 +19874,8 @@ ${fullText}`
   }
 
   function toggleMic() {
-    if (editorChat || state.sessionSuperseded) return;
+    if (state.sessionSuperseded || state.localVoiceBusy ||
+        (editorChat && (editorChatBinding === undefined || editorChatRestoreBlocked))) return;
     if (IS_REMOTE) {
       toggleBrowserMic();
       return;
@@ -21358,6 +21374,10 @@ ${fullText}`
         break;
       case "editorChatBinding":
         if (!editorChat) break;
+        editorChatRestoreBlocked = msg.restoreBlocked === true;
+        if (typeof msg.restoreKey === "string" && uiState().editorChatRestoreKey !== msg.restoreKey) {
+          setUiState({ editorChatRestoreKey: msg.restoreKey });
+        }
         if (remoteHandoff) closePopovers();
         if (msg.switchDraft || composerSessionId !== msg.sessionId) remoteLinkReturn = undefined;
         editorChatBinding = undefined;
@@ -21375,7 +21395,14 @@ ${fullText}`
       case "editorChatBound":
         if (!editorChat) break;
         editorChatBinding = msg.binding;
+        renderMic();
         renderInputHighlight();
+        break;
+      case "editorChatRestoreBlocked":
+        if (!editorChat) break;
+        editorChatRestoreBlocked = msg.value === true;
+        renderMic();
+        updateSendButton();
         break;
       case "cloudHostUpdateState":
         receiveCloudHostUpdate(msg);
@@ -22261,6 +22288,12 @@ ${fullText}`
         break;
       case "openModePopover":
         openModePopover();
+        break;
+      case "localVoiceBusy":
+        if (!IS_REMOTE) {
+          state.localVoiceBusy = msg.value === true;
+          renderMic();
+        }
         break;
       case "voiceState":
         // Host confirms a transition (e.g. recording actually started). Only

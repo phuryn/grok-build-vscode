@@ -128,6 +128,40 @@ function loadSessions(
 }
 
 describe("Open to the side", () => {
+  it("shows one current destination and marks other open conversations without changing their dots", () => {
+    const { window, doc } = bootRail();
+    const api = railApi(window);
+    loadCatalog(api);
+    api.onMessage({ type: "conversationEditorAvailable" });
+    loadSessions(api, ["sidebar", "editor", "covered", "closed"].map(id => row(id, "/work/alpha", id)), "sidebar");
+    api.onMessage({ type: "sessionDot", id: "covered", dot: "unread" });
+    api.onMessage({
+      type: "projectsRailChatTarget", editor: true, sessionId: "editor",
+      openSessionIds: ["sidebar", "editor", "covered"],
+    });
+
+    const ids = (selector: string) => [...doc.querySelectorAll(`.rail-session${selector}`)].map(row => row.getAttribute("data-session-id"));
+    expect(ids('.active[aria-current="true"]')).toEqual(["editor"]);
+    expect(ids('.open[aria-description="Open in another chat"]').sort()).toEqual(["covered", "sidebar"]);
+    expect(doc.querySelector('[data-session-dot="covered"]')?.getAttribute("data-dot")).toBe("unread");
+
+    api.onMessage({
+      type: "projectsRailChatTarget", editor: false, sessionId: "sidebar", openSessionIds: ["sidebar", "editor"],
+    });
+    expect(ids(".active")).toEqual(["sidebar"]);
+    expect(ids(".open")).toEqual(["editor"]);
+  });
+
+  it("lets an explicit sidebar destination reveal its already-selected conversation", () => {
+    const { window, doc, posted } = bootRail();
+    const api = railApi(window);
+    loadCatalog(api);
+    loadSessions(api, [row("a", "/work/alpha", "Conversation A")], "a");
+    api.onMessage({ type: "projectsRailChatTarget", editor: false, sessionId: "a", openSessionIds: ["a"], revealActive: true });
+    doc.querySelector<HTMLElement>('.rail-session[data-session-id="a"]')!.click();
+    expect(posted).toContainEqual({ type: "resumeSession", id: "a", cwd: "/work/alpha", claim: true });
+  });
+
   it.each(["click", "Ctrl-click", "Cmd-click", "middle-click", "project menu"])("routes a project's New action via %s", (gesture) => {
     const { window, doc, posted } = bootRail();
     const api = railApi(window);

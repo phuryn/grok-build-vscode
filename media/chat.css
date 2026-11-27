@@ -4266,9 +4266,11 @@ textarea#input {
   opacity: 0.75;
   transition: background 0.12s, color 0.12s, opacity 0.12s;
 }
-.desk[data-editor-chat] :is(.mic-btn, .remote-btn)[hidden] { display: none; }
+.desk[data-editor-chat] .remote-btn[hidden] { display: none; }
 .mic-btn:hover { opacity: 1; background: var(--vscode-toolbar-hoverBackground); }
 .mic-btn:disabled { cursor: default; }
+.mic-btn.busy-elsewhere { color: var(--vscode-disabledForeground, var(--vscode-descriptionForeground)); }
+.mic-btn.busy-elsewhere .mic-waves i { animation: none; }
 /* Subtle "needs setup" dot when no voice API key is configured. */
 .mic-btn.needs-setup::after {
   content: "";

@@ -356,7 +356,7 @@ When the panel opens (or you click **+** for a new session):
 4. Normalize backend updates at the host boundary and stream the established
    message, thought, tool, permission, model, and usage events into the chat.
 
-The composer keeps unsent text in webview-local, per-session drafts. Rail/history picks and New switch drafts at the gesture; transcript replay preserves them. Each New carries a `draftId`, and the host's targeted `composerDraftSession` reply binds that draft to its assigned session id even after another navigation or New. Drafts last for the lifetime of the webview. Edit delivers text and files together through targeted `restoreComposer`; restored file ids resolve against host-owned `Session.restoredChips`, outside the shared attachment buffer. If the requester leaves during rewind, `queuedDraft` and `queuedDraftChips` park together and `restorePersistedDraft` returns them to the next focusing surface.
+The sidebar and shared chat renderer keep ordinary unsent text in webview-local, per-session drafts for the lifetime of the webview. Rail/history picks and New switch those drafts at the gesture. Transcript replay preserves them. Each New carries a `draftId`, and the host's targeted `composerDraftSession` reply binds that draft to its assigned session id even after another navigation or New. VS Code editor tabs use the host-bound drafts described below. Edit delivers text and files together through targeted `restoreComposer`. Restored file ids resolve against host-owned `Session.restoredChips`, outside the shared attachment buffer. If the requester leaves during rewind, `queuedDraft` and `queuedDraftChips` park together and `restorePersistedDraft` returns them to the next focusing surface.
 
 The composer unlocks as soon as the session is live. Its placeholder follows the
 session provider (**Ask Grok…** / **Ask Codex…** / **Ask Claude…** / **Ask Muse…**).
@@ -433,10 +433,10 @@ arrives.
 
 ## The session pool (Agent Dashboard)
 
-The sidebar shows one conversation at a time, but it keeps a **pool of live
-sessions** behind it — one spawned backend process each, with exactly
-one *focused* (the one you see). All the per-session state lives in a
-[`Session`](../src/session.ts) object; the sidebar holds `focused` plus a `Set` of
+The sidebar shows one conversation at a time, with optional editor tabs beside it
+in VS Code. It keeps a **pool of live sessions** with one spawned backend process
+each. `focused` names the sidebar's conversation. All the per-session state
+lives in a [`Session`](../src/session.ts) object. The sidebar holds a `Set` of
 every live `Session` (`pool`). The point is **lossless re-focus**: a backgrounded
 session keeps streaming into its own *view buffer* (every webview post that built
 its chat, in order), so re-focusing it is a `clearMessages` + replay of that
@@ -462,8 +462,12 @@ window) loads it from its provider's history into a fresh pool member instead
 
 In VS Code and its forks, Projects offers **Open to the side**, Ctrl/Cmd-click,
 and middle-click. `openEditorConversation` opens beside the active editor group
-or reveals the tab already showing that conversation. A plain rail click
-switches the sidebar or the editor tab that last had focus. Both use the shared
+or reveals the tab already showing that conversation. `grok.openConversationIn`
+routes a plain rail click to the last-used chat by default. `sidebar` always
+opens in the sidebar. `editor` reveals an existing match, reuses the most
+recently used editor chat, or opens beside the active editor group. The rail
+uses VS Code's active selection style for the destination and blends its inactive
+selection background into the rail for other open conversations. Both chat surfaces use the shared
 chat UI. Each tab binds to a `Session` in the same pool and replays its buffer,
 including turn-duration footers when the display setting is enabled. Tab messages
 carry their binding so events from the previous conversation cannot act on the
@@ -480,12 +484,29 @@ there is a draft or the provider has yet to assign an id.
 `grok.lastConversation` belongs to the sidebar. Conversation commands from the
 Command Palette follow the last-used chat.
 
+VS Code's `grok.conversation` panel serializer revives the native tab in its
+original group. The webview saves the host-issued lookup key with `setState`.
+The host's VS Code workspace state holds the conversation binding, draft text,
+and host-restored attachment chips. Leaving or closing a saved conversation
+parks its draft by conversation id so it can be picked up by a later tab or
+the sidebar. A restored tab waits until its renderer is ready and visible to
+start its CLI. An unsent New tab restores as a fresh session in its original
+project with its previous provider and draft. If history is unavailable, the
+tab reports the failure and leaves the draft available to copy. A fresh chat
+can open beside a failed tab that holds a draft.
+
 Ctrl/Cmd-click or middle-click on a project's **+** starts a fresh conversation
 in an editor tab. The project menu offers the same action. File and diff opens
 from a focused conversation tab use a separate editor group, and the tab's
 active-file chip can use the last text editor from its project. Idle cleanup
 and the phone's delete checks recognize conversations held open in editor tabs.
 The tab's phone handoff uses its bound conversation.
+
+Local dictation has one owner, bound to the chat surface and its session.
+`postVoiceToChat` sends text and microphone transitions directly to that
+renderer. A separate local busy frame disables the other local microphones.
+Closing or rebinding the owning tab cancels capture and invalidates late results.
+Phone and browser capture use the existing per-client PCM streams.
 
 Two details make the pool safe:
 
@@ -509,12 +530,13 @@ watching*, **red** *errored while no view was watching*.
 
 The green/red dot is a **globally unseen-completion badge**, not a per-tab read
 receipt or a live state. The persisted schema has one `unread` flag per conversation,
-so it cannot represent “read in tab B but unread in tab A.” The deliberate rule is:
-set the flag only when a turn ends while neither the local VS Code view nor any
-remote tab owns that session. Focusing it in either surface clears the flag. Because
-the flag lives in metadata rather than the live process, the badge **survives both
-the idle reaping below and a full VS Code restart** — so unattended results remain
-visible when you return, without marking a result unread in the tab that watched it.
+so it cannot represent “read in tab B but unread in tab A.” With editor chats open,
+a completion counts as seen if its editor tab or sidebar is visible, or a remote
+viewer holds the session. A covered local conversation can earn an unread badge
+while its tab still protects it from cleanup. Bringing a local chat into view
+or opening it remotely clears the flag. With just the sidebar, the focused
+conversation still counts as seen. The badge **survives both the idle
+reaping below and a full VS Code restart** because it lives in metadata.
 There's no timer. The actual color is a pure
 function ([`computeDot`](../src/session-pool.ts)) of `(live status, unread,
 unreadError)`, so the policy is unit-tested without a process pool. The host pushes
@@ -526,8 +548,8 @@ session isn't free, so the pool is bounded — silently. The pure `selectReapabl
 picks victims under two rules: an **idle TTL** (a session untouched for an hour is
 torn down, swept every 5 min) and an **LRU cap** (at most ~8 live; the
 least-recently-used eligible sessions are evicted past it). It **never** reaps the
-focused session or a `working`/`needs-you` one — so the cap can be exceeded when
-everything spare is busy, by design. Reaping just kills the process and recomputes
+focused sidebar session, an open editor chat, or a `working`/`needs-you` session,
+so the cap can be exceeded when everything spare is busy. Reaping just kills the process and recomputes
 the dot — a reaped session that's still unread **stays green**, a read one goes
 gray — and re-clicking the row reloads the session from disk.
 
@@ -1146,7 +1168,7 @@ every turn.
 | GitHub star prompt (`src/star-prompt.ts`, `scheduleStarPrompt` in `src/sidebar.ts`, `renderStarPrompt` in `media/chat.js`) | Asked again 30 days after each ask until the person chooses Star or Open GitHub (`STAR_PROMPT_REPEAT_MS`); Not now, or no answer, waits for the next one. The host needs messages sent in five conversations (counted from `sentAt`, routines excluded) and waits 30 seconds after a successful reply in the conversation on screen, with that window focused and nothing waiting on the person; the renderer also needs an empty draft and no update notice, dialog or open approval, and draws the card at the top of the composer. A new turn or a request in that conversation calls off an offer not made yet. Once the card is up, only its own buttons take it down, so it survives other replies and a change of conversation, and CSS hides it while an approval, question or plan waits. `StarPromptRecord` writes `askedAt` to `~/.grok/client-state/star-prompt.json` right before the card is shown, creating the file exclusively on the first ask, in the person's own home rather than a workspace's; Star or Open GitHub adds `done`, and an unusable file means no card. Both message types are local-only. `starAfkPilotRepo` runs `gh` only for the button that names the account, once `gh` still answers with that account; another account, no sign-in, a token from the environment or a failed call opens the repository in the browser instead |
 | Remote repo/session switching (`src/sidebar.ts`, `media/chat.js`) | `selectRemoteRepo` selects the newest session in the chosen repo or starts a new one; `remoteSessionFor` reserves desk adoption for session-less arrivals in the same repo. Host-wide fan-out (voice-config refresh, session list, dots, repo catalog) reads `cwdIfPresent` and skips a tab with no project; `cwd()` stays the request-path accessor. `historyReplay` renders `Loading conversation` and locks the browser repo switcher until replay settles |
 | `src/host.ts` | Portable effectful host surface (`Host`) + value types (`Uri`, `HostWebview`, `HostContext`, disposables, editor/workspace watchers). **Does not import `vscode`**; a non-VS-Code host implements this. Paths are absolute strings; `Uri` is only for non-file schemes (diff preview) and command-arg round-trips |
-| `src/vscode-host.ts` | VS Code implementation of `Host` (`createVsCodeHost`) plus `createVsCodeHostContext` / `wrapWebviewView` — the only module that maps Host methods onto `vscode.window` / `workspace` / `commands` / `env` / `workspace.fs` |
+| `src/vscode-host.ts` | VS Code implementation of `Host` (`createVsCodeHost`), the extension context adapter, and wrappers for native webviews and panels. It maps Host methods onto the VS Code API. |
 | `src/sidebar.ts` | Session/UI controller (`GrokSidebar`) — message routing, fs handlers, native diff editor opening (whole-file expansion delegated to `diff-view.ts`), `logout`, generated-media inlining (`postGeneratedMedia`), and the active-editor context chip (`refreshImplicitChip` mirrors the open file + live selection range, applies `grok.includeActiveFileByDefault` live). **Does not import `vscode`**; constructed with an injected `Host` + `HostContext` (extension entry wires the VS Code adapters). **Eye-off on that chip is a standing preference, not a per-file one** (#67): the chip is rebuilt on every file switch, so the choice is persisted to `IMPLICIT_CHIP_HIDDEN_KEY` in globalState on `toggleChip` and re-seeded by the pure `implicitChipStartsHidden(prev, remembered)` in `chips.ts` — the live chip wins when one exists (globalState writes are fire-and-forget), the store seeds a fresh webview/restart. Without it, dismissing the context was futile: the next file switch silently re-enabled it. Every attach flow (Add Selection to Grok, Add to Grok chat, @-mention, the `+` picker, image paste) routes through `revealAndFocusComposer` → the `focusInput` host message, landing the caret in the composer so the user can type immediately (#43); `insertActiveMention` degrades a Command-Palette Add to Grok chat with no active editor into the file picker instead of a silent no-op |
 | `src/diff-view.ts` | Pure native-diff reconstruction (#66) — `expandDiffToWholeFile` combines Grok's region-only diff block with the current disk file, using `_meta.details[]` site lines / the pre-write echo line and explicit `replace_all` semantics to avoid phantom matches; `firstChangedLine` positions the editor on the first hunk; `MAX_DIFF_EXPAND_BYTES` bounds memory. Unreadable, stale, or oversized files fall back to the region-only diff |
 | `src/acp.ts` | Provider-neutral ACP client — spawns the selected backend, manages session lifecycle, and emits the extension's established events (incl. `mediaContent` from `emitToolMedia`). `acpClientCapabilities(provider, grokVersion, versionVerified)` picks the advertised `initialize` shape: withhold `readTextFile` only for a live-verified grok >= 1.0.4 (image-aware `read_file`, #79; measured on 1.0.4, no upper cap — `research/image-read-capability-probe.cjs` re-establishes evidence on a new major); 0.2.x, 1.0.0–1.0.3, Codex, an unknown version, and a cache/unverified banner keep the delegated handshake. `getSessionInfo()` is Grok-only `_x.ai/session/info`: a control-plane meter whose -32601 result becomes `"unsupported"`; it never sends a prompt. Every response writer returns `writeLine`'s accepted/failed boolean; callers commit irreversible UI/session state only after a definite accepted write, while accepted-but-unconfirmed writes are never retried. `interject` (#52) sends the focused backend's own steering method — grok's **unadvertised** `_x.ai/interject`, Codex's, Claude's and Muse's advertised `_session/steering` — and `steerDelivered` decides whether a RESOLVED response actually delivered it. `forkSession` (#48), `submitFeedback` (#114), and the worktree RPCs (`createWorktree`/`listWorktrees`/`applyWorktree`/`removeWorktree`, P2-8) use the unadvertised Grok routes `_x.ai/session/fork` / `_x.ai/feedback` / `_x.ai/git/worktree/*`. Claude, Codex and Muse use advertised `session/fork`. These calls and steering return `"unsupported"` (never throw) on -32601 so an older CLI degrades instead of erroring. `submitFeedback` also treats a disabled-feedback internal_error as `"unsupported"`. `PromptResultMeta`/`PromptUsage` are **re-exported** from `acp-dispatch`, not redeclared — the duplicate silently dropped fields added on one side |

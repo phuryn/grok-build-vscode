@@ -10,6 +10,28 @@ const types = (posted: Posted[]) => posted.map((p) => p.type);
 const sidebarSrc = readFileSync(new URL("../src/sidebar.ts", import.meta.url), "utf8");
 
 describe("voice control mic button", () => {
+  it.each([false, true])("reports that another chat owns the mic (editor tab: %s)", editor => {
+    const { window, doc, posted } = bootWebview({ vscode: true, beforeScripts: window => {
+      if (editor) window.document.body.dataset.editorChat = "true";
+    } });
+    if (editor) dispatch(window, { type: "editorChatBound", binding: 7 });
+    const mic = doc.querySelector<HTMLButtonElement>("#mic-btn")!;
+    dispatch(window, { type: "localVoiceBusy", value: true });
+    expect(mic.disabled).toBe(true);
+    expect(mic.title).toBe("Dictation is active in another chat");
+    expect(mic.classList.contains("busy-elsewhere")).toBe(true);
+    posted.length = 0;
+    click(window, mic);
+    expect(posted).toHaveLength(0);
+
+    dispatch(window, { type: "localVoiceBusy", value: false });
+    expect(mic.disabled).toBe(false);
+    click(window, mic);
+    expect(posted).toContainEqual(editor
+      ? { type: "editorChatAction", binding: 7, message: { type: "voiceStart" } }
+      : { type: "voiceStart" });
+  });
+
   it("starts idle showing the mic icon", () => {
     const { doc } = bootWebview();
     const mic = $(doc, "mic-btn");
@@ -244,15 +266,6 @@ describe("voice control: live streaming transcription", () => {
 });
 
 describe("voice control: continuous listening + queue (hands-free)", () => {
-  it("forwards an empty parsed utterance so a bare send phrase can submit the local draft", () => {
-    const commit = sidebarSrc.slice(
-      sidebarSrc.indexOf("private commitVoiceStream"),
-      sidebarSrc.indexOf("private async finalizeVoiceStream"),
-    );
-    expect(commit).toContain('this.postLocal({ type: "voiceSubmit", text: text.trim() });');
-    expect(commit).not.toContain("if (text.trim())");
-  });
-
   it("voiceSubmit sends immediately when idle, clears composer, and KEEPS listening", () => {
     const { window, posted, doc } = bootWebview();
     const mic = $(doc, "mic-btn");

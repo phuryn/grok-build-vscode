@@ -487,3 +487,38 @@ describe.each(["desktop", "vscode", "remote"])("composer session drafts (%s)", (
     expect(input.value).toBe("parked draft");
   });
 });
+
+it("stores the host-issued editor restore key alongside existing webview state", () => {
+  let saved: Record<string, unknown> = { disclosure: true };
+  const h = bootWebview({ vscode: true, beforeScripts: window => {
+    window.document.body.dataset.editorChat = "true";
+    (window as any).acquireVsCodeApi = () => ({
+      getState: () => saved,
+      setState: (value: typeof saved) => { saved = value; },
+      postMessage: () => {},
+    });
+  } });
+  dispatch(h.window, { type: "editorChatBinding", sessionId: "one", restoreKey: "panel-key" });
+  expect(saved).toEqual({ disclosure: true, editorChatRestoreKey: "panel-key" });
+  dispatch(h.window, { type: "editorChatBinding", sessionId: "two", switchDraft: true });
+  expect(saved.editorChatRestoreKey).toBe("panel-key");
+});
+
+it("keeps a restored draft in the composer while send is blocked", () => {
+  const { window, doc, posted } = bootWebview({ vscode: true, beforeScripts: window => {
+    window.document.body.dataset.editorChat = "true";
+  } });
+  dispatch(window, { type: "editorChatBinding", restoreBlocked: true });
+  dispatch(window, { type: "editorChatBound", binding: 1 });
+  dispatch(window, { type: "restoreComposer", text: "draft to keep", draft: true });
+  const input = doc.querySelector<HTMLTextAreaElement>("#input")!;
+  const send = doc.querySelector<HTMLButtonElement>("#send-btn")!;
+  expect(send.disabled).toBe(true);
+
+  input.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  expect(input.value).toBe("draft to keep");
+  expect(posted.some(msg => msg.type === "editorChatAction" && (msg.message as Posted).type === "send")).toBe(false);
+
+  dispatch(window, { type: "editorChatRestoreBlocked", value: false });
+  expect(send.disabled).toBe(false);
+});

@@ -285,7 +285,10 @@ describe("VS Code projects rail section parity", () => {
     expect(railCss).toMatch(/--rail-repo-font-size:\s*14px/);
     expect(railCss).toMatch(/\.rail-repo\.collapsed\s+\.rail-sessions\s*{\s*display:\s*none/);
     expect(railCss).toMatch(
-      /\.rail-session\.active\s+\.rail-session-actions\s*{[\s\S]*?var\(--vscode-list-activeSelectionBackground\)[\s\S]*?var\(--vscode-sideBar-background\)/,
+      /\.rail-session\.active\s+\.rail-session-actions,\s*\.rail-session\.open\s+\.rail-session-actions\s*{[\s\S]*?var\(--rail-selection-bg\)[\s\S]*?var\(--vscode-sideBar-background\)/,
+    );
+    expect(railCss).toMatch(
+      /\.rail-session\.active\s*{\s*--rail-selection-bg:\s*var\(--vscode-list-activeSelectionBackground\)/,
     );
     expect(railCss).toMatch(
       /\.rail-repo-actions,[\s\S]*?\.rail-session-actions\s*{[\s\S]*?var\(--rail-hover-bg,[\s\S]*?var\(--vscode-sideBar-background\)/,

@@ -2,6 +2,12 @@
 
 The microphone button dictates speech using xAI, OpenAI, or Google. Click it, wait for the listening waves, and speak. Words appear live. Say **"grok send"** to submit once the phrase is finalized and keep listening for the next message. Click the mic again to finalize the recording and keep the text.
 
+In VS Code, you can dictate in the sidebar or a conversation tab. The chat
+where you started keeps the recording and receives the text. The other local
+mics show that dictation is busy until the recording and transcription finish.
+Closing the recording tab stops capture and discards any pending result.
+Spoken replies in VS Code play from the sidebar.
+
 In Settings → Voice, **Transcription backend** defaults to Auto:
 
 | Agent | Preferred backend |

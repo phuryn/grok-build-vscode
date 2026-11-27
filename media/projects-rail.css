@@ -471,12 +471,13 @@ html, body {
 .rail-rebuilding .rail-repo-actions,
 .rail-rebuilding .rail-session-actions { transition: none; }
 
-.rail-session.active .rail-session-actions {
+.rail-session.active .rail-session-actions,
+.rail-session.open .rail-session-actions {
   background:
     linear-gradient(
       to right,
       transparent 0%,
-      var(--vscode-list-activeSelectionBackground) 28%
+      var(--rail-selection-bg) 28%
     ),
     linear-gradient(
       to right,
@@ -520,10 +521,22 @@ html, body {
 .rail-session { --provider-badge-ring: var(--rail-bg, var(--vscode-sideBar-background)); }
 .rail-session:hover,
 .rail-session.rail-hover-hold { color: var(--vscode-foreground); background: var(--rail-hover-bg); --provider-badge-ring: var(--rail-hover-bg); }
+.rail-session.open {
+  --rail-selection-bg: color-mix(
+    in srgb,
+    var(--vscode-list-inactiveSelectionBackground, var(--rail-hover-bg)),
+    var(--vscode-sideBar-background) 40%
+  );
+  color: var(--vscode-list-inactiveSelectionForeground, var(--vscode-foreground));
+}
 .rail-session.active {
+  --rail-selection-bg: var(--vscode-list-activeSelectionBackground);
   color: var(--vscode-list-activeSelectionForeground, var(--vscode-foreground));
-  background: var(--vscode-list-activeSelectionBackground);
-  --provider-badge-ring: var(--vscode-list-activeSelectionBackground);
+}
+.rail-session.active,
+.rail-session.open {
+  background: var(--rail-selection-bg);
+  --provider-badge-ring: var(--rail-selection-bg);
 }
 
 .rail-session .history-row-dot {

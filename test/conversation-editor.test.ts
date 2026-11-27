@@ -21,7 +21,7 @@ function makeSession(id: string) {
 function panelFixture(title: string) {
   let receive: (frame: unknown) => void;
   let close: () => void;
-  let focus: () => void;
+  let changeViewState: (() => void) | undefined;
   return {
     title,
     visible: true,
@@ -35,8 +35,12 @@ function panelFixture(title: string) {
       },
     },
     onDidDispose: (listener: typeof close) => { close = listener; },
-    onDidFocus: (listener: typeof focus) => { focus = listener; return { dispose: vi.fn() }; },
-    focus: () => focus(),
+    onDidChangeViewState: (listener: () => void) => {
+      changeViewState = listener;
+      return { dispose: vi.fn() };
+    },
+    focus: () => changeViewState?.(),
+    changeViewState: () => changeViewState?.(),
     reveal: vi.fn(),
     dispose: () => close(),
     receive: (frame: unknown) => receive(frame),
@@ -52,6 +56,7 @@ function setup(capable = true) {
   const railPost = vi.fn();
   const messages: Record<string, unknown> = {};
   const sound = { enabled: true };
+  const settings = { openConversationIn: "lastUsed" };
   const configListeners = new Set<(event: { affectsConfiguration(key: string): boolean }) => void>();
   const host = {
     canOpenConversationEditor: capable,
@@ -62,7 +67,10 @@ function setup(capable = true) {
     }),
     revealChatView: vi.fn(),
     getActiveTextEditor: vi.fn(),
-    getConfiguration: () => ({ get: (key: string) => key === "soundNotifications" ? sound.enabled : true }),
+    getConfiguration: () => ({ get: (key: string) => {
+      if (key === "openConversationIn") return settings.openConversationIn;
+      return key === "soundNotifications" ? sound.enabled : true;
+    } }),
     onDidChangeConfiguration(listener: (event: { affectsConfiguration(key: string): boolean }) => void) {
       configListeners.add(listener);
       return { dispose: () => { configListeners.delete(listener); } };
@@ -103,6 +111,8 @@ function setup(capable = true) {
     refreshWorkflowCompletions: vi.fn(),
     restorePersistedDraft: vi.fn(),
     postRemoteStatus: vi.fn(),
+    voiceSetting: (_cwd: string, _key: string, fallback: unknown) => fallback,
+    voiceBackendState: () => ({ backend: "xai" }),
     watchActiveEditor: vi.fn(),
     buildInitialStateMsg: () => ({ type: "initialState", soundNotifications: sound.enabled }),
     providerStateMessage: () => ({ type: "providerState" }),
@@ -118,10 +128,231 @@ function setup(capable = true) {
   const plain = (id: string) => controller.onProjectsRailMessage({ type: "resumeSession", id, cwd: "/repo", claim: true });
   const binding = (panel: ReturnType<typeof panelFixture>) =>
     panel.webview.postMessage.mock.calls.map(call => call[0] as any).filter(msg => msg.type === "editorChatBound").at(-1)?.binding;
-  return { controller, host, panels, railPost, sidebar, first, second, pool, beside, plain, binding, configListeners, sound };
+  return { controller, host, panels, railPost, sidebar, first, second, pool, beside, plain, binding, configListeners, sound, settings };
+}
+
+function editorWorkspaceState() {
+  const values = new Map<string, unknown>();
+  return {
+    get: (key: string) => values.get(key),
+    update: async (key: string, value: unknown) => {
+      if (value === undefined) values.delete(key);
+      else values.set(key, JSON.parse(JSON.stringify(value)));
+    },
+  };
+}
+
+function editorPanelState(panel: ReturnType<typeof panelFixture>) {
+  const frame = panel.webview.postMessage.mock.calls.map(([value]) => value as Posted)
+    .find(message => message.type === "editorChatBinding");
+  return { editorChatRestoreKey: frame?.restoreKey };
 }
 
 describe("VS Code conversation editor", () => {
+  it.each(["saved", "new", "missing", "failed load"])("restores a %s panel in place with its draft and starts only when shown", async scenario => {
+    const firstWindow = setup();
+    const workspace = editorWorkspaceState();
+    firstWindow.controller.context.workspaceState = workspace;
+    if (scenario === "new") {
+      firstWindow.controller.newLocalSession = () => Object.assign(new Session(), { activeSessionId: "unsent-provider-id" });
+      firstWindow.controller.defaultProviderForProject = () => "codex";
+      firstWindow.controller.startSession = vi.fn();
+      firstWindow.controller.sweepEmptySessions = vi.fn();
+      firstWindow.controller.resolveLocalRepoTarget = () => ({ cwd: "/other-project" });
+      await firstWindow.controller.onProjectsRailMessage({ type: "newConversationBeside", cwd: "/other-project" });
+    } else {
+      await firstWindow.beside("one");
+    }
+    const original = firstWindow.panels[0];
+    original.receive({ type: "ready" });
+    const draft = "  typed before reload\n下一行\n";
+    const chip = { id: "restored-chip", path: "/repo/file.ts", relPath: "file.ts", hidden: false };
+    firstWindow.controller.lastEditorChat.session.restoredChips = [chip];
+    original.receive({ type: "editorChatDraft", binding: firstWindow.binding(original), text: draft, chipIds: [chip.id] });
+    const serialized = editorPanelState(original);
+    expect(serialized.editorChatRestoreKey).toEqual(expect.any(String));
+
+    const restored = setup();
+    restored.pool.delete(restored.first);
+    restored.controller.context.workspaceState = workspace;
+    restored.controller.newLocalSession = () => new Session();
+    restored.controller.resolveLocalRepoTarget = (cwd: string) => ({ cwd });
+    restored.controller.configureLocalResumeSession = (session: Session, id: string, cwd: string) => {
+      if (scenario === "missing") return false;
+      expect(id).toBe("one");
+      session.cwd = cwd;
+      return true;
+    };
+    restored.controller.bindSessionLoad = vi.fn();
+    restored.controller.startSession = vi.fn(async (id: string | undefined, session: Session) => {
+      if (scenario === "failed load") {
+        session.activeSessionId = undefined;
+        return;
+      }
+      session.activeSessionId = id ?? "new-provider-id";
+      return { sessionId: session.activeSessionId };
+    });
+    const nativePanel = panelFixture(original.title);
+    nativePanel.visible = nativePanel.active = false;
+    restored.controller.restoreEditorConversation(nativePanel, { ...serialized, cwd: "/untrusted", sessionId: "two" });
+    nativePanel.receive({ type: "ready" });
+    expect(restored.host.openEditorWebview).not.toHaveBeenCalled();
+    expect(nativePanel.webview).toHaveProperty("options.enableScripts", true);
+    expect(nativePanel.reveal).not.toHaveBeenCalled();
+    expect(restored.controller.startSession).not.toHaveBeenCalled();
+    expect(nativePanel.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      type: "restoreComposer", text: draft, chips: [chip],
+    }));
+
+    nativePanel.visible = true;
+    nativePanel.changeViewState();
+    nativePanel.changeViewState();
+    if (scenario === "missing" || scenario === "failed load") {
+      await vi.waitFor(() => expect(nativePanel.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "error" })));
+      expect(restored.controller.startSession).toHaveBeenCalledTimes(scenario === "missing" ? 0 : 1);
+      expect(nativePanel.webview.postMessage).toHaveBeenCalledWith({ type: "setBusy", value: false });
+      await restored.controller.onEditorChatMessage([...restored.controller.editorChats][0], {
+        type: "editorChatAction", binding: restored.binding(nativePanel), message: { type: "send", text: draft },
+      });
+      expect(restored.controller.handleSend).not.toHaveBeenCalled();
+    } else {
+      await vi.waitFor(() => expect(restored.controller.startSession).toHaveBeenCalledOnce());
+      const [id, session] = restored.controller.startSession.mock.calls[0];
+      expect(id).toBe(scenario === "new" ? undefined : "one");
+      expect(session.cwd).toBe(scenario === "new" ? "/other-project" : "/repo");
+      if (scenario === "new") expect(session.provider).toBe("codex");
+    }
+  });
+
+  it.each(["navigates away", "closes"])("keeps a parked draft across a reload when a tab %s", async (gesture) => {
+    const firstWindow = setup();
+    const workspace = editorWorkspaceState();
+    firstWindow.controller.context.workspaceState = workspace;
+    await firstWindow.beside("one");
+    const panel = firstWindow.panels[0];
+    panel.receive({ type: "ready" });
+    panel.receive({ type: "editorChatDraft", binding: firstWindow.binding(panel), text: "Parked draft for one" });
+    if (gesture === "closes") panel.dispose();
+    await firstWindow.plain("two");
+    // A plain click falls back to the sidebar after closing the only tab.
+    if (gesture === "closes") await firstWindow.beside("two");
+    const kept = firstWindow.panels.at(-1)!;
+    kept.receive({ type: "ready" });
+    kept.receive({ type: "editorChatDraft", binding: firstWindow.binding(kept), text: "Open draft for two" });
+
+    const restored = setup();
+    restored.controller.context.workspaceState = workspace;
+    restored.controller.restoreEditorConversation(panelFixture("two"), editorPanelState(kept));
+    await restored.beside("one");
+    const reopened = restored.panels[0];
+    reopened.receive({ type: "ready" });
+    expect(reopened.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      type: "restoreComposer", text: "Parked draft for one",
+    }));
+    expect(reopened.webview.postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ text: "Open draft for two" }));
+  });
+
+  it("publishes every open conversation through focus, replacement, and a background tab closing", async () => {
+    const { beside, plain, panels, controller, railPost, sidebar, pool } = setup();
+    pool.add(makeSession("three"));
+    await beside("one");
+    await beside("two");
+    panels[0].focus();
+    await plain("three");
+    expect(railPost).toHaveBeenLastCalledWith(expect.objectContaining({
+      type: "projectsRailChatTarget", editor: true, sessionId: "three",
+      openSessionIds: expect.arrayContaining(["sidebar", "three", "two"]),
+    }));
+    panels[1].dispose();
+    expect(railPost.mock.lastCall?.[0]).toMatchObject({
+      type: "projectsRailChatTarget", sessionId: "three", openSessionIds: ["sidebar", "three"],
+    });
+    controller.setLastEditorChat(undefined);
+    expect(railPost).toHaveBeenLastCalledWith(expect.objectContaining({
+      type: "projectsRailChatTarget", editor: false,
+      openSessionIds: expect.arrayContaining([sidebar.activeSessionId, "three"]),
+    }));
+  });
+
+  it("retargets the rail when the sidebar warm-switches to a live conversation", () => {
+    const { controller, railPost, first } = setup();
+    controller.focused = first;
+    controller.mirrorToProjectsRail({ type: "sessionName", sessionId: "one", name: "one" });
+    expect(railPost).toHaveBeenCalledWith(expect.objectContaining({
+      type: "projectsRailChatTarget", editor: false, sessionId: "one",
+    }));
+  });
+
+  it.each([
+    { status: "done", dot: "unread" },
+    { status: "error", dot: "error" },
+  ])("marks a covered tab $dot and clears it when visible without focus", async ({ status, dot }) => {
+    const { beside, panels, controller, first, railPost } = setup();
+    delete controller.markRead;
+    controller.remoteClients.isActiveValueVisible = () => false;
+    controller.refreshKeepAwake = vi.fn();
+    controller.refreshSessionOrderAfterTurn = vi.fn();
+    await beside("one");
+    const panel = panels[0];
+    panel.active = panel.visible = false;
+    panel.changeViewState();
+    controller.setStatus(first, status);
+    expect(controller.state.get("grok.sessionMeta", {}).one?.unread).toBe(true);
+    expect(railPost).toHaveBeenLastCalledWith({ type: "sessionDot", id: "one", dot });
+
+    panel.visible = true;
+    panel.changeViewState();
+    expect(controller.state.get("grok.sessionMeta", {}).one?.unread).toBeUndefined();
+    expect(railPost).toHaveBeenLastCalledWith({ type: "sessionDot", id: "one", dot: "none" });
+  });
+
+  it.each(["editor", "sidebar", "remote", "unsplit sidebar"])("counts a conversation as watched by its %s", async (viewer) => {
+    const { beside, panels, controller, sidebar } = setup();
+    controller.view = { visible: viewer === "sidebar", webview: { postMessage: vi.fn() } };
+    controller.remoteClients.isActiveValueVisible = () => viewer === "remote";
+    controller.refreshKeepAwake = vi.fn();
+    controller.refreshSessionOrderAfterTurn = vi.fn();
+    if (viewer !== "unsplit sidebar") {
+      await beside("sidebar");
+      panels[0].active = false;
+      panels[0].visible = viewer === "editor";
+    }
+    controller.setStatus(sidebar, "done");
+    expect(controller.state.get("grok.sessionMeta", {}).sidebar).toBeUndefined();
+  });
+
+  it("routes editor-preferred clicks to a new, existing, or last-used tab even after sidebar focus", async () => {
+    const { beside, plain, panels, controller, settings } = setup();
+    settings.openConversationIn = "editor";
+    await plain("one");
+    expect(panels).toHaveLength(1);
+    await beside("two");
+    panels[0].focus();
+    controller.setLastEditorChat(undefined);
+    await plain("sidebar");
+    expect(panels).toHaveLength(2);
+    expect(panels[0].title).toBe("sidebar");
+    await plain("two");
+    expect(panels[1].reveal).toHaveBeenCalledOnce();
+    expect(controller.openSession).not.toHaveBeenCalled();
+  });
+
+  it("updates the rail when the setting changes and routes sidebar-preferred clicks to the sidebar", async () => {
+    const { beside, plain, controller, host, settings, configListeners, railPost, panels } = setup();
+    controller.getProjectsRailHtml = () => "";
+    controller.resolveProjectsRailView({ webview: { postMessage: railPost, onDidReceiveMessage: vi.fn() } });
+    await beside("one");
+    settings.openConversationIn = "sidebar";
+    for (const listener of configListeners) listener({ affectsConfiguration: key => key === "grok.openConversationIn" });
+    expect(railPost).toHaveBeenLastCalledWith(expect.objectContaining({
+      type: "projectsRailChatTarget", editor: false, revealActive: true,
+    }));
+    await plain("two");
+    expect(controller.openSession).toHaveBeenCalledWith("two", "/repo");
+    expect(host.revealChatView).toHaveBeenCalledOnce();
+    expect(panels[0].title).toBe("one");
+  });
+
   it.each(["newSession", "resumeSession"])("parks a saved tab draft on accepted %s and restores it on return", async type => {
     const { controller, first, second, beside, panels, binding } = setup();
     const fresh = new Session();
@@ -403,8 +634,9 @@ describe("VS Code conversation editor", () => {
   });
 
   it("protects an idle editor session from reaping and a phone's delete", async () => {
-    const { beside, controller, first, second, pool } = setup();
+    const { beside, controller, first, second, pool, panels } = setup();
     await beside("one");
+    panels[0].active = panels[0].visible = false;
     first.lastActiveAt = second.lastActiveAt = 0;
     controller.remoteClients.isActiveValueVisible = () => false;
     controller.remoteClients.clientsForActiveValue = () => [];
@@ -483,7 +715,9 @@ describe("VS Code conversation editor", () => {
     expect(panels[0].title).toBe("sidebar");
     expect(panels[1].title).toBe("two");
     expect(controller.focused).toBe(sidebar);
-    expect(railPost).toHaveBeenLastCalledWith({ type: "projectsRailChatTarget", editor: true, sessionId: "sidebar" });
+    expect(railPost).toHaveBeenLastCalledWith(expect.objectContaining({
+      type: "projectsRailChatTarget", editor: true, sessionId: "sidebar",
+    }));
     controller.setLastEditorChat(undefined); // sidebar focus notification
     await plain("two");
     expect(controller.openSession).toHaveBeenCalledWith("two", "/repo");

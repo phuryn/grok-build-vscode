@@ -14,10 +14,29 @@ vi.mock("../src/voice-streamer", async () => {
   }
   return { PcmVoiceStreamer: Stream, VoiceStreamer: Stream, createPcmVoiceStreamer: (backend: string) => new Stream(backend) };
 });
+vi.mock("../src/voice-recorder", async importOriginal => {
+  const original = await importOriginal<typeof import("../src/voice-recorder")>();
+  class Recorder {
+    active = false;
+    outputPath = "";
+    async start({ outputPath }: { outputPath: string }) {
+      this.active = true;
+      this.outputPath = outputPath;
+    }
+    async stop() {
+      this.active = false;
+      return this.outputPath;
+    }
+    cancel() { this.active = false; }
+  }
+  return { ...original, VoiceRecorder: Recorder, transcribeAudio: vi.fn() };
+});
 import { GrokSidebar } from "../src/sidebar";
 import { Session } from "../src/session";
 import { RemoteClientState } from "../src/remote-client-state";
 import { DEFAULT_SEND_PHRASE } from "../src/voice";
+import { transcribeAudio } from "../src/voice-recorder";
+import { bootWebview, dispatch, type Posted } from "./webview-harness";
 
 function host(provider: Session["provider"] = "codex") {
   const s = Object.create(GrokSidebar.prototype) as any;
@@ -203,17 +222,165 @@ describe("local recording backend", () => {
     s.stopVoiceInput();
   });
 
-  it("keeps the backend across finalized send-phrase restarts and ignores partial commands", async () => {
+  it.each([["fix it grok send", "fix it"], ["grok send", ""]])("forwards %s on a finalized send and keeps the backend", async (speech, text) => {
     const s = host(); s.localVoiceCredentialCwd = "/repo";
     s.voiceStreamCtx = { backend: "openai", key: "openai-key", model: "gpt-live-transcribe", ffmpegPath: "ffmpeg", phrase: DEFAULT_SEND_PHRASE, keyterms: [], generation: 1 };
     await s.openVoiceStream(); const first = mock.streams.at(-1);
-    first.emit("partial", { text: "fix it grok send", speechFinal: false });
+    first.emit("partial", { text: speech, speechFinal: false });
     expect(mock.streams).toHaveLength(1);
     s.focused.provider = "grok";
-    first.emit("partial", { text: "fix it grok send", speechFinal: true });
+    first.emit("partial", { text: speech, speechFinal: true });
     await Promise.resolve();
-    expect(s.postLocal).toHaveBeenCalledWith({ type: "voiceSubmit", text: "fix it" });
+    expect(s.postLocal).toHaveBeenCalledWith({ type: "voiceSubmit", text });
     expect(mock.streams.at(-1).start.mock.calls[0][0].backend).toBe("openai");
     s.stopVoiceInput();
+  });
+});
+
+function splitVoiceHost(streaming = true) {
+  const s = host();
+  const sidebar = bootWebview({ vscode: true });
+  s.postLocal.mockImplementation((message: Posted) => dispatch(sidebar.window, message));
+  s.view = { webview: { postMessage: s.postLocal } };
+  s.editorChats = new Set();
+  s.host.getConfiguration = () => ({
+    get: (key: string, fallback: unknown) => {
+      if (key === "ffmpegPath") return process.execPath;
+      if (key === "voiceInputDevice") return "Test microphone";
+      if (key === "voiceStreaming") return streaming;
+      return fallback;
+    },
+  });
+  s.host.onDidChangeConfiguration = () => ({ dispose: vi.fn() });
+  s.getHtml = vi.fn(() => "");
+  const editor = (name: string) => {
+    const ui = bootWebview({ vscode: true, beforeScripts: window => {
+      window.document.body.dataset.editorChat = "true";
+    } });
+    let close!: () => void;
+    const post = vi.fn((message: Posted) => dispatch(ui.window, message));
+    const panel = {
+      webview: { postMessage: post, onDidReceiveMessage: () => ({ dispose: vi.fn() }) },
+      onDidDispose: (listener: () => void) => { close = listener; return { dispose: vi.fn() }; },
+    };
+    const session = Object.assign(new Session(), { cwd: `/${name}`, provider: "codex" });
+    const tab = { session, panel, ready: true, binding: 1 };
+    s.attachEditorChat(tab);
+    dispatch(ui.window, { type: "editorChatBound", binding: 1 });
+    return {
+      ui,
+      post,
+      close: () => close(),
+      action: (type: string, fields: Record<string, unknown> = {}) => s.onEditorChatMessage(tab, {
+        type: "editorChatAction", binding: tab.binding, message: { type, ...fields },
+      }),
+    };
+  };
+  const mic = (h: ReturnType<typeof bootWebview>) => h.doc.querySelector<HTMLButtonElement>("#mic-btn")!;
+  const composer = (h: ReturnType<typeof bootWebview>) => h.doc.querySelector<HTMLTextAreaElement>("#input")!;
+  return { s, sidebar, first: editor("first"), second: editor("second"), mic, composer };
+}
+
+describe("dictation across local chat surfaces", () => {
+  it("inserts partial and final text only in the owning tab and rejects other local controls", async () => {
+    const { s, sidebar, first, second, mic, composer } = splitVoiceHost();
+    composer(sidebar).value = "sidebar draft";
+    composer(second.ui).value = "other tab draft";
+    await first.action("voiceStart");
+    expect(mock.streams).toHaveLength(1);
+    expect(s.resolveSttApiKey).toHaveBeenCalledWith("/first", "openai");
+    expect(mic(first.ui).classList.contains("listening")).toBe(true);
+    expect(mic(sidebar).disabled).toBe(true);
+    expect(mic(second.ui).disabled).toBe(true);
+
+    await s.onMessage({ type: "voiceStart" }, "local");
+    await second.action("voiceStart");
+    await s.onMessage({ type: "voiceStop", discard: true }, "local");
+    await second.action("voiceStop");
+    expect(mock.streams).toHaveLength(1);
+    const stream = mock.streams[0];
+    expect(stream.cancel).not.toHaveBeenCalled();
+    expect(stream.stop).not.toHaveBeenCalled();
+
+    stream.emit("partial", { text: "only here", speechFinal: false });
+    expect(composer(first.ui).value).toBe("only here");
+    stream.transcript = "only in the first tab";
+    await first.action("voiceStop");
+    expect(composer(first.ui).value).toBe("only in the first tab");
+    expect(composer(sidebar).value).toBe("sidebar draft");
+    expect(composer(second.ui).value).toBe("other tab draft");
+    expect([sidebar, first.ui, second.ui].every(h => !mic(h).disabled)).toBe(true);
+    expect(s.sendRemoteClient).not.toHaveBeenCalled();
+  });
+
+  it.each(["close", "stream error"])("releases the mic on %s and ignores later transcript events", async (end) => {
+    const { s, sidebar, first, second, mic, composer } = splitVoiceHost();
+    await first.action("voiceStart");
+    expect(mock.streams).toHaveLength(1);
+    expect(mic(second.ui).disabled).toBe(true);
+    const stream = mock.streams[0];
+    if (end === "close") first.close();
+    else stream.emit("error", new Error("device disconnected"));
+    expect(stream.cancel).toHaveBeenCalledOnce();
+    expect(mic(sidebar).disabled).toBe(false);
+    expect(mic(second.ui).disabled).toBe(false);
+
+    stream.emit("partial", { text: "late text", speechFinal: true });
+    stream.emit("ended");
+    expect(composer(sidebar).value).toBe("");
+    expect(composer(second.ui).value).toBe("");
+    expect(first.post).not.toHaveBeenCalledWith(expect.objectContaining({ type: "voicePartial" }));
+    await second.action("voiceStart");
+    expect(mock.streams).toHaveLength(2);
+    await second.action("voiceStop", { discard: true });
+    expect(s.sendRemoteClient).not.toHaveBeenCalled();
+  });
+
+  it("delivers batch transcription only to its owner and ignores final text after that tab closes", async () => {
+    const { sidebar, first, second, mic, composer } = splitVoiceHost(false);
+    vi.mocked(transcribeAudio).mockResolvedValueOnce("batch draft");
+    await first.action("voiceStart");
+    await first.action("voiceStop");
+    expect(composer(first.ui).value).toBe("batch draft");
+    expect(composer(sidebar).value).toBe("");
+
+    let finish!: (text: string) => void;
+    vi.mocked(transcribeAudio).mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+    await first.action("voiceStart");
+    const stopping = first.action("voiceStop");
+    await vi.waitFor(() => expect(mic(first.ui).classList.contains("transcribing")).toBe(true));
+    first.close();
+    expect(mic(second.ui).disabled).toBe(false);
+    await second.action("voiceStart");
+    finish("late batch text");
+    await stopping;
+    expect(composer(first.ui).value).toBe("batch draft");
+    expect(composer(second.ui).value).toBe("");
+    expect(mic(sidebar).disabled).toBe(true);
+    await second.action("voiceStop", { discard: true });
+  });
+
+  it("marks both tabs busy for a sidebar recording and leaves an independent phone stream running when a tab closes", async () => {
+    const { s, sidebar, first, second, mic, composer } = splitVoiceHost();
+    await s.handleRemoteVoiceStart("phone", s.focused);
+    const phone = s.remoteVoice.get("phone").streamer;
+    await s.onMessage({ type: "voiceStart" }, "local");
+    expect(mic(first.ui).disabled).toBe(true);
+    expect(mic(second.ui).disabled).toBe(true);
+    s.voiceStreamer.transcript = "sidebar dictation";
+    await s.onMessage({ type: "voiceStop" }, "local");
+    expect(composer(sidebar).value).toBe("sidebar dictation");
+    expect(composer(first.ui).value).toBe("");
+
+    s.sendRemoteClient.mockClear();
+    await first.action("voiceStart");
+    second.close();
+    expect(mic(sidebar).disabled).toBe(true);
+    first.close();
+    expect(mic(sidebar).disabled).toBe(false);
+    expect(phone.cancel).not.toHaveBeenCalled();
+    expect(s.sendRemoteClient).not.toHaveBeenCalled();
+    expect(s.remoteVoice.has("phone")).toBe(true);
+    s.dropRemoteVoice("phone");
   });
 });

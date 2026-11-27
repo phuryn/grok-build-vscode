@@ -350,28 +350,7 @@ export function createVsCodeHost(
         },
       );
       if (opts.icon) panel.iconPath = toVsCodeUri(opts.icon);
-      return {
-        webview: wrapWebview(panel.webview),
-        get visible() { return panel.visible; },
-        get active() { return panel.active; },
-        get title() { return panel.title; },
-        set title(value) { if (value !== undefined) panel.title = value; },
-        reveal() {
-          if (opts.column === "beside") panel.reveal();
-          else panel.reveal(vscode.ViewColumn.Active);
-        },
-        onDidFocus(listener) {
-          return panel.onDidChangeViewState(({ webviewPanel }) => {
-            if (webviewPanel.active) listener();
-          });
-        },
-        onDidDispose(listener) {
-          return panel.onDidDispose(listener);
-        },
-        dispose() {
-          panel.dispose();
-        },
-      };
+      return wrapEditorWebview(panel, opts.column === "beside");
     },
     async linkRemote() {
       await vscode.commands.executeCommand("grok.linkRemote");
@@ -725,7 +704,31 @@ export function createVsCodeHostContext(context: vscode.ExtensionContext): HostC
     extensionVersion: (context.extension.packageJSON as { version?: string })?.version ?? "",
     isProduction: context.extensionMode === vscode.ExtensionMode.Production,
     globalState: context.globalState,
+    workspaceState: context.workspaceState,
     subscriptions: context.subscriptions,
+  };
+}
+
+export function wrapEditorWebview(panel: vscode.WebviewPanel, revealInPlace: boolean): HostEditorWebview {
+  return {
+    webview: wrapWebview(panel.webview),
+    get visible() { return panel.visible; },
+    get active() { return panel.active; },
+    get title() { return panel.title; },
+    set title(value) { if (value !== undefined) panel.title = value; },
+    reveal() {
+      if (revealInPlace) panel.reveal();
+      else panel.reveal(vscode.ViewColumn.Active);
+    },
+    onDidChangeViewState(listener) {
+      return panel.onDidChangeViewState(listener);
+    },
+    onDidDispose(listener) {
+      return panel.onDidDispose(listener);
+    },
+    dispose() {
+      panel.dispose();
+    },
   };
 }
 
@@ -738,6 +741,9 @@ export function wrapWebviewView(view: vscode.WebviewView): HostWebviewView {
     },
     show(preserveFocus?: boolean) {
       view.show?.(preserveFocus);
+    },
+    onDidChangeVisibility(listener) {
+      return view.onDidChangeVisibility(listener);
     },
   };
 }

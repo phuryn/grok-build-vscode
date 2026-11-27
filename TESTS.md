@@ -442,8 +442,19 @@ happy-dom test locking in the native-Windows regressions this build fixed (plus 
   ready mid-load, then sending after the transcript appears. It also checks
   project creation, file routing, the active-file chip, idle cleanup, phone
   delete protection, and handoff session ownership.
+- The same suite checks all three plain-click destinations, live setting
+  changes, and the rail target snapshot after replacing or closing tabs. It
+  covers green and red unread dots on covered tabs, clearing on visibility
+  without focus, and idle protection for a covered tab.
+- The restore tests pass the first host's serialized panel state to a second
+  host with the same workspace storage. They check reuse of the native panel,
+  saved and never-sent chats, exact draft text and restored chips, lazy startup,
+  and visible failures with a recoverable draft. They also reopen a draft
+  parked by navigation or close. The composer DOM suite checks that the panel
+  saves the host key and keeps draft text when sending is blocked.
 - The separate Projects rail DOM tests cover the conversation and project
-  menus, mouse gestures, and the capability check for older hosts. The
+  menus, mouse gestures, destination selection, open markers, unread dot
+  coexistence, and the capability check for older hosts. The
   composer, handoff, and star-card DOM tests exercise the shared chat script.
 - The VS Code integration suite opens two fake-provider conversations into
   separate native editor groups, checks their replay and live sessions, and
@@ -541,7 +552,7 @@ posted.
 
 - `test/stt-backend.test.ts` covers Auto and strict choices for every provider and credential combination, plus the Google credential priority.
 - `test/google-voice.test.ts` uses an in-process loopback WebSocket server with a fake key. It exercises the production adapter, setup acknowledgement, redaction, raw PCM, transcript revisions, final-only sending, Stop and Cancel, and HTTP and WebSocket rejection. It also checks WAV decoding for recorded clips.
-- `test/voice-routing-host.test.ts` exercises desk and phone routing with fake capture and transcription. It checks the old and new renderer views of availability, saved-key reuse, scoped PCM ownership, setup guidance, and hands-free restarts.
+- `test/voice-routing-host.test.ts` exercises desk and phone routing with fake capture and transcription. It checks availability, saved-key reuse, scoped PCM ownership, setup guidance, and hands-free restarts. It also drives the sidebar and two editor composers with the real renderer. Streaming and batch results stay with the owner, other controls are refused, and close and error release the mic without touching a phone stream.
 - `test/voice-settings.dom.test.ts` drives the shared Settings and composer in a simulated DOM. It covers the Google capability gate, desk-only key entry, free-tier disclosure, phone acknowledgement, and missing-key prompts.
 - The [Google file probe](research/google-voice.md#owner-probe) reaches the real Gemini API with an operator-supplied key and stays outside the automated suite.
 

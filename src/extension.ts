@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import { configureWorkspaceGrokHome } from "./workspace-grok-home";
 import { GrokSidebar } from "./sidebar";
-import { createVsCodeHost, createVsCodeHostContext, fromVsCodeUri, wrapWebviewView } from "./vscode-host";
+import { createVsCodeHost, createVsCodeHostContext, fromVsCodeUri, wrapEditorWebview, wrapWebviewView } from "./vscode-host";
 import { withLineTimestamps } from "./output-timestamps";
 import {
   GROK_VIEW_ID,
@@ -182,6 +182,12 @@ export function activate(context: vscode.ExtensionContext): GrokExtensionApi {
   testHooks?.isolateFromInstalledGrok();
 
   context.subscriptions.push(
+    vscode.window.registerWebviewPanelSerializer(GrokSidebar.conversationViewType, {
+      async deserializeWebviewPanel(panel, state) {
+        panel.iconPath = vscode.Uri.joinPath(context.extensionUri, "resources", "grok-icon.png");
+        sidebar.restoreEditorConversation(wrapEditorWebview(panel, true), state);
+      },
+    }),
     vscode.window.registerWebviewViewProvider(
       GrokSidebar.viewId,
       {

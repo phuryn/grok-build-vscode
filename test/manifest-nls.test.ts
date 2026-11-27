@@ -29,6 +29,9 @@ const pkg = JSON.parse(pkgRaw) as {
     configuration: {
       title: string;
       properties: Record<string, {
+        type?: string;
+        default?: unknown;
+        enum?: string[];
         description?: string;
         markdownDescription?: string;
         enumDescriptions?: string[];
@@ -70,6 +73,19 @@ const placeholderKeys = [...new Set([...pkgRaw.matchAll(/%([A-Za-z0-9._-]+)%/g)]
 const urls = (value: string) => (value.match(/https?:\/\/[^\s)]+/g) || []).sort();
 
 describe("manifest localization", () => {
+  it("contributes the three conversation destinations with last used as the default", () => {
+    expect(pkg.contributes.configuration.properties["grok.openConversationIn"]).toMatchObject({
+      type: "string",
+      default: "lastUsed",
+      enum: ["lastUsed", "sidebar", "editor"],
+      enumDescriptions: [
+        "%configuration.grok.openConversationIn.enumDescriptions.lastUsed%",
+        "%configuration.grok.openConversationIn.enumDescriptions.sidebar%",
+        "%configuration.grok.openConversationIn.enumDescriptions.editor%",
+      ],
+    });
+  });
+
   it("wraps every localizable string in a placeholder", () => {
     const unwrapped = localizableStrings()
       .filter(([, value]) => !/^%[A-Za-z0-9._-]+%$/.test(value))

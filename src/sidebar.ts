@@ -744,12 +744,31 @@ interface EditorChatTab {
   openSeq: number;
   ready: boolean;
   focusComposerOnReveal?: boolean;
+  restoreKey?: string;
+  restoring?: "pending" | "loading";
+  restoreError?: string;
+  listeners?: HostDisposable;
 }
 
 interface EditorChatDraft {
   text: string;
   chips: FileChip[];
 }
+
+const VOICE_CONFIGURATION_KEYS = [
+  "grok.voiceApiKey", "grok.voiceOpenAiApiKey", "grok.voiceGoogleApiKey",
+  "grok.voiceBackend", "grok.ffmpegPath", "grok.voiceSendPhrase", "grok.voiceKeyterms",
+];
+
+interface EditorChatState {
+  cwd: string;
+  provider: AcpProvider;
+  sessionId?: string;
+  draft?: EditorChatDraft;
+}
+
+const EDITOR_CHAT_STATE = "grok.editorChatPanel.";
+const PARKED_EDITOR_DRAFT = "grok.editorChatDraft.";
 
 type ProjectsRailMessage = WebviewMsg
   | { type: "openConversationBeside"; id: string; cwd?: string }
@@ -876,11 +895,13 @@ type NewChatSpawn = { provider: AcpProvider; modelId?: string; cwd: string; draf
 
 export class GrokSidebar {
   public static readonly viewId = "grok.chat";
+  public static readonly conversationViewType = "grok.conversation";
   /** Primary side bar projects rail — separate webview, not a second chat client. */
   public static readonly projectsViewId = "grok.projects";
   private view?: HostWebviewView;
   /** Second local consumer of catalog-shaped host messages. Absent until resolved. */
   private projectsRail?: HostWebviewView;
+  private projectsRailConfigWatcher?: HostDisposable;
   /** The session currently shown in the chat — one member of {@link pool}. */
   private focused = this.newLocalSession();
   private readonly editorChats = new Set<EditorChatTab>();
@@ -992,7 +1013,7 @@ export class GrokSidebar {
       if (this.cloudHostUpdate && !this.cloudHostUpdate.admitting) throw new Error(CLOUD_UPDATE_REFUSAL);
     },
   });
-  private voiceRecorder = new VoiceRecorder();
+  private voiceRecorder?: VoiceRecorder;
   /** Availability only. Read the stored key for the recording that uses it. */
   private googleVoiceKeyAvailable?: boolean;
   private voiceTempPath?: string;
@@ -1017,6 +1038,7 @@ export class GrokSidebar {
   };
   private localVoiceCwd?: string;
   private localVoiceCredentialCwd?: string;
+  private localVoiceOwner?: { session: Session; tab?: EditorChatTab };
   private readonly remoteVoice = new Map<string, RemoteVoiceEntry>();
   private static readonly MAX_REMOTE_PCM_BYTES = MAX_RECORDING_SECONDS * 16_000 * 2;
   private static readonly MAX_REMOTE_PCM_CHUNK_BYTES = 256 * 1024;
@@ -3785,6 +3807,7 @@ export class GrokSidebar {
 
   resolveWebviewView(view: HostWebviewView): void {
     this.cancelStarPrompt();
+    this.stopSplitSidebarVoice();
     this.view = view;
     // Assigning html boots a new renderer. The `local` cache entry belonged
     // to the previous JS state and must not suppress the next identical frame.
@@ -3832,15 +3855,7 @@ export class GrokSidebar {
     // change, so the mic button's "needs setup" hint updates without a reload.
     this.configWatcher?.dispose();
     const configChanges = this.host.onDidChangeConfiguration((e) => {
-      if (
-        e.affectsConfiguration("grok.voiceApiKey") ||
-        e.affectsConfiguration("grok.voiceOpenAiApiKey") ||
-        e.affectsConfiguration("grok.voiceGoogleApiKey") ||
-        e.affectsConfiguration("grok.voiceBackend") ||
-        e.affectsConfiguration("grok.ffmpegPath") ||
-        e.affectsConfiguration("grok.voiceSendPhrase") ||
-        e.affectsConfiguration("grok.voiceKeyterms")
-      ) {
+      if (VOICE_CONFIGURATION_KEYS.some(key => e.affectsConfiguration(key))) {
         this.postVoiceConfigured();
       }
       if (e.affectsConfiguration("grok.chatFontScale")) {
@@ -4007,7 +4022,15 @@ export class GrokSidebar {
     authWatcher.onDidCreate(refreshVoiceConfigured);
     authWatcher.onDidChange(refreshVoiceConfigured);
     authWatcher.onDidDelete(refreshVoiceConfigured);
-    this.configWatcher = disposeAll(configChanges, authWatcher);
+    const visibility = view.onDidChangeVisibility?.(() => {
+      if (this.view !== view) return;
+      if (view.visible) {
+        this.markRead(this.focused);
+        if (this.context.workspaceState && this.chatReadyForHandoff) this.restorePersistedDraft(this.focused, "local");
+      }
+      this.postProjectsRailChatTarget();
+    });
+    this.configWatcher = disposeAll(configChanges, authWatcher, ...(visibility ? [visibility] : []));
     this.applyTerminalShellPref();
     void this.maybeStartUplink();
   }
@@ -4019,6 +4042,12 @@ export class GrokSidebar {
    */
   resolveProjectsRailView(view: HostWebviewView): void {
     this.projectsRail = view;
+    this.projectsRailConfigWatcher?.dispose();
+    this.projectsRailConfigWatcher = this.host.canOpenConversationEditor
+      ? this.host.onDidChangeConfiguration(event => {
+        if (event.affectsConfiguration("grok.openConversationIn")) this.postProjectsRailChatTarget();
+      })
+      : undefined;
     view.webview.options = {
       enableScripts: true,
       localResourceRoots: [
@@ -4040,6 +4069,8 @@ export class GrokSidebar {
   /** Drop the rail handle when the view is disposed (or re-created). */
   disposeProjectsRailView(): void {
     this.projectsRail = undefined;
+    this.projectsRailConfigWatcher?.dispose();
+    this.projectsRailConfigWatcher = undefined;
   }
 
   private chatLocalResourceRoots(): Uri[] {
@@ -4079,9 +4110,12 @@ export class GrokSidebar {
       }
       return;
     }
-    if (msg.type === "resumeSession" && this.lastEditorChat) {
-      await this.openEditorConversation(msg.id, msg.cwd, this.lastEditorChat);
-      return;
+    if (msg.type === "resumeSession") {
+      const target = this.projectsRailChatDestination();
+      if (target.editor) {
+        await this.openEditorConversation(msg.id, msg.cwd, target.tab);
+        return;
+      }
     }
     if (!GrokSidebar.PROJECTS_RAIL_WEBVIEW_TYPES.has(msg.type)) {
       this.host.appendLine(`[projects-rail] ignored ${msg.type}`);
@@ -4117,13 +4151,41 @@ export class GrokSidebar {
   private setLastEditorChat(tab: EditorChatTab | undefined): void {
     if (this.lastEditorChat === tab) return;
     this.lastEditorChat = tab;
+    // Keep the most recently used editor available after the sidebar takes focus.
+    if (tab && this.editorChats.delete(tab)) this.editorChats.add(tab);
     this.postProjectsRailChatTarget();
   }
 
+  private projectsRailChatDestination(): { editor: boolean; tab?: EditorChatTab; revealActive?: boolean } {
+    if (!this.host.canOpenConversationEditor) return { editor: false };
+    switch (this.host.getConfiguration("grok").get<string>("openConversationIn", "lastUsed")) {
+      case "sidebar":
+        return { editor: false, revealActive: true };
+      case "editor":
+        return { editor: true, tab: [...this.editorChats].at(-1) };
+      default:
+        return this.lastEditorChat
+          ? { editor: true, tab: this.lastEditorChat }
+          : { editor: false, revealActive: !!this.editorChats.size && !this.view?.visible };
+    }
+  }
+
   private postProjectsRailChatTarget(): void {
-    const tab = this.lastEditorChat;
-    void this.projectsRail?.webview.postMessage({
-      type: "projectsRailChatTarget", editor: !!tab, sessionId: tab?.targetId ?? tab?.session.activeSessionId,
+    if (!this.projectsRail || !this.host.canOpenConversationEditor) return;
+    const { editor, tab, revealActive } = this.projectsRailChatDestination();
+    const sidebarId = this.focused.activeSessionId;
+    const openSessionIds = new Set<string>();
+    if (sidebarId) openSessionIds.add(sidebarId);
+    for (const chat of this.editorChats) {
+      const id = chat.targetId ?? chat.session.activeSessionId;
+      if (id) openSessionIds.add(id);
+    }
+    void this.projectsRail.webview.postMessage({
+      type: "projectsRailChatTarget",
+      editor,
+      sessionId: editor ? tab?.targetId ?? tab?.session.activeSessionId : sidebarId,
+      openSessionIds: [...openSessionIds],
+      revealActive,
     });
   }
 
@@ -4193,9 +4255,12 @@ export class GrokSidebar {
         this.bindSessionLoad(id, claim.reservation, session);
         await this.startSession(id, session, "ensure", clock);
       }
-      if (tab.session === session) tab.targetId = undefined;
+      if (tab.session === session && this.editorChats.has(tab)) {
+        tab.targetId = undefined;
+        if (tab.panel.visible) this.markRead(session);
+        this.postProjectsRailChatTarget();
+      }
       this.touch(session);
-      this.markRead(session);
       if (session.activeSessionId === id && session.client) void this.noteSessionOpened(id);
     } catch (error) {
       failure = error;
@@ -4210,24 +4275,124 @@ export class GrokSidebar {
     if (!this.editorWatcher) this.watchActiveEditor();
     this.activeEditorForContext();
     const panel = this.host.openEditorWebview({
-      viewType: "grok.conversation",
+      viewType: GrokSidebar.conversationViewType,
       title: this.editorChatTitle(session),
       column: "beside",
       icon: Uri.joinPath(this.context.extensionUri, "resources", "grok-icon.png"),
       localResourceRoots: this.chatLocalResourceRoots(),
     });
     if (!panel) return;
-    const tab: EditorChatTab = { panel, session, targetId, binding: 0, openSeq: 0, ready: false };
+    const tab: EditorChatTab = {
+      panel, session, targetId, binding: 0, openSeq: 0, ready: false,
+      restoreKey: this.context.workspaceState ? randomUUID() : undefined,
+    };
+    this.attachEditorChat(tab);
+    this.persistEditorChat(tab);
+    return tab;
+  }
+
+  /** VS Code supplies the native panel in its original editor group. */
+  restoreEditorConversation(panel: HostEditorWebview, state: unknown): void {
+    const key = (state as { editorChatRestoreKey?: unknown } | null)?.editorChatRestoreKey;
+    const restoreKey = typeof key === "string" && /^[a-f0-9-]{36}$/i.test(key) ? key : undefined;
+    const saved = restoreKey && this.context.workspaceState?.get<EditorChatState>(EDITOR_CHAT_STATE + restoreKey);
+    const id = saved ? saved.sessionId : undefined;
+    const held = id ? this.liveSessionById(id) : undefined;
+    const session = held && !this.editorChatFor(held) ? held : this.newLocalSession();
+    let valid = false;
+    if (saved && id) {
+      valid = held ? session === held : this.configureLocalResumeSession(session, id, saved.cwd);
+      if (valid && !held) {
+        session.activeSessionId = id;
+        session.hasHistory = true;
+      }
+    } else if (saved && this.resolveLocalRepoTarget(saved.cwd)) {
+      this.setSessionCwd(session, saved.cwd, this.workspaceRoot());
+      session.provider = saved.provider;
+      valid = true;
+    }
+    const tab: EditorChatTab = {
+      panel, session, restoreKey, binding: 0, openSeq: 0, ready: false,
+      targetId: valid ? id : undefined,
+      restoring: valid ? "pending" : undefined,
+      restoreError: valid ? undefined : this.editorRestoreError(!!saved && !!saved.draft),
+    };
+    if (saved && saved.draft) this.editorDrafts.set(session, saved.draft);
+    if (!this.editorWatcher) this.watchActiveEditor();
+    panel.webview.options = { enableScripts: true, localResourceRoots: this.chatLocalResourceRoots() };
+    this.attachEditorChat(tab);
+    this.persistEditorChat(tab);
+    if (panel.active) this.setLastEditorChat(tab);
+    else this.postProjectsRailChatTarget();
+  }
+
+  private async startRestoredEditor(tab: EditorChatTab): Promise<void> {
+    if (tab.restoring !== "pending" || !tab.ready || !tab.panel.visible) return;
+    tab.restoring = "loading";
+    const { session, targetId: id } = tab;
+    const current = () => this.editorChats.has(tab) && tab.session === session && tab.restoring === "loading";
+    let claim: Awaited<ReturnType<GrokSidebar["reserveBehindInFlightLoad"]>>;
+    let started = false;
+    let failure: unknown;
+    try {
+      if (id) {
+        claim = await this.reserveBehindInFlightLoad(id, undefined, current, () => {});
+        if (!claim || !current()) return;
+        this.bindSessionLoad(id, claim.reservation, session);
+      }
+      this.pool.add(session);
+      started = !!(await this.startSession(id, session, "ensure", undefined, { canReplace: current }));
+    } catch (error) {
+      failure = error;
+      this.host.appendLine(`[editor-chat] restore failed: ${errorDetail(error)}`);
+    } finally {
+      if (id && claim) this.releaseSessionLoad(id, claim.reservation, failure);
+      if (current()) {
+        tab.restoring = undefined;
+        tab.targetId = undefined;
+        if (started || !id) {
+          void tab.panel.webview.postMessage({ type: "editorChatRestoreBlocked", value: false });
+          this.emitEditorSession(session, { type: "setBusy", ...(started ? rehydrateBusyChrome(session) : { value: false }) });
+          if (tab.panel.visible) this.markRead(session);
+          this.persistEditorChat(tab);
+          if (failure) this.reportEditorChatFailure(tab);
+        } else {
+          this.pool.delete(session);
+          session.activeSessionId = undefined;
+          tab.restoreError = this.editorRestoreError(this.editorDrafts.has(session));
+          this.emitEditorSession(session, { type: "setBusy", value: false });
+          this.emitEditorSession(session, { type: "error", text: tab.restoreError });
+        }
+        this.postProjectsRailChatTarget();
+      }
+    }
+  }
+
+  private editorRestoreError(hasDraft: boolean): string {
+    return hasDraft
+      ? this.l10n("Could not restore this conversation. You can copy your draft or open a new chat.")
+      : this.l10n("Could not open this conversation.");
+  }
+
+  private attachEditorChat(tab: EditorChatTab): void {
+    const { panel } = tab;
     this.editorChats.add(tab);
     this.takeParkedEditorDraft(tab);
     if (this.editorChats.size === 1) void this.view?.webview.postMessage({ type: "trackLocalChatFocus" });
-    const focus = panel.onDidFocus?.(() => {
-      this.setLastEditorChat(tab);
-      this.refreshImplicitChip(false, tab.session);
-      this.focusEditorComposer(tab);
+    const viewState = panel.onDidChangeViewState?.(() => {
+      if (panel.visible) this.markRead(tab.session);
+      if (panel.active) {
+        this.setLastEditorChat(tab);
+        this.refreshImplicitChip(false, tab.session);
+        this.focusEditorComposer(tab);
+      }
+      void this.startRestoredEditor(tab);
     });
-    const soundConfig = this.host.onDidChangeConfiguration(event => {
+    const config = this.host.onDidChangeConfiguration(event => {
       if (!tab.ready) return;
+      if (!this.configWatcher && VOICE_CONFIGURATION_KEYS.some(key => event.affectsConfiguration(key))) {
+        this.postEditorVoiceConfigured(tab);
+      }
       for (const type of ["soundNotifications", "inputNeededSound"] as const) {
         if (event.affectsConfiguration(`grok.${type}`)) {
           void panel.webview.postMessage({ type, value: this.host.getConfiguration("grok").get(type, false) });
@@ -4240,14 +4405,12 @@ export class GrokSidebar {
         this.reportEditorChatFailure(tab);
       });
     });
-    panel.onDidDispose(() => {
-      messages.dispose();
-      focus?.dispose();
-      soundConfig.dispose();
+    const closed = panel.onDidDispose(() => {
+      tab.listeners?.dispose();
       this.forgetEditorChat(tab);
     });
+    tab.listeners = disposeAll(messages, config, ...(viewState ? [viewState] : []), ...(closed ? [closed] : []));
     panel.webview.html = this.getHtml(panel.webview, true);
-    return tab;
   }
 
   private reportEditorChatFailure(tab: EditorChatTab): void {
@@ -4257,8 +4420,11 @@ export class GrokSidebar {
 
   private forgetEditorChat(tab: EditorChatTab): void {
     if (!this.editorChats.delete(tab)) return;
+    if (this.localVoiceOwner?.tab === tab) this.stopLocalVoiceInput();
     this.parkBoundEditorDraft(tab);
+    if (tab.restoreKey) this.writeEditorWorkspaceState(EDITOR_CHAT_STATE + tab.restoreKey, undefined);
     if (this.lastEditorChat === tab) this.setLastEditorChat(undefined);
+    else this.postProjectsRailChatTarget();
   }
 
   private closeEditorChat(tab: EditorChatTab): void {
@@ -4298,17 +4464,21 @@ export class GrokSidebar {
   }
 
   private bindEditorChat(tab: EditorChatTab, session: Session, switchDraft: boolean, targetId?: string): void {
+    if (this.localVoiceOwner?.tab === tab) this.stopLocalVoiceInput();
     if (switchDraft) {
       this.parkBoundEditorDraft(tab);
       tab.session = session;
       tab.targetId = targetId;
+      tab.restoring = undefined;
+      tab.restoreError = undefined;
       this.takeParkedEditorDraft(tab);
     }
     tab.focusComposerOnReveal = false;
     tab.binding++;
     tab.panel.title = this.editorChatTitle(session);
+    this.persistEditorChat(tab);
     if (tab.ready) this.replayEditorChat(tab, switchDraft);
-    if (tab === this.lastEditorChat) this.postProjectsRailChatTarget();
+    this.postProjectsRailChatTarget();
   }
 
   private async newEditorSession(existing: EditorChatTab | undefined, cwd: string, spawn?: NewChatSpawn): Promise<void> {
@@ -4329,6 +4499,8 @@ export class GrokSidebar {
     void webview.postMessage({
       type: "editorChatBinding", sessionId: session.activeSessionId,
       ...(switchDraft ? { switchDraft: true } : {}),
+      ...(tab.restoreKey ? { restoreKey: tab.restoreKey } : {}),
+      ...((tab.restoring || tab.restoreError) ? { restoreBlocked: true } : {}),
     });
     send({ type: "clearMessages" });
     send({ ...this.buildInitialStateMsg(session), cwd: this.sessionCwd(session), readRepliesAloud: false });
@@ -4336,6 +4508,8 @@ export class GrokSidebar {
     send(this.modelPinsMessage());
     const identity = this.sessionIdentityFrame(session);
     if (identity) send(identity);
+    this.postEditorVoiceConfigured(tab);
+    this.postLocalVoiceBusy(tab);
     this.refreshWorkflowCompletions(session);
     send({ type: "historyReplay", active: true });
     if (session.activeSessionId) {
@@ -4352,7 +4526,8 @@ export class GrokSidebar {
     for (const pending of this.pendingConfirms?.values() ?? []) {
       if (pending.session === session) send(pending.request);
     }
-    send({ type: "setBusy", ...rehydrateBusyChrome(session) });
+    const busy = tab.restoreError ? { value: false } : tab.restoring ? { value: true, locked: true } : rehydrateBusyChrome(session);
+    send({ type: "setBusy", ...busy });
     // Seed a fresh renderer or a different conversation. A rebind of the
     // same conversation already has its draft on screen.
     const draft = switchDraft === false ? undefined : this.editorDrafts.get(session);
@@ -4360,16 +4535,21 @@ export class GrokSidebar {
     this.postSessionName(session);
     void webview.postMessage({ type: "editorChatBound", binding: tab.binding });
     this.restorePersistedDraft(session, tab);
+    if (tab.restoreError) send({ type: "error", text: tab.restoreError });
   }
 
   private emitEditorSession(session: Session, message: HostMsg): void {
     const tab = this.editorChatFor(session);
     if (!tab) return;
-    if (message.type === "session" && message.sessionId && tab === this.lastEditorChat) this.postProjectsRailChatTarget();
+    if (message.type === "session") {
+      this.persistEditorChat(tab);
+      this.postProjectsRailChatTarget();
+    }
     if (message.type === "sessionName") tab.panel.title = this.editorChatTitle(session);
     if (tab.ready) {
       const webview = tab.panel.webview;
       void webview.postMessage(this.localizeHistoryMessage(message, webview));
+      if (message.type === "session") this.postEditorVoiceConfigured(tab);
     }
   }
 
@@ -4386,16 +4566,19 @@ export class GrokSidebar {
     "workflowControl", "stopDelegatedWork", "retryProviderSession", "restartProviderSession",
     "listSessions", "toggleSessionPin", "renameSession", "deleteSession",
     "openSettingsSurface", "showLogs", "recheckConnection", "remoteHandoff", "remoteSignIn", "openRemotePortal",
+    "voiceStart", "voiceStop",
   ]);
 
   private async onEditorChatMessage(tab: EditorChatTab, raw: unknown): Promise<void> {
     if (!this.editorChats.has(tab) || !raw || typeof raw !== "object") return;
     const frame = raw as { type: string; binding?: number; message?: WebviewMsg; text?: string; chipIds?: string[] };
     if (frame.type === "ready") {
+      if (this.localVoiceOwner?.tab === tab) this.stopLocalVoiceInput();
       tab.ready = true;
       this.replayEditorChat(tab);
       this.focusEditorComposer(tab);
       void this.postRemoteStatus();
+      void this.startRestoredEditor(tab);
       return;
     }
     if (frame.type === "localChatFocus") {
@@ -4409,9 +4592,13 @@ export class GrokSidebar {
       const chips = chipIds ? session.restoredChips.filter(chip => chipIds.has(chip.id)) : [];
       if (frame.text || chips.length) this.editorDrafts.set(session, { text: frame.text, chips });
       else this.editorDrafts.delete(session);
+      this.persistEditorChat(tab);
       return;
     }
     if (frame.type !== "editorChatAction" || !frame.message) return;
+    if ((tab.restoring || tab.restoreError)
+        && frame.message.type !== "resumeSession" && frame.message.type !== "newSession"
+        && frame.message.type !== "openSettingsSurface" && frame.message.type !== "showLogs") return;
     if (GrokSidebar.EDITOR_CHAT_PROVIDER_SETUP_TYPES.has(frame.message.type)) {
       await this.openSettingsEditor("providers");
     } else if (GrokSidebar.EDITOR_CHAT_TYPES.has(frame.message.type)) {
@@ -5947,7 +6134,6 @@ Only continue if you trust this code.`,
         open: async () => {
           const tab = [...(this.editorChats ?? [])].find(tab => tab.session.activeSessionId === id);
           if (tab) {
-            this.markRead(tab.session);
             this.revealEditorComposer(tab);
             return;
           }
@@ -7062,6 +7248,15 @@ Only continue if you trust this code.`,
     if (tab) {
       if (tab.ready && this.editorChatFor(session) === tab) {
         retainChips();
+        if (tab.restoreKey) {
+          const previous = this.editorDrafts.get(session);
+          const existing = previous?.text ?? "";
+          this.editorDrafts.set(session, {
+            text: draft && existing.includes(text) ? existing : [existing.trim(), text].filter(Boolean).join("\n\n"),
+            chips: restoreQueuedChips(previous?.chips ?? [], [{ text, chips: chips ?? [] }]),
+          });
+          this.persistEditorChat(tab);
+        }
         this.emitEditorSession(session, message);
         return;
       }
@@ -10491,6 +10686,34 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     if (text || chips.length) await this.rememberQueuedDraft(id, text, chips.length ? chips : undefined, true);
     if (this.editorDrafts?.get(id) === draft) this.editorDrafts?.delete(id);
     if (this.editorDrafts?.get(session) === draft) this.editorDrafts?.delete(session);
+    this.writeEditorWorkspaceState(PARKED_EDITOR_DRAFT + id, undefined);
+  }
+
+  private writeEditorWorkspaceState(key: string, value: unknown): void {
+    const storage = this.context?.workspaceState;
+    if (!storage) return;
+    void Promise.resolve(storage.update(key, value)).catch(error => {
+      this.host.appendLine(`[editor-chat] Could not save workspace state: ${errorDetail(error)}`);
+    });
+  }
+
+  private persistEditorChat(tab: EditorChatTab): void {
+    if (!tab.restoreKey) return;
+    const key = EDITOR_CHAT_STATE + tab.restoreKey;
+    const previous = this.context.workspaceState?.get<EditorChatState>(key);
+    const { session } = tab;
+    const draft = this.editorDrafts.get(session);
+    if (tab.restoreError) {
+      if (previous) this.writeEditorWorkspaceState(key, { ...previous, draft });
+      return;
+    }
+    const snapshot: EditorChatState = {
+      cwd: this.sessionCwd(session),
+      provider: session.provider,
+      sessionId: tab.targetId ?? (session.hasHistory ? session.activeSessionId ?? previous?.sessionId : undefined),
+      draft,
+    };
+    this.writeEditorWorkspaceState(key, snapshot);
   }
 
   private parkBoundEditorDraft(tab: EditorChatTab): void {
@@ -10499,17 +10722,32 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     if (!draft) return;
     this.editorDrafts.delete(session);
     const id = session.activeSessionId ?? tab.targetId;
-    if (id) this.editorDrafts.set(id, draft);
+    if (!id) return;
+    this.editorDrafts.set(id, draft);
+    if (tab.targetId || session.hasHistory) this.writeEditorWorkspaceState(PARKED_EDITOR_DRAFT + id, draft);
   }
 
   private takeParkedEditorDraft(tab: EditorChatTab): void {
     const { session } = tab;
     const id = session.activeSessionId ?? tab.targetId;
     if (!id) return;
-    const draft = this.editorDrafts?.get(id);
+    const draft = this.takeParkedEditorDraftForId(id);
     if (!draft) return;
-    this.editorDrafts.delete(id);
-    this.editorDrafts.set(session, draft);
+    const current = this.editorDrafts.get(session);
+    if (!current) this.editorDrafts.set(session, draft);
+    else this.editorDrafts.set(session, {
+      text: current.text.includes(draft.text) ? current.text : [draft.text, current.text].filter(Boolean).join("\n\n"),
+      chips: restoreQueuedChips(draft.chips, [current]),
+    });
+  }
+
+  private takeParkedEditorDraftForId(id: string): EditorChatDraft | undefined {
+    const draft = this.editorDrafts?.get(id)
+      ?? this.context?.workspaceState?.get<EditorChatDraft>(PARKED_EDITOR_DRAFT + id);
+    if (!draft) return;
+    this.editorDrafts?.delete(id);
+    this.writeEditorWorkspaceState(PARKED_EDITOR_DRAFT + id, undefined);
+    return draft;
   }
 
   private keepUnrecordedEditor(tab: EditorChatTab, id?: string): boolean {
@@ -10549,11 +10787,11 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   private restorePersistedDraft(session: Session, recipient?: RemoteRequester | EditorChatTab | "local"): void {
     const id = session.activeSessionId;
     if (!id) return;
-    if ((!recipient || recipient === "local") && session === this.focused && this.view && !this.editorChatFor(session)) {
-      const draft = this.editorDrafts?.get(id);
+    if ((!recipient || recipient === "local") && session === this.focused && this.view && !this.editorChatFor(session)
+        && (!this.context?.workspaceState || (this.chatReadyForHandoff && this.view.visible))) {
+      const draft = this.takeParkedEditorDraftForId(id);
       if (draft) {
         this.restoreComposerFor(session, undefined, draft.text, draft.chips, true);
-        this.editorDrafts.delete(id);
       }
     }
     void this.updateSessionMeta((current) => {
@@ -11645,13 +11883,17 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     try { this.keepAwake.stop(); } catch { /* the pid watcher reaps it anyway */ }
     try { this.settingsEditor?.dispose(); } catch { /* tab already gone */ }
     this.settingsEditor = undefined;
-    for (const tab of this.editorChats ?? []) tab.panel.dispose();
+    // VS Code saves and restores the native tabs itself. Closing them here
+    // would turn extension shutdown into an explicit close for draft storage.
+    for (const tab of this.editorChats ?? []) tab.listeners?.dispose();
+    this.editorChats?.clear();
     void this.disposePool();
     for (const provider of new Set([...this.adapterHistoryClients.keys(), ...(this.museHistoryStart ? ["muse" as const] : [])])) {
       void this.disposeAdapterHistoryClient(provider);
     }
     this.editorWatcher?.dispose();
     this.configWatcher?.dispose();
+    this.disposeProjectsRailView();
     this.terminalManager.disposeAll();
     this.stopVoiceInput();
     this.remoteClients.clear();
@@ -14306,8 +14548,12 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           !!this.focused.client,
         );
         this.chatReadyForHandoff = true;
-        if (this.editorChats?.size) void this.view?.webview.postMessage({ type: "trackLocalChatFocus" });
+        if (this.editorChats?.size) {
+          void this.view?.webview.postMessage({ type: "trackLocalChatFocus" });
+          this.postLocalVoiceBusy();
+        }
         this.postInitialState();
+        if (origin === "local" && this.context?.workspaceState) this.restorePersistedDraft(this.focused, "local");
         if (this.pendingRemoteHandoff) {
           this.postLocal(this.pendingRemoteHandoff);
           this.pendingRemoteHandoff = undefined;
@@ -16320,10 +16566,12 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         break;
       }
       case "voiceStart":
-        await this.handleVoiceStart(session);
+        await this.handleVoiceStart(session, tab);
         break;
       case "voiceStop":
-        if (msg.discard) this.stopVoiceInput();
+        if (this.localVoiceOwner?.tab !== tab) break;
+        if (msg.discard && tab) this.stopLocalVoiceInput();
+        else if (msg.discard) this.stopVoiceInput();
         else await this.handleVoiceStop();
         break;
       case "remoteVoiceStart":
@@ -19074,6 +19322,15 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         this.sendRemoteClient(clientId, remoteMsg, remoteCwd);
       });
     }
+    for (const tab of this.editorChats ?? []) this.postEditorVoiceConfigured(tab);
+  }
+
+  private postEditorVoiceConfigured(tab: EditorChatTab): void {
+    if (!tab.ready) return;
+    const { session } = tab;
+    const cwd = this.sessionCwd(session);
+    const configured = !!this.voiceBackendState(cwd, session.provider).backend;
+    this.postVoiceToChat(tab, this.voiceConfiguredMsg(cwd, configured, session.provider));
   }
 
   private voiceSetting<T>(cwd: string, key: string, fallback: T): T {
@@ -19131,7 +19388,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   /** Begin recording the microphone (in the extension host — the webview can't
    *  reach the mic). The webview has already flipped its button to "listening";
    *  on any setup failure we send `voiceError` to reset it. */
-  private rejectVoiceStart(clientId?: string): void {
+  private rejectVoiceStart(clientId?: string, tab?: EditorChatTab): void {
     const message = clientId
       ? "Voice control is already active in this browser tab."
       : "Voice control is already active.";
@@ -19139,19 +19396,41 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       this.sendRemoteClient(clientId, { type: "voiceError" });
       this.sendRemoteClient(clientId, { type: "error", text: message });
     } else {
-      this.postLocal({ type: "voiceError" });
+      this.postVoiceToChat(tab, { type: "voiceError" });
       void this.host.showWarningMessage(message);
     }
   }
 
-  private claimVoice(cwd: string): boolean {
-    if (this.localVoiceCwd) return false;
-    this.localVoiceCwd = cwd;
-    return true;
+  private postVoiceToChat(tab: EditorChatTab | undefined, message: HostMsg): void {
+    if (!tab) this.postLocal(message);
+    else if (tab.ready && this.editorChats.has(tab)) void tab.panel.webview.postMessage(message);
   }
 
-  private releaseVoice(cwd?: string): void {
-    if (!cwd || cwd === this.localVoiceCwd) this.localVoiceCwd = undefined;
+  private postLocalVoiceBusy(tab?: EditorChatTab): void {
+    const owner = this.localVoiceOwner;
+    const webview = tab ? tab.panel.webview : this.view?.webview;
+    void webview?.postMessage({ type: "localVoiceBusy", value: !!owner && owner.tab !== tab });
+  }
+
+  private publishLocalVoiceBusy(hadEditorOwner = false): void {
+    if (hadEditorOwner || this.editorChats?.size) this.postLocalVoiceBusy();
+    for (const tab of this.editorChats ?? []) {
+      if (tab.ready) this.postLocalVoiceBusy(tab);
+    }
+  }
+
+  private finishLocalVoice(message: HostMsg): void {
+    const tab = this.localVoiceOwner?.tab;
+    this.localVoiceOwner = undefined;
+    this.localVoiceCwd = undefined;
+    this.localVoiceCredentialCwd = undefined;
+    this.voiceRecorder = undefined;
+    this.voiceBatchCtx = undefined;
+    this.voiceFinalizing = false;
+    try { if (this.voiceTempPath) fs.unlinkSync(this.voiceTempPath); } catch { /* best effort */ }
+    this.voiceTempPath = undefined;
+    this.postVoiceToChat(tab, message);
+    this.publishLocalVoiceBusy(!!tab);
   }
 
   /**
@@ -19190,30 +19469,36 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     if (pick === "Open Settings") await this.host.openSettings("grok.ffmpegPath");
   }
 
-  private async handleVoiceStart(session: Session = this.focused): Promise<void> {
+  private async handleVoiceStart(session: Session = this.focused, tab?: EditorChatTab): Promise<void> {
+    if (this.localVoiceOwner) {
+      this.rejectVoiceStart(undefined, tab);
+      return;
+    }
     const cwd = this.sessionCwd(session);
-    const credentialCwd = this.sessionCwd(session);
+    const credentialCwd = cwd;
     const backend = this.voiceBackendState(credentialCwd, session.provider).backend;
     let key = backend && backend !== "google" ? this.resolveSttApiKey(credentialCwd, backend) : undefined;
     if (!backend || (backend !== "google" && !key)) {
       void this.promptVoiceKeySetup(credentialCwd, session.provider);
-      this.postLocal({ type: "voiceError" });
-      return;
-    }
-    if (!this.claimVoice(cwd)) {
-      this.rejectVoiceStart();
+      this.postVoiceToChat(tab, { type: "voiceError" });
       return;
     }
     const generation = ++this.voiceGeneration;
+    this.localVoiceOwner = { session, tab };
+    this.localVoiceCwd = cwd;
     this.localVoiceCredentialCwd = credentialCwd;
+    this.publishLocalVoiceBusy();
     if (backend === "google") {
       key = await this.readGoogleVoiceKey(credentialCwd);
       if (generation !== this.voiceGeneration) return;
     }
     if (!key) {
-      this.stopVoiceInput();
+      if (tab) this.finishLocalVoice({ type: "voiceError" });
+      else {
+        this.stopVoiceInput();
+        this.postLocal({ type: "voiceError" });
+      }
       void this.promptVoiceKeySetup(credentialCwd, session.provider);
-      this.postLocal({ type: "voiceError" });
       return;
     }
     const cfg = this.host.getConfiguration("grok");
@@ -19230,9 +19515,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     });
     if (!resolvedFfmpeg.ok) {
       void this.reportFfmpegProblem(resolvedFfmpeg);
-      this.releaseVoice(cwd);
-      this.localVoiceCredentialCwd = undefined;
-      this.postLocal({ type: "voiceError" });
+      this.finishLocalVoice({ type: "voiceError" });
       return;
     }
     const ffmpegPath = resolvedFfmpeg.path;
@@ -19246,16 +19529,19 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     }
 
     this.voiceBatchCtx = { backend, key };
-    const tmp = path.join(os.tmpdir(), `grok-voice-${Date.now()}.wav`);
+    const recorder = new VoiceRecorder();
+    this.voiceRecorder = recorder;
+    const tmp = this.voiceTempPath = path.join(os.tmpdir(), `grok-voice-${randomUUID()}.wav`);
     try {
-      await this.voiceRecorder.start({ ffmpegPath, outputPath: tmp, device, log: (m) => this.host.appendLine(m) });
+      await recorder.start({ ffmpegPath, outputPath: tmp, device, log: (m) => this.host.appendLine(m) });
       if (generation !== this.voiceGeneration) {
-        this.voiceRecorder.cancel();
+        recorder.cancel();
         try { fs.unlinkSync(tmp); } catch { /* best effort */ }
         return;
       }
-      this.voiceTempPath = tmp;
-      this.postLocal({ type: "voiceState", status: "listening" });
+      if (!this.voiceFinalizing && this.voiceRecorder === recorder) {
+        this.postVoiceToChat(tab, { type: "voiceState", status: "listening" });
+      }
     } catch (e) {
       if (generation !== this.voiceGeneration) {
         try { fs.unlinkSync(tmp); } catch { /* best effort */ }
@@ -19263,6 +19549,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       }
       const msg = (e as Error).message;
       this.host.appendLine(`[voice] start failed: ${msg}`);
+      this.finishLocalVoice({ type: "voiceError" });
       // ffmpeg-missing is the common, fixable case — offer a jump to its setting.
       if (/ffmpeg/i.test(msg)) {
         const pick = await this.host.showErrorMessage(msg, "Open Settings");
@@ -19272,10 +19559,6 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       } else {
         this.host.showErrorMessage(msg);
       }
-      this.releaseVoice(cwd);
-      this.localVoiceCwd = undefined;
-      this.localVoiceCredentialCwd = undefined;
-      this.postLocal({ type: "voiceError" });
     }
   }
 
@@ -19330,7 +19613,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
 
     streamer.on("partial", (ev: { text: string; speechFinal: boolean }) => {
       if (!isCurrent()) return;
-      this.postLocal({ type: "voicePartial", text: ev.text });
+      this.postVoiceToChat(this.localVoiceOwner?.tab, { type: "voicePartial", text: ev.text });
       // A finished utterance ending in the send phrase → submit + keep listening.
       if (ev.speechFinal && ctx.phrase) {
         const parsed = parseVoiceCommand(ev.text, ctx.phrase);
@@ -19344,23 +19627,18 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     });
     streamer.on("error", (e: Error) => {
       if (!isCurrent()) return;
-      streamer.cancel();
-      this.host.appendLine(`[voice] stream error: ${e.message}`);
-      if (!this.voiceFinalizing) {
-        if (/\b(401|403)\b|rejected/i.test(e.message)) {
-          void this.host.showErrorMessage(e.message, "Open Settings").then((pick) => {
-            if (pick === "Open Settings") void this.host.openSettings(sttKeySetting(ctx.backend));
-          });
-        } else {
-          this.host.showErrorMessage(`Voice transcription failed: ${e.message}`);
-        }
-        this.postLocal({ type: "voiceError" });
-      }
       this.voiceStreamer = undefined;
       this.voiceStreamCtx = undefined;
-      this.releaseVoice(this.localVoiceCwd);
-      this.localVoiceCwd = undefined;
-      this.localVoiceCredentialCwd = undefined;
+      streamer.cancel();
+      this.host.appendLine(`[voice] stream error: ${e.message}`);
+      this.finishLocalVoice({ type: "voiceError" });
+      if (/\b(401|403)\b|rejected/i.test(e.message)) {
+        void this.host.showErrorMessage(e.message, "Open Settings").then((pick) => {
+          if (pick === "Open Settings") void this.host.openSettings(sttKeySetting(ctx.backend));
+        });
+      } else {
+        this.host.showErrorMessage(`Voice transcription failed: ${e.message}`);
+      }
     });
 
     try {
@@ -19375,13 +19653,14 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         log: (m) => this.host.appendLine(m),
       });
       if (!isCurrent()) { streamer.cancel(); return; }
-      this.postLocal({ type: "voiceState", status: "listening" });
+      this.postVoiceToChat(this.localVoiceOwner?.tab, { type: "voiceState", status: "listening" });
     } catch (e) {
       if (!isCurrent()) return;
       this.voiceStreamer = undefined;
       this.voiceStreamCtx = undefined;
       const msg = (e as Error).message;
       this.host.appendLine(`[voice] stream start failed: ${msg}`);
+      this.finishLocalVoice({ type: "voiceError" });
       if (/ffmpeg/i.test(msg)) {
         const pick = await this.host.showErrorMessage(msg, "Open Settings");
         if (pick === "Open Settings") {
@@ -19397,10 +19676,6 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       } else {
         this.host.showErrorMessage(msg);
       }
-      this.releaseVoice(this.localVoiceCwd);
-      this.localVoiceCwd = undefined;
-      this.localVoiceCredentialCwd = undefined;
-      this.postLocal({ type: "voiceError" });
     }
   }
 
@@ -19412,7 +19687,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     const old = this.voiceStreamer;
     this.voiceStreamer = undefined; // detach so late events are ignored
     old?.cancel();
-    this.postLocal({ type: "voiceSubmit", text: text.trim() });
+    this.postVoiceToChat(this.localVoiceOwner?.tab, { type: "voiceSubmit", text: text.trim() });
     void this.openVoiceStream(); // reuses cached device → fast restart
   }
 
@@ -19428,7 +19703,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     this.voiceStreamCtx = undefined;
     if (!streamer) { this.voiceFinalizing = false; return; }
     this.voiceStoppingStreamer = streamer;
-    this.postLocal({ type: "voiceState", status: "transcribing" });
+    this.postVoiceToChat(this.localVoiceOwner?.tab, { type: "voiceState", status: "transcribing" });
     let finalText = "";
     let completed = true;
     try { finalText = await streamer.stop(); } catch (err) {
@@ -19437,51 +19712,34 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       if (generation === this.voiceGeneration) void this.host.showErrorMessage((err as Error).message);
     }
     if (this.voiceStoppingStreamer === streamer) this.voiceStoppingStreamer = undefined;
-    if (generation !== this.voiceGeneration) {
-      this.voiceFinalizing = false;
-      return;
-    }
+    if (generation !== this.voiceGeneration) return;
     const cwd = this.localVoiceCredentialCwd ?? this.workspaceRoot();
     const phrase = ctx?.phrase ?? this.voiceSetting(cwd, "voiceSendPhrase", DEFAULT_SEND_PHRASE);
     const { text, send } = parseFinalVoiceCommand(finalText, completed ? streamer.finalizedTranscript : "", phrase);
-    this.voiceFinalizing = false;
-    this.releaseVoice(this.localVoiceCwd);
-    this.localVoiceCwd = undefined;
-    this.localVoiceCredentialCwd = undefined;
-    if (!text && !send) {
-      this.postLocal({ type: "voiceError" });
-      return;
-    }
-    this.postLocal({ type: "voiceTranscript", text, send });
+    this.finishLocalVoice(text || send ? { type: "voiceTranscript", text, send } : { type: "voiceError" });
   }
 
   /** Hard-stop any voice capture (no transcript) and reset the mic to idle.
    *  Called on session switch/restart so listening never bleeds across sessions. */
+  private stopLocalVoiceInput(): void {
+    const wasActive = !!(this.localVoiceOwner || this.voiceStreamer || this.voiceStreamCtx ||
+      this.voiceRecorder?.active || this.voiceFinalizing || this.voiceTempPath);
+    this.voiceGeneration += 1;
+    this.voiceStreamer?.cancel();
+    this.voiceStoppingStreamer?.cancel();
+    this.voiceStoppingStreamer = undefined;
+    this.voiceStreamer = undefined;
+    this.voiceStreamCtx = undefined;
+    this.voiceRecorder?.cancel();
+    if (wasActive) this.finishLocalVoice({ type: "voiceState", status: "idle" });
+  }
+
+  private stopSplitSidebarVoice(): void {
+    if (this.editorChats?.size && this.localVoiceOwner && !this.localVoiceOwner.tab) this.stopLocalVoiceInput();
+  }
+
   private stopVoiceInput(session?: Session): void {
-    if (!session || session === this.focused) {
-      const wasActive =
-        !!this.localVoiceCwd ||
-        !!this.voiceStreamer ||
-        !!this.voiceStreamCtx ||
-        this.voiceRecorder.active ||
-        this.voiceFinalizing ||
-        !!this.voiceTempPath;
-      this.voiceGeneration += 1;
-      this.voiceStreamer?.cancel();
-      this.voiceStoppingStreamer?.cancel();
-      this.voiceStoppingStreamer = undefined;
-      this.voiceStreamer = undefined;
-      this.voiceStreamCtx = undefined;
-      this.voiceFinalizing = false;
-      this.voiceRecorder.cancel();
-      try { if (this.voiceTempPath) fs.unlinkSync(this.voiceTempPath); } catch { /* best effort */ }
-      this.voiceTempPath = undefined;
-      this.voiceBatchCtx = undefined;
-      this.releaseVoice(this.localVoiceCwd);
-      this.localVoiceCwd = undefined;
-      this.localVoiceCredentialCwd = undefined;
-      if (wasActive) this.postLocal({ type: "voiceState", status: "idle" });
-    }
+    if (!session || session === (this.localVoiceOwner?.session ?? this.focused)) this.stopLocalVoiceInput();
     for (const [clientId, remote] of [...this.remoteVoice]) {
       if (session && remote.session !== session) continue;
       remote.ingress.close();
@@ -19493,31 +19751,33 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
 
   /** Stop recording, transcribe with the pinned backend, and fill the composer. */
   private async handleVoiceStop(): Promise<void> {
+    if (this.voiceFinalizing) return;
     const generation = this.voiceGeneration;
+    const tab = this.localVoiceOwner?.tab;
     // Streaming path: finalize the live stream.
     if (this.voiceStreamer) {
       await this.finalizeVoiceStream();
       return;
     }
-    if (!this.voiceRecorder.active) {
-      if (this.localVoiceCwd) this.stopVoiceInput();
-      this.postLocal({ type: "voiceError" });
+    const recorder = this.voiceRecorder;
+    if (!recorder?.active) {
+      if (tab) this.stopLocalVoiceInput();
+      else if (this.localVoiceCwd) this.stopVoiceInput();
+      this.postVoiceToChat(tab, { type: "voiceError" });
       return;
     }
     const cwd = this.localVoiceCredentialCwd ?? this.workspaceRoot();
     const batch = this.voiceBatchCtx;
     const key = batch && (batch.backend === "google" ? batch.key : this.resolveSttApiKey(cwd, batch.backend) || batch.key);
     if (!key) {
-      this.voiceRecorder.cancel();
-      this.releaseVoice(this.localVoiceCwd);
-      this.localVoiceCwd = undefined;
-      this.localVoiceCredentialCwd = undefined;
-      this.postLocal({ type: "voiceError" });
+      recorder.cancel();
+      this.finishLocalVoice({ type: "voiceError" });
       return;
     }
+    this.voiceFinalizing = true;
     let wavPath: string;
     try {
-      wavPath = await this.voiceRecorder.stop();
+      wavPath = await recorder.stop();
       if (generation !== this.voiceGeneration) {
         try { fs.unlinkSync(wavPath); } catch { /* best effort */ }
         return;
@@ -19526,14 +19786,11 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       if (generation !== this.voiceGeneration) return;
       this.host.appendLine(`[voice] stop failed: ${(e as Error).message}`);
       this.host.showErrorMessage(`Voice recording failed: ${(e as Error).message}`);
-      this.releaseVoice(this.localVoiceCwd);
-      this.localVoiceCwd = undefined;
-      this.localVoiceCredentialCwd = undefined;
-      this.postLocal({ type: "voiceError" });
+      this.finishLocalVoice({ type: "voiceError" });
       return;
     }
-    const tempPath = this.voiceTempPath;
-    this.postLocal({ type: "voiceState", status: "transcribing" });
+    this.postVoiceToChat(tab, { type: "voiceState", status: "transcribing" });
+    let result: HostMsg = { type: "voiceError" };
     try {
       const raw = await transcribeAudio(wavPath, key, (m) => this.host.appendLine(m), batch?.backend);
       if (generation !== this.voiceGeneration) return;
@@ -19543,10 +19800,9 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       const { text, send } = parseVoiceCommand(raw, sendPhrase);
       if (!text && !send) {
         this.host.showInformationMessage("Voice control: nothing was transcribed (silence?).");
-        this.postLocal({ type: "voiceError" });
         return;
       }
-      this.postLocal({ type: "voiceTranscript", text, send });
+      result = { type: "voiceTranscript", text, send };
     } catch (e) {
       if (generation !== this.voiceGeneration) return;
       this.host.appendLine(`[voice] transcription failed: ${(e as Error).message}`);
@@ -19555,16 +19811,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           if (pick === "Open Settings") void this.host.openSettings(sttKeySetting("google"));
         });
       } else this.host.showErrorMessage((e as Error).message);
-      this.postLocal({ type: "voiceError" });
     } finally {
-      try { if (tempPath) fs.unlinkSync(tempPath); } catch { /* best effort */ }
-      if (this.voiceTempPath === tempPath) this.voiceTempPath = undefined;
-      if (this.voiceBatchCtx === batch) {
-        this.voiceBatchCtx = undefined;
-        this.releaseVoice(this.localVoiceCwd);
-        this.localVoiceCwd = undefined;
-        this.localVoiceCredentialCwd = undefined;
-      }
+      if (generation === this.voiceGeneration) this.finishLocalVoice(result);
     }
   }
 
@@ -21756,6 +22004,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   private mirrorToProjectsRail(message: HostMsg): void {
     if (!this.projectsRail) return;
     if (!GrokSidebar.PROJECTS_RAIL_HOST_TYPES.has(message.type)) return;
+    // A warm switch announces itself with "sessionName" only, so it retargets the rail too.
+    if (message.type === "sessions" || message.type === "session" || message.type === "sessionName") {
+      this.postProjectsRailChatTarget();
+    }
     void this.projectsRail.webview.postMessage(message);
   }
 
@@ -22730,6 +22982,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
 
   private focusSession(session: Session): void {
     if (session === this.focused) return;
+    this.stopSplitSidebarVoice();
     this.focused = session;
     this.touch(session);
     this.markRead(session); // opening it clears any unread (green/red) badge
@@ -22801,6 +23054,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
    * so we tear it down. Called before switching focus to a new/other session.
    */
   private parkFocused(): void {
+    this.stopSplitSidebarVoice();
     const cur = this.focused;
     // A DELETED conversation is not parked, whatever state it is holding.
     //
@@ -23249,16 +23503,21 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     session.status = status;
     // Activity refreshes the LRU/TTL clock so a busy session never ages out.
     if (status === "working" || status === "needs-you") this.touch(session);
-    // Unread metadata is global per conversation, while visibility is per view.
-    // Define the badge as "completed while nobody was looking": if VS Code or any
-    // remote tab owns this session, at least one view watched the result arrive.
-    if ((status === "done" || status === "error") && !this.sessionHasLiveOwner(session)) {
+    if ((status === "done" || status === "error") && !this.sessionHasViewingSurface(session)) {
       this.setMetaUnread(session.activeSessionId, true, status === "error");
     }
     this.pushDot(session);
     // Wake lock: a turn starting or ending can change turnInFlight.
     this.refreshKeepAwake();
     if (status === "done" || status === "error") this.refreshSessionOrderAfterTurn(session);
+  }
+
+  private sessionHasViewingSurface(session: Session): boolean {
+    // Preserve delivery to the focused sidebar as read on the unsplit desk.
+    if (!this.editorChats?.size) return this.sessionHasLiveOwner(session);
+    return this.editorChatFor(session)?.panel.visible === true
+      || (session === this.focused && this.view?.visible === true && !isCloudEnvironment())
+      || this.remoteClients.isActiveValueVisible(session);
   }
 
   /**
@@ -26215,7 +26474,7 @@ ${fileShellOpen}
       <div class="composer-toolbar">
         <div class="toolbar-left">
           <button id="add-btn" class="icon-btn" title="${l10n("Add context")}"></button>
-          <button id="mic-btn" class="icon-btn mic-btn" title="${l10n("Voice control")}"${editorChat ? " hidden" : ""}></button>
+          <button id="mic-btn" class="icon-btn mic-btn" title="${l10n("Voice control")}"></button>
           <button id="gear-btn" class="toolbar-btn model-chip" title="${l10n("Model and effort")}"></button>
           <div class="context-donut" id="donut" title="${l10n("Context usage")}">
             <svg width="16" height="16" viewBox="0 0 16 16">

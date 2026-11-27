@@ -326,6 +326,7 @@ export interface HostWebviewView {
   webview: HostWebview;
   readonly visible?: boolean;
   show?(preserveFocus?: boolean): void;
+  onDidChangeVisibility?(listener: () => void): HostDisposable;
 }
 
 /** Editor-area webview tab. Desktop does not implement this. */
@@ -335,7 +336,7 @@ export interface HostEditorWebview extends HostDisposable {
   readonly active: boolean;
   title?: string;
   reveal(): void;
-  onDidFocus?(listener: () => void): HostDisposable;
+  onDidChangeViewState?(listener: () => void): HostDisposable;
   onDidDispose(listener: () => void): HostDisposable;
 }
 
@@ -377,6 +378,7 @@ export interface HostContext {
    */
   isCloudBuild?: boolean;
   globalState: MementoLike;
+  workspaceState?: MementoLike;
   subscriptions: { push(...items: HostDisposable[]): void };
 }
 

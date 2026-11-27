@@ -60,7 +60,8 @@
   "main": "./out/extension.js",
   "l10n": "./l10n",
   "activationEvents": [
-    "onStartupFinished"
+    "onStartupFinished",
+    "onWebviewPanel:grok.conversation"
   ],
   "contributes": {
     "viewsContainers": {
@@ -475,6 +476,17 @@
           "type": "boolean",
           "default": false,
           "markdownDescription": "%configuration.grok.showTurnDuration.markdownDescription%"
+        },
+        "grok.openConversationIn": {
+          "type": "string",
+          "enum": ["lastUsed", "sidebar", "editor"],
+          "default": "lastUsed",
+          "description": "%configuration.grok.openConversationIn.description%",
+          "enumDescriptions": [
+            "%configuration.grok.openConversationIn.enumDescriptions.lastUsed%",
+            "%configuration.grok.openConversationIn.enumDescriptions.sidebar%",
+            "%configuration.grok.openConversationIn.enumDescriptions.editor%"
+          ]
         },
         "grok.steerByDefault": {
           "type": "boolean",
