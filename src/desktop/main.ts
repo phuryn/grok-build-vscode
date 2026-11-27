@@ -689,10 +689,10 @@ async function createApp(): Promise<void> {
     const session = sourceWebview ? sidebar!.desktopFileSession(sourceWebview) : undefined;
     if (sourceWebview && !session && sourceWebview !== webview) return undefined;
     // A pane is only ever its session's. The window's own chat uses the window's
-    // project until its session has roots (not started yet: no cwd), as the Files
-    // panel does and as it did before split view.
-    const sessionRoots = session ? sidebar!.desktopPaneAuthRoots(session) : [];
-    const windowScope = !sourceWebview || (sourceWebview === webview && !sessionRoots.length);
+    // project only while its session has no folder yet (not started), as the
+    // Files panel does; a session whose folder was closed keeps no roots.
+    const windowScope = !sourceWebview || (sourceWebview === webview && !session?.cwd);
+    const sessionRoots = !windowScope && session ? sidebar!.desktopPaneAuthRoots(session) : [];
     let mediaCache:
       | { grokHome?: string; sessionDir?: string; sessionCatalogDirs?: string[] }
       | undefined;
