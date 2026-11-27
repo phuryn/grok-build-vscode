@@ -207,6 +207,15 @@ describe("main.ts actually consults the guards (#174)", () => {
     expect(handler).toContain("hide()");
   });
 
+  it("freezes the split layout on close only after the Files check approved it", () => {
+    const at = src.indexOf('mainWindow.on("close"');
+    expect(at).toBeGreaterThan(-1);
+    const handler = src.slice(at, at + 900);
+    const guard = handler.indexOf("if (!desktopFilesCloseConfirmed()) return;");
+    expect(guard).toBeGreaterThan(-1);
+    expect(guard).toBeLessThan(handler.indexOf("preserveSplit();"));
+  });
+
   it("sets the quitting flag before anything else in before-quit", () => {
     const at = src.indexOf('app.on("before-quit"');
     expect(at).toBeGreaterThan(-1);

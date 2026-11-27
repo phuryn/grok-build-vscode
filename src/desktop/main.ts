@@ -900,6 +900,10 @@ async function createApp(): Promise<void> {
       quitting: appIsQuitting,
       trayPresent: !!tray && !tray.isDestroyed(),
     })) {
+      // Unsaved Files edits are asked about first and may cancel this close;
+      // freezing drafts now would stop them saving for the rest of the run.
+      // The approved close fires this event again.
+      if (!desktopFilesCloseConfirmed()) return;
       preserveSplit();
       return;
     }
