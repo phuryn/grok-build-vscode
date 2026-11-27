@@ -10152,12 +10152,16 @@
           body: deleteSessionWarning(active),
           confirmLabel: l10n("Delete"),
           danger: true,
-        }).then((ok) => {
+        }).then(async (ok) => {
+          if (!ok) return;
+          // A desktop side chat closes with the conversation it shows, and its
+          // Files panel with it: ask about unsaved file edits first, as × does.
+          if (active && desktopChatPane && !(await (window.__grokDeskFtBeforeClose?.() ?? true))) return;
           // `cwd` names the project this row belongs to, so the host can act on a
           // conversation in a project it has not selected. Without it the host
           // authorizes against the selected repo only, and every row the rail
           // draws from elsewhere is refused.
-          if (ok) vscode.postMessage({ type: "deleteSession", id: s.id, name: s.displayName, cwd });
+          vscode.postMessage({ type: "deleteSession", id: s.id, name: s.displayName, cwd });
         });
       },
     });

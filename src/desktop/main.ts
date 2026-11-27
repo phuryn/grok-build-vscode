@@ -90,6 +90,8 @@ import {
 import {
   injectFileTreePanelLogged,
   registerFileTreeIpc,
+  confirmDesktopFilesClose,
+  desktopFilesCloseConfirmed,
 } from "./file-tree-ipc";
 import {
   installWindowSecurityLocks,
@@ -1148,10 +1150,23 @@ if (gotSingleInstanceLock) {
     app.quit();
   });
 
-  app.on("before-quit", () => {
+  app.on("before-quit", (event) => {
     // Before anything else: the window's close handler reads this, and a quit
     // that arrives while it still says false cannot complete at all.
     appIsQuitting = true;
+    // Unsaved file edits are asked about while every chat is still bound, so
+    // Cancel leaves each panel able to save. Quit resumes on a yes.
+    if (!desktopFilesCloseConfirmed()) {
+      event.preventDefault();
+      void confirmDesktopFilesClose().then(ok => {
+        if (ok) app.quit();
+        else appIsQuitting = false;
+      }).catch(error => {
+        appIsQuitting = false;
+        log(`[desk-ft] quit check failed: ${String(error)}`);
+      });
+      return;
+    }
     destroyTray();
     try {
       sidebar?.preserveDesktopConversationLayout();

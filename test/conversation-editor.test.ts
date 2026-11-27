@@ -892,6 +892,8 @@ describe("desktop Projects routing", () => {
     h.controller.projectsRail = undefined;
     h.controller.view = { webview: { postMessage: main }, visible: true };
     Object.assign(h.host, { canSwitchWorkspaceFolder: true });
+    h.controller.localWorkspaceSwitchQueue = { run: (task: () => Promise<void>) => task() };
+    h.controller.followSessionWorkspace = vi.fn(async () => {});
     return { ...h, main };
   }
 
@@ -919,6 +921,21 @@ describe("desktop Projects routing", () => {
       [expect.objectContaining({ sessionId: "one", text: survivor.text })],
     ]);
     expect(controller.hasSavedDesktopPanes()).toBe(false);
+  });
+
+  it("moves the window's project to the promoted chat's, so its New starts there", async () => {
+    const { controller, panels, binding, first } = desktop();
+    controller.context.workspaceState = editorWorkspaceState();
+    controller.chatReadyForHandoff = true;
+    controller.postMode = vi.fn();
+    await controller.openDesktopConversationBeside("one", "/repo");
+    const pane = panels[0];
+    pane.receive({ type: "ready" });
+    expect(controller.closeDesktopMainChat(pane.webview,
+      { sessionId: "sidebar", text: "", chipIds: [], revision: 0 },
+      { binding: binding(pane), text: "", chipIds: [], revision: 0, scrollTop: null },
+    )).toBe(true);
+    await vi.waitFor(() => expect(controller.followSessionWorkspace).toHaveBeenCalledWith(first));
   });
 
   it("rejects a promotion whose renderer binding has changed and leaves both drafts in place", async () => {

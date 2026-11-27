@@ -4380,6 +4380,11 @@ export class GrokSidebar {
     this.closeEditorChat(tab);
     void view.webview.postMessage({ type: "desktopChatAdopted", sessionId, files: promoted.files });
     this.focusSession(session, true);
+    // The window's own New, file tree and rail follow its project, as when a
+    // conversation is opened here; otherwise New in this column would start in
+    // the project of the chat that just closed.
+    void this.localWorkspaceSwitchQueue.run(() => this.followSessionWorkspace(session))
+      .catch(error => this.host.appendLine(`[desk-pane] follow promoted project: ${String(error)}`));
     this.postLocal({ type: "setBusy", ...rehydrateBusyChrome(session) });
     if (draft) this.restoreComposerFor(session, undefined, draft.text, draft.chips, true);
     this.writeDesktopMainDraft(session, draft);

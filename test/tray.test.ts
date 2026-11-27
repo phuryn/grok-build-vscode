@@ -210,7 +210,7 @@ describe("main.ts actually consults the guards (#174)", () => {
   it("sets the quitting flag before anything else in before-quit", () => {
     const at = src.indexOf('app.on("before-quit"');
     expect(at).toBeGreaterThan(-1);
-    const handler = src.slice(at, at + 600);
+    const handler = src.slice(at, at + 1200);
     expect(handler).toContain("appIsQuitting = true");
     // Ahead of the disposal work: a quit that arrives while the flag still says
     // false is a quit the close handler cancels.

@@ -64,6 +64,24 @@ function pathsEquivalent(a: string, b: string): boolean {
 let handlersRegistered = false;
 let closeBoundWindow: BrowserWindow | null = null;
 let closeBoundHandler: ((event: ElectronEvent) => void) | null = null;
+let askFilesClose: (() => Promise<boolean>) | null = null;
+let filesCloseConfirmed = false;
+
+/**
+ * Ask every Files panel about unsaved edits, once per quit. Quit asks this
+ * BEFORE it tears the sessions down: a pane's Files answers only while its
+ * chat is bound, so asking afterwards left Cancel with a Save that was refused.
+ */
+export async function confirmDesktopFilesClose(): Promise<boolean> {
+  if (filesCloseConfirmed || !askFilesClose) return true;
+  const ok = await askFilesClose();
+  if (ok) filesCloseConfirmed = true;
+  return ok;
+}
+
+export function desktopFilesCloseConfirmed(): boolean {
+  return filesCloseConfirmed || !askFilesClose;
+}
 
 /** True when the IPC event came from the desktop app's main window main frame. */
 export function isIpcFromMainWindow(
@@ -437,21 +455,25 @@ export function registerFileTreeIpc(opts: FileTreeIpcOptions): void {
   const win = opts.getMainWindow();
   if (win && !win.isDestroyed()) {
     let closePending = false;
+    askFilesClose = () => win.isDestroyed() ? Promise.resolve(true) : win.webContents
+      .executeJavaScript(
+        `(function(){try{var f=window.__grokDeskFtBeforeClose;if(typeof f!=="function")return Promise.resolve(true);return Promise.resolve(f()).then(Boolean);}catch(_){return false;}})()`,
+        true,
+      )
+      .then(async (ok) => {
+        if (ok && opts.confirmPaneFilesClose) ok = await opts.confirmPaneFilesClose();
+        return ok === true;
+      });
     const onClose = (event: ElectronEvent) => {
-      if (event.defaultPrevented) return;
+      if (event.defaultPrevented || filesCloseConfirmed) return;
       if (closePending) {
         event.preventDefault();
         return;
       }
       closePending = true;
       event.preventDefault();
-      void win.webContents
-        .executeJavaScript(
-          `(function(){try{var f=window.__grokDeskFtBeforeClose;if(typeof f!=="function")return Promise.resolve(true);return Promise.resolve(f()).then(Boolean);}catch(_){return false;}})()`,
-          true,
-        )
-        .then(async (ok) => {
-          if (ok && opts.confirmPaneFilesClose) ok = await opts.confirmPaneFilesClose();
+      void confirmDesktopFilesClose()
+        .then((ok) => {
           closePending = false;
           if (!ok || win.isDestroyed()) return;
           if (closeBoundWindow === win && closeBoundHandler) {
@@ -481,6 +503,8 @@ export function unregisterFileTreeIpc(): void {
     closeBoundWindow = null;
     closeBoundHandler = null;
   }
+  askFilesClose = null;
+  filesCloseConfirmed = false;
   handlersRegistered = false;
 }
 
