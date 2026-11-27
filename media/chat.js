@@ -22262,6 +22262,10 @@ ${fullText}`
         // The question was about the conversation that was on screen.
         if (projectPromptFor && projectPromptFor.sessionId && msg.sessionId !== projectPromptFor.sessionId) removeProjectPrompt();
         projectPromptView = msg.sessionId || "";
+        // The host re-sends `session` for the conversation already on screen
+        // (re-focus, an editor tab or pane binding, a model-list refresh, the
+        // first send) and follows only the first one with its stored count.
+        const sameConversation = !!msg.sessionId && state.contextSelectionSessionId === msg.sessionId;
         if (state.contextSelectionSessionId !== msg.sessionId) state.contextWindowSelection = undefined;
         state.contextSelectionSessionId = msg.sessionId;
         if (goalSessionId !== msg.sessionId) renderSessionGoal(null);
@@ -22294,13 +22298,21 @@ ${fullText}`
         refreshModelControls();
         renderProviderSignInCard();
         const m = state.availableModels.find((x) => x.modelId === msg.currentModelId && (!x.provider || x.provider === state.activeProvider));
-        // A new chat starts from its own model's window; one that names none
-        // must not keep the previous chat's (Antigravity's 1M on a Codex chat).
-        state.contextWindow = m?.totalContextTokens || 200000;
         setModelCatalogPending(false);
-        state.contextBreakdown = null;
-        state.autoCompact = null;
-        updateDonut(0);
+        if (sameConversation) {
+          // Same conversation: its count and the window the host reported stay.
+          // Zeroing here showed 0 on an opened chat, and the 200K guess under a
+          // held replay's count showed 214K/200K on a 1M Opus chat.
+          if (m?.totalContextTokens) state.contextWindow = m.totalContextTokens;
+          updateDonut();
+        } else {
+          // A new chat starts from its own model's window; one that names none
+          // must not keep the previous chat's (Antigravity's 1M on a Codex chat).
+          state.contextWindow = m?.totalContextTokens || 200000;
+          state.contextBreakdown = null;
+          state.autoCompact = null;
+          updateDonut(0);
+        }
         reportRemotePreferences();
         break;
       }

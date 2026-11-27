@@ -1069,6 +1069,48 @@ describe("context donut (token usage)", () => {
     expect($(doc, "donut-label").textContent).toBe("44K/100K");
   });
 
+  // The host's cold resume of a Claude chat, measured with the real
+  // startSession and cacheProviderModels: the seed, then a second `session` for
+  // the same conversation from the model-list refresh. The live model id can
+  // miss the catalog (the desktop's lists Opus as `opus[1m]`), so the frame's own
+  // guess is 200K.
+  const claudeSession = (sessionId: string) => ({
+    type: "session", sessionId, provider: "claude", currentModelId: "claude-opus-5-5",
+    models: [{ provider: "claude", modelId: "opus[1m]", name: "Opus", totalContextTokens: 1000000 }],
+  });
+
+  it("a repeated session frame for the open chat keeps its stored count", () => {
+    const { window, doc } = boot();
+    dispatch(window, { type: "clearMessages" });
+    dispatch(window, { type: "historyReplay", active: true });
+    dispatch(window, claudeSession("pins"));
+    dispatch(window, { type: "historyReplay", active: false });
+    dispatch(window, { type: "contextUsage", used: 154025, window: 1000000 });
+    dispatch(window, claudeSession("pins"));
+    expect($(doc, "donut-label").textContent).toBe("154K/1M");
+  });
+
+  it("an editor tab or pane replay keeps the window under the held count", () => {
+    const { window, doc } = boot();
+    // replayEditorChat: identity frame, then the buffer inside one bracket.
+    // promptComplete is held to the bracket's end; session and contextUsage are not.
+    dispatch(window, claudeSession("l22"));
+    dispatch(window, { type: "historyReplay", active: true });
+    dispatch(window, claudeSession("l22"));
+    dispatch(window, { type: "contextUsage", used: 213869, window: 1000000 });
+    dispatch(window, { type: "promptComplete", meta: { totalTokens: 213869 } });
+    dispatch(window, claudeSession("l22"));
+    dispatch(window, { type: "historyReplay", active: false });
+    expect($(doc, "donut-label").textContent).toBe("214K/1M");
+  });
+
+  it("a different conversation still starts from zero and its own window", () => {
+    const { window, doc } = boot();
+    dispatch(window, { type: "contextUsage", used: 44123, window: 100000 });
+    dispatch(window, claudeSession("other"));
+    expect($(doc, "donut-label").textContent).toBe("0K/200K");
+  });
+
   it("a stripped zero keeps the donut, a later contextUsage corrects it", () => {
     const { window, doc } = boot();
     dispatch(window, { type: "promptComplete", meta: { totalTokens: 40088 } });
