@@ -687,7 +687,12 @@ async function createApp(): Promise<void> {
   // consumers read these fields after a workspace candidate has already missed.
   authContext.get = (sourceWebview) => {
     const session = sourceWebview ? sidebar!.desktopFileSession(sourceWebview) : undefined;
-    if (sourceWebview && !session) return undefined;
+    if (sourceWebview && !session && sourceWebview !== webview) return undefined;
+    // A pane is only ever its session's. The window's own chat uses the window's
+    // project until its session has roots (not started yet: no cwd), as the Files
+    // panel does and as it did before split view.
+    const sessionRoots = session ? sidebar!.desktopPaneAuthRoots(session) : [];
+    const windowScope = !sourceWebview || (sourceWebview === webview && !sessionRoots.length);
     let mediaCache:
       | { grokHome?: string; sessionDir?: string; sessionCatalogDirs?: string[] }
       | undefined;
@@ -696,8 +701,8 @@ async function createApp(): Promise<void> {
       return mediaCache;
     };
     return {
-      workspaceRoot: sourceWebview ? undefined : config.getWorkspaceRoot(),
-      allowedRoots: session ? sidebar!.desktopPaneAuthRoots(session) : sidebar!.desktopAuthRoots(),
+      workspaceRoot: windowScope ? config.getWorkspaceRoot() : undefined,
+      allowedRoots: windowScope ? sidebar!.desktopAuthRoots() : sessionRoots,
       sessionCwd: session?.cwd,
       get grokHome() {
         return media().grokHome;

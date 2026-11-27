@@ -4417,8 +4417,10 @@ export class GrokSidebar {
     const main = this.view?.webview === webview;
     const tab = main ? undefined : [...this.editorChats].find(chat => chat.panel.webview === webview);
     const session = main ? this.focused : tab?.session;
-    if (!session) return;
-    const cwd = session.cwd ?? (main ? this.workspaceRoot() : undefined);
+    // The window's own panel shows the window's project before any session
+    // exists (no agent connected yet), as the single-chat app always did.
+    if (!session && !main) return;
+    const cwd = session?.cwd ?? (main ? this.workspaceRoot() : undefined);
     const root = cwd && this.isAuthorizedCwd(cwd) ? path.resolve(cwd) : undefined;
     return { root, preferencesKey: main ? this.context.workspaceState?.get<string>(DESKTOP_MAIN_FILES) : tab?.restoreKey };
   }

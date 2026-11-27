@@ -5,7 +5,7 @@
  *   1. Window opens and chat.js boots without console errors
  *   2. A typed prompt reaches the agent and the streamed reply renders
  *   3. Renderer reload rehydrates the live session (transcript survives)
- *   4. openText / openDiff open a read-only viewer window (visible surface)
+ *   4. openText opens a read-only viewer window; openDiff opens in the Files panel
  *   5. File-tree panel: list / expand / collapse / open (via open sink)
  *
  * Not covered here: live AFK Pilot relay, real grok binary, multi-window,
@@ -21,6 +21,30 @@ import * as os from "node:os";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+
+/**
+ * CSP-safe stand-in for `page.waitForFunction`. The app's CSP is nonce-only, and
+ * Playwright's polling evaluates the predicate as a string, which that CSP
+ * refuses whenever the condition is not already true on the first check. Poll
+ * with `evaluate` instead, which the CSP does not govern. A navigation between
+ * polls (reload tests) is retried, not fatal.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function waitInPage(target: Page, fn: (arg: any) => unknown, arg?: unknown, options?: { timeout?: number }): Promise<void> {
+  const argTimeout = (arg as { timeout?: unknown } | undefined)?.timeout;
+  const timeout = options?.timeout ?? (!options && typeof argTimeout === "number" ? argTimeout : 30_000);
+  const deadline = Date.now() + timeout;
+  let last: unknown;
+  for (;;) {
+    try {
+      if (await target.evaluate(fn, arg)) return;
+    } catch (error) {
+      last = error;
+    }
+    if (Date.now() > deadline) throw new Error(`waitInPage timed out after ${timeout} ms${last ? `: ${String(last)}` : ""}`);
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+}
 const mainJs = path.join(root, "out", "desktop", "main.js");
 const electronExe = path.join(
   root,
@@ -123,7 +147,7 @@ describe("desktop Electron app (real window + fake CLI)", () => {
     // Wait until the composer exists (chat.js booted + HTML applied).
     await page.waitForSelector("#input", { timeout: 45_000 });
     // Session start: welcome "Starting" clears or composer unlocks after agent ready.
-    await page.waitForFunction(
+    await waitInPage(page, 
       () => {
         const input = document.querySelector("#input") as HTMLTextAreaElement | null;
         const send = document.querySelector("#send-btn") as HTMLButtonElement | null;
@@ -195,7 +219,7 @@ describe("desktop Electron app (real window + fake CLI)", () => {
     await page.locator("#send-btn").click();
 
     // User bubble appears.
-    await page.waitForFunction(
+    await waitInPage(page, 
       (text) => {
         const users = [...document.querySelectorAll(".msg.user")];
         return users.some((el) => (el.textContent || "").includes(text));
@@ -205,7 +229,7 @@ describe("desktop Electron app (real window + fake CLI)", () => {
     );
 
     // Fake CLI default scenario streams agent_message_chunk "ok".
-    await page.waitForFunction(
+    await waitInPage(page, 
       () => {
         const agents = [...document.querySelectorAll(".msg.agent, .msg.assistant, .message.agent")];
         // chat.js may use .msg with role markers — also accept any non-user bubble with "ok"
@@ -233,7 +257,7 @@ describe("desktop Electron app (real window + fake CLI)", () => {
     await page.waitForSelector("#input", { timeout: 45_000 });
 
     // Rehydrate replays the buffer — user + agent text should return.
-    await page.waitForFunction(
+    await waitInPage(page, 
       () => {
         const text = document.querySelector("#messages")?.textContent || "";
         return text.includes("hello from desktop e2e");
@@ -258,7 +282,7 @@ describe("desktop Electron app (real window + fake CLI)", () => {
     }, marker);
     const viewer = await windowPromise;
     await viewer.waitForLoadState("domcontentloaded");
-    await viewer.waitForFunction(
+    await waitInPage(viewer, 
       (t) => (document.body?.innerText || "").includes(t),
       marker,
       { timeout: 10_000 },
@@ -269,10 +293,11 @@ describe("desktop Electron app (real window + fake CLI)", () => {
     await viewer.close();
   });
 
-  it("openDiff opens a side-by-side read-only preview window", async () => {
+  it("openDiff of a project file opens in the chat's Files panel", async () => {
+    // Since split view a diff of a file inside the chat's project opens in that
+    // chat's Files panel; the separate window is only the fallback outside it.
     const leftMark = `diff-left-${Date.now()}`;
     const rightMark = `diff-right-${Date.now()}`;
-    const windowPromise = app.waitForEvent("window", { timeout: 15_000 });
     await page.evaluate(
       ({ oldText, newText }) => {
         (window as unknown as { acquireVsCodeApi: () => { postMessage: (m: unknown) => void } })
@@ -286,21 +311,17 @@ describe("desktop Electron app (real window + fake CLI)", () => {
       },
       { oldText: leftMark, newText: rightMark },
     );
-    const viewer = await windowPromise;
-    await viewer.waitForLoadState("domcontentloaded");
-    await viewer.waitForFunction(
+    await waitInPage(page,
       ({ a, b }) => {
-        const t = document.body?.innerText || "";
-        return t.includes(a) && t.includes(b);
+        const t = (document.getElementById("desk-ft-panel") as HTMLElement | null)?.innerText || "";
+        return document.body.classList.contains("desk-ft-viewing") && t.includes(a) && t.includes(b);
       },
       { a: leftMark, b: rightMark },
-      { timeout: 10_000 },
+      { timeout: 15_000 },
     );
-    const body = await viewer.locator("body").innerText();
-    expect(body).toContain(leftMark);
-    expect(body).toContain(rightMark);
-    expect(body.toLowerCase()).toMatch(/read-only|proposed|preview/);
-    await viewer.close();
+    // Back to the tree for the file-tree tests that follow.
+    await page.locator("#desk-ft-title").click();
+    await waitInPage(page, () => !document.body.classList.contains("desk-ft-viewing"), undefined, { timeout: 10_000 });
   });
 
   /** Panel starts closed (no space); open via the top-bar toggle. */
@@ -312,7 +333,7 @@ describe("desktop Electron app (real window + fake CLI)", () => {
     if (closed) {
       await page.locator("#desk-ft-top-toggle").click();
     }
-    await page.waitForFunction(
+    await waitInPage(page, 
       () => !document.body.classList.contains("desk-ft-closed"),
       { timeout: 5_000 },
     );
@@ -325,7 +346,7 @@ describe("desktop Electron app (real window + fake CLI)", () => {
   it("file-tree panel renders the workspace root entries", async () => {
     await ensureFilePanelOpen();
 
-    await page.waitForFunction(
+    await waitInPage(page, 
       () => {
         const body = document.getElementById("desk-ft-body");
         if (!body) return false;
@@ -363,7 +384,7 @@ describe("desktop Electron app (real window + fake CLI)", () => {
 
     // Collapse directory.
     await srcRow.click();
-    await page.waitForFunction(
+    await waitInPage(page, 
       () => !document.querySelector('.desk-ft-node[data-rel="src"].desk-ft-open'),
       { timeout: 5_000 },
     );
@@ -381,7 +402,7 @@ describe("desktop Electron app (real window + fake CLI)", () => {
     expect(await page.locator("#desk-ft-body").isVisible()).toBe(true);
 
     await page.locator("#desk-ft-top-toggle").click();
-    await page.waitForFunction(
+    await waitInPage(page, 
       () => document.body.classList.contains("desk-ft-closed"),
       { timeout: 5_000 },
     );
@@ -389,7 +410,7 @@ describe("desktop Electron app (real window + fake CLI)", () => {
     expect(await page.locator("#desk-ft-panel").isVisible()).toBe(false);
 
     await page.locator("#desk-ft-top-toggle").click();
-    await page.waitForFunction(
+    await waitInPage(page, 
       () => !document.body.classList.contains("desk-ft-closed"),
       { timeout: 5_000 },
     );
@@ -449,7 +470,7 @@ describe("desktop Electron app (real window + fake CLI)", () => {
     await fileRow.waitFor({ state: "visible", timeout: 10_000 });
     await fileRow.click();
 
-    await page.waitForFunction(
+    await waitInPage(page, 
       () => document.body.classList.contains("desk-ft-viewing"),
       { timeout: 10_000 },
     );
@@ -462,7 +483,7 @@ describe("desktop Electron app (real window + fake CLI)", () => {
     expect(await page.locator('.desk-ft-tab[data-rel="notes.md"]').count()).toBe(1);
     expect(await page.locator(".desk-ft-crumb-back").count()).toBe(0);
     await page.locator("#desk-ft-title").click();
-    await page.waitForFunction(
+    await waitInPage(page, 
       () => !document.body.classList.contains("desk-ft-viewing"),
       { timeout: 5_000 },
     );
@@ -539,7 +560,7 @@ describe("desktop Electron app (real window + fake CLI)", () => {
       if (!api) throw new Error("no acquireVsCodeApi");
       api.postMessage({ type: "openFile", path: "notes.md" });
     });
-    await page.waitForFunction(
+    await waitInPage(page, 
       () => document.body.classList.contains("desk-ft-viewing"),
       { timeout: 15_000 },
     );
@@ -569,7 +590,7 @@ describe("desktop Electron app (real window + fake CLI)", () => {
       if (!api) throw new Error("no acquireVsCodeApi");
       api.postMessage({ type: "openFile", path: "product-decisions.md" });
     });
-    await page.waitForFunction(
+    await waitInPage(page, 
       () => document.body.classList.contains("desk-ft-viewing"),
       { timeout: 15_000 },
     );
@@ -716,7 +737,7 @@ describe("desktop Electron app (real window + fake CLI)", () => {
   it("projects rail mounts once repos arrives (desktop multi-folder)", async () => {
     // getHtml includes #projects-rail; host posts repos for open folders.
     await page.waitForSelector("#projects-rail", { timeout: 30_000 });
-    await page.waitForFunction(
+    await waitInPage(page, 
       () => {
         const rail = document.getElementById("projects-rail");
         if (!rail || rail.hidden) return false;
@@ -733,7 +754,7 @@ describe("desktop Electron app (real window + fake CLI)", () => {
     // Proves Step 0: rail rules live in shared media/chat.css, not only the
     // web client's page shell — so the desktop column is not bare layout.
     await page.waitForSelector("#projects-rail:not([hidden])", { timeout: 45_000 });
-    await page.waitForFunction(
+    await waitInPage(page, 
       () => document.querySelectorAll(".rail-repo").length >= 1,
       { timeout: 45_000 },
     );
@@ -847,7 +868,7 @@ describe("desktop Electron app (real window + fake CLI)", () => {
   it("rail group collapse state survives reload (localStorage)", async () => {
     // Owner requirement: client remembers rail collapse, same as archived projects.
     await page.waitForSelector("#projects-rail:not([hidden])", { timeout: 45_000 });
-    await page.waitForFunction(
+    await waitInPage(page, 
       () => document.querySelectorAll(".rail-head-fold .rail-head-btn").length >= 1,
       { timeout: 45_000 },
     );
@@ -900,7 +921,7 @@ describe("desktop Electron app (real window + fake CLI)", () => {
     await page.reload({ waitUntil: "domcontentloaded", timeout: 30_000 });
     await page.waitForSelector("#input", { timeout: 45_000 });
     await page.waitForSelector("#projects-rail:not([hidden])", { timeout: 45_000 });
-    await page.waitForFunction(
+    await waitInPage(page, 
       () => document.querySelectorAll(".rail-head-fold .rail-head-btn").length >= 1,
       { timeout: 45_000 },
     );
@@ -943,7 +964,7 @@ describe("desktop Electron app (real window + fake CLI)", () => {
     if (before) {
       await page.locator("#desk-ft-top-toggle").click();
     }
-    await page.waitForFunction(
+    await waitInPage(page, 
       () => !document.body.classList.contains("desk-ft-closed"),
       { timeout: 5_000 },
     );
@@ -964,7 +985,7 @@ describe("desktop Electron app (real window + fake CLI)", () => {
     await page.waitForSelector("#input", { timeout: 45_000 });
     await page.waitForSelector("#desk-ft-top-toggle", { timeout: 15_000 });
     // did-finish-load re-injects the panel and must re-read localStorage.
-    await page.waitForFunction(
+    await waitInPage(page, 
       () => !document.body.classList.contains("desk-ft-closed"),
       { timeout: 15_000 },
     );
@@ -1129,7 +1150,7 @@ describe("desktop multi-folder rail + isolation", () => {
     });
     page = await app.firstWindow({ timeout: 60_000 });
     await page.waitForSelector("#input", { timeout: 45_000 });
-    await page.waitForFunction(
+    await waitInPage(page, 
       () => {
         const input = document.querySelector("#input") as HTMLTextAreaElement | null;
         return !!input && !document.body.classList.contains("busy-locked") && !input.disabled;
@@ -1149,7 +1170,7 @@ describe("desktop multi-folder rail + isolation", () => {
 
   it("rail lists both open project folders", async () => {
     await page.waitForSelector("#projects-rail:not([hidden])", { timeout: 45_000 });
-    await page.waitForFunction(
+    await waitInPage(page, 
       () => document.querySelectorAll(".rail-repo-label").length >= 2,
       { timeout: 45_000 },
     );
@@ -1168,12 +1189,12 @@ describe("desktop multi-folder rail + isolation", () => {
     const msgA = `isolation-A-${Date.now()}`;
     await page.locator("#input").fill(msgA);
     await page.locator("#send-btn").click();
-    await page.waitForFunction(
+    await waitInPage(page, 
       (t) => [...document.querySelectorAll(".msg.user")].some((el) => (el.textContent || "").includes(t)),
       msgA,
       { timeout: 30_000 },
     );
-    await page.waitForFunction(
+    await waitInPage(page, 
       () => {
         const all = [...document.querySelectorAll("#messages .msg")];
         return all.some((el) => !el.classList.contains("user") && (el.textContent || "").includes("ok"));
@@ -1182,7 +1203,7 @@ describe("desktop multi-folder rail + isolation", () => {
     );
 
     // Switch to B via the project header (whole row selects when not focused).
-    await page.waitForFunction(
+    await waitInPage(page, 
       (name) => [...document.querySelectorAll(".rail-repo-label")].some((b) => (b.textContent || "").includes(name)),
       leafB,
       { timeout: 15_000 },
@@ -1331,7 +1352,7 @@ describe("desktop rail: case-mismatched session catalog (selected project)", () 
   it("selected project rail lists sessions stored under the other drive-letter casing", async () => {
     if (process.platform !== "win32") return;
     // Wait until the host has posted sessions (ready → postSessionsList).
-    await page.waitForFunction(
+    await waitInPage(page, 
       (title) => {
         const rail = document.querySelector("#projects-rail");
         if (!rail) return false;
