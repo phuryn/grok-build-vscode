@@ -66,6 +66,7 @@ function harness(options?: {
   list?: (scopeId: string, relPath: string) => Promise<unknown>;
   confirm?: (request: { title: string }) => Promise<string>;
   mount?: Record<string, unknown>;
+  preferences?: { getWidth: () => number; setWidth: (width: number) => void };
   fileIcons?: { baseUrl: string };
   onMaximizedChanged?: (max: boolean) => void;
 }) {
@@ -134,6 +135,7 @@ function harness(options?: {
     document,
     window,
     mount: { panelHost: document.body, toggleHost: document.body, presentation: "overlay", ...options?.mount },
+    preferences: options?.preferences,
     ui: {
       confirm: options?.confirm || (async () => "discard"),
       renderMarkdown: (source: string) => `<p>${source}</p>`,
@@ -1589,6 +1591,60 @@ describe("title strip is a folder label plus file-type tabs", () => {
 });
 
 describe("split desktop Files mount", () => {
+  it.each([
+    { desktopResize: true, overlay: false, cap: 400, width: 280, saved: 280 },
+    { desktopResize: true, overlay: false, cap: 250, width: 250, saved: 280 },
+    { desktopResize: true, overlay: true, cap: 240, width: 220, saved: 220 },
+    { desktopResize: false, overlay: false, cap: 400, width: 220, saved: 220 },
+  ])("uses the preferred reset only for a visible desktop dock (%j)", async ({ desktopResize, overlay, cap, width, saved }) => {
+    let preferred = 220;
+    const h = harness({
+      mount: {
+        presentation: "dock",
+        ...(desktopResize && { desktopResize }),
+        dockLayout: () => ({ overlay, minWidth: overlay ? 160 : 200, maxWidth: cap }),
+      },
+      preferences: { getWidth: () => preferred, setWidth: width => { preferred = width; } },
+    });
+    try {
+      h.panel.setOpen(true);
+      expect(h.panel.resizer.hidden).toBe(overlay);
+      h.panel.resizer.dispatchEvent(new h.window.MouseEvent("dblclick", { bubbles: true, button: 0 }));
+      expect(h.panel.element.style.getPropertyValue("--gfp-width")).toBe(width + "px");
+      expect(preferred).toBe(saved);
+    } finally {
+      h.panel.destroy();
+      await h.window.happyDOM.close();
+    }
+  });
+
+  it.each(["lostpointercapture", "pointermove"])("ends a desktop drag on %s without another resize", async (interruption) => {
+    const h = harness({
+      mount: { presentation: "dock", desktopResize: true, dockLayout: () => ({ overlay: false, minWidth: 200, maxWidth: 340 }) },
+    });
+    try {
+      h.panel.setOpen(true);
+      h.panel.element.getBoundingClientRect = () => ({ width: 280 });
+      h.panel.resizer.setPointerCapture = () => {};
+      h.panel.resizer.releasePointerCapture = () => {};
+      const pointer = (type: string, clientX: number, buttons: number) => h.panel.resizer.dispatchEvent(Object.assign(
+        new h.window.MouseEvent(type, { bubbles: true, clientX, buttons }),
+        { pointerId: 1 },
+      ));
+      pointer("pointerdown", 500, 1);
+      pointer("pointermove", 470, 1);
+      expect(h.panel.element.classList.contains("gfp-resizing")).toBe(true);
+      expect(h.panel.element.style.getPropertyValue("--gfp-width")).toBe("310px");
+      pointer(interruption, 400, 0);
+      pointer("pointermove", 380, 1);
+      expect(h.panel.element.classList.contains("gfp-resizing")).toBe(false);
+      expect(h.panel.element.style.getPropertyValue("--gfp-width")).toBe("310px");
+    } finally {
+      h.panel.destroy();
+      await h.window.happyDOM.close();
+    }
+  });
+
   it("keeps the default dock minimum and hides its panel close", async () => {
     const h = harness({ mount: { presentation: "dock", availableWidth: () => 340 } });
     try {

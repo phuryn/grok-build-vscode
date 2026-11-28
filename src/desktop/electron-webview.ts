@@ -333,43 +333,65 @@ body.desk .desk-ft-chat > .composer {
 }
 .desk-grid-divider {
   position: absolute;
+  overflow: hidden;
   pointer-events: auto;
   touch-action: none;
   user-select: none;
-  --desk-grid-stroke: var(--desk-grid-pixel);
+  --desk-grid-stroke: 1px;
+  --desk-grid-stroke-start: round(up, max(0px, (100% - 2 * var(--desk-grid-stroke)) / 2), var(--desk-grid-pixel));
+  --desk-grid-edge-color: var(--vscode-editorWidget-border);
   --desk-grid-stroke-color: var(--vscode-editorWidget-border);
 }
 .desk-grid-divider:hover,
 .desk-grid-divider[data-dragging] {
-  --desk-grid-stroke: calc(2 * var(--desk-grid-pixel));
   --desk-grid-stroke-color: var(--vscode-focusBorder);
 }
+.desk-grid-divider::before,
 .desk-grid-divider::after {
   content: "";
   position: absolute;
   pointer-events: none;
+}
+/* Match the Files sash and the adjoining panel border. Only the sash lights up. */
+.desk-grid-divider::before {
+  --desk-grid-stroke-offset: var(--desk-grid-stroke);
+}
+.desk-grid-divider::after {
+  --desk-grid-stroke-offset: 0px;
   background: var(--desk-grid-stroke-color);
+}
+.desk-ft-resizer:has(+ #desk-ft-panel.gfp-resizing)::after {
+  background: var(--vscode-focusBorder);
 }
 .desk-grid-divider[aria-orientation="vertical"] { cursor: col-resize; }
 .desk-grid-divider[aria-orientation="horizontal"] { cursor: row-resize; }
-body[data-desk-grid-drag="column"] { --desk-grid-drag-cursor: col-resize; }
-body[data-desk-grid-drag="row"] { --desk-grid-drag-cursor: row-resize; }
+body[data-desk-grid-drag="column"],
+body:has(#desk-ft-panel.gfp-resizing) { --desk-divider-drag-cursor: col-resize; }
+body[data-desk-grid-drag="row"] { --desk-divider-drag-cursor: row-resize; }
 body[data-desk-grid-drag],
-body[data-desk-grid-drag] * { cursor: var(--desk-grid-drag-cursor) !important; }
+body[data-desk-grid-drag] *,
+body:has(#desk-ft-panel.gfp-resizing),
+body:has(#desk-ft-panel.gfp-resizing) * { cursor: var(--desk-divider-drag-cursor) !important; }
+.desk-grid-divider[aria-orientation="vertical"]::before,
 .desk-grid-divider[aria-orientation="vertical"]::after {
   inset-block: 0;
-  left: round(down, max(0px, (100% - var(--desk-grid-stroke)) / 2), var(--desk-grid-pixel));
-  width: min(100%, var(--desk-grid-stroke));
+  left: calc(var(--desk-grid-stroke-start) + var(--desk-grid-stroke-offset));
 }
+.desk-grid-divider[aria-orientation="horizontal"]::before,
 .desk-grid-divider[aria-orientation="horizontal"]::after {
   inset-inline: 0;
-  top: round(down, max(0px, (100% - var(--desk-grid-stroke)) / 2), var(--desk-grid-pixel));
-  height: min(100%, var(--desk-grid-stroke));
+  top: calc(var(--desk-grid-stroke-start) + var(--desk-grid-stroke-offset));
 }
+.desk-grid-divider[aria-orientation="vertical"]::before { border-left: var(--desk-grid-stroke) solid var(--desk-grid-edge-color); }
+.desk-grid-divider[aria-orientation="horizontal"]::before { border-top: var(--desk-grid-stroke) solid var(--desk-grid-edge-color); }
+.desk-grid-divider[aria-orientation="vertical"]::after { width: var(--desk-grid-stroke); }
+.desk-grid-divider[aria-orientation="horizontal"]::after { height: var(--desk-grid-stroke); }
 @media (forced-colors: active) {
-  .desk-grid-divider::after { forced-color-adjust: none; background: CanvasText; }
-  .desk-grid-divider:hover::after,
-  .desk-grid-divider[data-dragging]::after { background: Highlight; }
+  .desk-grid-divider::before,
+  .desk-grid-divider::after { forced-color-adjust: none; }
+  .desk-grid-divider { --desk-grid-edge-color: CanvasText; --desk-grid-stroke-color: CanvasText; }
+  .desk-grid-divider:hover,
+  .desk-grid-divider[data-dragging] { --desk-grid-stroke-color: Highlight; }
 }
 body.desk #desk-conversation-columns > .desk-ft-shell {
   flex: none;

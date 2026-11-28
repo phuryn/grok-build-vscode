@@ -93,6 +93,8 @@ The docked Files and chat headers line up with Projects. On narrower tiles,
 Files opens between the chat bar and composer, covering part of the transcript.
 Its header has a close button in both placements. Closing Files leaves its open
 tabs and edits available when you reopen it.
+Drag the docked Files divider to resize the panel. Double-click it to restore
+the default 280 px width within the space available.
 
 Drag the divider between columns or between chats stacked in a column to
 resize those neighbours. Double-click a column divider to restore automatic

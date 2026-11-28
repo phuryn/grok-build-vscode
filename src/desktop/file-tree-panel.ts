@@ -201,6 +201,7 @@ export function fileTreePanelBootSource(_iconsDir?: string): string {
           toggleHost: topBar,
           presentation: "dock",
           dockLayout: () => dockLayout,
+          desktopResize: true,
           closeLabel: topBar?.dataset.filesCloseLabel,
           onCloseButton: () => document.getElementById("input")?.focus(),
           id: "desk-ft-panel",

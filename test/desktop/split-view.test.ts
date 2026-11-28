@@ -59,6 +59,24 @@ function nativeChats(app: ElectronApplication) {
     })));
 }
 
+function dividerAppearance(el: Element) {
+  const vertical = el.getAttribute("aria-orientation") === "vertical";
+  const style = getComputedStyle(el);
+  const stroke = getComputedStyle(el, "::after");
+  const edge = el.classList.contains("gfp-resizer")
+    ? getComputedStyle(el.nextElementSibling!)
+    : getComputedStyle(el, "::before");
+  return {
+    grab: vertical ? el.getBoundingClientRect().width : el.getBoundingClientRect().height,
+    stroke: parseFloat(vertical ? stroke.width : stroke.height),
+    edge: parseFloat(vertical ? edge.borderLeftWidth : edge.borderTopWidth),
+    color: stroke.backgroundColor,
+    edgeColor: vertical ? edge.borderLeftColor : edge.borderTopColor,
+    cursor: style.cursor,
+    transition: stroke.transitionDuration,
+  };
+}
+
 async function reportSplitFailure(app: ElectronApplication | undefined, traceFile: string) {
   const trace = await readTrace(traceFile).catch(error => {
     console.error("Could not read desktop ACP trace", String(error));
@@ -965,35 +983,55 @@ it("shows every chat in the desktop grid and aligns split headers", async () => 
       expect(cells.slice(4)).toEqual(baseline.cells.slice(4));
       expect(cells.map(cell => [cell.y, cell.height])).toEqual(baseline.cells.map(cell => [cell.y, cell.height]));
     });
-    const dividerLook = () => columnDivider.evaluate(el => {
-      const style = getComputedStyle(el);
-      return { grab: el.getBoundingClientRect().width, stroke: getComputedStyle(el, "::after").width, cursor: style.cursor,
-        color: style.getPropertyValue("--desk-grid-stroke-color").trim(),
-        border: style.getPropertyValue("--vscode-editorWidget-border").trim(),
-        accent: style.getPropertyValue("--vscode-focusBorder").trim() };
-    });
+    const dividerLook = () => columnDivider.evaluate(dividerAppearance);
     await inThemes(async theme => {
       await page.mouse.move(1, 1);
       const rest = await dividerLook();
-      expect(rest).toMatchObject({ grab: 5, stroke: "1px", color: rest.border });
+      // A border snaps to whole device pixels: 0.8 CSS px at 125 % scaling.
+      expect(rest).toMatchObject({ grab: 5, stroke: 1, color: rest.edgeColor, transition: "0s" });
+      expect(rest.edge).toBeGreaterThan(0);
+      expect(rest.edge).toBeLessThanOrEqual(1);
       await capture(`grid-divider-rest-${theme}`);
       const point = await dividerPoint(columnDivider);
       await page.mouse.move(point.x, point.y);
       const hover = await dividerLook();
-      expect(hover).toMatchObject({ stroke: "2px", cursor: "col-resize", color: hover.accent });
+      expect(hover).toMatchObject({ stroke: 1, edge: rest.edge, edgeColor: rest.edgeColor, cursor: "col-resize", transition: "0s" });
+      expect(hover.color).not.toBe(rest.color);
       await capture(`grid-divider-hover-${theme}`);
       await page.mouse.down();
       try {
         await page.mouse.move(point.x + 32, point.y);
         await expectColumnsMoved(32);
         expect(await columnDivider.getAttribute("data-dragging")).toBe("");
-        expect(await dividerLook()).toMatchObject({ stroke: "2px", color: hover.accent });
+        expect(await dividerLook()).toEqual(hover);
         await capture(`grid-divider-drag-${theme}`);
       } finally {
         await page.mouse.up();
       }
       await columnDivider.dblclick();
       await expectColumnsMoved(0);
+
+      await page.mouse.move(1, 1);
+      expect(await rowDivider.evaluate(dividerAppearance)).toEqual({ ...rest, cursor: "row-resize" });
+      const rowPoint = await dividerPoint(rowDivider);
+      await page.mouse.move(rowPoint.x, rowPoint.y);
+      const rowHover = { ...hover, cursor: "row-resize" };
+      expect(await rowDivider.evaluate(dividerAppearance)).toEqual(rowHover);
+      await page.mouse.down();
+      try {
+        await page.mouse.move(rowPoint.x, rowPoint.y - 24);
+        await vi.waitFor(async () => {
+          const { cells } = await gridSnapshot();
+          expect(cells.slice(0, 5)).toEqual(baseline.cells.slice(0, 5));
+          expect(cells[5]).toEqual({ ...baseline.cells[5], height: baseline.cells[5].height - 24 });
+          expect(cells[6]).toEqual({ ...baseline.cells[6], y: baseline.cells[6].y - 24, height: baseline.cells[6].height + 24 });
+        });
+        expect(await rowDivider.evaluate(dividerAppearance)).toEqual(rowHover);
+      } finally {
+        await page.mouse.up();
+      }
+      await rowDivider.dblclick();
+      await vi.waitFor(async () => expect((await gridSnapshot()).cells).toEqual(baseline.cells));
     });
 
     const clamp = await pressDivider(columnDivider);
@@ -1006,18 +1044,6 @@ it("shows every chat in the desktop grid and aligns split headers", async () => 
     await expectColumnsMoved(baseline.cells[2].width - 360);
     await columnDivider.dblclick();
     await expectColumnsMoved(0);
-
-    const vertical = await pressDivider(rowDivider);
-    await page.mouse.move(vertical.x, vertical.y - 24);
-    await page.mouse.up();
-    await vi.waitFor(async () => {
-      const { cells } = await gridSnapshot();
-      expect(cells.slice(0, 5)).toEqual(baseline.cells.slice(0, 5));
-      expect(cells[5]).toEqual({ ...baseline.cells[5], height: baseline.cells[5].height - 24 });
-      expect(cells[6]).toEqual({ ...baseline.cells[6], y: baseline.cells[6].y - 24, height: baseline.cells[6].height + 24 });
-    });
-    await rowDivider.dblclick();
-    await vi.waitFor(async () => expect((await gridSnapshot()).cells).toEqual(baseline.cells));
 
     // Measure the synchronous main-process work between IPC listeners, including
     // planning and native setBounds. CDP bypasses native mouse hit testing.
@@ -1189,7 +1215,8 @@ it("docks each chat's project and restores each Files toggle independently", asy
       const rect = sel => document.querySelector(sel).getBoundingClientRect();
       const chat = rect(".desk-ft-chat");
       const files = rect("#desk-ft-panel");
-      return { chat: chat.width / zoom, files: files.width / zoom, next: files.left >= chat.right - 2 };
+      return { chat: chat.width / zoom, files: files.width / zoom, next: files.left >= chat.right - 2,
+        tile: rect("#desk-ft-shell").width / zoom, zoom };
     })()`;
     await mkdir(screenshots, { recursive: true });
     for (const target of [1920, 1440]) {
@@ -1218,6 +1245,100 @@ it("docks each chat's project and restores each Files toggle independently", asy
         const file = path.join(screenshots, `files-per-chat-${target}-at-${actual}-${theme}.png`);
         console.log(`${file} (${await captureWindow(app, file)})`);
       }
+    }
+
+    await setWindowWidth(1920);
+    const areaWidth = (await page.locator("#desk-conversation-columns").boundingBox())!.width;
+    const zoom = areaWidth < 1185 ? 0.8 : 1;
+    await page.evaluate(zoom => (window as any).__grokFontScale.set(zoom), zoom);
+    // Target the native chat's own CDP page. The outer page can neither hit
+    // the pane's handle nor capture the pane's renderer pixels.
+    const panePage = await vi.waitFor(() => {
+      const pane = app!.windows().find(window => window.url().includes("/__app__/conversation-"));
+      expect(pane).toBeDefined();
+      return pane!;
+    });
+    const filesDivider = panePage.locator("#desk-ft-resizer");
+    const gridDivider = page.getByRole("separator", { name: "Resize chat columns" }).first();
+    const nativeTile = () => panePage.evaluate<{ chat: number; files: number; tile: number; zoom: number; next: boolean }>(measure);
+    const dividerCenter = async (locator: typeof filesDivider) => {
+      const box = (await locator.boundingBox())!;
+      return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+    };
+    const storedWidth = () => panePage.evaluate(async () => {
+      const { preferencesKey } = await (window as any).grokDesktopFileTree.root();
+      if (!preferencesKey) throw new Error("Native chat preference key missing");
+      return localStorage.getItem("desk-ft-width." + preferencesKey);
+    });
+    await vi.waitFor(async () => {
+      const tile = await nativeTile();
+      expect(tile.zoom).toBe(zoom);
+      expect(tile.next).toBe(true);
+      expect(tile.files).toBeGreaterThan(224);
+      expect(await filesDivider.isVisible()).toBe(true);
+    });
+
+    for (const theme of ["light", "dark"]) {
+      if (await page.locator("html").getAttribute("data-theme") !== theme) {
+        await page.locator("#desk-theme-toggle").click();
+      }
+      await vi.waitFor(async () => expect(await panePage.locator("html").getAttribute("data-theme")).toBe(theme));
+      const captureDivider = (state: string) => panePage.screenshot({
+        path: path.join(screenshots, `files-divider-${state}-${theme}.png`),
+      });
+      const before = await nativeTile();
+      const main = await page.evaluate(measure);
+      const panes = await nativeChats(app);
+      const cap = Math.floor(Math.min(before.tile * 0.7, before.tile - 361));
+      const assertFilesWidth = (width: number) => vi.waitFor(async () => {
+        const resized = await nativeTile();
+        expect(resized.files).toBeCloseTo(width, 0);
+        expect(resized.chat + resized.files).toBeCloseTo(before.chat + before.files, 0);
+        expect(resized.chat).toBeGreaterThanOrEqual(359);
+        expect(await page.evaluate(measure)).toEqual(main);
+        expect(await nativeChats(app!)).toEqual(panes);
+      });
+      const compare = async (grid: ReturnType<typeof dividerAppearance>) => {
+        const files = await filesDivider.evaluate(dividerAppearance);
+        expect(files).toMatchObject({ color: grid.color, edgeColor: grid.edgeColor, cursor: grid.cursor, transition: "0s" });
+        expect(files.stroke).toBeCloseTo(grid.stroke, 0);
+        expect(files.edge).toBeCloseTo(grid.edge, 0);
+      };
+      await page.mouse.move(1, 1);
+      await panePage.mouse.move(10, 100);
+      await compare(await gridDivider.evaluate(dividerAppearance));
+      await captureDivider("rest");
+      const gridPoint = await dividerCenter(gridDivider);
+      await page.mouse.move(gridPoint.x, gridPoint.y);
+      const accent = await gridDivider.evaluate(dividerAppearance);
+      const start = await dividerCenter(filesDivider);
+      await panePage.mouse.move(start.x, start.y);
+      await compare(accent);
+      await captureDivider("hover");
+      await panePage.mouse.down();
+      try {
+        await panePage.mouse.move(start.x + 24 * before.zoom, start.y);
+        await assertFilesWidth(Math.round(before.files) - 24);
+        await compare(accent);
+        await captureDivider("drag");
+        await panePage.mouse.move(10, start.y);
+        await assertFilesWidth(cap);
+        await compare(accent);
+        expect(await panePage.evaluate(y => getComputedStyle(document.elementFromPoint(10, y)!).cursor, start.y))
+          .toBe("col-resize");
+      } finally {
+        await panePage.mouse.up();
+      }
+
+      const atCap = await dividerCenter(filesDivider);
+      await panePage.mouse.move(atCap.x, atCap.y);
+      await panePage.mouse.down();
+      await panePage.mouse.move(before.tile * before.zoom - 10, atCap.y);
+      await panePage.mouse.up();
+      await assertFilesWidth(200);
+      await filesDivider.dblclick();
+      await assertFilesWidth(Math.min(280, cap));
+      expect(await storedWidth()).toBe("280");
     }
 
     const mainBefore = await page.evaluate(measure);

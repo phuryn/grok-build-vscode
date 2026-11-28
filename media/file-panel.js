@@ -1514,6 +1514,7 @@
       let dragging = false;
       let startX = 0;
       let startWidth = 0;
+      const desktop = mount.desktopResize === true;
       // Body `--chat-zoom` scales VISUAL rects and clientX, while --gfp-width
       // is layout px. Convert both ends of the gesture so the edge tracks the
       // cursor (a no-op at zoom 1). Converting only the delta jumps on grab.
@@ -1525,26 +1526,35 @@
         const unzoom = typeof helpers.unzoomClientPx === "function" ? helpers.unzoomClientPx : (px) => px;
         return unzoom(clientPx, zoomOf(doc));
       };
-      resizer.addEventListener("pointerdown", (event) => {
-        if (!open || isOverlay() || mount.dockLayout?.()?.overlay) return;
-        dragging = true;
-        startX = layoutPx(event.clientX);
-        startWidth = layoutPx(rootEl.getBoundingClientRect().width);
-        rootEl.classList.add("gfp-resizing");
-        try { resizer.setPointerCapture(event.pointerId); } catch (_) { /* noop */ }
-        event.preventDefault();
-      });
-      resizer.addEventListener("pointermove", (event) => {
-        if (dragging && !mount.dockLayout?.()?.overlay) setPanelWidth(startWidth + startX - layoutPx(event.clientX));
-      });
       const stop = (event) => {
         if (!dragging) return;
         dragging = false;
         rootEl.classList.remove("gfp-resizing");
         try { resizer.releasePointerCapture(event.pointerId); } catch (_) { /* noop */ }
       };
+      resizer.addEventListener("pointerdown", (event) => {
+        if (!open || isOverlay() || mount.dockLayout?.()?.overlay || (desktop && resizer.hidden)) return;
+        dragging = true;
+        startX = layoutPx(event.clientX);
+        startWidth = layoutPx(rootEl.getBoundingClientRect().width);
+        rootEl.classList.add("gfp-resizing");
+        try { resizer.setPointerCapture(event.pointerId); } catch (_) { if (desktop) stop(event); }
+        event.preventDefault();
+      });
+      resizer.addEventListener("pointermove", (event) => {
+        if (desktop && !event.buttons) return stop(event);
+        if (dragging && !mount.dockLayout?.()?.overlay) setPanelWidth(startWidth + startX - layoutPx(event.clientX));
+      });
       resizer.addEventListener("pointerup", stop);
       resizer.addEventListener("pointercancel", stop);
+      if (desktop) {
+        resizer.addEventListener("lostpointercapture", stop);
+        resizer.addEventListener("dblclick", () => {
+          if (resizer.hidden || isOverlay() || mount.dockLayout?.()?.overlay) return;
+          setPanelWidth(DEFAULT_WIDTH, false);
+          options.preferences?.setWidth?.(DEFAULT_WIDTH);
+        });
+      }
     })();
 
     function abortPending() {
