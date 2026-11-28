@@ -1120,9 +1120,10 @@ async function createApp(): Promise<void> {
       log,
       fetchNotice: fetchGithubDesktopNotice,
     },
+    onInstallFailed: forgetDesktopFilesCloseAnswer,
   });
   updateActions.install = () => {
-    void installUpdateAfterFilesCheck(confirmDesktopFilesClose, () => desktopUpdate.install(), forgetDesktopFilesCloseAnswer)
+    void installUpdateAfterFilesCheck(confirmDesktopFilesClose, () => desktopUpdate.install())
       .catch(error => log(`[update] files check failed: ${String(error)}`));
   };
   // After first paint so a slow check never races the webview boot.

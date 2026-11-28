@@ -98,7 +98,9 @@ left to right, with up to three rows per column. The window's own chat stays
 at the top left. Each Files button opens that chat's project tree and Changes.
 Project files Files can preview (text, Markdown, JSON, images) and diffs
 requested from its chat open there too; every other file, such as a PDF, a
-spreadsheet or a Word document, goes to the system's app, as from the main chat. Opening Files can
+spreadsheet or a Word document, goes to the system's app, as from the main chat.
+The choice goes by file type, so a text file too large to preview opens in Files
+as a message with an Open externally button. Opening Files can
 widen its column while the column widths are automatic.
 In split view, Files docks when the tile can fit the chat and a 200 px panel.
 The docked Files and chat headers line up with Projects. On narrower tiles,
