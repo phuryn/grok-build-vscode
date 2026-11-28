@@ -1,5 +1,23 @@
 # Changelog
 
+## 4.17.17 — 2026-11-28
+
+**Split view, and the desktop app is called AFK Pilot.**
+
+### Added
+
+- **Conversations side by side in VS Code.** **Open to the side** in a Projects row's menu, Ctrl/Cmd-click or middle-click opens a conversation in an editor tab beside your files; each tab is a full chat with its own draft. A plain click goes to the chat you used last, and when that is a tab, to the tab already showing the conversation if there is one, and never into a tab holding the unsent draft of a new conversation; the new `grok.openConversationIn` setting makes it always the sidebar or always a tab. Projects gives the conversation in that chat the stronger highlight and conversations open in other chats a lighter one. While tabs are open, a reply that finishes in a conversation that no chat here is showing and no connected phone or browser has open gets the green dot. Tabs come back after a window reload, and closing a tab never stops its agent. Dictation works in one chat at a time.
+- **Several chats in the desktop app's window.** Open a chat beside the others the same ways. Chats fill columns from left to right, up to three rows per column, each with its own Files panel; on a narrow chat, Files opens over part of the transcript. Drag the lines between columns, between stacked chats, and between a chat and its Files to resize them. Double-click a line between columns to reset the column widths, a line between stacked chats to reset that column's heights, or the line beside Files to set Files to 280 px, or less where the chat is narrow. Closing a chat keeps its agent running and its draft, and the window brings its chats back after a restart.
+
+### Changed
+
+- **The desktop app is called AFK Pilot.** Its window, menus, About, dialogs, Start menu and desktop shortcuts and Linux launcher say AFK Pilot, and it updates itself as before. Saved keys, settings and history stay as they are. The installer files, the program file and install folder, and the macOS menu bar, Dock and Finder keep the name Grok Build Desktop, so updates find the app.
+
+### Fixed
+
+- **Quit → Discard in the desktop app** now quits. With an unsaved file edit open, it used to stop the agents and leave the window open.
+- **Restart to update in the desktop app** asks about unsaved file edits before it closes the app. On Windows the app used to close a moment later whatever you answered.
+
 ## 4.17.16 — 2026-11-26
 
 **How long each reply took, and a GitHub star.**

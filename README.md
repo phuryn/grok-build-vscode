@@ -326,9 +326,18 @@ Sessions run in **parallel**: start a new one with **+** while another is mid-tu
 
 The green/red dot is an **unread badge** — it survives a VS Code restart and clears when you open the session, so after firing off a few agents the green dots are exactly the results waiting for you.
 
-**Desk alerts** tell you when a turn finishes, fails or waits for you while you are not looking at it: a toast in VS Code when its window is in the background or another conversation is showing, or a system notification when the standalone app's window is in the background. Click one to open that conversation.
+**Desk alerts** tell you when a turn finishes, fails or waits for you while you are not looking at it: a toast in VS Code when its window is in the background or no open chat shows that conversation, or a system notification on Windows and macOS when the standalone app's window is in the background. Click one to open that conversation.
 
 ![Session history dropdown with status dots](docs/screenshots/session_history.png)
+
+</details>
+
+<details>
+<summary><strong>Split view</strong> — several conversations on screen at once</summary>
+
+**In VS Code and its forks**, open a conversation in an editor tab beside your files: **Open to the side** in a Projects row's menu, Ctrl/Cmd-click the row, or middle-click it. Each tab is a full chat with its own draft; drag tabs into editor groups to see two or more side by side. A plain click opens a conversation in the chat you used last, and when that is a tab, brings forward the tab already showing the conversation if there is one, and opens a new tab rather than reuse one holding the unsent draft of a new conversation; `grok.openConversationIn` makes that always the sidebar, or always a tab. In Projects, the conversation in that chat has the stronger highlight, and conversations open in other chats a lighter one. While tabs are open, a reply that finishes in a conversation that no chat here is showing and no connected phone or browser has open gets the green dot. Tabs come back after a window reload, and closing one never stops its agent.
+
+**In the standalone app**, open a chat beside the others the same ways. Every open chat shares the window: chats fill columns from left to right, up to three rows per column, each with its own Files panel. Drag the lines between columns, between stacked chats, and between a chat and its Files to resize them. Double-click a line between columns to reset the column widths, a line between stacked chats to reset that column's heights, or the line beside Files to set Files to 280 px, or less where the chat is narrow. The layout comes back with the window's chats after a restart.
 
 </details>
 
@@ -440,7 +449,7 @@ A ` ```mermaid ` block renders as a real diagram via [Mermaid](https://mermaid.j
 
 ## Configuration
 
-AFK Pilot follows VS Code's display language: Simplified Chinese when VS Code runs in Simplified Chinese, English in every other language, Traditional Chinese included. In Chinese you get the command names, the setting descriptions, the projects rail, the Settings page and the chat's own controls: the model picker, modes, message box, menus, history, rewind, find, context usage, plan and question cards, tips and the panels that install and connect an agent. Agent replies and the answers they offer, errors, status lines, approval cards, tool rows and diffs stay as they are, and so do the names of providers, models and Muse Code's own modes. AFK Pilot anywhere else stays in English: this is for VS Code and the editors based on it.
+AFK Pilot follows VS Code's display language: Simplified Chinese when VS Code runs in Simplified Chinese, English in every other language, Traditional Chinese included. In Chinese you get the command names, the setting descriptions, the projects rail, the Settings page and the chat's own controls: the model picker, modes, message box, menus, history, rewind, find, context usage, plan and question cards, tips and the panels that install and connect an agent. Agent replies and the answers they offer, errors the agent reports, status lines, approval cards, tool rows and diffs stay as they are, and so do the names of providers, models and Muse Code's own modes. AFK Pilot anywhere else stays in English: this is for VS Code and the editors based on it.
 
 <details>
 <summary><strong>All <code>grok.*</code> settings</strong> (VS Code Settings → search "grok")</summary>
@@ -451,6 +460,7 @@ AFK Pilot follows VS Code's display language: Simplified Chinese when VS Code ru
 | `grok.homeDirectory` | `""` | VS Code only: set an absolute Grok account folder in Workspace settings for each repo, reload, then sign in from AFK Pilot. |
 | `grok.deepseekPath` | `""` | A DeepSeek install directory (`node/` and `runtime/`) to use instead of the copy this app installs. PATH is not searched. Restart DeepSeek conversations after changing it. |
 | `grok.askToAddProjects` | `true` | The first time you send in a conversation whose folder is not one of your projects, offer to add it to Projects. Another conversation in that folder asks again; "Never for this folder" stops it for that folder. |
+| `grok.openConversationIn` | `"lastUsed"` | Where a plain click on a conversation in Projects opens it: `lastUsed`, the chat you used most recently; `sidebar`, always the sidebar chat; `editor`, its tab if one is open, else the last-used chat tab, else a new tab beside the active editor group. A tab holding the unsent draft of a conversation not saved yet is never reused; a new tab opens instead. In the standalone app, `sidebar` means the main chat, and a conversation already open in a chat is brought forward whatever this says. |
 | `grok.defaultModel` | `""` | Model ID for new sessions. Empty = CLI default. |
 | `grok.defaultEffort` | `""` | Reasoning effort forwarded as `--reasoning-effort` (`none` / `minimal` / `low` / `medium` / `high` / `xhigh`). Empty = CLI default. Applies live on recent CLIs; older CLIs (and resetting to the model default) restart the session. |
 | `grok.defaultMode` | `""` | Mode for new chats with an agent you have not picked a mode for yet. Each agent starts its new chats in the mode last picked for it, including Codex's Ask for approval and Antigravity's Auto and Accept edits (Plan is never kept); this setting follows your last Agent / Claude Auto / Auto accept switch. Empty = Auto accept for Grok and Antigravity, and Allow all for Muse, on new installs; existing installs keep Agent. Claude uses Auto and Codex uses Agent in both cases. Muse's On request is not offered on Windows or cloud machines. |
@@ -500,7 +510,7 @@ VS Code commands (not Grok slash commands):
 |---|---|
 | `AFK Pilot: Open` | Open the AFK Pilot sidebar |
 | `AFK Pilot: New Session` | Start a fresh session |
-| `AFK Pilot: Compact Conversation` | Compact the current session to reclaim context |
+| `AFK Pilot: Compact Conversation` | Show how to compact the current session, for agents that support it (type `/compact` in the message box) |
 | `AFK Pilot: Pick Model` | Open the model picker |
 | `AFK Pilot: Toggle Plan / Agent Mode` | Open the mode picker (Agent / Plan / Auto accept) |
 | `Add to AFK Pilot chat` | Add files to the composer (the Explorer selection, the active editor, or a file picker) |
