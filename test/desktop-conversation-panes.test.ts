@@ -226,14 +226,16 @@ describe("desktop conversation pane host", () => {
   });
 
   it("hands a pane's PDF to the OS app like the main chat, never to the text viewer", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "pane-pdf-"));
+    // macOS's tmpdir is under /var, a link to /private/var: start from the real
+    // folder so the path the host opens and the one expected are the same spelling.
+    const root = realpathSync(mkdtempSync(path.join(tmpdir(), "pane-pdf-")));
     const pdf = path.join(root, "report.pdf");
     writeFileSync(pdf, "%PDF-1.4");
     try {
       const { host, open } = fixture(() => ({ allowedRoots: [root], sessionCwd: root }), root);
       const { webview } = open();
       await host.openResource(pdf, { sourceWebview: webview });
-      expect(openPath).toHaveBeenCalledWith(realpathSync(pdf));
+      expect(openPath).toHaveBeenCalledWith(pdf);
       expect(loadDocument).not.toHaveBeenCalled();
     } finally {
       rmSync(root, { recursive: true, force: true });
