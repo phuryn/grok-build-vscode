@@ -1,7 +1,17 @@
-# Grok Build Desktop
+# AFK Pilot desktop app
 
-Standalone Electron host for the same Grok Build agent UI that the VS Code
-extension uses. It speaks ACP over `grok agent stdio`, stores nothing private
+Standalone Electron host for the same agent UI that the VS Code extension uses.
+
+**It was called Grok Build Desktop until November 2026.** Everything the app
+draws says AFK Pilot: the window, About, menus, the tray, dialogs, the Windows
+shortcuts and uninstall entry, the Linux menu entry. What keeps the old name is
+what an update or a saved setting has to find: the app ID, the installer file
+names, the `.exe` and install folder, the macOS app bundle (and with it the
+macOS menu bar, Dock and Finder name), the `GrokBuildDesktop` settings folder,
+and the startup name that macOS and Linux derive the saved-key store from
+(`src/desktop/host-dialogs.ts`).
+
+For Grok Build it speaks ACP over `grok agent stdio`. It stores nothing private
 beyond what the extension already does, and is published from this public repo.
 
 Not affiliated with or endorsed by SpaceXAI (formerly xAI).
@@ -137,8 +147,7 @@ channel entries with the AppImage as `path`, and inspects the actual squashfs
 to reject any AppImage containing `resources/package-type`. Only the Debian
 build overrides electron-builder's `productName` to `grok-build-desktop` to
 select its install directory; the AppImage keeps the shared configuration.
-The menu name remains `Grok Build Desktop`, `StartupWMClass` remains
-`Grok Build Desktop (Community)`, and `main.ts` sets the app name and
+The menu name is `AFK Pilot`, `StartupWMClass` matches it, and `main.ts` sets the app name and
 `GrokBuildDesktop` settings directory independently of builder metadata.
 The packaged `package.json` is identical in both formats. Linux build hosts
 need `squashfs-tools` and `desktop-file-utils` in addition to Node 20 and npm.

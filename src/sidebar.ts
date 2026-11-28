@@ -26739,9 +26739,9 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       ? `
   <aside id="projects-rail" class="projects-rail" aria-label="Projects">
     <div class="rail-top">
-      <span class="rail-brand" title="Grok Build Desktop">
+      <span class="rail-brand" title="AFK Pilot">
         <span class="mark" style="--rail-mark:url('${railMark}')" aria-hidden="true"></span>
-        <span class="wordmark"><b>Grok</b> <span class="dim">Build</span></span>
+        <span class="wordmark"><b>AFK</b> <span class="dim">Pilot</span></span>
       </span>
       <button id="desk-rail-toggle" class="rail-icon-btn" type="button" title="Hide projects" aria-label="Hide projects" aria-expanded="true">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/></svg>

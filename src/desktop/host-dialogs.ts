@@ -310,9 +310,17 @@ export function resolveMessageBoxChoice(
 /** Public repo linked from the Help menu — this repo only. */
 export const DESKTOP_PUBLIC_REPO_URL = "https://github.com/phuryn/grok-build-vscode";
 
-export const DESKTOP_APP_FULL_NAME = "Grok Build Desktop (Community)";
-export const DESKTOP_APP_SHORT_NAME = "Grok Build Desktop";
+/** The name people see: window title, About, the app and tray menus, dialogs.
+ *  electron-builder.yml repeats it for shortcuts, the uninstall entry, the macOS
+ *  menu bar and the Linux launcher (pinned by the packaging tests). It was
+ *  "Grok Build Desktop (Community)" until 2026-11-28; the "(Community)" said this
+ *  is not an xAI product, which a name without "Grok" no longer suggests. */
+export const DESKTOP_APP_NAME = "AFK Pilot";
 
-/** Window title / About. Carries "(Community)" because the window is where a
- *  user actually reads the name, and this is not an xAI product. */
-export const DESKTOP_APP_DISPLAY_NAME = "Grok Build Desktop (Community)";
+/** The app's old name, kept where people never see it and changing it would
+ *  cost them something: main.ts gives it to Electron before anything resolves a
+ *  path, and macOS names the Keychain item that encrypts saved keys
+ *  "<name> Safe Storage" from it (Linux keys its libsecret entry the same way),
+ *  so a new value would leave every saved key unreadable after an update. It is
+ *  also the host's appName, which telemetry reports. */
+export const DESKTOP_APP_INTERNAL_NAME = "Grok Build Desktop";

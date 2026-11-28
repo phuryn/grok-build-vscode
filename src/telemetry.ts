@@ -69,7 +69,7 @@ export interface SessionStartProps {
   sessionOrigin: TelemetrySessionOrigin;
   clientDevice: TelemetryClientDevice;
   /** Cloud hosts are `sprite`, including those running the desktop binary.
-   *  Off-cloud: Grok Build Desktop is `desktop`; editor hosts are `vscode`. */
+   *  Off-cloud: the desktop app is `desktop`; editor hosts are `vscode`. */
   hostKind: TelemetryHostKind;
   appPurpose: TelemetryAppPurpose;
   /** Omitted (undefined) when no snapshot exists for the session's cwd. */

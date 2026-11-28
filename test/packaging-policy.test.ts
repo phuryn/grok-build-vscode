@@ -21,7 +21,10 @@ describe("marketplace vs GitHub README", () => {
     scripts: Record<string, string>;
   };
 
-  it("GitHub README covers Grok Build Desktop and both hosts", () => {
+  it("GitHub README covers the desktop app and both hosts", () => {
+    // Renamed 2026-11-28 by the owner: the desktop app is AFK Pilot. The old
+    // name stays in the README because the installer files still carry it.
+    expect(github).toMatch(/The desktop app is called \*\*AFK Pilot\*\*/);
     expect(github).toMatch(/Grok Build Desktop/);
     expect(github).toMatch(/VS Code extension/i);
     // Desktop downloads moved from GitHub Releases to the site, which detects
@@ -61,7 +64,9 @@ describe("marketplace vs GitHub README", () => {
     // another product is named. "Later in the document" is the only
     // machine-checkable form of "not the headline".
     const firstExtension = marketplace.search(/AFK Pilot: Grok Build, Muse Code, Antigravity, Claude Code, Codex, DeepSeek & more/);
-    const firstDesktop = marketplace.search(/Grok Build Desktop/i);
+    // The desktop app is named by its download link: since 2026-11-28 it shares
+    // the AFK Pilot name with the extension.
+    const firstDesktop = marketplace.search(/afkpilot\.com\/desktop/i);
     expect(firstExtension).toBeGreaterThanOrEqual(0);
     if (firstDesktop >= 0) {
       expect(firstDesktop).toBeGreaterThan(firstExtension);
@@ -69,7 +74,7 @@ describe("marketplace vs GitHub README", () => {
       // sold, not mentioned.
       expect(firstDesktop).toBeGreaterThan(marketplace.length / 2);
       // A footnote is named a handful of times, not threaded throughout.
-      expect((marketplace.match(/Grok Build Desktop/gi) || []).length).toBeLessThanOrEqual(3);
+      expect((marketplace.match(/afkpilot\.com\/desktop/gi) || []).length).toBeLessThanOrEqual(3);
     }
     // AFK Pilot may be named anywhere — it IS the extension's Remote Control
     // feature, not a separate product being cross-sold.

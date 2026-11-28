@@ -6,10 +6,10 @@
 
 Two ways to use it:
 
-| | **VS Code extension** | **Grok Build Desktop** |
+| | **VS Code extension** | **Desktop app** |
 |---|---|---|
 | **What** | Sidebar chat inside VS Code / Cursor | Standalone Electron app (no editor required) |
-| **Get it** | [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=PawelHuryn.grok-vscode-phuryn) · [Open VSX](https://open-vsx.org/extension/PawelHuryn/grok-vscode-phuryn) | [afkpilot.com/desktop](https://afkpilot.com/desktop) (see [Desktop install](#grok-build-desktop)) |
+| **Get it** | [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=PawelHuryn.grok-vscode-phuryn) · [Open VSX](https://open-vsx.org/extension/PawelHuryn/grok-vscode-phuryn) | [afkpilot.com/desktop](https://afkpilot.com/desktop) (see [Desktop install](#desktop-app)) |
 | **Best when** | You already live in the editor | You want the agent as its own window |
 
 ![Grok Build in VS Code, choosing Grok 4.7 and its reasoning effort](docs/screenshots/grok_4.7.png)
@@ -41,9 +41,9 @@ AFK Pilot defaults to the **Secondary Side Bar** (right side, next to other AI t
 
 > Prefer the terminal, building from source, or installing into several IDEs at once? See **[docs/INSTALL.md](docs/INSTALL.md)**.
 
-### Grok Build Desktop
+### Desktop app
 
-Standalone app for **macOS** (Apple Silicon + Intel), **Windows** (x64) and **Linux** (x86_64 AppImage, or a Debian package). Same agent UI as the extension; no VS Code required.
+The desktop app is called **AFK Pilot**. Until November 2026 it was Grok Build Desktop, and the installer files and the macOS app bundle keep that name so updates find them. A standalone app for **macOS** (Apple Silicon + Intel), **Windows** (x64) and **Linux** (x86_64 AppImage, or a Debian package). Same agent UI as the extension; no VS Code required.
 
 **1. Download** the installer from **[afkpilot.com/desktop](https://afkpilot.com/desktop)** — it detects your platform and offers the right build. Asset names:
 
@@ -63,7 +63,7 @@ Standalone app for **macOS** (Apple Silicon + Intel), **Windows** (x64) and **Li
 
 **Windows is not signed yet**, so Microsoft Defender SmartScreen may show “Windows protected your PC.” Choose **More info** → **Run anyway**.
 
-**Debian / Ubuntu:** download the `.deb` from [GitHub Releases](https://github.com/phuryn/grok-build-vscode/releases) and run `sudo apt install ./Grok-Build-Desktop-<version>-linux-amd64.deb`. It installs under `/opt/grok-build-desktop`, adds the **Grok Build Desktop** menu entry and dependencies, configures Chromium's sandbox helper, and removes with `sudo apt remove grok-build-desktop`. Use this package on Ubuntu 24.04+: its user-namespace restrictions prevent the AppImage from launching normally. **Update available** opens the new `.deb`; install it with the same `apt` command to upgrade.
+**Debian / Ubuntu:** download the `.deb` from [GitHub Releases](https://github.com/phuryn/grok-build-vscode/releases) and run `sudo apt install ./Grok-Build-Desktop-<version>-linux-amd64.deb`. It installs under `/opt/grok-build-desktop`, adds the **AFK Pilot** menu entry and dependencies, configures Chromium's sandbox helper, and removes with `sudo apt remove grok-build-desktop`. Use this package on Ubuntu 24.04+: its user-namespace restrictions prevent the AppImage from launching normally. **Update available** opens the new `.deb`; install it with the same `apt` command to upgrade.
 
 **Other Linux systems:** the AppImage is one file: `chmod +x` it and run it. It needs FUSE (`libfuse2` on Debian; `libfuse2t64` on Ubuntu 24.04+) and updates itself in place where the distro permits unprivileged user namespaces. There is exactly one AppImage per release.
 

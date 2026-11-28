@@ -3,7 +3,7 @@
  * fill, no colour of its own — it IS the border, and only changes colour on
  * hover/drag.
  *
- * Mounted by chat.js next to the rail so BOTH rail hosts (Grok Build Desktop and
+ * Mounted by chat.js next to the rail so BOTH rail hosts (the desktop app and
  * the AFK Pilot browser client) get it by construction, the same argument that
  * put the gear in the rail. VS Code has no rail mount, so nothing mounts there.
  *

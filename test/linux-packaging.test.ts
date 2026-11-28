@@ -101,7 +101,7 @@ describe("Debian install path and branding", () => {
     const helper = new LinuxTargetHelper(packager);
     const target = new FpmTarget("deb", packager, helper, dir);
     const desktop = await helper.computeDesktopEntry(target.options);
-    for (const line of ["Name=Grok Build Desktop", "StartupWMClass=Grok Build Desktop (Community)",
+    for (const line of ["Name=AFK Pilot", "StartupWMClass=AFK Pilot",
       "Exec=/opt/grok-build-desktop/grok-build-desktop %U", "Icon=grok-build-desktop"]) {
       expect(desktop.split("\n")).toContain(line);
     }
@@ -109,10 +109,10 @@ describe("Debian install path and branding", () => {
     expect(packager.appInfo.productFilename).toBe("grok-build-desktop");
     expect(packager.appInfo.updaterCacheDirName).toBe("grok-build-desktop-updater");
     expect((await target.computeFpmMetaInfoOptions()).name).toBe("grok-build-desktop");
-    expect(target.options.synopsis).toBe("Desktop client for Grok Build");
+    expect(target.options.synopsis).toBe("AI coding agents in one desktop app");
     expect(helper.getDescription(target.options)).toBe(
-      "Desktop client for the Grok Build agent. Talks to Grok, Codex, " +
-      "Claude Code and Muse Code. Not affiliated with or endorsed by SpaceXAI.");
+      "AFK Pilot runs Grok Build, Codex, Claude Code and Muse Code in one " +
+      "desktop app. Not affiliated with or endorsed by SpaceXAI.");
     const [postinst, postrm] = (await target.scriptFiles).map((file: string) => fs.readFileSync(file, "utf8"));
     expect(postinst).toContain("chmod 4755 '/opt/grok-build-desktop/chrome-sandbox'");
     for (const hook of [postinst, postrm]) {
@@ -125,7 +125,7 @@ describe("Debian install path and branding", () => {
     expect(overridden).toEqual(original);
     expect(overridden).not.toHaveProperty("productName");
     expect(overridden.name).toBe("grok-build-desktop");
-    expect(overridden.description).toBe("Grok Build Desktop (Community)");
+    expect(overridden.description).toBe("AFK Pilot");
     // Alone this takes ~1 s; cold-loading app-builder-lib beside 350 parallel
     // test files took over 30 s twice on 2026-11-03, once in the release gate.
   }, 120_000);

@@ -21,7 +21,7 @@ const machine = (opts: {
 
 describe("finding ffmpeg when PATH is stripped", () => {
   it("finds the Homebrew binary a GUI app's PATH cannot see", () => {
-    // Grok Build Desktop, launched from Finder: PATH is the bare system one, and
+    // The desktop app, launched from Finder: PATH is the bare system one, and
     // ffmpeg is where `brew install` put it. This is the case that cost an
     // evening — the user had ffmpeg, `which` found it, the app did not.
     const r = resolveConfiguredFfmpeg(

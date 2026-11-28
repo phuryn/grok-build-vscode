@@ -24,7 +24,7 @@ import {
   type SessionStartPropKey,
   type SessionStartProps,
 } from "../src/telemetry";
-import { DESKTOP_APP_SHORT_NAME } from "../src/desktop/host-dialogs";
+import { DESKTOP_APP_INTERNAL_NAME } from "../src/desktop/host-dialogs";
 import { GrokSidebar } from "../src/sidebar";
 import { Session } from "../src/session";
 import { RemoteClientState } from "../src/remote-client-state";
@@ -348,7 +348,7 @@ describe("session_start — feature flags + host (analytics)", () => {
 });
 
 describe("the three hosts are distinguishable in analytics", () => {
-  // Grok Build Desktop reports through the SAME shared send path as the
+  // The desktop app reports through the SAME shared send path as the
   // extension (sidebar.ts → host.appName → `host`), and its extensionId
   // resolves to the official publisher.name, so the fork gate lets it through.
   // What identifies it is this property — without it, desktop sessions would be
@@ -369,9 +369,11 @@ describe("the three hosts are distinguishable in analytics", () => {
     isDebug: false,
   };
 
+  // The app is called AFK Pilot since 2026-11-28; its appName keeps the old name
+  // so the host series in analytics carries on.
   it("tags desktop sessions with Grok Build Desktop and hostKind desktop", () => {
     const ev = buildSessionStartEvent(
-      props(DESKTOP_APP_SHORT_NAME, "desktop"), sys, "s-1", "2026-08-07T00:00:00.000Z",
+      props(DESKTOP_APP_INTERNAL_NAME, "desktop"), sys, "s-1", "2026-08-07T00:00:00.000Z",
     );
     expect(ev.props.host).toBe("Grok Build Desktop");
     expect(ev.props.hostKind).toBe("desktop");

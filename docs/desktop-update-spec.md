@@ -1,6 +1,7 @@
 # Desktop auto-update
 
-This is the current-state contract for Grok Build Desktop updates. Phase 1
+This is the current-state contract for the desktop app's updates (AFK Pilot,
+formerly Grok Build Desktop). Phase 1
 (notice-only) shipped first. Phase 2 adds a real `electron-updater` download
 on macOS, Windows and Linux AppImage under the same rail affordance. Debian
 packages use a format-specific download notice. Rules from phase 1 carry

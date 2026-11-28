@@ -504,9 +504,9 @@ at **[afkpilot.com](https://afkpilot.com)** from the **Remote control** phone
 button in the chat's top bar. One optional companion shares the same chat UI and
 the same agents:
 
-- **[Grok Build Desktop (Community)](https://afkpilot.com/desktop)** — the same
-  agent as a standalone app for Windows, macOS and Linux, for machines where you
-  would rather not install an editor. Free.
+- **[AFK Pilot desktop app](https://afkpilot.com/desktop)** (formerly Grok Build
+  Desktop) — the same agents as a standalone app for Windows, macOS and Linux,
+  for machines where you would rather not install an editor. Free.
 
 It is not required, and nothing here depends on it.
 

@@ -65,9 +65,8 @@ import {
   isAppDocumentUrl,
 } from "./electron-webview";
 import {
-  DESKTOP_APP_FULL_NAME,
-  DESKTOP_APP_DISPLAY_NAME,
-  DESKTOP_APP_SHORT_NAME,
+  DESKTOP_APP_INTERNAL_NAME,
+  DESKTOP_APP_NAME,
   DESKTOP_PUBLIC_REPO_URL,
 } from "./host-dialogs";
 import { createFileMemento } from "./memento";
@@ -219,9 +218,11 @@ function parseArgs(argv: string[]): {
 // Name + userData MUST be set before anything resolves getPath("userData") —
 // Electron otherwise parks the profile under the generic "Electron" folder.
 // Tests pass --user-data-dir for isolation (skips branding/migration).
+// The startup name is the app's old one on purpose: macOS and Linux derive the
+// store that encrypts saved keys from it (host-dialogs.ts), so it never changes.
 const earlyArgs = parseArgs(process.argv.slice(1));
 try {
-  app.setName(DESKTOP_APP_SHORT_NAME);
+  app.setName(DESKTOP_APP_INTERNAL_NAME);
   // Windows groups taskbar buttons by AppUserModelID, and an unpackaged run
   // without one inherits electron.exe's identity — so the taskbar showed
   // Electron's atom whatever icon the window set. Installed builds were never
@@ -751,9 +752,10 @@ async function createApp(): Promise<void> {
     return handles;
   });
 
-  // Full product name for About / OS app identity (short name was set early so
-  // userData resolved under a branded folder). Window title uses short name.
-  app.setName(DESKTOP_APP_FULL_NAME);
+  // The name people see, for About, dialogs and the Linux window class (the
+  // .desktop file's StartupWMClass matches it). The startup name above already
+  // did its one job, naming the profile and the saved-key store.
+  app.setName(DESKTOP_APP_NAME);
   const isPackaged = app.isPackaged;
   Menu.setApplicationMenu(
     buildDesktopAppMenu(
@@ -802,7 +804,7 @@ async function createApp(): Promise<void> {
     height: savedSize && workArea && Number.isSafeInteger(savedSize.height) ? Math.max(480, Math.min(savedSize.height, workArea.height)) : 800,
     minWidth: 400,
     minHeight: 480,
-    title: DESKTOP_APP_DISPLAY_NAME,
+    title: DESKTOP_APP_NAME,
     // Match AFK Pilot dark page chrome; theme toggle may lighten the document.
     backgroundColor: "#1a1a1a",
     // Windows draws a light system menu strip over a dark app otherwise. Hide

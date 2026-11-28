@@ -8,6 +8,7 @@
   "A routine sends one prompt to one project on a schedule you set — a morning summary of what changed, or a weekly dependency check. Each run becomes a session, and the last twenty stay here so you can see it working.": "例行任务按你设定的时间表向一个项目发送一条提示，例如每天早上的变更总结，或每周的依赖检查。每次运行都会成为一个会话，最近二十次会保留在这里，方便你查看运行情况。",
   "A terminal opened for GitHub sign-in. When it finishes, re-check.": "已打开终端进行 GitHub 登录。完成后请重新检查。",
   "AFK Pilot can read replies out loud — turn it on in {Voice settings}.": "AFK Pilot 可以朗读回复，在{语音设置}中开启。",
+  "AFK Pilot desktop app": "AFK Pilot 桌面应用",
   "AFK Pilot extension": "AFK Pilot 扩展",
   "AFK Pilot keeps this machine awake and lets you continue from a phone without storing prompts or code.": "AFK Pilot 使本机保持唤醒，让你可以在手机上继续，且不存储提示或代码。",
   "API key": "API 密钥",

@@ -61,7 +61,7 @@ There is no SDK and no third-party tracker — just one small, dependency-free H
 
 Telemetry sends **only when all** of these allow it:
 
-1. The host telemetry gate — `Host.isTelemetryEnabled`. In VS Code this is the global `telemetry.telemetryLevel` setting (anything other than `off`). In **Grok Build Desktop** there is no VS Code global setting: `isTelemetryEnabled` is mapped to the same `grok.telemetry.enabled` switch as (2).
+1. The host telemetry gate — `Host.isTelemetryEnabled`. In VS Code this is the global `telemetry.telemetryLevel` setting (anything other than `off`). In the **desktop app** there is no VS Code global setting: `isTelemetryEnabled` is mapped to the same `grok.telemetry.enabled` switch as (2).
 2. The product opt-out — `grok.telemetry.enabled` (default `true`).
 3. This is the official published build (`PawelHuryn.grok-vscode-phuryn` / `OFFICIAL_EXTENSION_ID`). A fork rebuilt under another publisher never reports into the official project.
 

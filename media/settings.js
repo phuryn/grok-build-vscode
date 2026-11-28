@@ -1494,7 +1494,7 @@
     {
       id: "aboutHostProduct",
       category: "about",
-      title: (s) => (s && s.hostKind === "desktop") ? "Grok Build Desktop" : l10n("AFK Pilot extension"),
+      title: (s) => (s && s.hostKind === "desktop") ? l10n("AFK Pilot desktop app") : l10n("AFK Pilot extension"),
       kind: "value",
       visible: (s, env) => remoteAbout(s, env),
       get: (s) => versionLabel(s && s.extVersion),

@@ -3,7 +3,7 @@
  * the directories a GUI-launched app's PATH routinely misses — and hand the
  * child a PATH in which `npx` itself can run.
  *
- * Grok Build Desktop does not resolve the login shell's environment, so
+ * The desktop app does not resolve the login shell's environment, so
  * `spawn("npx")` is ENOENT on a machine where `which npx` answers
  * `/opt/homebrew/bin/npx`. That is the same incident `ffmpeg-locate.ts` opens
  * with. The difference: ffmpeg is a self-contained executable; npx is a

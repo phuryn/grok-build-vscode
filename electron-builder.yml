@@ -1,8 +1,14 @@
-# Grok Build Desktop — electron-builder config (signed + notarised on macOS).
+# AFK Pilot, the desktop app — electron-builder config (signed + notarised on macOS).
+# Called Grok Build Desktop until 2026-11-28. Only the names people see changed:
+# appId, productName (exe, install folder, Mac bundle file), the installer file
+# names, extraMetadata.name and the Linux executableName keep the old name, so
+# updates, saved settings and saved keys carry on (src/desktop/host-dialogs.ts).
 # Entry: out/desktop/main.js (see package.json scripts dist / dist:mac / dist:win).
 # Does not affect the VS Code VSIX path (npm run package).
 
 appId: com.productcompass.grok-build-desktop
+# Not the displayed name: it names the .exe, the install folder and the Mac
+# bundle file, which an update must find where it left them.
 productName: Grok Build Desktop
 copyright: Copyright © Paweł Huryn
 
@@ -31,7 +37,7 @@ extraMetadata:
   # rcedit stamps `description` as the .exe FileDescription, which is the label
   # Windows shows in Task Manager and the UAC prompt. package.json's is the
   # marketplace blurb — a 300-character paragraph in a column meant for a name.
-  description: Grok Build Desktop (Community)
+  description: AFK Pilot
 
 # Layout inside app.asar (or app/ when --dir):
 #   package.json, out/**, media/**, resources/**, LICENSE, node_modules/{ws,jpeg-js,qrcode-generator,@agentclientprotocol/codex-acp}
@@ -146,7 +152,12 @@ mac:
     # prompt the user — macOS terminates the process, and it presents as a
     # crash rather than as a permissions problem.
     NSMicrophoneUsageDescription: >-
-      Grok Build Desktop uses the microphone for voice input in chat.
+      AFK Pilot uses the microphone for voice input in chat.
+    # No CFBundleName here, although it is what the menu bar shows. Electron
+    # looks up its helper apps ("Grok Build Desktop Helper*.app", named after
+    # productName) by the app's name and stops with "Unable to find helper app"
+    # when none matches. So the menu bar, the Dock and Finder keep the bundle's
+    # name, Grok Build Desktop; everything drawn by the app says AFK Pilot.
   # Both arches in ONE electron-builder invocation so latest-mac.yml lists
   # both zips. A second arch job would overwrite the first (#5592).
   publish:
@@ -164,10 +175,10 @@ mac:
 
 dmg:
   # ${arch} matters: without it the arm64 and x64 builds both mount a volume
-  # called "Grok Build Desktop <version>", and the second one races the first's
+  # called "AFK Pilot <version>", and the second one races the first's
   # unmount — hdiutil detach then fails on a volume that is already gone or
   # still busy, which is what killed the first macOS run.
-  title: Grok Build Desktop ${version} ${arch}
+  title: AFK Pilot ${version} ${arch}
 
 win:
   # An explicit multi-size .ico rather than relying on the PNG conversion, so
@@ -202,8 +213,10 @@ nsis:
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
-  shortcutName: Grok Build Desktop
-  uninstallDisplayName: Grok Build Desktop (Community)
+  # An update renames the existing Start menu and desktop shortcuts in place
+  # (the installer reads the old name from the registry), so pins survive.
+  shortcutName: AFK Pilot
+  uninstallDisplayName: AFK Pilot
   artifactName: Grok-Build-Desktop-${version}-${os}-${arch}.${ext}
 
 linux:
@@ -229,17 +242,18 @@ linux:
   executableName: grok-build-desktop
   maintainer: Paweł Huryn <support@productcompass.pm>
   vendor: Paweł Huryn
-  synopsis: Desktop client for Grok Build
+  synopsis: AI coding agents in one desktop app
   description: >-
-    Desktop client for the Grok Build agent. Talks to Grok, Codex,
-    Claude Code and Muse Code. Not affiliated with or endorsed by SpaceXAI.
+    AFK Pilot runs Grok Build, Codex, Claude Code and Muse Code in one
+    desktop app. Not affiliated with or endorsed by SpaceXAI.
   category: Development
   packageCategory: devel
   desktop:
-    Name: Grok Build Desktop
+    Name: AFK Pilot
     GenericName: AI coding agent
-    StartupWMClass: Grok Build Desktop (Community)
-    Keywords: grok;ai;agent;coding;
+    # Matches the name main.ts gives Electron once it is ready (DESKTOP_APP_NAME).
+    StartupWMClass: AFK Pilot
+    Keywords: afk;pilot;grok;ai;agent;coding;
     StartupNotify: true
   target:
     - target: AppImage

@@ -1,4 +1,5 @@
-# Builds the Grok Build Desktop installers.
+# Builds the desktop app's installers (AFK Pilot; the files keep the old
+# Grok-Build-Desktop-* names, which the update feeds and scripts match).
 #
 # macOS is the reason this workflow exists. A .dmg can only be produced on
 # macOS, so there is no way to cut a Mac build from the Windows dev box — the

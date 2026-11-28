@@ -7,7 +7,7 @@ Product documentation lives here. Build, test and repo conventions are in
 ## Using it
 
 - [Install](INSTALL.md) — manual, build-from-source and multi-IDE paths.
-- [Grok Build Desktop](desktop.md) — the standalone app: download, install warnings, packaging.
+- [AFK Pilot desktop app](desktop.md) (formerly Grok Build Desktop) — the standalone app: download, install warnings, packaging.
 - [Slash commands](SLASH-COMMANDS.md) — what the running CLI exposes and how commands dispatch.
 - [Projects](projects.md) — the three ways to add one, where new folders go, and cloning from GitHub.
 - [Tips on the empty screen](empty-state-tips.md) — what the welcome screen suggests, and the rules it follows.

@@ -26,7 +26,7 @@
 import { ChildProcess, spawn } from "node:child_process";
 
 /** Shown in `systemd-inhibit --list` so a user can see who holds the lock. */
-export const KEEP_AWAKE_WHO = "Grok Build";
+export const KEEP_AWAKE_WHO = "AFK Pilot";
 export const KEEP_AWAKE_WHY = "Agent turn or AFK Pilot link — staying awake";
 
 /** How often each child re-checks that the extension host is still alive. */

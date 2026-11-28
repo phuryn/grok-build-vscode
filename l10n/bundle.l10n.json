@@ -8,6 +8,7 @@
   "A routine sends one prompt to one project on a schedule you set — a morning summary of what changed, or a weekly dependency check. Each run becomes a session, and the last twenty stay here so you can see it working.": "A routine sends one prompt to one project on a schedule you set — a morning summary of what changed, or a weekly dependency check. Each run becomes a session, and the last twenty stay here so you can see it working.",
   "A terminal opened for GitHub sign-in. When it finishes, re-check.": "A terminal opened for GitHub sign-in. When it finishes, re-check.",
   "AFK Pilot can read replies out loud — turn it on in {Voice settings}.": "AFK Pilot can read replies out loud — turn it on in {Voice settings}.",
+  "AFK Pilot desktop app": "AFK Pilot desktop app",
   "AFK Pilot extension": "AFK Pilot extension",
   "AFK Pilot keeps this machine awake and lets you continue from a phone without storing prompts or code.": "AFK Pilot keeps this machine awake and lets you continue from a phone without storing prompts or code.",
   "API key": "API key",

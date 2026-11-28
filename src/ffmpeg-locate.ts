@@ -8,7 +8,7 @@
  *
  *   • **A GUI-launched app has a stripped PATH.** VS Code resolves the login
  *     shell's environment on macOS, so an extension host sees `/opt/homebrew/bin`
- *     and `spawn("ffmpeg")` works. Grok Build Desktop does not, so the same code
+ *     and `spawn("ffmpeg")` works. The desktop app does not, so the same code
  *     reported ffmpeg missing on a machine where `which ffmpeg` answered fine.
  *   • **`brew info` prints the Cellar directory**, and pasting that produced
  *     `spawn /opt/homebrew/Cellar/ffmpeg EACCES` — macOS refusing to execute a

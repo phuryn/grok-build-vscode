@@ -110,7 +110,7 @@ import { findFilesUnder } from "./find-files";
 import {
   buildInputBoxHtml,
   buildQuickPickHtml,
-  DESKTOP_APP_SHORT_NAME,
+  DESKTOP_APP_INTERNAL_NAME,
   parseDialogSubmit,
   planMessageBoxButtons,
   resolveMessageBoxChoice,
@@ -1354,7 +1354,7 @@ export function createElectronHost(opts: ElectronHostOptions): Host {
     },
 
     get appName() {
-      return DESKTOP_APP_SHORT_NAME;
+      return DESKTOP_APP_INTERNAL_NAME;
     },
     get language() {
       return "en";

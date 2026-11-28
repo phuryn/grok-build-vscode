@@ -5,7 +5,7 @@
  * on Developer Tools can be unit-tested without spawning Electron.
  */
 import type { BaseWindow, MenuItemConstructorOptions } from "electron";
-import { DESKTOP_APP_FULL_NAME } from "./host-dialogs";
+import { DESKTOP_APP_NAME } from "./host-dialogs";
 
 /** Env var set by `scripts/run-desktop.cjs --open-devtools` (desktop-dev). */
 export const DESKTOP_OPEN_DEVTOOLS_ENV = "GROK_DESKTOP_OPEN_DEVTOOLS";
@@ -183,9 +183,9 @@ export function desktopAppMenuTemplate(opts: {
     ...(isMac
       ? [
           {
-            label: DESKTOP_APP_FULL_NAME,
+            label: DESKTOP_APP_NAME,
             submenu: [
-              { role: "about" as const, label: `About ${DESKTOP_APP_FULL_NAME}` },
+              { role: "about" as const, label: `About ${DESKTOP_APP_NAME}` },
               { type: "separator" as const },
               { role: "services" as const },
               { type: "separator" as const },
@@ -251,7 +251,7 @@ export function desktopAppMenuTemplate(opts: {
           },
         },
         {
-          label: `About ${DESKTOP_APP_FULL_NAME}`,
+          label: `About ${DESKTOP_APP_NAME}`,
           click: () => {
             openRepo();
           },

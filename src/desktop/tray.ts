@@ -18,7 +18,7 @@
  * item.
  */
 import type { MenuItemConstructorOptions } from "electron";
-import { DESKTOP_APP_DISPLAY_NAME } from "./host-dialogs";
+import { DESKTOP_APP_NAME } from "./host-dialogs";
 
 /** Config key, relative to the `grok` section (full: `grok.desktop.tray`). */
 export const TRAY_CONFIG_KEY = "desktop.tray";
@@ -96,7 +96,7 @@ export function shouldHideWindowOnClose(opts: {
 /** Shown once, the first time a close is turned into a hide. */
 export function trayNoticeContent(): { title: string; body: string } {
   return {
-    title: `${DESKTOP_APP_DISPLAY_NAME} is still running`,
+    title: `${DESKTOP_APP_NAME} is still running`,
     body: "It stays in the tray so your agent and any linked phone keep working. "
       + "Quit from the tray icon to stop it, or turn this off in Settings → General.",
   };
@@ -104,7 +104,7 @@ export function trayNoticeContent(): { title: string; body: string } {
 
 /** Hover text on the icon itself — the other half of "where did it go?". */
 export function trayTooltip(): string {
-  return DESKTOP_APP_DISPLAY_NAME;
+  return DESKTOP_APP_NAME;
 }
 
 export const TRAY_MENU_SHOW_LABEL = "Open";

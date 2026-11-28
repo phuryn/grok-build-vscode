@@ -132,7 +132,8 @@ import {
 import {
   buildInputBoxHtml,
   buildQuickPickHtml,
-  DESKTOP_APP_FULL_NAME,
+  DESKTOP_APP_INTERNAL_NAME,
+  DESKTOP_APP_NAME,
   DESKTOP_PUBLIC_REPO_URL,
   MESSAGE_BOX_CANCEL_LABEL,
   parseDialogSubmit,
@@ -2091,8 +2092,25 @@ describe("desktop DevTools gate (non-production only)", () => {
 });
 
 describe("desktop branding and menu", () => {
-  it("names the product Grok Build Desktop (Community) and links this repo only", () => {
-    expect(DESKTOP_APP_FULL_NAME).toBe("Grok Build Desktop (Community)");
+  // macOS names the Keychain item that encrypts saved keys "<name> Safe Storage"
+  // after the name Electron starts under, and Linux keys its libsecret entry the
+  // same way. A new startup name would leave every saved key unreadable after
+  // an update, so it stays the app's old name and is set before anything else.
+  it("starts under the old name, so saved keys survive the rename", () => {
+    expect(DESKTOP_APP_INTERNAL_NAME).toBe("Grok Build Desktop");
+    const main = fs.readFileSync(
+      path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "src", "desktop", "main.ts"),
+      "utf8",
+    );
+    const early = main.indexOf("app.setName(DESKTOP_APP_INTERNAL_NAME)");
+    expect(early).toBeGreaterThan(-1);
+    expect(early).toBeLessThan(main.indexOf("app.setAppUserModelId("));
+    expect(early).toBeLessThan(main.indexOf("app.setName(DESKTOP_APP_NAME)"));
+    expect(main).not.toMatch(/whenReady[\s\S]*app\.setName\(DESKTOP_APP_INTERNAL_NAME\)/);
+  });
+
+  it("names the product AFK Pilot and links this repo only", () => {
+    expect(DESKTOP_APP_NAME).toBe("AFK Pilot");
     expect(DESKTOP_PUBLIC_REPO_URL).toBe(
       "https://github.com/phuryn/grok-build-vscode",
     );
