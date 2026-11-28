@@ -807,21 +807,62 @@ describe("attachDesktopAutoUpdate", () => {
 describe("Restart to update and unsaved Files edits", () => {
   it("keeps the app open when the person keeps their unsaved edits", async () => {
     let installs = 0;
-    expect(await installUpdateAfterFilesCheck(async () => false, () => { installs++; })).toBe(false);
+    expect(await installUpdateAfterFilesCheck(async () => false, () => { installs++; return true; }, () => {})).toBe(false);
     expect(installs).toBe(0);
   });
 
   it("starts the installer only after the question is answered", async () => {
     const order: string[] = [];
-    const ok = await installUpdateAfterFilesCheck(async () => { order.push("asked"); return true; }, () => { order.push("installed"); });
+    const ok = await installUpdateAfterFilesCheck(
+      async () => { order.push("asked"); return true; },
+      () => { order.push("installed"); return true; },
+      () => { order.push("forgot"); },
+    );
     expect(ok).toBe(true);
     expect(order).toEqual(["asked", "installed"]);
+  });
+
+  it("forgets the answer when the install fails and the app stays open", async () => {
+    const order: string[] = [];
+    const ok = await installUpdateAfterFilesCheck(
+      async () => { order.push("asked"); return true; },
+      () => { order.push("install failed"); return false; },
+      () => { order.push("forgot"); },
+    );
+    expect(ok).toBe(false);
+    expect(order).toEqual(["asked", "install failed", "forgot"]);
+  });
+
+  it("reports an install that electron-updater could not start", async () => {
+    // AppImageUpdater: unlinking an AppImage in a read-only folder throws inside
+    // install(), which reports it as an "error" event and does not quit.
+    const updater = fakeUpdater({
+      async check() { updater.emit("update-downloaded", { version: "3.8.0" }); },
+      quit: () => { updater.emit("error", new Error("EACCES: permission denied, unlink")); },
+    });
+    const session = attachDesktopAutoUpdate({
+      updater, platform: "linux", currentVersion: "3.7.0", packaged: true, packageType: "appimage",
+      ui: { postNotice: () => {}, postReady: () => {}, log: () => {}, fetchNotice: async () => null },
+    });
+    await session.check();
+    expect(session.install()).toBe(false);
+  });
+
+  it("reports an install that started", async () => {
+    const updater = fakeUpdater({ async check() { updater.emit("update-downloaded", { version: "3.8.0" }); } });
+    const session = attachDesktopAutoUpdate({
+      updater, platform: "win32", currentVersion: "3.7.0", packaged: true,
+      ui: { postNotice: () => {}, postReady: () => {}, log: () => {}, fetchNotice: async () => null },
+    });
+    expect(session.install()).toBe(false);
+    await session.check();
+    expect(session.install()).toBe(true);
   });
 
   it("is what the desktop app's Restart to update runs", () => {
     const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
     const main = fs.readFileSync(path.join(root, "src", "desktop", "main.ts"), "utf8");
-    expect(main).toMatch(/updateActions\.install = \(\) => \{\s*void installUpdateAfterFilesCheck\(confirmDesktopFilesClose, \(\) => desktopUpdate\.install\(\)\)/);
+    expect(main).toMatch(/updateActions\.install = \(\) => \{\s*void installUpdateAfterFilesCheck\(confirmDesktopFilesClose, \(\) => desktopUpdate\.install\(\), forgetDesktopFilesCloseAnswer\)/);
   });
 });
 

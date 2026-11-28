@@ -79,6 +79,11 @@ export async function confirmDesktopFilesClose(): Promise<boolean> {
   return ok;
 }
 
+/** The app stayed open after all (a failed update install): ask again next time. */
+export function forgetDesktopFilesCloseAnswer(): void {
+  filesCloseConfirmed = false;
+}
+
 export function desktopFilesCloseConfirmed(): boolean {
   return filesCloseConfirmed || !askFilesClose;
 }

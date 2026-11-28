@@ -92,6 +92,7 @@ import {
   confirmDesktopFilesClose,
   desktopFilesCloseConfirmed,
   desktopFilesDiscardApproved,
+  forgetDesktopFilesCloseAnswer,
 } from "./file-tree-ipc";
 import {
   installWindowSecurityLocks,
@@ -1121,7 +1122,7 @@ async function createApp(): Promise<void> {
     },
   });
   updateActions.install = () => {
-    void installUpdateAfterFilesCheck(confirmDesktopFilesClose, () => desktopUpdate.install())
+    void installUpdateAfterFilesCheck(confirmDesktopFilesClose, () => desktopUpdate.install(), forgetDesktopFilesCloseAnswer)
       .catch(error => log(`[update] files check failed: ${String(error)}`));
   };
   // After first paint so a slow check never races the webview boot.

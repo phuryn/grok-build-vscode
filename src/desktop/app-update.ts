@@ -285,14 +285,20 @@ export function desktopAutoUpdateEnabled(opts: {
  * Restart to update closes the app, so unsaved Files edits are asked about
  * first. Asking at quit is too late on Windows: the installer is already
  * running by then and ends the app a moment later whatever the answer.
+ *
+ * An install that fails leaves the app open (an AppImage in a folder the
+ * account cannot write), so the answer is forgotten: a later Quit asks again
+ * about edits made after it.
  */
 export async function installUpdateAfterFilesCheck(
   confirmFilesClose: () => Promise<boolean>,
-  install: () => void,
+  install: () => boolean,
+  forgetFilesAnswer: () => void,
 ): Promise<boolean> {
   if (!(await confirmFilesClose())) return false;
-  install();
-  return true;
+  if (install()) return true;
+  forgetFilesAnswer();
+  return false;
 }
 
 /** latest-mac.yml from one dual-arch `electron-builder --mac` must list both zips. */
@@ -342,7 +348,8 @@ export interface DesktopUpdateUi {
 
 export interface DesktopUpdateSession {
   check(): Promise<void>;
-  install(): void;
+  /** False when nothing was installed and the app stays open. */
+  install(): boolean;
   getState(): AppUpdateState;
 }
 
@@ -395,6 +402,8 @@ export function attachDesktopAutoUpdate(opts: {
 }): DesktopUpdateSession {
   let state = initialAppUpdateState();
   let configured = false;
+  let installing = false;
+  let installFailed = false;
   const enabled = desktopAutoUpdateEnabled(opts);
   let resolvedUpdater: DesktopAutoUpdater | undefined;
   /** Resolve the injected updater at most once, and only when it is wanted. */
@@ -461,6 +470,7 @@ export function attachDesktopAutoUpdate(opts: {
     });
     updater().on("error", (err: unknown) => {
       opts.ui.log(`[update] ${updaterLogLine(err)}`);
+      if (installing) installFailed = true;
       apply({ type: "error" });
       void fallbackNotice();
     });
@@ -471,7 +481,11 @@ export function attachDesktopAutoUpdate(opts: {
   return {
     getState: () => state,
     install() {
-      if (state.phase !== "ready") return;
+      if (state.phase !== "ready") return false;
+      // electron-updater reports an install that could not start as an
+      // "error" event during this call and then does not quit.
+      installing = true;
+      installFailed = false;
       try {
         // Silent + force-run: a non-silent NSIS install (oneClick:false) runs
         // the full wizard and ignores isForceRunAfter. Squirrel.Mac ignores both.
@@ -479,7 +493,11 @@ export function attachDesktopAutoUpdate(opts: {
       } catch (e) {
         opts.ui.log(`[update] quitAndInstall failed: ${updaterLogLine(e)}`);
         void fallbackNotice();
+        installFailed = true;
+      } finally {
+        installing = false;
       }
+      return !installFailed;
     },
     async check() {
       if (shouldSkipUpdateCheck(state)) return;

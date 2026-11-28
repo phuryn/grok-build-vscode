@@ -532,9 +532,10 @@ over the chat's right side through the shared component's `dockLayout` mount
 option; phone and browser mounts keep the component's defaults. Each
 renderer mounts the shared Files component and invokes the same desktop file
 IPC. The registered sender and main frame resolve to a host-owned chat root,
-and a root named by the renderer only checks freshness. A chat's project file and
-diff opens return to its own Files panel; PDFs and spreadsheets go to the OS, as
-from the main chat. When the first chat closes,
+and a root named by the renderer only checks freshness. A chat's diff opens, and
+its opens of project files `classifyFilePreview` can preview, return to its own
+Files panel; every other kind (PDFs, spreadsheets, Word documents) goes to the OS,
+as from the main chat. When the first chat closes,
 `closeDesktopMainChat` parks its draft, adopts the next view's live `Session`
 and Files state, and disposes the redundant view. Desktop workspace state
 restores the open order and drafts, with Files preferences keyed to the
