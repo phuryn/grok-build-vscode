@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { bootWebview, dispatch } from "./webview-harness";
 
 /**
@@ -153,5 +155,61 @@ describe("desktop launch composer focus", () => {
     historyBtn.focus();
     window.dispatchEvent(new window.Event("focus"));
     expect(doc.activeElement).toBe(historyBtn);
+  });
+});
+
+describe("desktop composer focus border follows the keyboard", () => {
+  function bootWithFocus(desktop: boolean, initial: boolean) {
+    const focus = { has: initial };
+    const harness = bootWebview({
+      beforeScripts(w) {
+        if (desktop) (w as unknown as { grokDesktopShell: boolean }).grokDesktopShell = true;
+        (w.document as unknown as { hasFocus: () => boolean }).hasFocus = () => focus.has;
+      },
+    });
+    return { ...harness, focus };
+  }
+  const tick = (w: Window) => new Promise<void>(resolve => (w as unknown as { setTimeout: typeof setTimeout }).setTimeout(() => resolve(), 5));
+  const unfocused = (doc: Document) => doc.documentElement.classList.contains("desk-page-unfocused");
+
+  it("marks a desktop chat whose page does not have the keyboard, and clears it when it does", async () => {
+    // A pane opened beside the chat you are typing in boots without the keyboard.
+    const { window, doc, focus } = bootWithFocus(true, false);
+    expect(doc.activeElement).toBe(doc.getElementById("input"));
+    expect(unfocused(doc)).toBe(true);
+
+    focus.has = true;
+    window.dispatchEvent(new window.Event("focus"));
+    expect(unfocused(doc)).toBe(false);
+
+    // Another chat (or app) takes the keyboard; the composer stays this page's activeElement.
+    focus.has = false;
+    window.dispatchEvent(new window.Event("blur"));
+    await tick(window);
+    expect(unfocused(doc)).toBe(true);
+    expect(doc.activeElement).toBe(doc.getElementById("input"));
+  });
+
+  it("a blur that only moved focus into a child frame keeps the border", async () => {
+    const { window, doc } = bootWithFocus(true, true);
+    expect(unfocused(doc)).toBe(false);
+    window.dispatchEvent(new window.Event("blur"));
+    await tick(window);
+    expect(unfocused(doc)).toBe(false);
+  });
+
+  it("never marks the VS Code or browser chat", async () => {
+    const { window, doc } = bootWithFocus(false, false);
+    window.dispatchEvent(new window.Event("blur"));
+    await tick(window);
+    expect(unfocused(doc)).toBe(false);
+  });
+
+  it("chat.css drops the focus border only under the desktop mark", () => {
+    const css = readFileSync(path.join(__dirname, "..", "media", "chat.css"), "utf8");
+    expect(css).toMatch(/\.composer-card:focus-within\s*\{\s*border-color:\s*var\(--vscode-focusBorder\);/);
+    expect(css).toMatch(
+      /html\.desk-page-unfocused \.composer-card:focus-within\s*\{\s*border-color:\s*var\(--vscode-input-border, var\(--vscode-editorWidget-border\)\);/,
+    );
   });
 });

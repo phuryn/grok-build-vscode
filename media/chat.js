@@ -17133,6 +17133,23 @@ ${fullText}`
     window.addEventListener("resize", resetDocumentScroll);
   }
 
+  // Every desktop chat is its own page, and each keeps its composer focused
+  // after another chat or another app takes the keyboard, so `:focus-within`
+  // drew the focus border on every chat on screen. Mark the page while it does
+  // not have the keyboard; chat.css drops the border then. The blur check waits
+  // a tick because focus moving into a child frame also blurs the window.
+  // Desktop only: nothing else ever sets the class.
+  function syncDesktopPageFocus() {
+    const root = document.documentElement;
+    if (root) root.classList.toggle("desk-page-unfocused", !document.hasFocus());
+  }
+  if (IS_DESKTOP_CLIENT) {
+    syncDesktopPageFocus();
+    window.addEventListener("focus", syncDesktopPageFocus);
+    document.addEventListener("focusin", syncDesktopPageFocus);
+    window.addEventListener("blur", () => setTimeout(syncDesktopPageFocus, 0));
+  }
+
   /** Set client-owned zoom, persist, report (remote), refresh gear if open. */
   function setClientFontScale(next) {
     if (!CLIENT_OWNS_FONT_SCALE) return state.remoteFontScale;
