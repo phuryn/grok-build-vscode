@@ -6596,7 +6596,14 @@
           body: deleteSessionWarning(active),
           confirmLabel: l10n("Delete"),
           danger: true,
-        }).then((ok) => { if (ok) vscode.postMessage({ type: "deleteSession", id: s.id, name: s.displayName }); });
+        }).then(async (ok) => {
+          if (!ok) return;
+          // A desktop side chat closes with the conversation it shows, and its
+          // Files panel with it: ask about unsaved file edits first, as × and
+          // the Projects row's Delete do.
+          if (active && desktopChatPane && !(await (window.__grokDeskFtBeforeClose?.() ?? true))) return;
+          vscode.postMessage({ type: "deleteSession", id: s.id, name: s.displayName });
+        });
       };
       actions.appendChild(delBtn);
       }

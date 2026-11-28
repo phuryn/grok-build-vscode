@@ -853,6 +853,12 @@ export interface Host {
     icon?: Uri;
     localResourceRoots: Uri[];
   }): HostEditorWebview | undefined;
+  /**
+   * Desktop: ask once about unsaved Files edits in these chats before they
+   * close. Resolves true when nothing is unsaved or the person discards.
+   * Optional: VS Code's editor tabs carry no Files panel.
+   */
+  confirmEditorChatFilesDiscard?(panels: readonly HostEditorWebview[]): Promise<boolean>;
 }
 
 /**

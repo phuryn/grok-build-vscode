@@ -281,6 +281,20 @@ export function desktopAutoUpdateEnabled(opts: {
   return !!opts.packaged || !!opts.forceDev;
 }
 
+/**
+ * Restart to update closes the app, so unsaved Files edits are asked about
+ * first. Asking at quit is too late on Windows: the installer is already
+ * running by then and ends the app a moment later whatever the answer.
+ */
+export async function installUpdateAfterFilesCheck(
+  confirmFilesClose: () => Promise<boolean>,
+  install: () => void,
+): Promise<boolean> {
+  if (!(await confirmFilesClose())) return false;
+  install();
+  return true;
+}
+
 /** latest-mac.yml from one dual-arch `electron-builder --mac` must list both zips. */
 export function latestMacYmlHasBothArches(yml: string | null | undefined): boolean {
   // Same line-end anchor as the Windows check: a bare `/mac-arm64\.zip/`

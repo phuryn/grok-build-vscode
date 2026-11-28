@@ -15,6 +15,7 @@ import {
   desktopUpdateFeedConfig,
   desktopUpdatePageUrl,
   initialAppUpdateState,
+  installUpdateAfterFilesCheck,
   isDesktopInstallerAsset,
   isNewerVersion,
   latestLinuxYmlHasAppImage,
@@ -800,6 +801,27 @@ describe("attachDesktopAutoUpdate", () => {
     session.install();
     expect(quits).toBe(0);
     expect(updater.quitCalls).toEqual([]);
+  });
+});
+
+describe("Restart to update and unsaved Files edits", () => {
+  it("keeps the app open when the person keeps their unsaved edits", async () => {
+    let installs = 0;
+    expect(await installUpdateAfterFilesCheck(async () => false, () => { installs++; })).toBe(false);
+    expect(installs).toBe(0);
+  });
+
+  it("starts the installer only after the question is answered", async () => {
+    const order: string[] = [];
+    const ok = await installUpdateAfterFilesCheck(async () => { order.push("asked"); return true; }, () => { order.push("installed"); });
+    expect(ok).toBe(true);
+    expect(order).toEqual(["asked", "installed"]);
+  });
+
+  it("is what the desktop app's Restart to update runs", () => {
+    const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
+    const main = fs.readFileSync(path.join(root, "src", "desktop", "main.ts"), "utf8");
+    expect(main).toMatch(/updateActions\.install = \(\) => \{\s*void installUpdateAfterFilesCheck\(confirmDesktopFilesClose, \(\) => desktopUpdate\.install\(\)\)/);
   });
 });
 

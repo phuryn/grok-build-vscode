@@ -104,6 +104,7 @@ import {
   DESKTOP_RELEASES_API_URL,
   DESKTOP_UPDATE_CHECK_INTERVAL_MS,
   attachDesktopAutoUpdate,
+  installUpdateAfterFilesCheck,
   noticeIfUpdateAvailable,
   type GithubReleaseLike,
 } from "./app-update";
@@ -1119,7 +1120,10 @@ async function createApp(): Promise<void> {
       fetchNotice: fetchGithubDesktopNotice,
     },
   });
-  updateActions.install = () => desktopUpdate.install();
+  updateActions.install = () => {
+    void installUpdateAfterFilesCheck(confirmDesktopFilesClose, () => desktopUpdate.install())
+      .catch(error => log(`[update] files check failed: ${String(error)}`));
+  };
   // After first paint so a slow check never races the webview boot.
   setTimeout(() => {
     void desktopUpdate.check();

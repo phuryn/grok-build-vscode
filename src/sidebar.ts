@@ -10566,6 +10566,12 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       );
       if (ok !== "Close anyway") return;
     }
+    // A side chat of this project closes with it, and its Files panel with it:
+    // ask about unsaved file edits first, as closing the chat with × does.
+    const sideChats = this.sessionsBoundToFolder(target)
+      .flatMap(s => this.editorChatFor(s)?.panel ?? []);
+    if (origin === "local" && sideChats.length && this.host.confirmEditorChatFilesDiscard
+        && !(await this.host.confirmEditorChatFilesDiscard(sideChats))) return;
 
     const activeRoot = this.host.workspaceRoot();
     const wasActive = !!activeRoot && pathsEqual(target, activeRoot);

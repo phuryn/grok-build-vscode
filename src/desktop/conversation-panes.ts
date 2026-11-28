@@ -179,10 +179,12 @@ export class DesktopConversationPanes {
     this.runInMain("window.__grokMeasureConversationLayout?.()");
   }
 
-  async confirmFilesClose(): Promise<boolean> {
+  /** Ask once in the window about unsaved Files edits in every chat, or only in `only`. */
+  async confirmFilesClose(only?: readonly HostEditorWebview[]): Promise<boolean> {
     const contents = this.getWindow()?.webContents;
     if (!contents || contents.isDestroyed()) return false;
-    const dirty = await Promise.all([...this.panes.values()].map(({ view }) =>
+    const asked = [...this.panes.values()].filter(({ panel }) => !only || only.includes(panel));
+    const dirty = await Promise.all(asked.map(({ view }) =>
       view.webContents.executeJavaScript("window.__grokDeskFilePanel?.hasDirty()").catch(() => !view.webContents.isDestroyed())));
     if (!dirty.some(Boolean)) return true;
     // Confirm once in the window for edits across all panes.

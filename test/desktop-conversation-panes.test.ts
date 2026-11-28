@@ -312,6 +312,31 @@ describe("desktop conversation pane host", () => {
     }
   });
 
+  it("asks about unsaved Files edits only in the chats that are closing", async () => {
+    const { window, host } = fixture();
+    const dirty = makePaneContents(31);
+    const clean = makePaneContents(32);
+    dirty.executeJavaScript.mockImplementation(async (source: string) => source.includes("hasDirty") ? true : undefined);
+    clean.executeJavaScript.mockImplementation(async (source: string) => source.includes("hasDirty") ? false : undefined);
+    makeContents.mockReturnValueOnce(dirty).mockReturnValueOnce(clean);
+    const open = () => host.openEditorWebview({
+      viewType: "grok.conversation", title: "Side chat", column: "beside", localResourceRoots: [],
+    })!;
+    const dirtyPanel = open();
+    const cleanPanel = open();
+    const ask = vi.mocked(window.webContents.executeJavaScript);
+    ask.mockClear();
+    ask.mockResolvedValue(false);
+
+    await expect(host.confirmEditorChatFilesDiscard!([cleanPanel])).resolves.toBe(true);
+    expect(ask).not.toHaveBeenCalled();
+
+    await expect(host.confirmEditorChatFilesDiscard!([dirtyPanel])).resolves.toBe(false);
+    expect(ask).toHaveBeenCalledWith("window.__grokDeskFtBeforeClose?.(true)");
+    ask.mockResolvedValue(true);
+    await expect(host.confirmEditorChatFilesDiscard!([cleanPanel, dirtyPanel])).resolves.toBe(true);
+  });
+
   it("closes the renderer once, revokes IPC immediately, and only emits panel disposal", () => {
     const { contents, window, panes, open, event } = fixture();
     const panel = open();

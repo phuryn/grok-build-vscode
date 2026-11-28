@@ -203,7 +203,7 @@ export interface ElectronHostOptions {
   getWindow: () => BrowserWindow | null;
   showWindow?: () => void;
   log: (line: string) => void;
-  conversationPanes?: Pick<DesktopConversationPanes, "open">;
+  conversationPanes?: Pick<DesktopConversationPanes, "open" | "confirmFilesClose">;
   /**
    * AFK Pilot link/unlink — filled after GrokSidebar is constructed so the host
    * reuses the extension's uplink flow (no protocol reimplementation).
@@ -1392,6 +1392,9 @@ export function createElectronHost(opts: ElectronHostOptions): Host {
     canOpenConversationEditor: !!opts.conversationPanes,
     openEditorWebview(options) {
       return opts.conversationPanes?.open(options);
+    },
+    confirmEditorChatFilesDiscard(panels) {
+      return opts.conversationPanes?.confirmFilesClose(panels) ?? Promise.resolve(true);
     },
   };
 }
