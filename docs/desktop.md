@@ -96,15 +96,17 @@ pane).
 All open chats share the window. As space changes, chats fill columns from
 left to right, with up to three rows per column. The window's own chat stays
 at the top left. Each Files button opens that chat's project tree and Changes.
-Files also opens files and diffs requested from its chat. Opening Files can
+Project files and diffs requested from its chat open there too; PDFs and
+spreadsheets go to the system's app, as they do from the main chat. Opening Files can
 widen its column while the column widths are automatic.
 In split view, Files docks when the tile can fit the chat and a 200 px panel.
 The docked Files and chat headers line up with Projects. On narrower tiles,
 Files opens between the chat bar and composer, covering part of the transcript.
 Its header has a close button in both placements. Closing Files leaves its open
 tabs and edits available when you reopen it.
-Drag the docked Files divider to resize the panel. Double-click it to restore
-the default 280 px width within the space available.
+Drag the docked Files divider to resize the panel. Double-click it to reset
+the width to 280 px within the space available; an added chat with no saved
+width starts at 290 px.
 
 Drag the divider between columns or between chats stacked in a column to
 resize those neighbours. Double-click a column divider to restore automatic
@@ -122,8 +124,9 @@ live in memory while the app is running.
 
 Run `npm run test:desktop -- test/desktop/split-view.test.ts` on an interactive
 desktop to exercise chat panes with the fake ACP CLI. The driver writes light
-and dark PNGs under `.screens/desktop-split/` and checks that each capture
-contains the native pane's reply.
+and dark PNGs under `.screens/desktop-split/` and checks that each window
+capture contains the native pane's reply. Its settings captures hide the pane
+on purpose.
 
 ## Build commands
 

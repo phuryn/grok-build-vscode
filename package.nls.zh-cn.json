@@ -76,7 +76,7 @@
   "configuration.grok.soundNotifications.markdownDescription": "当 agent 完成一个回合或遇到错误时播放短音——完成时是上行的提示音，错误时是较低的音。默认关闭。**只在 AFK Pilot 面板未获得焦点时播放**（你已切到编辑器或其他窗口），因此你盯着看时不会响，离开时才会提醒你。也可以在设置 → **通知 → 声音通知**中随时切换。",
   "configuration.grok.processingSound.markdownDescription": "当 agent 仍在工作时播放安静的重复提示音。第一次提示等七秒，之后每八秒重复一次直到回合结束。默认关闭，与完成/错误音相互独立。也可以在设置 → **通知 → 处理中提示音**中随时切换。",
   "configuration.grok.inputNeededSound.markdownDescription": "当对话需要你的输入时播放短音，例如权限请求、提问或计划批准。默认关闭。仅在 AFK Pilot 面板未获得焦点或不可见时播放。也可以在设置 → **通知 → 需要输入时的提示音**中随时切换。",
-  "configuration.grok.readRepliesAloud.description": "在 VS Code 聊天中朗读完成的回复。代码块会被跳过。",
+  "configuration.grok.readRepliesAloud.description": "在 VS Code 侧边栏聊天中朗读完成的回复。代码块会被跳过。",
   "configuration.grok.summarizeRepliesAloud.markdownDescription": "朗读回复时改读简化摘要。每条回复多花一次 xAI 调用并增加网络延迟；摘要失败时使用完整回复。使用与 xAI 听写相同的凭据解析。AFK Pilot 在浏览器端保留每台设备各自的偏好。",
   "configuration.grok.remote.keepAwake.markdownDescription": "在本机关联 **AFK Pilot** 账户期间保持唤醒，使远程回合不被空闲休眠打断。仅在你登录后生效（设置 → 远程控制 → *登录*）；取消关联立即释放锁定。屏幕仍可自由休眠——只有系统/空闲休眠被阻止。macOS 使用 `caffeinate`，Windows 使用 `SetThreadExecutionState`，Linux 使用 `systemd-inhibit`。**合上笔记本盖子在所有平台上仍会休眠**——这是操作系统层面的决定，任何应用都无法覆盖。",
   "configuration.grok.thumbsFeedback.markdownDescription": "在完成的 Grok 回合上显示赞踩按钮，以便向 SpaceXAI 发送评分。**默认关闭。**开启后，只有该 Grok 会话实际支持反馈时才显示——Codex 或 Claude 上从不显示。评分不会被存储。可在设置 → 常规 → **向 SpaceXAI 发送赞踩反馈**中随时切换。",

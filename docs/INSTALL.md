@@ -2,7 +2,7 @@
 
 The quickest path is in the [README](../README.md#install): install the extension from the Extensions view, then let the sidebar's onboarding install the `grok` CLI and sign you in. This file covers the manual, build-from-source, and multi-IDE paths.
 
-For the **standalone Grok Build Desktop** app (installers, code-signing and SmartScreen notes, packaging commands), see **[desktop.md](desktop.md)**.
+For the **standalone desktop app, AFK Pilot** (installers, code-signing and SmartScreen notes, packaging commands), see **[desktop.md](desktop.md)**.
 
 ## Install the CLI yourself (optional)
 
