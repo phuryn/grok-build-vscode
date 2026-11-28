@@ -536,8 +536,9 @@ and a root named by the renderer only checks freshness. A chat's diff opens, and
 its opens of project files `classifyFilePreview` can preview, return to its own
 Files panel; every other kind (PDFs, spreadsheets, Word documents) goes to the OS,
 as from the main chat. Routing is by type: a previewable file over
-`FILE_PREVIEW_MAX_BYTES` reaches the panel and shows "file too large" with an
-external-open action. When the first chat closes,
+`FILE_PREVIEW_MAX_BYTES` (text, 2 MiB) or `FILE_PREVIEW_MAX_IMAGE_BYTES` (images,
+8 MiB) reaches the panel and shows "file too large" with an Open in default app
+action. When the first chat closes,
 `closeDesktopMainChat` parks its draft, adopts the next view's live `Session`
 and Files state, and disposes the redundant view. Desktop workspace state
 restores the open order and drafts, with Files preferences keyed to the
